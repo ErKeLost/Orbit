@@ -10,6 +10,7 @@ import { Message, MessageContent, MessageResponse } from "../ai-elements/message
 import { MessageActions } from "../assistant-ui/elements/message-actions";
 import { Icon } from "../Icon";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "../ui/context-menu";
+import { withoutRuntimeImageNotes } from "../../lib/image-note";
 
 const turnTimeFormatter = new Intl.DateTimeFormat(undefined, {
   hour: "2-digit",
@@ -112,7 +113,13 @@ type ProjectedPart = { part: Part; key: string; active: boolean; messageIndex: n
 function projectParts(items: DisplayMessage[], streaming: boolean): ProjectedPart[] {
   return items.flatMap((entry, itemIndex) => {
     const parts = Array.isArray(entry.message.content) ? entry.message.content : [{ type: "text", text: entry.message.content ?? "" }];
-    return parts.map((part, partIndex) => ({ part: part as Part, key: `${entry.id}-${partIndex}`, messageIndex: itemIndex, active: streaming && itemIndex === items.length - 1 }));
+    return parts.map((part, partIndex) => {
+      const projected = part as Part;
+      // Runtime image metadata stays in the transcript data and still reaches
+      // the model; only the desktop view and its copy action omit it.
+      const visible = projected.type === "text" && projected.text ? { ...projected, text: withoutRuntimeImageNotes(projected.text) } : projected;
+      return { part: visible, key: `${entry.id}-${partIndex}`, messageIndex: itemIndex, active: streaming && itemIndex === items.length - 1 };
+    });
   });
 }
 
