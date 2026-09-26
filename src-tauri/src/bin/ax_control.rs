@@ -56,7 +56,12 @@ fn main() {
                     // running Electron app may have no visible AX window
                     // until NSRunningApplication is brought to the front.
                     let mut snapshot = None;
-                    for _ in 0..50 {
+                    // Electron apps such as SodaMusic can create the helper
+                    // processes first and expose the main AX window several
+                    // seconds later. Keep activating and polling long enough
+                    // for the real window to appear before returning
+                    // WINDOW_NOT_FOUND.
+                    for _ in 0..150 {
                         if let Some(pid) = app_lib::fast_ax::find_pid(app) {
                             let _ = app_lib::fast_ax::activate_pid(pid);
                         }
