@@ -1,6 +1,6 @@
 [package]
 name = "orbit"
-version = "0.3.15"
+version = "0.3.16"
 default-run = "orbit"
 description = "A local desktop workspace for Orbit"
 authors = ["you"]
@@ -28,6 +28,7 @@ rustls = { version = "=0.23.43", default-features = false, features = ["ring", "
 tauri = { version = "=2.11.5", features = ["macos-private-api"] }
 tauri-plugin-log = "=2.9.1"
 tauri-plugin-dialog = "=2.7.3"
+tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "=2.3.3"
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls"] }
 
