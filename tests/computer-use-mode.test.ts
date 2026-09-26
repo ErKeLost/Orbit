@@ -602,6 +602,24 @@ describe("desktop goal loop", () => {
     expect(observedApp).toBe("Music")
   })
 
+  test("blocks with PERM_DENIED when the Accessibility grant is missing", async () => {
+    const client = mockClient(args => {
+      if (args[0] === "launch") throw new AgentDesktopCommandError("launch", {
+        code: "PERM_DENIED",
+        message: "AX_PERMISSION_DENIED: this process is not trusted for Accessibility",
+        disposition: { delivery: "not_delivered", retry: "never" },
+      })
+      throw new Error(`unexpected command: ${args[0]}`)
+    })
+    const result = await runGuiTaskEngine({
+      input: task({ goal: "open Music", textSlots: [] }),
+      client,
+      resolveApp,
+    })
+    expect(result.status).toBe("blocked")
+    expect(result.trace.some(entry => entry.note?.includes("PERM_DENIED"))).toBe(true)
+  })
+
   test("types prepared text, submits it, then finishes", async () => {
     const commands: string[][] = []
     const client = mockClient(args => {

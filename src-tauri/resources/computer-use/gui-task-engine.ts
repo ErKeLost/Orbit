@@ -78,6 +78,11 @@ export async function runGuiTaskEngine({
     appLaunched = true
     if (launched.renderer === "chromium") await delay(Math.min(CHROMIUM_RENDERER_SETTLE_MS, remaining()), undefined, { signal })
   } catch (error) {
+    // A missing Accessibility grant is recoverable only by the user, so it is
+    // a blocked task, not an app failure; PERM_DENIED is the authoritative code.
+    if (error instanceof AgentDesktopCommandError && error.detail.code === "PERM_DENIED") {
+      return finish("blocked", undefined, safeError(error))
+    }
     return finish(signal?.aborted ? "aborted" : "error", undefined, safeError(error))
   } finally {
     metrics.launchMs += performance.now() - launchStarted
@@ -130,6 +135,9 @@ export async function runGuiTaskEngine({
         }
       }
     } catch (error) {
+      if (error instanceof AgentDesktopCommandError && error.detail.code === "PERM_DENIED") {
+        return finish("blocked", observation, safeError(error))
+      }
       return finish(signal?.aborted ? "aborted" : "error", observation, safeError(error))
     } finally {
       metrics.observationMs += performance.now() - observationStarted
