@@ -45,6 +45,7 @@ extern "C" {
     fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
     fn AXUIElementSetMessagingTimeout(element: AXUIElementRef, timeout: f32) -> AXError;
     fn AXUIElementCopyAttributeValue(element: AXUIElementRef, attribute: CFStringRef, value: *mut CFTypeRef) -> AXError;
+    fn AXUIElementSetAttributeValue(element: AXUIElementRef, attribute: CFStringRef, value: CFTypeRef) -> AXError;
     fn AXUIElementCopyMultipleAttributeValues(element: AXUIElementRef, attributes: CFArrayRef, options: u32, values: *mut CFArrayRef) -> AXError;
     fn AXUIElementCopyActionNames(element: AXUIElementRef, names: *mut CFArrayRef) -> AXError;
     fn AXValueGetType(value: CFTypeRef) -> u32;
@@ -67,6 +68,7 @@ extern "C" {
     fn CFStringGetTypeID() -> usize;
     fn CFBooleanGetTypeID() -> usize;
     fn CFBooleanGetValue(v: CFTypeRef) -> bool;
+    static kCFBooleanTrue: CFTypeRef;
     fn CFNumberGetTypeID() -> usize;
     fn CFNumberGetValue(v: CFTypeRef, kind: isize, out: *mut c_void) -> bool;
     fn CFArrayGetTypeID() -> usize;
@@ -468,6 +470,35 @@ fn normalize_role(role: &str, subrole: Option<&str>) -> &'static str {
         "AXSortButton" | "AXDockItem" => "button",
         _ => "unknown",
     }
+}
+
+/// Chromium/CEF/Electron renderers boot into a limited accessibility mode and
+/// only build the full tree for an assistive client that explicitly requests
+/// it. The request is the macOS-standard `AXManualAccessibility` /
+/// `AXEnhancedUserInterface` write on the application element. The write is
+/// sent only when the app itself advertises the attribute and it currently
+/// reads as false — never blind, and never keyed on an app name. Chromium
+/// applies the change behind a short debounce (measured ≈2s), so callers must
+/// keep polling afterwards. Returns true when an activation write was sent.
+pub fn activate_renderer_accessibility(pid: i32) -> bool {
+    let app = Owned(unsafe { AXUIElementCreateApplication(pid) });
+    if app.0.is_null() {
+        return false;
+    }
+    let mut attempted = false;
+    for name in ["AXManualAccessibility", "AXEnhancedUserInterface"] {
+        let key = cfstr(name);
+        let mut current: CFTypeRef = std::ptr::null();
+        let error = unsafe { AXUIElementCopyAttributeValue(app.0, key.0, &mut current) };
+        let readable = unsafe { to_bool(current) };
+        let _read = Owned(current);
+        if error != AX_SUCCESS || readable != Some(false) {
+            continue;
+        }
+        unsafe { AXUIElementSetAttributeValue(app.0, key.0, kCFBooleanTrue) };
+        attempted = true;
+    }
+    attempted
 }
 
 /// Observe every window of `pid`. `budget` bounds wall-clock time; a stalled

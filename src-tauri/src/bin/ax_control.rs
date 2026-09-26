@@ -6,6 +6,32 @@ fn is_permission_denied(message: &str) -> bool {
     message.starts_with("AX_PERMISSION_DENIED") || message.contains("Permission denied")
 }
 
+/// One snapshot with a Chromium/CEF renderer-activation retry: freshly
+/// launched or background processes expose an empty/shallow AX tree until an
+/// assistive client requests full accessibility, so an empty result first
+/// attempts the attribute-driven activation and retries once after its
+/// measured debounce before reporting failure.
+fn snapshot_with_renderer_activation(app: &str) -> Result<serde_json::Value, String> {
+    let empty = serde_json::json!({ "tree": { "window_count": 0 } });
+    let mut snapshot = match app_lib::ax::observe(app, 2000) {
+        Ok(value) => value,
+        Err(message) if message == "target application has no observable AX window" => empty,
+        Err(message) => return Err(message),
+    };
+    if snapshot["tree"]["window_count"].as_u64() == Some(0) {
+        if let Some(pid) = app_lib::fast_ax::find_pid(app) {
+            if app_lib::fast_ax::activate_renderer_accessibility(pid) {
+                std::thread::sleep(std::time::Duration::from_millis(2_200));
+                snapshot = app_lib::ax::observe(app, 2000)?;
+            }
+        }
+    }
+    if snapshot["tree"]["window_count"].as_u64() == Some(0) {
+        return Err("target application has no observable AX window".into());
+    }
+    Ok(snapshot)
+}
+
 #[cfg(target_os = "macos")]
 fn main() {
     use std::io::{self, BufRead, Write};
@@ -30,40 +56,62 @@ fn main() {
                 "now-playing" => app_lib::now_playing::now_playing(),
                 "snapshot" => {
                     ledger.clear();
-                    let snapshot = app_lib::ax::observe(app, 2000)?;
-                    if snapshot["tree"]["window_count"].as_u64() == Some(0) {
-                        return Err("target application has no observable AX window".into());
-                    }
+                    let snapshot = snapshot_with_renderer_activation(app)?;
                     ledger.register(&snapshot).map_err(str::to_owned)?;
                     snapshot
                 }
                 "launch" => {
                     ledger.clear();
+                    // Resolve the bundle once so both the initial open and the
+                    // reopen retries below use the same launch target.
+                    let bundle = std::process::Command::new("/usr/bin/mdfind")
+                        .args([&format!("kMDItemDisplayName == '{}'cd && kMDItemContentType == 'com.apple.application-bundle'", app)])
+                        .output().ok()
+                        .and_then(|output| String::from_utf8(output.stdout).ok())
+                        .and_then(|paths| paths.lines().map(str::trim).find(|path| path.ends_with(".app")).map(str::to_owned));
+                    let open_bundle = || {
+                        let mut open = std::process::Command::new("/usr/bin/open");
+                        if let Some(bundle) = &bundle { open.arg(bundle); } else { open.args(["-a", app]); }
+                        let _ = open.status();
+                    };
                     // Already running: activation is the only launch work.
                     // Otherwise open the bundle and poll the cheap NSWorkspace
                     // lookup plus a shallow AX window probe.
                     if app_lib::fast_ax::find_pid(app).is_none() {
-                        let bundle = std::process::Command::new("/usr/bin/mdfind")
-                            .args([&format!("kMDItemDisplayName == '{}'cd && kMDItemContentType == 'com.apple.application-bundle'", app)])
-                            .output().ok()
-                            .and_then(|output| String::from_utf8(output.stdout).ok())
-                            .and_then(|paths| paths.lines().map(str::trim).find(|path| path.ends_with(".app")).map(str::to_owned));
-                        let mut open = std::process::Command::new("/usr/bin/open");
-                        if let Some(bundle) = bundle { open.arg(bundle); } else { open.args(["-a", app]); }
-                        let _ = open.status();
+                        open_bundle();
                     }
                     // Activation must happen before the AXWindows probe. A
                     // running Electron app may have no visible AX window
                     // until NSRunningApplication is brought to the front.
                     let mut snapshot = None;
+                    // Chromium/CEF/Electron apps keep their renderer AX in a
+                    // limited mode until an assistive client requests full
+                    // accessibility; ask once per launch (attribute-driven,
+                    // no app-name rule) and keep polling through the
+                    // renderer's activation debounce.
+                    let mut nudged = false;
                     // Electron apps such as SodaMusic can create the helper
                     // processes first and expose the main AX window several
                     // seconds later. Keep activating and polling long enough
                     // for the real window to appear before returning
                     // WINDOW_NOT_FOUND.
-                    for _ in 0..150 {
+                    // A process can also be alive with no window at all
+                    // (closed to a tray, or the window torn down after an
+                    // earlier session). `open` on a running bundle delivers
+                    // the standard macOS reopen event, which AppKit/Electron
+                    // apps answer by rebuilding their main window; retry it a
+                    // few times, spaced out, before giving up.
+                    let mut reopens = 0;
+                    for iteration in 0..300 {
                         if let Some(pid) = app_lib::fast_ax::find_pid(app) {
                             let _ = app_lib::fast_ax::activate_pid(pid);
+                            if !nudged {
+                                nudged = app_lib::fast_ax::activate_renderer_accessibility(pid);
+                            }
+                            if reopens < 3 && iteration >= 40 && (iteration - 40) % 80 == 0 {
+                                open_bundle();
+                                reopens += 1;
+                            }
                         }
                         match app_lib::ax::observe(app, 2) {
                             Ok(candidate) => {
@@ -90,12 +138,15 @@ fn main() {
                     let value = request["value"].as_str();
                     let headed = request["headed"].as_bool().unwrap_or(false);
                     let pid = ledger.process_id().ok_or("no active process identity")?;
-                    let data = if operation == "press" && request["ref"].as_str() == Some("return")
-                    {
+                    let focused_key = match request["ref"].as_str() {
+                        Some(key @ ("return" | "escape")) if operation == "press" => Some(key),
+                        _ => None,
+                    };
+                    let data = if let Some(key) = focused_key {
                         ledger
                             .consume_focused(app, pid, operation)
                             .map_err(str::to_owned)?;
-                        app_lib::ax::dispatch_focused(app, operation)?
+                        app_lib::ax::dispatch_focused(app, operation, key)?
                     } else {
                         let reference = request["ref"].as_str().ok_or("missing ref")?;
                         let target = ledger

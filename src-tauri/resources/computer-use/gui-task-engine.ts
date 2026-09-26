@@ -3,7 +3,8 @@ import { AgentDesktopCommandError, type AgentDesktopClient, type LaunchData } fr
 import { resolveDesktopApp } from "./desktop-app-resolver.ts"
 import { observeDesktop } from "./desktop-observation.ts"
 import { assessDesktopRisk, decideDesktop, isRetryableJevError, redactLocalSlots } from "./jev.ts"
-import { validateTaskInput, type DesktopCandidate, type DesktopDecision, type DesktopObservation, type GuiTaskEvent, type GuiTaskInput, type GuiTaskMetrics, type GuiTaskResult, type GuiTaskStatus, type GuiTaskTrace } from "./gui-task-contract.ts"
+import { validateTaskInput, type DesktopCandidate, type DesktopDecision, type DesktopNode, type DesktopObservation, type GuiTaskEvent, type GuiTaskInput, type GuiTaskMetrics, type GuiTaskResult, type GuiTaskStatus, type GuiTaskTrace } from "./gui-task-contract.ts"
+import { describeDiff, diffTrees, findNodeByIdentity } from "./tree-diff.ts"
 
 const CHROMIUM_RENDERER_SETTLE_MS = 2_000
 const SETTLE_POLL_MS = 60
@@ -40,10 +41,22 @@ export async function runGuiTaskEngine({
   let root: string | undefined
   let repeatedDrillKey: string | undefined
   const drillCounts = new Map<string, number>()
+  // Regions whose inspection stopped yielding anything new; their DRILL
+  // candidates are no longer offered, forcing Jev to act on observed targets.
+  const drillExhausted = new Set<string>()
+  let pendingDrill: { key: string; signature: string } | undefined
   let allowPressEnter = false
   let consecutiveWaits = 0
   let unchangedMutations = 0
-  let pendingMutation: { before: string; entry: GuiTaskTrace; historyIndex: number } | undefined
+  let pendingMutation: { before: string; beforeTree: DesktopNode; entry: GuiTaskTrace; historyIndex: number } | undefined
+  // Targets whose inferred action was verified to be wrong (opened an
+  // unrelated overlay or had no effect). Keyed by observed identity, not by
+  // snapshot ref, so they stay excluded across successor observations.
+  const quarantined = new Set<string>()
+  // Text targets whose declared text operation was delivered but verified to
+  // have failed (value_equals). Excluded from the offered space without the
+  // speculative gate so the alternate delivery operation stays available.
+  const verifiedFailures = new Set<string>()
   let actions = 0
   let decisions = 0
   let appLaunched = false
@@ -145,9 +158,33 @@ export async function runGuiTaskEngine({
     appLaunched = true
     emit({ type: "observed", step: decisions, status: "running", payload: { app: observation.app, window: observation.title, surface: observation.surface, candidateCount: observation.candidates.length, complete: observation.complete } })
 
+    if (pendingDrill && observation.root) {
+      if (candidateSignature(observation) === pendingDrill.signature) {
+        // The drill revealed exactly the candidates the full window already
+        // offered: inspecting deeper cannot help. Widen deterministically and
+        // stop offering this region for inspection — without spending another
+        // Jev decision on it.
+        drillExhausted.add(pendingDrill.key)
+        root = undefined
+        repeatedDrillKey = undefined
+        allowPressEnter = false
+        consecutiveWaits = 0
+        unchangedMutations = 0
+        trace.push({ step: decisions, stateId: observation.fingerprint, note: "DRILL revealed no new candidates; widened to the window and excluded that region from further inspection" })
+        history.push("DRILL revealed no new candidates; returned to the whole window; that region is excluded from further inspection, choose an action on an observed target")
+      }
+      pendingDrill = undefined
+    }
+
     if (pendingMutation) {
       const changed = pendingMutation.before !== observation.fingerprint
       pendingMutation.entry.changed = changed
+      // Structured evidence for Jev: what the delivered action actually did to
+      // the interface, not just whether the fingerprint moved.
+      const diffNote = describeDiff(diffTrees(pendingMutation.beforeTree, observation.tree))
+      history[pendingMutation.historyIndex] += changed
+        ? `; diff: ${diffNote}`
+        : `; no accessibility change (${diffNote})`
       history[pendingMutation.historyIndex] += `; changed=${changed}`
       unchangedMutations = changed ? 0 : unchangedMutations + 1
       pendingMutation = undefined
@@ -165,9 +202,13 @@ export async function runGuiTaskEngine({
       // Read-only tasks (inspect and report) never see mutation candidates:
       // the model cannot click, type, submit or send, so a mis-chosen row
       // cannot change application state.
+      const eligible = current.candidates.filter(candidate =>
+        !(candidate.speculative && (quarantined.has(targetKey(candidate)) || quarantined.has(targetKey(candidate, true))))
+        && !verifiedFailures.has(targetKey(candidate))
+        && !(candidate.operation === "DRILL" && drillExhausted.has(targetKey(candidate))))
       const offered = input.readOnly
-        ? current.candidates.filter(candidate => !isMutation(candidate.operation) && candidate.operation !== "PRESS_ENTER")
-        : current.candidates
+        ? eligible.filter(candidate => !isMutation(candidate.operation) && !isContextualMutation(candidate.operation) && candidate.operation !== "PRESS_ENTER")
+        : eligible
       const askJev = () => decide(
           redact(input.goal),
           offered.filter(candidate => !(candidate.operation === "ACTIVATE" && !candidate.ref)).map(candidate => ({
@@ -292,6 +333,7 @@ export async function runGuiTaskEngine({
       if (drillCount >= 3) {
         // Re-entering the same region cannot reveal anything new; tell Jev
         // explicitly so it picks an action instead of looping on inspection.
+        drillExhausted.add(targetKey(candidate))
         root = undefined
         repeatedDrillKey = undefined
         entry.outcome = "drill_exhausted"
@@ -308,6 +350,7 @@ export async function runGuiTaskEngine({
         continue
       }
       repeatedDrillKey = drillKey
+      pendingDrill = { key: targetKey(candidate), signature: candidateSignature(observation) }
       root = candidate.ref
       allowPressEnter = false
       consecutiveWaits = 0
@@ -346,7 +389,7 @@ export async function runGuiTaskEngine({
       if (candidate.slotId) usedSlotIds.add(candidate.slotId)
       consecutiveFailures = 0
       allowPressEnter = ["SET_VALUE", "TYPE_TEXT", "FOCUS"].includes(decision.operation)
-      if (isMutation(candidate.operation)) {
+      if (isMutation(candidate.operation) || isContextualMutation(candidate.operation)) {
         // Auto-wait instead of a fixed sleep: re-observe until the tree
         // differs from the pre-action state (or a short ceiling passes).
         // Fast apps settle in one poll; slow renderers get up to the ceiling.
@@ -364,11 +407,65 @@ export async function runGuiTaskEngine({
           }
         }
       }
-      const historyIndex = history.push(`${decision.operation} ${candidate.description}: ${outcome}`) - 1
+      // Verify inferred (speculative) actions against their expectations
+      // right away, using the settled successor observation. A wrong guess is
+      // undone and its target excluded so the next turn takes another route.
+      const settled = prefetched
+      let verdict: "side_effect" | "no_effect" | undefined
+      let verdictDetail: string | undefined
+      if (settled) {
+        if (candidate.speculative && candidate.expect?.includes("no_overlay") && observation.surface === "window" && settled.surface !== "window") verdict = "side_effect"
+        else if (candidate.speculative && settled.fingerprint === observation.fingerprint) verdict = "no_effect"
+        else if (["SET_VALUE", "TYPE_TEXT"].includes(candidate.operation) && outcome !== "delivered_verified") {
+          // value_equals: after delivery the field itself must hold the
+          // prepared text; a driver-verified delivery already proved this.
+          const slot = findSlot(input, candidate.slotId)
+          const field = slot?.value ? findNodeByIdentity(settled.tree, candidate) : undefined
+          if (field && typeof field.value === "string" && slot && !field.value.includes(slot.value)) {
+            verdict = "no_effect"
+            verdictDetail = "the observed field value does not contain the prepared text"
+          } else if (field && typeof field.value === "string" && slot) {
+            verdictDetail = `verified: the field now holds the prepared ${slot.id} text`
+          }
+        } else if (candidate.operation === "CLEAR") {
+          const field = findNodeByIdentity(settled.tree, candidate)
+          if (field && typeof field.value === "string" && field.value.length > 0) {
+            verdict = "no_effect"
+            verdictDetail = "the field still holds text after clearing"
+          }
+        }
+      }
+      if (verdict) {
+        // A side effect disqualifies every inferred action on that target;
+        // no effect only disqualifies the attempted operation (a single click
+        // may select a row that a double-click would open).
+        quarantined.add(targetKey(candidate, verdict === "side_effect"))
+        if (verdict === "no_effect" && ["SET_VALUE", "TYPE_TEXT", "CLEAR"].includes(candidate.operation)) verifiedFailures.add(targetKey(candidate))
+        entry.verdict = verdict
+        if (verdict === "side_effect") {
+          try {
+            await executeCandidate(client, launched.app || input.target.app, { id: "undo", operation: "DISMISS", description: "undo unexpected overlay" }, input, remaining(), signal)
+            entry.note = `unexpected ${settled!.surface} opened; dismissed with Escape`
+          } catch (error) {
+            entry.note = `unexpected ${settled!.surface} opened; Escape failed: ${safeError(error)}`
+          }
+          prefetched = undefined
+        }
+        history.push(`${decision.operation} ${candidate.description}: ${outcome}; verdict=${verdict}${verdictDetail ? ` (${verdictDetail})` : ""}${verdict === "side_effect" ? ` (opened an unrelated ${settled!.surface}; undone with Escape)` : ""}; this target is excluded, choose a different target or route`)
+        pendingMutation = undefined
+        unchangedMutations = verdict === "no_effect" ? unchangedMutations + 1 : 0
+        emit({ type: "acted", step: decisions, status: "running", payload: { operation: decision.operation, candidate: candidate.description, outcome, verdict } })
+        root = undefined
+        repeatedDrillKey = undefined
+        staleRetries = 0
+        if (unchangedMutations >= 3) return finish("blocked", settled, "Three delivered actions produced no observable accessibility change")
+        continue
+      }
+      const historyIndex = history.push(`${decision.operation} ${candidate.description}: ${outcome}${!verdict && verdictDetail ? `; ${verdictDetail}` : ""}`) - 1
       // Window activation/focus is validated by the next foreground-gated
       // action, not by an AX fingerprint change. Activating a window can leave
       // the accessibility tree byte-for-byte identical.
-      if (isMutation(candidate.operation)) pendingMutation = { before: observation.fingerprint, entry, historyIndex }
+      if (isMutation(candidate.operation) || isContextualMutation(candidate.operation)) pendingMutation = { before: observation.fingerprint, beforeTree: observation.tree, entry, historyIndex }
       else pendingMutation = undefined
       emit({ type: "acted", step: decisions, status: "running", payload: { operation: decision.operation, candidate: candidate.description, outcome } })
       root = undefined
@@ -417,12 +514,25 @@ async function executeCandidate(
   }
   // Defense in depth: a read-only task must never deliver a mutating step,
   // even if a stale candidate survived into the current observation.
-  if (input.readOnly && (isMutation(candidate.operation) || candidate.operation === "PRESS_ENTER")) {
+  if (input.readOnly && (isMutation(candidate.operation) || isContextualMutation(candidate.operation) || candidate.operation === "PRESS_ENTER")) {
     throw new Error(`read-only task refused ${candidate.operation}`)
   }
   if (candidate.operation === "PRESS_ENTER") {
     const result = await client.run<Record<string, unknown>>(["press", "return", "--app", app], common)
     return delivery(result)
+  }
+  if (candidate.operation === "DISMISS") {
+    return delivery(await client.run<Record<string, unknown>>(["press", "escape", "--app", app], common))
+  }
+  if (candidate.operation === "RIGHT_CLICK") {
+    if (!candidate.ref) throw new Error("RIGHT_CLICK requires an observed element ref")
+    const args = ["right-click", candidate.ref, "--timeout-ms", String(timeoutMs)]
+    if (candidate.headed && client.backend !== "xa11y") args.unshift("--headed")
+    return delivery(await client.run(args, common))
+  }
+  if (candidate.operation === "CLEAR") {
+    if (!candidate.ref) throw new Error("CLEAR requires an observed element ref")
+    return delivery(await client.run(["clear", candidate.ref, "--timeout-ms", String(timeoutMs)], common))
   }
   if (candidate.operation === "ACTIVATE") {
     if (client.backend === "xa11y" && candidate.ref) return delivery(await client.run(["activate", candidate.ref, "--timeout-ms", String(timeoutMs)], common))
@@ -471,7 +581,7 @@ function delivery(envelope: { data?: Record<string, unknown> }): string {
 }
 
 function confirmationLabel(operation: DesktopCandidate["operation"]): string {
-  const labels: Partial<Record<DesktopCandidate["operation"], string>> = { PRESS_ENTER: "按回车提交", CLICK: "点击", DOUBLE_CLICK: "双击", SET_VALUE: "写入", TYPE_TEXT: "输入" }
+  const labels: Partial<Record<DesktopCandidate["operation"], string>> = { PRESS_ENTER: "按回车提交", CLICK: "点击", DOUBLE_CLICK: "双击", RIGHT_CLICK: "右键打开菜单", SET_VALUE: "写入", TYPE_TEXT: "输入", CLEAR: "清空字段" }
   return labels[operation] ?? operation
 }
 
@@ -488,7 +598,29 @@ function findSlot(input: GuiTaskInput, id: string | undefined) {
 }
 
 function isMutation(operation: DesktopCandidate["operation"]): boolean {
-  return !["ACTIVATE", "FOCUS", "DRILL", "WIDEN", "WAIT", "DONE", "BLOCKED", "SCROLL_TO", "SCROLL_DOWN", "SCROLL_UP"].includes(operation)
+  return !["ACTIVATE", "FOCUS", "DRILL", "WIDEN", "WAIT", "DONE", "BLOCKED", "SCROLL_TO", "SCROLL_DOWN", "SCROLL_UP", "DISMISS", "RIGHT_CLICK"].includes(operation)
+}
+
+/** Changes visible UI state (opens a context menu) without being destructive:
+ * excluded from risk confirmation and undo-risk fan-out, but still settled,
+ * diffed and forbidden in read-only tasks. */
+function isContextualMutation(operation: DesktopCandidate["operation"]): boolean {
+  return operation === "RIGHT_CLICK"
+}
+
+/** Observed identity of a candidate's target, stable across snapshots.
+ * `state` and `holds` are excluded: both change as a result of the very
+ * action being judged, so they cannot participate in a stable identity. */
+function targetKey(candidate: DesktopCandidate, anyOperation = false): string {
+  const { state: _state, holds: _holds, ...identity } = candidate.criteria ?? {}
+  return `${anyOperation ? "*" : candidate.operation}:${candidate.criteria ? JSON.stringify(identity) : candidate.description.split(";")[0]}`
+}
+
+/** Stable comparison of what a region offers, used to detect a drill that
+ * revealed nothing new. Descriptions are AX-derived and layout-dependent, so
+ * equality is best-effort: a mismatch just falls back to the normal flow. */
+function candidateSignature(observation: DesktopObservation): string {
+  return observation.candidates.map(candidate => `${candidate.operation}:${candidate.description}`).sort().join("|")
 }
 
 function safeError(error: unknown): string {

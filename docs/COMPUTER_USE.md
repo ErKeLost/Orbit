@@ -63,15 +63,18 @@ Pi 不预猜 UI 控件、步骤、坐标或完成谓词。agent-desktop 不拥�
 Jev 可以选择：
 
 ```text
-CLICK
-SET_VALUE / TYPE_TEXT / TYPE_TEXT_PHYSICAL
+ACTIVATE / FOCUS
+CLICK / DOUBLE_CLICK / RIGHT_CLICK
+SET_VALUE / TYPE_TEXT / CLEAR
 CHECK / UNCHECK
 EXPAND / COLLAPSE
-SCROLL_UP / SCROLL_DOWN
-PRESS_ENTER
+SCROLL_TO / SCROLL_UP / SCROLL_DOWN
+PRESS_ENTER / DISMISS
 DRILL / WIDEN
 WAIT / DONE / BLOCKED
 ```
+
+RIGHT_CLICK 和 CLEAR 只在元素声明了对应能力（`RightClick` action / `SetValue` 且有值）且后端为 agent-desktop 时编译；两者都是右键菜单和清空输入框这类通用意图的入口。多行 caller 文本只走 SET_VALUE，避免物理输入把换行变成 Return。
 
 候选 ID 是不透明本地 ID。Jev 不接收 agent-desktop ref、本地输入值或命令行参数。安全文本只通过 `textSlots` 留在本地；候选只暴露 slot ID 和 purpose。
 
@@ -80,10 +83,10 @@ WAIT / DONE / BLOCKED
 1. agent-desktop ref 绑定 snapshot，并保存进程实例、窗口、路径、语义身份和 bounds 证据。
 2. 动作时重新识别 live element，而不是直接复用旧 native handle。
 3. 动作前检查 visibility、enabled、editability、stability、occlusion 和支持的 action。
-4. 默认使用无焦点窃取的 AX semantic route。`SET_VALUE`、semantic `TYPE_TEXT` 和 Web 内容需要的 exact-window `TYPE_TEXT_PHYSICAL` 是 Jev 事前可选的独立能力；某一路线失败后不会自动切换另一条路线。
+4. 默认使用无焦点窃取的 AX semantic route。`SET_VALUE`、semantic `TYPE_TEXT` 和 Web 内容需要的 exact-window 实体键盘输入是 Jev 事前可选的独立能力；某一路线失败后不会自动切换另一路线。文本交付后引擎按 `value_equals` 预期用身份重识别目标字段并核对 value：成功记为证据，失败判 `no_effect` 并从候选空间剔除该目标（另一投递操作仍可选）。
 5. 响应携带 `disposition.delivery` 与 `disposition.retry`。
 6. 只有 `retry=safe` 且 `STALE_REF` 才允许刷新后重新决策；任何 uncertain、unverified 或已交付动作都不重放。
-7. 每次 mutation 后重新读取 successor AX state；密集页面仍从 skeleton 开始。相同动作不会被永久移除，因此滚动、下一首等合法重复操作仍可执行；连续三次已交付 mutation 都没有 AX 变化才停止。
+7. 每次 mutation 后重新读取 successor AX state；密集页面仍从 skeleton 开始。相同动作不会被永久移除，因此滚动、下一首等合法重复操作仍可执行；连续三次已交付 mutation 都没有 AX 变化才停止。每次已交付 mutation 都会对前后两棵树做结构化 diff（新增/删除节点、值变化、焦点变化），摘要进入 Jev 的 recentActions，进展判断基于“实际发生了什么”而不是 changed 布尔值。
 8. 任务在 `DONE`、`BLOCKED`、不确定交付、取消、错误或预算耗尽时终止。
 
 ## 运行与打包

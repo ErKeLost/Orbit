@@ -16,7 +16,7 @@ const task = (overrides: Partial<GuiTaskInput> = {}): GuiTaskInput => ({
   ...overrides,
 })
 
-const observation = (fingerprint: string, candidates: DesktopObservation["candidates"]): DesktopObservation => ({
+const observation = (fingerprint: string, candidates: DesktopObservation["candidates"], overrides: Partial<DesktopObservation> = {}): DesktopObservation => ({
   app: "Music",
   windowId: "w-1",
   title: "Music",
@@ -26,6 +26,8 @@ const observation = (fingerprint: string, candidates: DesktopObservation["candid
   candidates,
   context: "Music window",
   fingerprint,
+  tree: { role: "window" },
+  ...overrides,
 })
 
 const choice = (operation: DesktopDecision["operation"], candidateId: string): DesktopDecision => ({
@@ -40,8 +42,9 @@ const choice = (operation: DesktopDecision["operation"], candidateId: string): D
 
 const resolveApp = async () => ({ displayName: "Music", bundleId: "test.music", path: "/Applications/Music.app", launchId: "test.music" })
 
-function mockClient(handler: (args: string[]) => DesktopEnvelope | Promise<DesktopEnvelope>): AgentDesktopClient {
+function mockClient(handler: (args: string[]) => DesktopEnvelope | Promise<DesktopEnvelope>, backend?: string): AgentDesktopClient {
   return {
+    ...(backend ? { backend } : {}),
     run: async <T>(args: string[]) => await handler(args) as DesktopEnvelope<T>,
     dispose: async () => undefined,
   }
@@ -232,17 +235,31 @@ describe("AX-first desktop observation", () => {
         name: "SodaMusic",
         children: [{
           role: "web_area",
+          available_actions: ["ScrollDownByPage"],
           children: [
             { role: "text_field", ref_id: "@s1:e1", value: "蓝", states: ["editable"], available_actions: ["SetFocus", "SetValue"] },
-            {
+            ...[0, 1, 2].map(row => ({
               role: "group",
-              ref_id: "@s1:e2",
-              bounds: { x: 0, y: 0, width: 800, height: 48 },
+              ref_id: row === 0 ? "@s1:e2" : `@s1:row${row}`,
+              bounds: { x: 0, y: 100 + row * 56, width: 800, height: 48 },
               available_actions: ["SetFocus"],
               children_count: 2,
               children: [
-                { role: "static_text", value: "蓝", ref_id: "@s1:e3" },
-                { role: "image", description: "/tos/cover.jpg", ref_id: "@s1:e4" },
+                { role: "static_text", value: row === 0 ? "蓝" : `song ${row}`, ref_id: `@s1:t${row}` },
+                { role: "image", description: "/tos/cover.jpg", ref_id: `@s1:i${row}` },
+              ],
+            })),
+            // A lone bar with time text and several children is not a row.
+            {
+              role: "group",
+              ref_id: "@s1:bar",
+              bounds: { x: 0, y: 900, width: 800, height: 48 },
+              available_actions: ["SetFocus"],
+              children_count: 3,
+              children: [
+                { role: "static_text", value: "00:28 / 01:37", ref_id: "@s1:time" },
+                { role: "group", ref_id: "@s1:b1", bounds: { x: 300, y: 910, width: 24, height: 24 }, available_actions: ["SetFocus"] },
+                { role: "group", ref_id: "@s1:b2", bounds: { x: 340, y: 905, width: 36, height: 36 }, available_actions: ["SetFocus"] },
               ],
             },
           ],
@@ -264,6 +281,9 @@ describe("AX-first desktop observation", () => {
     expect(result.candidates.some(candidate => candidate.operation === "SET_VALUE" && candidate.ref === "@s1:e1")).toBe(false)
     const row = result.candidates.find(candidate => candidate.ref === "@s1:e2")!
     expect(row.description).not.toContain("cover.jpg")
+    expect(row.description).toContain("row 1 of 3 repeated same-shaped rows")
+    expect(result.candidates.some(candidate => candidate.ref === "@s1:bar" && ["CLICK", "DOUBLE_CLICK"].includes(candidate.operation))).toBe(false)
+    expect(result.candidates.some(candidate => candidate.ref === "@s1:bar" && candidate.operation === "DRILL")).toBe(true)
   })
 
   test("keeps quoted goal evidence visible beyond the first 32 text nodes", async () => {
@@ -448,6 +468,75 @@ describe("AX-first desktop observation", () => {
     expect(result.status).toBe("done")
     expect(JSON.stringify(seenCriteria)).not.toContain("private song")
     expect(JSON.stringify(seenCriteria)).toContain("[slot:query]")
+  })
+
+  test("compiles context-menu and clear candidates only for the agent-desktop backend", async () => {
+    const snapshot: SnapshotData = {
+      app: "Music",
+      complete: true,
+      ref_count: 3,
+      snapshot_id: "s1",
+      window: { id: "w-1", title: "Music" },
+      tree: {
+        role: "window",
+        name: "Music",
+        children: [{
+          role: "group",
+          name: "song row",
+          ref_id: "@s1:e1",
+          available_actions: ["RightClick"],
+        }, {
+          role: "textfield",
+          name: "搜索",
+          ref_id: "@s1:e2",
+          value: "leftover",
+          available_actions: ["SetValue"],
+        }, {
+          role: "button",
+          name: "更多",
+          ref_id: "@s1:e3",
+          available_actions: ["Click", "RightClick"],
+        }],
+      },
+    }
+    const envelope = { version: "2.4", ok: true, command: "snapshot", data: snapshot }
+    const agentResult = await observeDesktop(mockClient(() => envelope, "agent-desktop"), { app: "Music", textSlots: [], usedSlotIds: new Set(), allowPressEnter: false }, { timeoutMs: 5_000 })
+    expect(agentResult.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ operation: "RIGHT_CLICK", ref: "@s1:e1" }),
+      expect.objectContaining({ operation: "CLEAR", ref: "@s1:e2" }),
+    ]))
+    const xaResult = await observeDesktop(mockClient(() => envelope), { app: "Music", textSlots: [], usedSlotIds: new Set(), allowPressEnter: false }, { timeoutMs: 5_000 })
+    expect(xaResult.candidates.some(candidate => ["RIGHT_CLICK", "CLEAR"].includes(candidate.operation))).toBe(false)
+  })
+
+  test("routes multiline prepared text through set-value instead of physical typing", async () => {
+    const snapshot: SnapshotData = {
+      app: "Music",
+      complete: true,
+      ref_count: 1,
+      snapshot_id: "s1",
+      window: { id: "w-1", title: "Music" },
+      tree: {
+        role: "window",
+        name: "Music",
+        children: [{
+          role: "textfield",
+          name: "Composer",
+          ref_id: "@s1:e1",
+          available_actions: ["SetValue", "TypeText"],
+        }],
+      },
+    }
+    const result = await observeDesktop(mockClient(() => ({ version: "2.4", ok: true, command: "snapshot", data: snapshot })), {
+      app: "Music",
+      textSlots: [{ id: "msg", value: "第一行\n第二行", description: "message body" }],
+      usedSlotIds: new Set(),
+      allowPressEnter: false,
+    }, { timeoutMs: 5_000 })
+    expect(result.candidates.some(candidate => candidate.ref === "@s1:e1" && candidate.operation === "TYPE_TEXT")).toBe(false)
+    expect(result.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ operation: "SET_VALUE", ref: "@s1:e1", slotId: "msg" }),
+    ]))
   })
 })
 
@@ -723,6 +812,39 @@ describe("desktop goal loop", () => {
     expect(result.trace.filter(item => item.note).length).toBeGreaterThanOrEqual(3)
   })
 
+  test("undoes an inferred click that opens an unrelated overlay and excludes that target", async () => {
+    const commands: string[][] = []
+    const client = mockClient(args => {
+      commands.push(args)
+      if (args[0] === "launch") return { version: "2.4", ok: true, command: "launch", data: { app: "Music", pid: 1 } }
+      return { version: "2.4", ok: true, command: args[0], data: { app: "Music", pid: 1 } }
+    })
+    const guess = { id: "guess", operation: "DOUBLE_CLICK" as const, ref: "@s1:bar", headed: true, speculative: true, expect: ["no_overlay" as const], criteria: { what: "group containing \"00:28\"" }, description: "group containing 00:28" }
+    const leaf = { id: "leaf", operation: "CLICK" as const, ref: "@s1:play", headed: true, speculative: true, criteria: { what: "group embedded control" }, description: "leaf control" }
+    const base = observation("base", [guess, leaf, { id: "done", operation: "DONE", description: "done" }])
+    const menu = { ...observation("menu", [{ id: "dismiss", operation: "DISMISS", description: "dismiss" }]), surface: "menu" }
+    const played = observation("played", [guess, leaf, { id: "done", operation: "DONE", description: "done" }])
+    const states = [base, menu, base, played, played]
+    let offered: string[][] = []
+    const result = await runGuiTaskEngine({
+      input: task({ textSlots: [] }),
+      client,
+      observe: async () => states.shift() ?? played,
+      decide: async (_goal, candidates, _context, history) => {
+        offered.push(candidates.map(candidate => candidate.id))
+        if (history.some(item => item.includes("verdict=side_effect")) && !history.some(item => item.startsWith("CLICK"))) return choice("CLICK", "leaf")
+        if (history.some(item => item.startsWith("CLICK"))) return choice("DONE", "done")
+        return choice("DOUBLE_CLICK", "guess")
+      },
+      resolveApp,
+      assessRisk: async () => ({ probability: 0.1, model: "jev-test", latencyMs: 1, usage: { inputTokens: 1, outputTokens: 1 } }),
+    })
+    expect(commands.map(args => args.filter(arg => arg !== "--headed")).map(args => args[0] === "press" ? `press ${args[1]}` : args[0])).toEqual(["launch", "double-click", "press escape", "click"])
+    expect(result.trace.find(entry => entry.operation === "DOUBLE_CLICK")?.verdict).toBe("side_effect")
+    expect(offered[1]).not.toContain("guess")
+    expect(result.status).toBe("done")
+  })
+
   test("lets Jev pick a different candidate after a proven non-delivered failure", async () => {
     const commands: string[][] = []
     const client = mockClient(args => {
@@ -830,5 +952,222 @@ describe("desktop goal loop", () => {
     })
     expect(result.status).toBe("done")
     expect(attempts).toBe(2)
+  })
+
+  test("feeds Jev a structured diff of what the previous action changed", async () => {
+    const commands: string[] = []
+    const client = mockClient(args => {
+      commands.push(args[0])
+      return { version: "2.4", ok: true, command: args[0], data: { app: "Music", pid: 1, disposition: { delivery: "delivered_verified", retry: "never" } } }
+    })
+    const before = observation("before", [
+      { id: "row", operation: "CLICK", ref: "@s1:e1", description: "button \"更多\"" },
+      { id: "done", operation: "DONE", description: "done" },
+    ], { tree: { role: "window", children: [{ role: "button", name: "更多" }] } })
+    const after = observation("after", [
+      { id: "row", operation: "CLICK", ref: "@s2:e1", description: "button \"更多\"" },
+      { id: "done", operation: "DONE", description: "done" },
+    ], { tree: { role: "window", children: [{ role: "button", name: "更多" }, { role: "menu", name: "操作" }] } })
+    const seenHistory: string[][] = []
+    const decisions = [choice("CLICK", "row"), choice("DONE", "done")]
+    const result = await runGuiTaskEngine({
+      input: task({ textSlots: [] }), client,
+      observe: async () => (seenHistory.length === 0 ? before : after),
+      decide: async (_goal, _offered, _context, history) => {
+        seenHistory.push([...history])
+        return decisions[seenHistory.length - 1]!
+      },
+      resolveApp,
+      assessRisk: async () => ({ probability: 0.1, model: "jev-test", latencyMs: 1, usage: { inputTokens: 1, outputTokens: 1 } }),
+    })
+    expect(result.status).toBe("done")
+    expect(seenHistory[1]![0]).toContain("diff: +menu \"操作\"")
+    expect(seenHistory[1]![0]).toContain("changed=true")
+  })
+
+  test("verifies typed text against the settled field and excludes the failed route", async () => {
+    const commands: string[][] = []
+    const client = mockClient(args => {
+      commands.push(args)
+      if (args[0] === "set-value") return { version: "2.4", ok: true, command: "set-value", data: { disposition: { delivery: "delivered_unverified", retry: "never" } } }
+      return { version: "2.4", ok: true, command: args[0], data: { app: "Music", pid: 1 } }
+    })
+    const attempt = observation("empty", [
+      { id: "type", operation: "SET_VALUE", ref: "@s1:e1", slotId: "query", expect: ["value_equals"], description: "Search", criteria: { what: "textfield \"Search\"", supports: "SetValue" } },
+      { id: "done", operation: "DONE", description: "done" },
+    ], { tree: { role: "window", children: [{ role: "textfield", name: "Search", value: "" }] } })
+    const settled = observation("typed", [
+      { id: "type", operation: "SET_VALUE", ref: "@s2:e1", slotId: "query", expect: ["value_equals"], description: "Search", criteria: { what: "textfield \"Search\"", holds: "someone else", supports: "SetValue" } },
+      { id: "done", operation: "DONE", description: "done" },
+    ], { tree: { role: "window", children: [{ role: "textfield", name: "Search", value: "someone else" }] } })
+    let observeCalls = 0
+    let seenHistory: string[] | undefined
+    let offeredSecond: string[] | undefined
+    const decisions = [choice("SET_VALUE", "type"), choice("DONE", "done")]
+    const result = await runGuiTaskEngine({
+      input: task(), client,
+      observe: async () => {
+        observeCalls++
+        return observeCalls === 1 ? attempt : settled
+      },
+      decide: async (_goal, offered, _context, history) => {
+        if (decisions.length === 1) {
+          offeredSecond = offered.map(candidate => candidate.id)
+          seenHistory = [...history]
+        }
+        return decisions.shift()!
+      },
+      resolveApp,
+      assessRisk: async () => ({ probability: 0.1, model: "jev-test", latencyMs: 1, usage: { inputTokens: 1, outputTokens: 1 } }),
+    })
+    expect(result.status).toBe("done")
+    expect(result.trace.find(entry => entry.operation === "SET_VALUE")?.verdict).toBe("no_effect")
+    expect(offeredSecond).not.toContain("type")
+    expect(seenHistory![0]).toContain("verdict=no_effect (the observed field value does not contain the prepared text)")
+    expect(commands.filter(args => args[0] === "set-value")).toHaveLength(1)
+  })
+
+  test("reports verified text delivery as evidence when the field holds the prepared text", async () => {
+    const client = mockClient(args => {
+      if (args[0] === "set-value") return { version: "2.4", ok: true, command: "set-value", data: { disposition: { delivery: "delivered_unverified", retry: "never" } } }
+      return { version: "2.4", ok: true, command: args[0], data: { app: "Music", pid: 1 } }
+    })
+    const attempt = observation("empty", [
+      { id: "type", operation: "SET_VALUE", ref: "@s1:e1", slotId: "query", expect: ["value_equals"], description: "Search", criteria: { what: "textfield \"Search\"", supports: "SetValue" } },
+      { id: "done", operation: "DONE", description: "done" },
+    ], { tree: { role: "window", children: [{ role: "textfield", name: "Search", value: "" }] } })
+    const settled = observation("typed", [
+      { id: "type", operation: "SET_VALUE", ref: "@s2:e1", slotId: "query", expect: ["value_equals"], description: "Search", criteria: { what: "textfield \"Search\"", holds: "private song", supports: "SetValue" } },
+      { id: "done", operation: "DONE", description: "done" },
+    ], { tree: { role: "window", children: [{ role: "textfield", name: "Search", value: "private song" }] } })
+    let observeCalls = 0
+    let seenHistory: string[] | undefined
+    const decisions = [choice("SET_VALUE", "type"), choice("DONE", "done")]
+    const result = await runGuiTaskEngine({
+      input: task(), client,
+      observe: async () => {
+        observeCalls++
+        return observeCalls === 1 ? attempt : settled
+      },
+      decide: async (_goal, _offered, _context, history) => {
+        if (decisions.length === 1) seenHistory = [...history]
+        return decisions.shift()!
+      },
+      resolveApp,
+      assessRisk: async () => ({ probability: 0.1, model: "jev-test", latencyMs: 1, usage: { inputTokens: 1, outputTokens: 1 } }),
+    })
+    expect(result.status).toBe("done")
+    expect(result.trace.find(entry => entry.operation === "SET_VALUE")?.verdict).toBeUndefined()
+    expect(seenHistory![0]).toContain("verified: the field now holds the prepared query text")
+  })
+
+  test("clears a field and excludes the route when text remains", async () => {
+    const commands: string[][] = []
+    const client = mockClient(args => {
+      commands.push(args)
+      if (args[0] === "clear") return { version: "2.4", ok: true, command: "clear", data: { disposition: { delivery: "delivered", retry: "never" } } }
+      return { version: "2.4", ok: true, command: args[0], data: { app: "Music", pid: 1 } }
+    })
+    const attempt = observation("full", [
+      { id: "wipe", operation: "CLEAR", ref: "@s1:e1", description: "Search", criteria: { what: "textfield \"Search\"", supports: "SetValue" } },
+      { id: "done", operation: "DONE", description: "done" },
+    ], { tree: { role: "window", children: [{ role: "textfield", name: "Search", value: "leftover" }] } })
+    const settled = observation("wiped", [
+      { id: "wipe", operation: "CLEAR", ref: "@s2:e1", description: "Search", criteria: { what: "textfield \"Search\"", holds: "leftover", supports: "SetValue" } },
+      { id: "done", operation: "DONE", description: "done" },
+    ], { tree: { role: "window", children: [{ role: "textfield", name: "Search", value: "leftover" }] } })
+    let observeCalls = 0
+    let offeredSecond: string[] | undefined
+    const decisions = [choice("CLEAR", "wipe"), choice("DONE", "done")]
+    const result = await runGuiTaskEngine({
+      input: task({ textSlots: [] }), client,
+      observe: async () => {
+        observeCalls++
+        return observeCalls === 1 ? attempt : settled
+      },
+      decide: async (_goal, offered) => {
+        if (decisions.length === 1) offeredSecond = offered.map(candidate => candidate.id)
+        return decisions.shift()!
+      },
+      resolveApp,
+      assessRisk: async () => ({ probability: 0.4, model: "jev-test", latencyMs: 1, usage: { inputTokens: 1, outputTokens: 1 } }),
+    })
+    expect(result.status).toBe("done")
+    expect(commands.map(args => args[0])).toEqual(["launch", "clear"])
+    expect(result.trace.find(entry => entry.operation === "CLEAR")?.verdict).toBe("no_effect")
+    expect(offeredSecond).not.toContain("wipe")
+  })
+
+  test("read-only tasks are never offered context-menu or clear operations", async () => {
+    const current = observation("ready", [
+      { id: "menu", operation: "RIGHT_CLICK", ref: "@s1:e1", description: "row context menu" },
+      { id: "wipe", operation: "CLEAR", ref: "@s1:e2", description: "empty the field" },
+      { id: "done", operation: "DONE", description: "done" },
+    ])
+    let offered: string[] = []
+    const result = await runGuiTaskEngine({
+      input: task({ textSlots: [], readOnly: true }),
+      client: mockClient(args => ({ version: "2.4", ok: true, command: args[0], data: { app: "Music", pid: 1 } })),
+      observe: async () => current,
+      decide: async (_goal, candidates) => {
+        offered = candidates.map(candidate => candidate.operation)
+        return choice("DONE", "done")
+      },
+      resolveApp,
+    })
+    expect(offered).not.toContain("RIGHT_CLICK")
+    expect(offered).not.toContain("CLEAR")
+    expect(result.status).toBe("done")
+  })
+
+  test("retries a protocol-invalid Jev answer once and completes", async () => {
+    const current = observation("ready", [{ id: "done", operation: "DONE", description: "done" }])
+    let attempts = 0
+    const result = await runGuiTaskEngine({
+      input: task({ textSlots: [] }), client: mockClient(args => ({ version: "2.4", ok: true, command: args[0], data: { app: "Music", pid: 1 } })),
+      observe: async () => current,
+      decide: async () => {
+        attempts++
+        if (attempts === 1) throw new Error("Jev returned an invalid confidence or non-maximal desktop choice")
+        return choice("DONE", "done")
+      },
+      resolveApp,
+    })
+    expect(result.status).toBe("done")
+    expect(attempts).toBe(2)
+  })
+
+  test("auto-widens a drill that revealed no new candidates and excludes the region", async () => {
+    const drill = { id: "deep", operation: "DRILL" as const, ref: "@s1:e9", description: "group containing \"推荐 · 听歌模式\"" }
+    const click = { id: "act", operation: "CLICK" as const, ref: "@s1:e2", description: "button \"搜索\"" }
+    const done = { id: "done", operation: "DONE" as const, description: "done" }
+    const fullWindow = observation("full", [{ ...drill }, { ...click }, { ...done }])
+    const drilled = observation("drilled", [{ ...drill }, { ...click }, { ...done }], { root: "@s1:e9" })
+    const widened = observation("full-again", [{ ...drill }, { ...click }, { ...done }])
+    let observeCalls = 0
+    const roots: (string | undefined)[] = []
+    const decisions = [choice("DRILL", "deep"), choice("CLICK", "act"), choice("DONE", "done")]
+    let offeredSecond: string[] | undefined
+    const result = await runGuiTaskEngine({
+      input: task({ textSlots: [] }), client: mockClient(args => ({ version: "2.4", ok: true, command: args[0], data: { app: "Music", pid: 1, disposition: { delivery: "delivered_verified", retry: "never" } } })),
+      observe: async (_client, options) => {
+        observeCalls++
+        roots.push(options.root)
+        return observeCalls === 2 ? drilled : observeCalls === 3 ? widened : fullWindow
+      },
+      decide: async (_goal, offered) => {
+        if (decisions.length === 2) offeredSecond = offered.map(candidate => candidate.id)
+        return decisions.shift()!
+      },
+      resolveApp,
+      assessRisk: async () => ({ probability: 0.1, model: "jev-test", latencyMs: 1, usage: { inputTokens: 1, outputTokens: 1 } }),
+    })
+    expect(result.status).toBe("done")
+    // The drill's successor observation revealed nothing new: the engine
+    // widened and excluded the region without spending a Jev round on it.
+    expect(result.decisions).toBe(3)
+    expect(result.trace.some(entry => entry.note?.includes("DRILL revealed no new candidates"))).toBe(true)
+    expect(offeredSecond).not.toContain("deep")
+    expect(roots).toEqual([undefined, "@s1:e9", undefined, undefined])
   })
 })

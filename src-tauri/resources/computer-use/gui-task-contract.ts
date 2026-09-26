@@ -1,3 +1,7 @@
+import type { DesktopNode } from "./agent-desktop-client.ts"
+
+export type { DesktopNode }
+
 export type TextSlot = { id: string; value: string; description: string }
 export type ExecutionBudget = { maxActions: number; maxDecisions: number; maxDurationMs: number }
 export type GuiTaskInput = {
@@ -14,8 +18,10 @@ export type DesktopOperation =
   | "ACTIVATE"
   | "CLICK"
   | "DOUBLE_CLICK"
+  | "RIGHT_CLICK"
   | "SET_VALUE"
   | "TYPE_TEXT"
+  | "CLEAR"
   | "CHECK"
   | "UNCHECK"
   | "EXPAND"
@@ -24,6 +30,7 @@ export type DesktopOperation =
   | "SCROLL_UP"
   | "SCROLL_TO"
   | "PRESS_ENTER"
+  | "DISMISS"
   | "DRILL"
   | "WIDEN"
   | "WAIT"
@@ -41,7 +48,19 @@ export type DesktopCandidate = {
   ref?: string
   slotId?: string
   headed?: boolean
+  /** Why this action is believed to work. Declared = the element advertises
+   * it; structural/geometric = inferred from layout and must be verified. */
+  evidence?: "declared" | "structural" | "geometric"
+  /** Inferred, not declared: the verifier must check the result. */
+  speculative?: boolean
+  /** Generic expectations the verifier checks after delivery. */
+  expect?: DesktopExpectation[]
 }
+
+/** `no_overlay`: an ordinary activation must not open an unrelated menu,
+ * popover, sheet or alert. `value_equals`: a text mutation must leave the
+ * field holding the caller-prepared value (checked from the settled tree). */
+export type DesktopExpectation = "no_overlay" | "value_equals"
 
 export type DesktopObservation = {
   app: string
@@ -55,6 +74,9 @@ export type DesktopObservation = {
   candidates: DesktopCandidate[]
   context: string
   fingerprint: string
+  /** Retained skeleton tree; the engine diffs consecutive observations so
+   * Jev receives what actually changed, not just a changed=true boolean. */
+  tree: DesktopNode
 }
 
 export type DesktopDecision = {
@@ -89,6 +111,8 @@ export type GuiTaskTrace = {
   confidence?: number
   outcome?: string
   changed?: boolean
+  /** Verifier result for an inferred action. */
+  verdict?: "side_effect" | "no_effect"
   note?: string
 }
 export type GuiTaskResult = {

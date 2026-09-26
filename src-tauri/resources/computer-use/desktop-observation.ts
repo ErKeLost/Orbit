@@ -16,7 +16,16 @@ type FlatNode = DesktopNode & {
   siblingOrdinal?: number
   siblingCount?: number
   actionableAncestor?: { description: string; bounds?: DesktopBounds }
+  /** Structural evidence, derived only from geometry and AX shape (never from
+   * text): this node is one of several same-shaped siblings stacked
+   * vertically, i.e. a repeated list row. */
+  listRow?: { ordinal: number; count: number; inListContainer: boolean }
+  /** Geometric facts for anonymous controls laid out in a horizontal cluster. */
+  cluster?: { ordinal: number; count: number; sizeRank: number; centered: boolean }
 }
+
+const LIST_CONTAINER_ROLES = new Set(["list", "table", "outline", "grid", "collection", "list_box", "listbox", "tree", "browser"])
+const SCROLL_ACTIONS = ["Scroll", "ScrollDownByPage", "ScrollUpByPage", "scroll_down_by_page", "scroll_up_by_page"]
 
 export async function observeDesktop(
   client: AgentDesktopClient,
@@ -50,7 +59,7 @@ export async function observeDesktop(
     .slice(0, MAX_OBSERVED_ELEMENTS)
     .map(item => item.node)
   const windowBounds = snapshot.tree.children?.find(node => node.role === "window")?.bounds
-  let candidates = buildCandidates(offeredNodes, input.textSlots, input.usedSlotIds, Boolean(input.root), input.allowPressEnter, !snapshot.complete, windowBounds)
+  let candidates = buildCandidates(offeredNodes, input.textSlots, input.usedSlotIds, Boolean(input.root), input.allowPressEnter, !snapshot.complete, windowBounds, findOverlay(snapshot.tree), client.backend)
   // Text slots add mutation candidates; they must never hide navigation or
   // activation candidates. The semantic layer decides whether a field is the
   // intended target after the user has identified the right surface.
@@ -77,12 +86,13 @@ export async function observeDesktop(
     candidates,
     context,
     fingerprint,
+    tree: snapshot.tree,
   }
 }
 
 function flatten(root: DesktopNode): FlatNode[] {
   const result: FlatNode[] = []
-  const visit = (node: DesktopNode, path: string[], siblingOrdinal?: number, siblingCount?: number, actionableAncestor?: FlatNode["actionableAncestor"], viewport?: DesktopBounds) => {
+  const visit = (node: DesktopNode, path: string[], siblingOrdinal?: number, siblingCount?: number, actionableAncestor?: FlatNode["actionableAncestor"], viewport?: DesktopBounds, structure: Pick<FlatNode, "listRow" | "cluster"> = {}) => {
     // AX keeps list rows below the fold "visible"; compare against the nearest
     // scroll container so pointer targets outside its viewport are scrolled
     // into view first instead of being clicked blindly.
@@ -90,7 +100,8 @@ function flatten(root: DesktopNode): FlatNode[] {
       const center = node.bounds.y + node.bounds.height / 2
       if (center < viewport.y || center > viewport.y + viewport.height) node = { ...node, states: [...(node.states ?? []), "offscreen"] }
     }
-    const nextViewport = (node.available_actions ?? []).includes("scroll_down_by_page") && node.bounds?.height ? node.bounds : viewport
+    const scrollable = isScrollable(node)
+    const nextViewport = scrollable && node.bounds?.height ? node.bounds : viewport
     const label = node.name ?? node.description
     const descendantSummary = summarizeDescendants(node)
     const self = label
@@ -98,18 +109,98 @@ function flatten(root: DesktopNode): FlatNode[] {
       : descendantSummary && hasPrimaryCapability(node)
         ? `${node.role} containing "${sanitize(descendantSummary, 100)}"`
         : node.role
-    if (node.ref_id) result.push({ ...node, path, descendantSummary, siblingOrdinal, siblingCount, actionableAncestor })
+    if (node.ref_id) result.push({ ...node, path, descendantSummary, siblingOrdinal, siblingCount, actionableAncestor, ...structure })
     const next = node.children?.length && path.at(-1) !== self ? [...path, self] : path
     const nextActionableAncestor = hasPrimaryCapability(node) && descendantSummary
       ? { description: self, bounds: node.bounds }
       : actionableAncestor
     const groups = groupSiblings(node.children ?? [])
-    for (const [index, child] of (node.children ?? []).entries()) {
+    const children = node.children ?? []
+    const inListContainer = scrollable || LIST_CONTAINER_ROLES.has(node.role.toLowerCase())
+    const rows = detectListRows(children, inListContainer)
+    const clusters = detectClusters(children)
+    for (const [index, child] of children.entries()) {
       const siblings = groups.get(siblingIdentity(child))!
-      visit(child, next, siblings.indexOf(index) + 1, siblings.length, nextActionableAncestor, nextViewport)
+      visit(child, next, siblings.indexOf(index) + 1, siblings.length, nextActionableAncestor, nextViewport, { listRow: rows.get(index), cluster: clusters.get(index) })
     }
   }
   visit(root, [])
+  return result
+}
+
+function isScrollable(node: DesktopNode): boolean {
+  return (node.available_actions ?? []).some(action => SCROLL_ACTIONS.includes(action))
+}
+
+/** A list row is proven by repetition, not by content: at least three siblings
+ * with the same role and capabilities, near-equal size, the same left edge,
+ * stacked vertically. Outside a scroll/list container, four are required.
+ * A lone bar (toolbar, player, status strip) can never qualify. */
+function detectListRows(children: DesktopNode[], inListContainer: boolean): Map<number, NonNullable<FlatNode["listRow"]>> {
+  const result = new Map<number, NonNullable<FlatNode["listRow"]>>()
+  const byShape = new Map<string, number[]>()
+  for (const [index, child] of children.entries()) {
+    const b = child.bounds
+    if (!b || b.width <= 0 || b.height <= 0) continue
+    const key = siblingIdentity(child)
+    byShape.set(key, [...(byShape.get(key) ?? []), index])
+  }
+  for (const indices of byShape.values()) {
+    // Cluster by near-equal geometry inside one capability group.
+    const pending = [...indices]
+    while (pending.length) {
+      const seed = children[pending[0]].bounds!
+      const same = pending.filter(index => {
+        const b = children[index].bounds!
+        return Math.abs(b.height - seed.height) <= Math.max(4, seed.height * 0.25)
+          && Math.abs(b.width - seed.width) <= Math.max(8, seed.width * 0.15)
+          && Math.abs(b.x - seed.x) <= 12
+      })
+      for (const index of same) pending.splice(pending.indexOf(index), 1)
+      // Rows of one list are contiguous: split the stack wherever the gap to
+      // the next item exceeds one row height, so a distant bar with the same
+      // width can never join a list above it.
+      const ordered = [...same].sort((a, b) => children[a].bounds!.y - children[b].bounds!.y)
+      const runs: number[][] = []
+      for (const index of ordered) {
+        const run = runs.at(-1)
+        const previous = run && children[run.at(-1)!].bounds!
+        const current = children[index].bounds!
+        const gap = previous ? current.y - (previous.y + previous.height) : Infinity
+        if (run && gap >= -1 && gap <= Math.max(previous!.height, current.height)) run.push(index)
+        else runs.push([index])
+      }
+      for (const run of runs) {
+        if (run.length < (inListContainer ? 3 : 4)) continue
+        run.forEach((index, position) => result.set(index, { ordinal: position + 1, count: run.length, inListContainer }))
+      }
+    }
+  }
+  return result
+}
+
+/** Horizontal clusters of small sibling controls (toolbars, transport bars,
+ * tab strips). Only geometry is reported; Jev applies general UI knowledge
+ * such as "the primary control is usually the largest, centered one". */
+function detectClusters(children: DesktopNode[]): Map<number, NonNullable<FlatNode["cluster"]>> {
+  const result = new Map<number, NonNullable<FlatNode["cluster"]>>()
+  const items = [...children.entries()].filter(([, child]) => child.bounds && child.bounds.width > 0 && child.bounds.height > 0 && child.bounds.height <= 96 && child.bounds.width <= 160)
+  if (items.length < 2 || items.length > 16) return result
+  const centerY = (b: DesktopBounds) => b.y + b.height / 2
+  const seedY = centerY(items[0][1].bounds!)
+  const row = items.filter(([, child]) => Math.abs(centerY(child.bounds!) - seedY) <= Math.max(8, child.bounds!.height / 2))
+  if (row.length < 2) return result
+  row.sort((a, b) => a[1].bounds!.x - b[1].bounds!.x)
+  const areas = row.map(([, child]) => child.bounds!.width * child.bounds!.height)
+  const sortedAreas = [...new Set(areas)].sort((a, b) => b - a)
+  const left = row[0][1].bounds!.x
+  const right = row.at(-1)![1].bounds!.x + row.at(-1)![1].bounds!.width
+  const middle = (left + right) / 2
+  row.forEach(([index, child], position) => {
+    const b = child.bounds!
+    const centered = Math.abs(b.x + b.width / 2 - middle) <= Math.max(b.width / 2, 6)
+    result.set(index, { ordinal: position + 1, count: row.length, sizeRank: sortedAreas.indexOf(areas[position]) + 1, centered })
+  })
   return result
 }
 
@@ -131,7 +222,7 @@ function siblingIdentity(node: DesktopNode): string {
   return `${node.role}:${capabilities.join(",")}`
 }
 
-function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet<string>, insideRoot: boolean, allowPressEnter: boolean, allowDrill: boolean, windowBounds?: DesktopBounds): DesktopCandidate[] {
+function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet<string>, insideRoot: boolean, allowPressEnter: boolean, allowDrill: boolean, windowBounds?: DesktopBounds, overlay?: string, backend?: string): DesktopCandidate[] {
   const candidates: DesktopCandidate[] = []
   const nextSlot = nextTextSlot(nodes, slots, used)
   let identity: Record<string, string> | undefined
@@ -190,20 +281,22 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
         // A leaf nested in a focus-only list row is not a stable pointer
         // target during list refreshes. Keep physical delivery as a local
         // fallback only after the row has been drilled into.
-        if (insideRoot) add({ operation: "CLICK", ref, headed: true, description: `${descriptor}; use the observed element bounds for a verified physical pointer activation` })
+        if (insideRoot) add({ operation: "CLICK", ref, headed: true, evidence: "geometric", speculative: true, description: `${descriptor}; physical pointer click at this leaf element's observed bounds (no declared action; verify the effect)` })
       } else if (semanticItem) {
         // A focus-only list row is a container, not an action. Drill into its
         // descendants to find the actual link/button before resorting to
         // physical pointer delivery.
-        add({ operation: "DRILL", ref, headed: false, description: `${descriptor}; inspect this focus-only list item for its actionable child` })
-        add({ operation: "FOCUS", ref, headed: false, description: `${descriptor}; focus this observed list item before submitting the platform default action` })
-        // A row identified by its visible descendant text is a stable pointer
-        // target even in the full-window view; anonymous rows still require a
-        // drill first so Jev never double-clicks an unidentified element.
-        const rowSized = Boolean(node.bounds && node.bounds.height > 0 && node.bounds.height <= 120)
+        // A focus-only container declares no activation. Physical pointer
+        // delivery is offered only when repetition structurally proves it is
+        // a list row; any other container (toolbar, player bar, panel) must
+        // be drilled so the actual leaf control is targeted.
+        add({ operation: "DRILL", ref, headed: false, description: `${descriptor}; inspect this focus-only container for its actionable children` })
         const identified = Boolean(node.name || node.description || node.descendantSummary)
-        if (identified && rowSized) add({ operation: "CLICK", ref, headed: true, description: `${descriptor}; select or open this list item with one verified physical click` })
-        if (insideRoot || (node.descendantSummary && rowSized)) add({ operation: "DOUBLE_CLICK", ref, headed: true, description: `${descriptor}; open or play this list item with a verified physical double-click` })
+        if (node.listRow && identified) {
+          add({ operation: "FOCUS", ref, headed: false, description: `${descriptor}; focus this list row before submitting the platform default action` })
+          add({ operation: "CLICK", ref, headed: true, evidence: "structural", speculative: true, expect: ["no_overlay"], description: `${descriptor}; select this structural list row with one verified physical click` })
+          add({ operation: "DOUBLE_CLICK", ref, headed: true, evidence: "structural", speculative: true, expect: ["no_overlay"], description: `${descriptor}; open this structural list row with a verified physical double-click` })
+        }
       }
     }
     if (actions.has("SetFocus") && !hasClickAction(actions) && !passiveText && !node.children_count && !isEditableTextRole(node.role)) {
@@ -219,9 +312,15 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
       } else {
         add({ operation: "CLICK", ref, headed: false, description: `${descriptor}; delivery=semantic accessibility` })
       }
-      if (webContent && node.role === "group" && !node.name && !node.description && (node.siblingCount ?? 0) > 1) {
-        add({ operation: "DOUBLE_CLICK", ref, headed: true, description: `${descriptor}; activate this observed list item itself with two rapid verified pointer clicks` })
+      if (webContent && node.role === "group" && !node.name && !node.description && node.listRow) {
+        add({ operation: "DOUBLE_CLICK", ref, headed: true, evidence: "structural", speculative: true, expect: ["no_overlay"], description: `${descriptor}; activate this observed list item itself with two rapid verified pointer clicks` })
       }
+    }
+    // A declared context-menu capability is the generic "more actions on this
+    // item" route; the opened menu's items become candidates in the next
+    // observation. Agent-desktop backend only: it owns the right-click delivery.
+    if (backend === "agent-desktop" && actions.has("RightClick")) {
+      add({ operation: "RIGHT_CLICK", ref, headed: false, description: `${descriptor}; open this item's context menu` })
     }
     if (actions.has("Toggle")) {
       add({ operation: "CHECK", ref, description: descriptor })
@@ -238,29 +337,38 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
     if (actions.has("Scroll") || actions.has("ScrollUpByPage")) {
       add({ operation: "SCROLL_UP", ref, description: `${descriptor}${pane}; reveal earlier content in this scrollable region` })
     }
+    // Clearing a non-empty field is a standalone generic goal ("empty the
+    // search box") and needs no caller-prepared text.
+    if (backend === "agent-desktop" && isEditableTextRole(node.role) && actions.has("SetValue") && !(node.states ?? []).includes("secure") && typeof node.value === "string" && node.value.length > 0) {
+      add({ operation: "CLEAR", ref, description: `${descriptor}; empty this field` })
+    }
     // Keep every eligible editable field as a candidate. Field-purpose
     // disambiguation belongs to the semantic decision layer, not this
     // application-agnostic AX normalization layer.
     if (nextSlot && isEditableTextRole(node.role) && !(node.states ?? []).includes("secure")) {
       const purpose = sanitize(nextSlot.description, 180)
       const hasCurrentValue = typeof node.value === "string" && node.value.length > 0
+      // Multi-line caller text must never go through physical typing: the
+      // embedded newline presses Return and can send an unfinished message.
+      // The semantic value route inserts the text verbatim instead.
+      const multiline = nextSlot.value.includes("\n")
       // Prefer physical/event-driven typing only when the observed field
       // actually advertises TypeText. Native text areas such as WeChat's
       // composer may expose SetValue alone and must keep that safe semantic
       // route available.
       const eventDrivenField = webContent || (actions.has("TypeText") && ["textfield", "textarea", "searchfield", "textbox", "editabletext"].includes(node.role.toLowerCase().replace(/[\s_-]/g, "")))
-      if (actions.has("SetValue") && !eventDrivenField) add({ operation: "SET_VALUE", ref, slotId: nextSlot.id, description: `${descriptor}; replace with caller-prepared text for ${purpose}` })
+      if (actions.has("SetValue") && (!eventDrivenField || multiline)) add({ operation: "SET_VALUE", ref, slotId: nextSlot.id, expect: ["value_equals"], description: `${descriptor}; replace with caller-prepared text for ${purpose}` })
       // Electron controls can expose SetValue while the renderer only reacts
       // to keyboard input events. Offer a headed typing route explicitly;
       // the native driver still validates the live target before delivery.
-      if (webContent && actions.has("SetValue")) {
+      if (webContent && actions.has("SetValue") && !multiline) {
         add({ operation: "TYPE_TEXT", ref, slotId: nextSlot.id, headed: true, description: `${descriptor}; enter caller-prepared text for ${purpose}; delivery=exact-window physical keyboard` })
       }
       if (!webContent && !actions.has("SetValue") && !actions.has("TypeText") && actions.has("SetFocus")) {
         add({ operation: "FOCUS", ref, headed: false, description: `${descriptor}; focus this text field before entering text` })
       }
-      if (actions.has("TypeText") && !hasCurrentValue) {
-        add({ operation: "TYPE_TEXT", ref, slotId: nextSlot.id, headed: webContent, description: `${descriptor}; enter caller-prepared text for ${purpose}; delivery=${webContent ? "exact-window physical keyboard" : "semantic text input"}` })
+      if (actions.has("TypeText") && !hasCurrentValue && !multiline) {
+        add({ operation: "TYPE_TEXT", ref, slotId: nextSlot.id, expect: ["value_equals"], headed: webContent, description: `${descriptor}; enter caller-prepared text for ${purpose}; delivery=${webContent ? "exact-window physical keyboard" : "semantic text input"}` })
       }
     }
     const hasIdentity = Boolean(node.name || node.description || visibleValue(node) || node.native_id?.value)
@@ -279,6 +387,7 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
     const where = focusedDraft ? ` in ${describeNode(focusedDraft).split(";")[0]} which currently holds text` : ""
     add({ operation: "PRESS_ENTER", description: `Press Return to submit the text in the focused field${where}.` })
   }
+  if (overlay) add({ operation: "DISMISS", description: `Press Escape to close the open ${overlay} without choosing any of its items.` })
   if (insideRoot) add({ operation: "WIDEN", description: "Return from the current drilled region to the whole window." })
   add({ operation: "WAIT", description: "Wait briefly and obtain a fresh accessibility observation without mutating the app." })
   add({ operation: "DONE", description: "Every part of the user's goal is visibly satisfied in the current observation." })
@@ -304,7 +413,9 @@ function candidateCriteria(node: FlatNode, slots: TextSlot[] = []): Record<strin
   if (node.states?.length) criteria.state = node.states.join(", ")
   if ((node.siblingCount ?? 0) > 1) criteria.sibling = `item ${node.siblingOrdinal} of ${node.siblingCount} among sibling ${node.role} elements with the same capabilities`
   if (node.children_count) criteria.contains = `${node.children_count} items not shown`
-  if (node.available_actions?.length) criteria.supports = node.available_actions.join(", ")
+  const structure = structuralFacts(node)
+  if (structure) criteria.structure = structure
+  criteria.supports = node.available_actions?.length ? node.available_actions.join(", ") : "no declared action"
   const haystack = `${node.name ?? ""} ${node.description ?? ""} ${value ?? ""}`
   const matchingSlot = slots.find(slot => slot.value.length > 0 && haystack.includes(slot.value))
   if (matchingSlot) criteria.local_match = `contains caller-prepared text for ${sanitize(matchingSlot.description, 120)}`
@@ -323,7 +434,7 @@ function nextTextSlot(_nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet<s
 
 function hasSupportedCapability(node: FlatNode): boolean {
   const actions = new Set(node.available_actions ?? [])
-  return Boolean(node.children_count) || ["Click", "Activate", "SetFocus", "Toggle", "Expand", "Collapse", "Scroll", "SetValue", "TypeText"].some(action => actions.has(action))
+  return Boolean(node.children_count) || ["Click", "Activate", "SetFocus", "Toggle", "Expand", "Collapse", "Scroll", "SetValue", "TypeText", "RightClick"].some(action => actions.has(action))
 }
 
 function hasPrimaryCapability(node: DesktopNode): boolean {
@@ -333,6 +444,15 @@ function hasPrimaryCapability(node: DesktopNode): boolean {
 
 function hasClickAction(actions: Set<string>): boolean {
   return actions.has("Click") || actions.has("Activate")
+}
+
+/** Observed structure and geometry only; never an inferred purpose. */
+function structuralFacts(node: FlatNode): string | undefined {
+  const facts: string[] = []
+  if (node.listRow) facts.push(`row ${node.listRow.ordinal} of ${node.listRow.count} repeated same-shaped rows${node.listRow.inListContainer ? " in a list/scroll container" : ""}`)
+  if (node.cluster) facts.push(`control ${node.cluster.ordinal} of ${node.cluster.count} in a horizontal control cluster; size rank ${node.cluster.sizeRank}${node.cluster.centered ? "; at the cluster center" : ""}`)
+  if (node.cluster && node.bounds && node.bounds.width > 0) facts.push(`size ${Math.round(node.bounds.width)}x${Math.round(node.bounds.height)}`)
+  return facts.length ? facts.join("; ") : undefined
 }
 
 function describeNode(node: FlatNode): string {
@@ -347,6 +467,8 @@ function describeNode(node: FlatNode): string {
   if (path && !label && !derived) parts.push(`inside ${sanitize(path, 120)}`)
   if ((node.siblingCount ?? 0) > 1) parts.push(`item ${node.siblingOrdinal} of ${node.siblingCount} among sibling ${node.role} elements with the same capabilities`)
   if (node.children_count) parts.push(`contains ${node.children_count} items not shown`)
+  const structure = structuralFacts(node)
+  if (structure) parts.push(structure)
   if (embedded && node.bounds && node.actionableAncestor?.bounds?.width) {
     const position = Math.round(((node.bounds.x + node.bounds.width / 2 - node.actionableAncestor.bounds.x) / node.actionableAncestor.bounds.width) * 100)
     const placement = position <= 25 ? "leading" : position >= 75 ? "trailing" : "middle"

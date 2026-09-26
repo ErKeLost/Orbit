@@ -197,6 +197,11 @@ export async function decideDesktop(
         "Use DRILL when the needed control is probably inside a truncated region.",
         "Use SCROLL_TO before acting on an offscreen target.",
         "Use the alternate delivery route only after a recent delivery produced no visible change.",
+        "Prefer targets whose capability is declared by the element; a target marked 'no declared action' or reached by physical pointer is an inference, so prefer drilling into containers to reach their leaf controls.",
+        "Descriptions report only observed structure and geometry; judge a control's purpose from its position in its cluster and general UI conventions, not from a guessed label.",
+        "When recentActions report verdict=side_effect or verdict=no_effect for a target, do not choose that target again; choose a different target or a different route.",
+        "recentActions may carry 'diff:' facts describing exactly what the previous action changed (new nodes, removed nodes, value or focus changes); judge progress from those facts, not from changed=true alone.",
+        "RIGHT_CLICK only opens a context menu and is easy to undo; afterwards choose one of the newly observed menu items as the next step.",
         "When the goal names a specific item (a row, button or field by label), act only on candidates whose description or criteria contain that exact label; if it is offscreen, use SCROLL_TO (or scroll its region) until it is visible, and never activate a different similarly-shaped item as a substitute.",
         "When the goal asks to verify text and observed_goal_matches already shows that text (marked [slot:…]) together with the goal's other required facts in the same window, choose DONE now; further scrolling or drilling risks losing sight of the evidence.",
         "Choose DONE only when every part of the goal is visibly satisfied now.",
@@ -268,7 +273,7 @@ function riskQuestion(id: string): string {
 }
 
 function isMutationOperation(operation: DesktopCandidate["operation"]): boolean {
-  return !["ACTIVATE", "FOCUS", "DRILL", "WIDEN", "WAIT", "DONE", "BLOCKED", "SCROLL_TO", "SCROLL_DOWN", "SCROLL_UP"].includes(operation)
+  return !["ACTIVATE", "FOCUS", "DRILL", "WIDEN", "WAIT", "DONE", "BLOCKED", "SCROLL_TO", "SCROLL_DOWN", "SCROLL_UP", "DISMISS", "RIGHT_CLICK"].includes(operation)
 }
 
 function compactTargetGroup(group: DesktopCandidate[], history: string[]): DesktopCandidate[] {
@@ -343,8 +348,10 @@ function operationDescription(operation: DesktopCandidate["operation"]): string 
     FOCUS: "Focus one observed accessibility element without activating or submitting it.",
     CLICK: "Activate one observed clickable control.",
     DOUBLE_CLICK: "Open or activate one observed list item itself with two rapid verified pointer clicks when one click would only select it.",
+    RIGHT_CLICK: "Open one observed item's context menu without choosing any item yet; its items become visible in the next observation.",
     SET_VALUE: "Directly set one observed field to a caller-prepared value. This does not establish keyboard focus for a following Return key.",
     TYPE_TEXT: "Enter one caller-prepared value through the field's text-input capability. Prefer this when the next step must submit with Return or trigger live input events.",
+    CLEAR: "Empty one observed field that currently holds text, without entering new text.",
     CHECK: "Put an observed checkbox or switch into its checked state.",
     UNCHECK: "Put an observed checkbox or switch into its unchecked state.",
     EXPAND: "Expand an observed disclosure or container.",
@@ -353,6 +360,7 @@ function operationDescription(operation: DesktopCandidate["operation"]): string 
     SCROLL_UP: "Scroll one observed scrollable region upward.",
     SCROLL_TO: "Bring one observed offscreen target into the visible viewport without activating it.",
     PRESS_ENTER: "Submit the value written by the immediately preceding text operation.",
+    DISMISS: "Close the currently open menu, popover or dialog with Escape without choosing any of its items.",
     DRILL: "Read inside one anonymous or non-actionable truncated region so its hidden descendants can identify the exact target without mutating the application.",
     WIDEN: "Return observation from a drilled region to the whole window.",
     WAIT: "Wait briefly for the application to settle, then observe again.",
@@ -445,6 +453,10 @@ export function redactLocalSlots(text: string, slots: readonly TextSlot[]): stri
 export function isRetryableJevError(error: unknown): boolean {
   const message = safeError(error)
   if (/max_tokens_exceeded|\b4\d\d\b/i.test(message)) return false
+  // Sampling noise can produce a structurally invalid Choice answer (broken
+  // probability distribution, non-maximal confidence). A fresh sample usually
+  // fixes it; the engine retries each decision at most once.
+  if (/invalid (desktop )?(choice answer|confidence or non-maximal desktop choice|desktop probability distribution)/i.test(message)) return true
   return /timeout|timed out|fetch failed|connection|socket|temporarily unavailable|\b5\d\d\b/i.test(message)
 }
 

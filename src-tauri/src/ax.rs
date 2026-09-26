@@ -439,7 +439,7 @@ fn scroll_into_viewport(root: &App, path: &[usize]) -> Result<Value, String> {
     Err("target did not enter the scroll viewport".into())
 }
 
-pub fn dispatch_focused(app_name: &str, operation: &str) -> Result<Value, String> {
+pub fn dispatch_focused(app_name: &str, operation: &str, key: &str) -> Result<Value, String> {
     let root = app(app_name)?;
     if !App::foreground(Duration::ZERO)
         .map_err(|e| e.to_string())?
@@ -455,12 +455,15 @@ pub fn dispatch_focused(app_name: &str, operation: &str) -> Result<Value, String
     // Return is a keyboard action, not an AX action on an arbitrary focused
     // wrapper. Deliver it through the platform keyboard after foreground/PID
     // validation; the successor snapshot is the only delivery evidence.
+    // Escape is the platform-generic dismiss for menus, popovers and sheets.
+    let (key, label) = match key {
+        "return" => (xa11y::Key::Enter, "enter"),
+        "escape" => (xa11y::Key::Escape, "escape"),
+        _ => return Err("unsupported focused key".into()),
+    };
     let input = xa11y::input_sim().map_err(|e| e.to_string())?;
-    input
-        .keyboard()
-        .press(xa11y::Key::Enter)
-        .map_err(|e| e.to_string())?;
-    Ok(json!({"operation":operation,"keyboard":"enter"}))
+    input.keyboard().press(key).map_err(|e| e.to_string())?;
+    Ok(json!({"operation":operation,"keyboard":label}))
 }
 
 fn target_from_ref(value: &str) -> Result<AxTarget, String> {
