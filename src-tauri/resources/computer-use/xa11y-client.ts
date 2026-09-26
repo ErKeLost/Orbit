@@ -157,17 +157,20 @@ async function resolveWorker(): Promise<string> {
   const here = dirname(fileURLToPath(import.meta.url))
   const candidates = [
     process.env.ORBIT_XA11Y_WORKER,
-    // Bundled worker ships inside the computer-use resources directory.
-    resolve(here, "ax_control"),
+    // In `tauri dev`, prefer the freshly compiled debug worker. The copied
+    // resources worker can be stale because beforeBundleCommand is not part
+    // of the dev loop.
+    resolve(process.cwd(), "src-tauri/target/debug/ax_control"),
+    resolve(process.cwd(), "target/debug/ax_control"),
     // This module is shipped under src-tauri/resources/computer-use; the
     // workspace target is therefore two levels above this directory.
     // Tauri dev/build resources live under target/<profile>/resources; the
     // worker binary is a sibling of resources in that profile directory.
     resolve(here, "../../ax_control"),
+    // Bundled worker ships inside the computer-use resources directory.
+    resolve(here, "ax_control"),
     resolve(here, "../../target/debug/ax_control"),
     resolve(here, "../../../target/debug/ax_control"),
-    resolve(process.cwd(), "src-tauri/target/debug/ax_control"),
-    resolve(process.cwd(), "target/debug/ax_control"),
   ].filter((item): item is string => Boolean(item))
   for (const candidate of candidates) { try { await access(candidate, constants.X_OK); return candidate } catch {} }
   throw new Error("xa11y worker is unavailable; build src-tauri/bin/ax_control first")
