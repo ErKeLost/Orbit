@@ -2,6 +2,11 @@
 //! macOS only in this release: the worker binary is bundled exclusively with
 //! macOS packages and other platforms resolve no worker client-side.
 #[cfg(target_os = "macos")]
+fn is_permission_denied(message: &str) -> bool {
+    message.starts_with("AX_PERMISSION_DENIED") || message.contains("Permission denied")
+}
+
+#[cfg(target_os = "macos")]
 fn main() {
     use std::io::{self, BufRead, Write};
     let stdin = io::stdin();
@@ -47,12 +52,27 @@ fn main() {
                         if let Some(bundle) = bundle { open.arg(bundle); } else { open.args(["-a", app]); }
                         let _ = open.status();
                     }
+                    // Activation must happen before the AXWindows probe. A
+                    // running Electron app may have no visible AX window
+                    // until NSRunningApplication is brought to the front.
                     let mut snapshot = None;
                     for _ in 0..50 {
-                        if let Ok(candidate) = app_lib::ax::observe(app, 2) {
-                            if candidate["tree"]["window_count"].as_u64() != Some(0) {
-                                snapshot = Some(candidate);
-                                break;
+                        if let Some(pid) = app_lib::fast_ax::find_pid(app) {
+                            let _ = app_lib::fast_ax::activate_pid(pid);
+                        }
+                        match app_lib::ax::observe(app, 2) {
+                            Ok(candidate) => {
+                                if candidate["tree"]["window_count"].as_u64() != Some(0) {
+                                    snapshot = Some(candidate);
+                                    break;
+                                }
+                            }
+                            Err(message) => {
+                                // Missing Accessibility trust never resolves by
+                                // polling; fail immediately with the distinct code.
+                                if is_permission_denied(&message) {
+                                    return Err(message);
+                                }
                             }
                         }
                         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -109,6 +129,8 @@ fn main() {
                     .and_then(|request| request.get("id").cloned());
                 let code = if message == "target application has no observable AX window" {
                     "WINDOW_NOT_FOUND"
+                } else if is_permission_denied(&message) {
+                    "PERM_DENIED"
                 } else if message.starts_with("APP_UNRESPONSIVE") {
                     "APP_UNRESPONSIVE"
                 } else if message.starts_with("FOREGROUND_REQUIRED") {

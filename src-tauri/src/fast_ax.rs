@@ -41,6 +41,7 @@ const PER_CALL_TIMEOUT_SECS: f32 = 0.35;
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
+    fn AXIsProcessTrusted() -> u8;
     fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
     fn AXUIElementSetMessagingTimeout(element: AXUIElementRef, timeout: f32) -> AXError;
     fn AXUIElementCopyAttributeValue(element: AXUIElementRef, attribute: CFStringRef, value: *mut CFTypeRef) -> AXError;
@@ -472,6 +473,16 @@ fn normalize_role(role: &str, subrole: Option<&str>) -> &'static str {
 /// Observe every window of `pid`. `budget` bounds wall-clock time; a stalled
 /// app returns a partial tree with `complete=false` instead of blocking.
 pub fn observe_pid(pid: i32, app_name: &str, max_nodes: usize, budget: Duration) -> Result<Value, String> {
+    // A TCC denial is process-wide and permanent for the task's lifetime;
+    // surface it as its own failure class instead of folding it into
+    // WINDOW_NOT_FOUND, which would send the caller into app-restart loops.
+    if unsafe { AXIsProcessTrusted() } == 0 {
+        return Err(
+            "AX_PERMISSION_DENIED: this process is not trusted for Accessibility. \
+             Enable the host app under System Settings → Privacy & Security → Accessibility."
+                .into(),
+        );
+    }
     let app = Owned(unsafe { AXUIElementCreateApplication(pid) });
     if app.0.is_null() {
         return Err("target application has no observable AX window".into());
@@ -574,4 +585,22 @@ pub fn find_pid(app_name: &str) -> Option<i32> {
         }
     }
     fallback
+}
+
+/// Bring a running regular application to the foreground without requiring
+/// an AX window to exist first. Electron apps can keep their process alive
+/// while their window is hidden or still being rebuilt; querying AXWindows
+/// before this activation incorrectly reports WINDOW_NOT_FOUND.
+pub fn activate_pid(pid: i32) -> bool {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+    unsafe {
+        NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+            .map(|application| {
+                application.activateWithOptions(
+                    NSApplicationActivationOptions::ActivateAllWindows
+                        | NSApplicationActivationOptions::ActivateIgnoringOtherApps,
+                )
+            })
+            .unwrap_or(false)
+    }
 }
