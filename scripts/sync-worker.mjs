@@ -4,6 +4,7 @@
 // - Cross-compilation (--target triple) puts output under target/<triple>/<profile>.
 // - Mobile platforms have no desktop worker and skip cleanly.
 import { copyFileSync, existsSync, readdirSync, statSync } from "node:fs"
+import { execFileSync } from "node:child_process"
 import { resolve } from "node:path"
 
 const root = resolve(import.meta.dirname, "..")
@@ -36,5 +37,9 @@ if (!source) {
   process.exit(1)
 }
 copyFileSync(source, target)
+// Rust's linker adds an ad-hoc signature to Mach-O executables. Remove it
+// before Tauri signs the worker as part of the app bundle; replacing that
+// embedded signature can hang codesign on GitHub's macOS runners.
+execFileSync("/usr/bin/codesign", ["--remove-signature", target], { stdio: "inherit" })
 const { size } = statSync(target)
-console.log(`[sync-worker] ax_control (${source} ${profile}) ${(size / 1024 / 1024).toFixed(1)} MB → resources/computer-use/`)
+console.log(`[sync-worker] ax_control (${source} ${profile}) ${(size / 1024 / 1024).toFixed(1)} MB → resources/computer-use/ (signature cleared)`)
