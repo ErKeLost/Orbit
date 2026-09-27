@@ -10,6 +10,8 @@ export type GuiTaskInput = {
   textSlots?: TextSlot[]
   /** Only inspect the already-open view; forbid clicks, text entry and sends. */
   readOnly?: boolean
+  /** Experimental narrow lookahead depth (0 = off). Not part of the tool schema. */
+  lookahead?: number
   budget: ExecutionBudget
 }
 
@@ -30,6 +32,7 @@ export type DesktopOperation =
   | "SCROLL_UP"
   | "SCROLL_TO"
   | "PRESS_ENTER"
+  | "MENU_ITEM"
   | "DISMISS"
   | "DRILL"
   | "WIDEN"
@@ -46,6 +49,8 @@ export type DesktopCandidate = {
    * than a flat sentence. */
   criteria?: Record<string, string>
   ref?: string
+  /** MENU_ITEM: exact title path from the menu bar. */
+  menuPath?: string[]
   slotId?: string
   headed?: boolean
   /** Why this action is believed to work. Declared = the element advertises
@@ -74,6 +79,12 @@ export type DesktopObservation = {
   candidates: DesktopCandidate[]
   context: string
   fingerprint: string
+  /** Hash of the accessibility tree alone (no OS media fact). */
+  treeFingerprint?: string
+  /** OS media-session fact included in context, when available. */
+  media?: string
+  /** Taken without reading the media fact (settle poll); see attachMedia. */
+  mediaSkipped?: boolean
   /** Retained skeleton tree; the engine diffs consecutive observations so
    * Jev receives what actually changed, not just a changed=true boolean. */
   tree: DesktopNode
@@ -89,6 +100,12 @@ export type DesktopDecision = {
   usage: { inputTokens: number; outputTokens: number }
   /** Undo-risk probability answered in the same Jev request, when asked. */
   risk?: number
+  /** Every undo-risk answer of this request, by candidate id (cacheable). */
+  risks?: Record<string, number>
+  /** Predicted probability that the chosen step completes the whole goal. */
+  completesGoal?: number
+  /** Predicted following CLICK targets (narrow lookahead), in order. */
+  lookahead?: { candidateId: string; confidence: number }[]
 }
 
 export type GuiTaskMetrics = {
@@ -99,6 +116,16 @@ export type GuiTaskMetrics = {
   actionMs: number
   inputTokens: number
   outputTokens: number
+  /** Jev round trips (step decisions, rechecks and separate risk calls). */
+  jevCalls: number
+  /** Steps executed from Affordance Memory without asking Jev. */
+  replayedSteps: number
+  /** Steps executed from a guarded lookahead prediction (no new request). */
+  lookaheadSteps: number
+  /** Time spent waiting for the app to settle after actions. */
+  settleMs: number
+  /** Accessibility notifications observed while settling. */
+  settleEvents: number
 }
 
 export type GuiTaskStatus = "done" | "blocked" | "needs_review" | "needs_text" | "aborted" | "max_actions" | "max_decisions" | "timeout" | "error"
@@ -113,6 +140,10 @@ export type GuiTaskTrace = {
   changed?: boolean
   /** Verifier result for an inferred action. */
   verdict?: "side_effect" | "no_effect"
+  /** Who chose this step. */
+  source?: "jev" | "memory" | "lookahead"
+  /** Wall-clock time of this step (decision + action + settle). */
+  ms?: number
   note?: string
 }
 export type GuiTaskResult = {

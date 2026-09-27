@@ -48,6 +48,7 @@ extern "C" {
     fn AXUIElementSetAttributeValue(element: AXUIElementRef, attribute: CFStringRef, value: CFTypeRef) -> AXError;
     fn AXUIElementCopyMultipleAttributeValues(element: AXUIElementRef, attributes: CFArrayRef, options: u32, values: *mut CFArrayRef) -> AXError;
     fn AXUIElementCopyActionNames(element: AXUIElementRef, names: *mut CFArrayRef) -> AXError;
+    fn AXUIElementPerformAction(element: AXUIElementRef, action: CFStringRef) -> AXError;
     fn AXValueGetType(value: CFTypeRef) -> u32;
     fn AXValueGetValue(value: CFTypeRef, kind: u32, out: *mut c_void) -> bool;
     fn AXUIElementGetTypeID() -> usize;
@@ -634,4 +635,171 @@ pub fn activate_pid(pid: i32) -> bool {
             })
             .unwrap_or(false)
     }
+}
+
+// ------------------------------------------------------------------ menu bar
+//
+// The application menu bar is a declared, labeled command surface: every item
+// carries its title, enabled state and (often) a keyboard shortcut. It lets
+// the agent reach commands that toolbars expose only as unlabeled icons.
+
+const MENU_MAX_ITEMS: usize = 400;
+const MENU_MAX_DEPTH: usize = 3;
+
+fn attr(element: &Owned, name: &str) -> Owned {
+    let key = cfstr(name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let error = unsafe { AXUIElementCopyAttributeValue(element.0, key.0, &mut value) };
+    if error != AX_SUCCESS {
+        return Owned(std::ptr::null());
+    }
+    Owned(value)
+}
+
+fn children_of(element: &Owned) -> Vec<Owned> {
+    let children = attr(element, "AXChildren");
+    if children.0.is_null() || unsafe { CFGetTypeID(children.0) != CFArrayGetTypeID() } {
+        return Vec::new();
+    }
+    (0..unsafe { CFArrayGetCount(children.0) })
+        .filter_map(|i| {
+            let child = unsafe { CFArrayGetValueAtIndex(children.0, i) };
+            (!child.is_null() && unsafe { CFGetTypeID(child) == AXUIElementGetTypeID() }).then(|| Owned(unsafe { CFRetain(child) }))
+        })
+        .collect()
+}
+
+/// Children of a menu-bar item or menu item, looking through the AXMenu
+/// container that holds the actual items.
+fn menu_items(element: &Owned) -> Vec<Owned> {
+    let mut out = Vec::new();
+    for child in children_of(element) {
+        if unsafe { to_string(attr(&child, "AXRole").0) }.as_deref() == Some("AXMenu") {
+            out.extend(children_of(&child));
+        } else {
+            out.push(child);
+        }
+    }
+    out
+}
+
+fn shortcut(item: &Owned) -> Option<String> {
+    let key = unsafe { to_string(attr(item, "AXMenuItemCmdChar").0) }?.trim().to_string();
+    if key.is_empty() {
+        return None;
+    }
+    // kAXMenuItemModifier bits: 1=shift, 2=option, 4=control, 8=no command.
+    let modifiers = unsafe { to_number(attr(item, "AXMenuItemCmdModifiers").0) }.unwrap_or(0.0) as i64;
+    let mut out = String::new();
+    if modifiers & 4 != 0 { out.push('⌃'); }
+    if modifiers & 2 != 0 { out.push('⌥'); }
+    if modifiers & 1 != 0 { out.push('⇧'); }
+    if modifiers & 8 == 0 { out.push('⌘'); }
+    out.push_str(&key.to_uppercase());
+    Some(out)
+}
+
+fn app_menu_bar(pid: i32) -> Result<Owned, String> {
+    let app = Owned(unsafe { AXUIElementCreateApplication(pid) });
+    if app.0.is_null() {
+        return Err("target application is unavailable".into());
+    }
+    unsafe { AXUIElementSetMessagingTimeout(app.0, 0.5) };
+    let bar = attr(&app, "AXMenuBar");
+    if bar.0.is_null() {
+        return Err("target application exposes no menu bar".into());
+    }
+    Ok(bar)
+}
+
+/// Read the application's menu bar as `{path, enabled, shortcut, checked}`
+/// leaves. The Apple menu (first item) is skipped: it belongs to the system.
+pub fn read_menu_bar(pid: i32) -> Result<Value, String> {
+    let bar = app_menu_bar(pid)?;
+    let mut items = Vec::new();
+    fn visit(element: &Owned, path: &mut Vec<String>, depth: usize, items: &mut Vec<Value>) {
+        for item in menu_items(element) {
+            if items.len() >= MENU_MAX_ITEMS {
+                return;
+            }
+            let title = unsafe { to_string(attr(&item, "AXTitle").0) }.unwrap_or_default().trim().to_string();
+            if title.is_empty() {
+                continue; // separators
+            }
+            let enabled = unsafe { to_bool(attr(&item, "AXEnabled").0) }.unwrap_or(true);
+            path.push(title);
+            let sub = if depth < MENU_MAX_DEPTH { menu_items(&item) } else { Vec::new() };
+            if sub.is_empty() || depth >= MENU_MAX_DEPTH {
+                let checked = unsafe { to_string(attr(&item, "AXMenuItemMarkChar").0) }.map(|mark| !mark.trim().is_empty()).unwrap_or(false);
+                items.push(json!({ "path": path.clone(), "enabled": enabled, "shortcut": shortcut(&item), "checked": checked }));
+            } else if enabled {
+                visit(&item, path, depth + 1, items);
+            }
+            path.pop();
+        }
+    }
+    let top = children_of(&bar);
+    for (index, menu) in top.iter().enumerate() {
+        if index == 0 {
+            continue;
+        }
+        let title = unsafe { to_string(attr(menu, "AXTitle").0) }.unwrap_or_default().trim().to_string();
+        if title.is_empty() {
+            continue;
+        }
+        let mut path = vec![title];
+        visit(menu, &mut path, 1, &mut items);
+    }
+    Ok(json!({ "items": items, "truncated": items.len() >= MENU_MAX_ITEMS }))
+}
+
+/// Press a menu item by exact title path, resolving every hop from the live
+/// menu bar (opening a menu can replace its AX objects). Each segment must
+/// match exactly one enabled item.
+pub fn press_menu_path(pid: i32, path: &[String]) -> Result<Value, String> {
+    if path.len() < 2 {
+        return Err("menu path needs a top-level menu and an item".into());
+    }
+    let press = |element: &Owned, final_segment: bool| -> Result<(), String> {
+        let order: &[&str] = if final_segment { &["AXPress", "AXPick", "AXConfirm"] } else { &["AXPress", "AXPick", "AXShowMenu", "AXOpen"] };
+        let mut names: CFArrayRef = std::ptr::null();
+        unsafe { AXUIElementCopyActionNames(element.0, &mut names) };
+        let names = Owned(names);
+        let mut available = Vec::new();
+        if !names.0.is_null() {
+            for i in 0..unsafe { CFArrayGetCount(names.0) } {
+                if let Some(name) = unsafe { to_string(CFArrayGetValueAtIndex(names.0, i)) } {
+                    available.push(name);
+                }
+            }
+        }
+        let action = order.iter().find(|name| available.iter().any(|a| a == *name)).ok_or("menu item has no usable native action")?;
+        let key = cfstr(action);
+        let error = unsafe { AXUIElementPerformAction(element.0, key.0) };
+        if error != AX_SUCCESS {
+            return Err(format!("menu action failed (AXError {error})"));
+        }
+        Ok(())
+    };
+    for depth in 1..path.len() {
+        let bar = app_menu_bar(pid)?;
+        let mut current: Option<Owned> = None;
+        for (index, segment) in path[..=depth].iter().enumerate() {
+            let pool = match &current { None => children_of(&bar), Some(parent) => menu_items(parent) };
+            let mut matches: Vec<Owned> = pool.into_iter().filter(|item| unsafe { to_string(attr(item, "AXTitle").0) }.map(|t| t.trim() == segment).unwrap_or(false)).collect();
+            if matches.len() != 1 {
+                return Err(format!("menu path segment {index} {}", if matches.is_empty() { "was not found" } else { "is ambiguous" }));
+            }
+            current = matches.pop();
+        }
+        let target = current.ok_or("empty menu path")?;
+        if unsafe { to_bool(attr(&target, "AXEnabled").0) } == Some(false) {
+            return Err(format!("menu path segment {depth} is disabled"));
+        }
+        press(&target, depth + 1 == path.len())?;
+        if depth + 1 != path.len() {
+            std::thread::sleep(Duration::from_millis(80));
+        }
+    }
+    Ok(json!({ "operation": "menu-press", "path": path }))
 }

@@ -93,39 +93,6 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
-      - name: Restore macOS signing certificate
-        if: runner.os == 'macOS'
-        env:
-          ORBIT_MACOS_SIGNING_P12_BASE64: ${{ secrets.ORBIT_MACOS_SIGNING_P12_BASE64 }}
-          ORBIT_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.ORBIT_MACOS_SIGNING_P12_PASSWORD }}
-        run: |
-          test -n "$ORBIT_MACOS_SIGNING_P12_BASE64" || { echo "::error::Missing ORBIT_MACOS_SIGNING_P12_BASE64. macOS builds need the self-signed code signing certificate (run scripts/make-signing-cert.sh locally, then upload work/orbit-signing.p12.base64 and work/orbit-signing.password as repository secrets). Ad-hoc builds would break Accessibility grants on every update."; exit 1; }
-          test -n "$ORBIT_MACOS_SIGNING_P12_PASSWORD" || { echo "::error::Missing ORBIT_MACOS_SIGNING_P12_PASSWORD."; exit 1; }
-          printf '%s' "$ORBIT_MACOS_SIGNING_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/orbit-signing.p12"
-          # tauri-macos-sign's APPLE_CERTIFICATE path only resolves Apple-prefixed
-          # identities, so import the self-signed P12 ourselves and let the
-          # bundler find it via APPLE_SIGNING_IDENTITY (codesign -s <name>).
-          keychain="$RUNNER_TEMP/orbit-signing.keychain-db"
-          keychain_password="$(openssl rand -hex 16)"
-          security create-keychain -p "$keychain_password" "$keychain"
-          security unlock-keychain -p "$keychain_password" "$keychain"
-          security list-keychain -d user -s "$keychain" $(security list-keychain -d user | tr -d '"')
-          security import "$RUNNER_TEMP/orbit-signing.p12" -k "$keychain" -P "$ORBIT_MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" >/dev/null
-          security find-identity -p codesigning "$keychain"
-          echo "APPLE_SIGNING_IDENTITY=Orbit Developer" >> "$GITHUB_ENV"
-
-      - name: Smoke test code signing
-        if: runner.os == 'macOS'
-        run: |
-          set -x
-          echo 'int main(){return 0;}' > "$RUNNER_TEMP/smoke.c"
-          cc -o "$RUNNER_TEMP/smoke" "$RUNNER_TEMP/smoke.c"
-          perl -e 'alarm 60; exec @ARGV' codesign --force -s "Orbit Developer" "$RUNNER_TEMP/smoke"
-          codesign --verify --strict "$RUNNER_TEMP/smoke"
-          codesign -dvv "$RUNNER_TEMP/smoke" 2>&1 | grep -E "Authority=|CDHash="
-          rm -f "$RUNNER_TEMP/smoke" "$RUNNER_TEMP/smoke.c"
-
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -135,7 +102,7 @@ jobs:
           tauriScript: bun run tauri
           tagName: v__VERSION__
           releaseName: Orbit v__VERSION__
-          releaseBody: "Orbit installers for macOS, Linux, and Windows. macOS builds are signed with a self-signed certificate (no Apple notarization) - right-click the app on first install to approve it, and in-app updates keep Accessibility grants."
+          releaseBody: "Orbit installers for macOS, Linux, and Windows. macOS builds use fast ad-hoc signing and are not notarized; right-click the app on first install to approve it. Updating may require allowing Accessibility again."
           # Keep the release out of /releases/latest until every desktop
           # matrix job has uploaded its updater metadata.
           releaseDraft: true

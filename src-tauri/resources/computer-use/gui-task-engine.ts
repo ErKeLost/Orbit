@@ -1,7 +1,8 @@
 import { setTimeout as delay } from "node:timers/promises"
 import { AgentDesktopCommandError, type AgentDesktopClient, type LaunchData } from "./agent-desktop-client.ts"
 import { resolveDesktopApp } from "./desktop-app-resolver.ts"
-import { observeDesktop } from "./desktop-observation.ts"
+import { attachMedia, invalidateMenuCache, observeDesktop, readMediaFact } from "./desktop-observation.ts"
+import { isReplayableOperation, lookupTemplate, memoryIdentity, resolveStep, memoryKey, parameterize, type AffordanceMemory, type MemoryStep } from "./affordance-memory.ts"
 import { assessDesktopRisk, decideDesktop, isRetryableJevError, redactLocalSlots } from "./jev.ts"
 import { validateTaskInput, type DesktopCandidate, type DesktopDecision, type DesktopNode, type DesktopObservation, type GuiTaskEvent, type GuiTaskInput, type GuiTaskMetrics, type GuiTaskResult, type GuiTaskStatus, type GuiTaskTrace } from "./gui-task-contract.ts"
 import { describeDiff, diffTrees, findNodeByIdentity } from "./tree-diff.ts"
@@ -9,6 +10,21 @@ import { describeDiff, diffTrees, findNodeByIdentity } from "./tree-diff.ts"
 const CHROMIUM_RENDERER_SETTLE_MS = 2_000
 const SETTLE_POLL_MS = 60
 const SETTLE_CEILING_MS = 900
+/** Wait for the first accessibility notification after an action. */
+const EVENT_SETTLE_TIMEOUT_MS = 900
+/** The "new" marker is only informative when a minority of targets changed. */
+const MAX_NEW_MARKERS = 24
+/** Replay: re-observe this many times for a remembered target to appear. */
+const REPLAY_WAIT_POLLS = 8
+const REPLAY_WAIT_POLL_MS = 120
+/** Busy-aware settle: keep observing while a progress indicator is shown. */
+const BUSY_CEILING_MS = 3_000
+const BUSY_POLL_MS = 150
+/** After typing into an autocomplete field, wait this long for suggestions. */
+const SUGGESTION_WAIT_MS = 300
+/** Minimum predicted probability for finishing without a DONE round trip. */
+const COMPLETION_THRESHOLD = 0.75
+const LOOKAHEAD_MIN_CONFIDENCE = 0.8
 
 export async function runGuiTaskEngine({
   input,
@@ -20,6 +36,7 @@ export async function runGuiTaskEngine({
   assessRisk = assessDesktopRisk,
   emit = () => undefined,
   confirm,
+  memory,
 }: {
   input: GuiTaskInput
   client: AgentDesktopClient
@@ -30,11 +47,13 @@ export async function runGuiTaskEngine({
   assessRisk?: typeof assessDesktopRisk
   emit?: (event: GuiTaskEvent) => void
   confirm?: (summary: string) => Promise<boolean>
+  /** Affordance Memory; omitted in tests and when disabled. */
+  memory?: AffordanceMemory
 }): Promise<GuiTaskResult> {
   validateTaskInput(input)
   const startedAt = Date.now()
   const deadline = startedAt + input.budget.maxDurationMs
-  const metrics: GuiTaskMetrics = { elapsedMs: 0, launchMs: 0, observationMs: 0, decisionMs: 0, actionMs: 0, inputTokens: 0, outputTokens: 0 }
+  const metrics: GuiTaskMetrics = { elapsedMs: 0, launchMs: 0, observationMs: 0, decisionMs: 0, actionMs: 0, inputTokens: 0, outputTokens: 0, jevCalls: 0, replayedSteps: 0, lookaheadSteps: 0, settleMs: 0, settleEvents: 0 }
   const trace: GuiTaskTrace[] = []
   const history: string[] = []
   const usedSlotIds = new Set<string>()
@@ -62,10 +81,51 @@ export async function runGuiTaskEngine({
   let appLaunched = false
   let goalVerified = false
   let lastAction: GuiTaskResult["lastAction"]
+  const slotsForMemory = input.textSlots ?? []
+  // Undo-risk answers by target identity: they do not change within a task.
+  const riskCache = new Map<string, number>()
+  // Identities offered before the last delivered action; successors not in
+  // this set are marked "new" for Jev (browser-use's `*` marker).
+  let previousIdentities: Set<string> | undefined
+  // Affordance Memory: learned trajectory replay and learning.
+  const memoryKeyValue = memory ? memoryKey(input.target.app, input.goal, slotsForMemory, Boolean(input.readOnly)) : undefined
+  let replayPlan: MemoryStep[] | undefined
+  let replayIndex = 0
+  let replayMisses = 0
+  // Narrow lookahead state (see decideDesktop options.lookahead).
+  const lookaheadDepth = input.lookahead ?? (process.env.ORBIT_CU_LOOKAHEAD ? Number(process.env.ORBIT_CU_LOOKAHEAD) : 0)
+  let lookaheadQueue: { key: string; confidence: number }[] = []
+  let lookaheadHealthy = true
+  let lookaheadSurface = "window"
+  let lookaheadCompletion: number | undefined
+  let lastExecutedKey: string | undefined
+  // Completion probability recorded when the trajectory was learned; lets
+  // the last replayed step finish without a DONE round trip.
+  let replayCompletion: number | undefined
+  const learnedSteps: MemoryStep[] = []
+  // Label of each learned step's target when it was chosen among same-shaped
+  // siblings: candidates for template variables.
+  const learnedLabels: (string | undefined)[] = []
+  let replayTemplateKey: string | undefined
+  let learnedCompletion: number | undefined
+  // Executed mutation targets, for cycle detection (A,B,A,B,... loops).
+  const mutationKeys: string[] = []
+  let learningTainted = false
+  const abandonReplay = async (reason: string) => {
+    if (!replayPlan) return
+    replayPlan = undefined
+    trace.push({ step: decisions, stateId: observation?.fingerprint ?? "unobserved", source: "memory", note: `memory replay stopped: ${reason}; continuing with Jev` })
+    if (memory && memoryKeyValue) await memory.recordFailure(replayTemplateKey ?? memoryKeyValue).catch(() => undefined)
+  }
 
   const remaining = () => Math.max(1, deadline - Date.now())
   const finish = (status: GuiTaskStatus, observation?: DesktopObservation, note?: string): GuiTaskResult => {
     metrics.elapsedMs = Math.max(0, Date.now() - startedAt)
+    if (status === "done" && memory && memoryKeyValue && !learningTainted && learnedSteps.length > 0) {
+      void memory.recordSuccess(memoryKeyValue, learnedSteps, learnedCompletion).catch(() => undefined)
+      const template = parameterize(input.target.app, input.goal, slotsForMemory, Boolean(input.readOnly), learnedSteps, learnedLabels)
+      if (template) void memory.recordSuccess(template.key, template.steps, learnedCompletion).catch(() => undefined)
+    }
     if (note) trace.push({ step: decisions, stateId: observation?.fingerprint ?? "unobserved", note })
     return { status, appLaunched, goalVerified, lastAction, actions, decisions, evidence: observation?.context.slice(0, 2_000) ?? "", metrics, trace }
   }
@@ -101,6 +161,22 @@ export async function runGuiTaskEngine({
     metrics.launchMs += performance.now() - launchStarted
   }
 
+  if (memory && memoryKeyValue) {
+    let entry = await memory.lookup(memoryKeyValue).catch(() => undefined)
+    if (!entry || entry.successes <= entry.failures) {
+      // Same task shape with a different item ("open {X}'s card").
+      const templated = await lookupTemplate(memory, input.target.app, input.goal, slotsForMemory, Boolean(input.readOnly)).catch(() => undefined)
+      if (templated) {
+        entry = templated.entry
+        replayTemplateKey = templated.key
+      }
+    }
+    if (entry && entry.successes > entry.failures) {
+      replayPlan = entry.steps
+      replayCompletion = entry.completion
+    }
+  }
+
   let observation: DesktopObservation | undefined
   // Observation produced by the post-action settle loop; reused as the next
   // turn's observation so a settled tree is never walked twice.
@@ -123,7 +199,9 @@ export async function runGuiTaskEngine({
         allowPressEnter,
       }, { timeoutMs: remaining(), signal })
       try {
-        observation = prefetched && !root ? prefetched : await observeOnce(launched.window?.id)
+        observation = prefetched && !root
+          ? attachMedia(prefetched, prefetched.mediaSkipped ? await readMediaFact(client, { timeoutMs: Math.min(remaining(), 5_000), signal }) : undefined)
+          : await observeOnce(launched.window?.id)
         prefetched = undefined
       } catch (error) {
         if (error instanceof AgentDesktopCommandError && error.detail.code === "WINDOW_NOT_FOUND") {
@@ -156,6 +234,11 @@ export async function runGuiTaskEngine({
       metrics.observationMs += performance.now() - observationStarted
     }
     appLaunched = true
+    if (previousIdentities) {
+      // Only the first observation after an action carries "new" markers.
+      observation = markNewCandidates(observation, previousIdentities)
+      previousIdentities = undefined
+    }
     emit({ type: "observed", step: decisions, status: "running", payload: { app: observation.app, window: observation.title, surface: observation.surface, candidateCount: observation.candidates.length, complete: observation.complete } })
 
     if (pendingDrill && observation.root) {
@@ -209,7 +292,62 @@ export async function runGuiTaskEngine({
       const offered = input.readOnly
         ? eligible.filter(candidate => !isMutation(candidate.operation) && !isContextualMutation(candidate.operation) && candidate.operation !== "PRESS_ENTER")
         : eligible
-      const askJev = () => decide(
+      // Affordance Memory replay: the next remembered step, matched by
+      // observed identity against what is offered right now. A miss hands
+      // control back to Jev for the rest of the task (self-heal).
+      let replayed: DesktopDecision | undefined
+      if (replayPlan && replayIndex < replayPlan.length) {
+        let resolved = resolveStep(replayPlan, replayIndex, offered, slots)
+        if (resolved.skip) {
+          replayIndex++
+          resolved = resolveStep(replayPlan, replayIndex, offered, slots)
+        }
+        const step = replayPlan[replayIndex]
+        const match = resolved.candidate
+        if (match) {
+          // An inserted SCROLL_TO does not consume the remembered step.
+          if (!(match.operation === "SCROLL_TO" && step.operation !== "SCROLL_TO")) replayIndex++
+          replayMisses = 0
+          replayed = { operation: match.operation, candidateId: match.id, confidence: 1, model: "affordance-memory", latencyMs: 0, probabilities: { [match.id]: 1 }, usage: { inputTokens: 0, outputTokens: 0 }, ...(typeof step.risk === "number" ? { risk: step.risk } : {}) }
+        } else if (replayIndex > 0 && replayMisses < REPLAY_WAIT_POLLS && !root) {
+          // The remembered target may still be loading (search results,
+          // navigation). Re-observe briefly before giving up on replay.
+          replayMisses++
+          await delay(Math.min(REPLAY_WAIT_POLL_MS, remaining()), undefined, { signal })
+          continue
+        } else {
+          await abandonReplay(`step ${replayIndex + 1} (${step.operation}) has no unique matching target`)
+        }
+      }
+      // Guarded lookahead: a click predicted by the previous Jev request runs
+      // without a new request only while every guard holds; any doubt drops
+      // the rest of the plan and asks Jev normally.
+      if (!replayed && lookaheadQueue.length > 0) {
+        const next = lookaheadQueue.shift()!
+        const match = offered.filter(candidate => candidate.operation === "CLICK" && targetKey(candidate, true) === next.key)
+        const risk = match.length === 1 ? riskCache.get(targetKey(match[0])) : undefined
+        const guard = next.key === lastExecutedKey ? "it repeats the step just executed (lookahead ordinal drift)"
+          : !lookaheadHealthy ? "the previous step was not verified"
+          : current.surface !== lookaheadSurface ? "the interface surface changed"
+          : match.length !== 1 ? "the predicted target is not uniquely present"
+          : next.confidence < LOOKAHEAD_MIN_CONFIDENCE ? `low confidence (${next.confidence.toFixed(2)})`
+          : typeof risk !== "number" || risk >= 0.5 ? "its undo risk is unknown or high"
+          : undefined
+        if (guard) {
+          lookaheadQueue = []
+          trace.push({ step: decisions, stateId: current.fingerprint, note: `lookahead stopped: ${guard}` })
+        } else {
+          replayed = { operation: "CLICK", candidateId: match[0].id, confidence: next.confidence, model: "jev-lookahead", latencyMs: 0, probabilities: { [match[0].id]: next.confidence }, usage: { inputTokens: 0, outputTokens: 0 }, risk: risk!, ...(lookaheadQueue.length === 0 && typeof lookaheadCompletion === "number" ? { completesGoal: lookaheadCompletion } : {}) }
+        }
+      }
+      const knownRisks: Record<string, number> = {}
+      for (const candidate of offered) {
+        const cached = riskCache.get(targetKey(candidate))
+        if (typeof cached === "number") knownRisks[candidate.id] = cached
+      }
+      const askJev = () => {
+        metrics.jevCalls++
+        return decide(
           redact(input.goal),
           offered.filter(candidate => !(candidate.operation === "ACTIVATE" && !candidate.ref)).map(candidate => ({
             ...candidate,
@@ -219,7 +357,12 @@ export async function runGuiTaskEngine({
           redact(current.context),
           history.map(redact),
           signal,
+          { knownRisks, lookahead: lookaheadDepth },
         )
+      }
+      if (replayed) {
+        decision = replayed
+      } else {
         try {
           decision = await askJev()
         } catch (error) {
@@ -229,17 +372,45 @@ export async function runGuiTaskEngine({
           await delay(Math.min(1_000, remaining()), undefined, { signal })
           decision = await askJev()
         }
+      }
     } catch (error) {
       return finish(signal?.aborted ? "aborted" : "error", observation, safeError(error))
     } finally {
       metrics.decisionMs += performance.now() - decisionStarted
     }
     decisions++
+    const stepStarted = performance.now()
+    const fromMemory = decision.model === "affordance-memory"
+    const fromLookahead = decision.model === "jev-lookahead"
+    if (fromMemory) metrics.replayedSteps++
+    if (fromLookahead) metrics.lookaheadSteps++
+    if (!fromMemory && !fromLookahead) {
+      // A fresh Jev decision replaces any pending plan.
+      lookaheadQueue = []
+      lookaheadCompletion = undefined
+      if (decision.operation === "CLICK" && decision.lookahead?.length) {
+        const byId = new Map(observation.candidates.map(item => [item.id, item]))
+        lookaheadQueue = decision.lookahead.flatMap(step => {
+          const target = byId.get(step.candidateId)
+          return target ? [{ key: targetKey(target, true), confidence: step.confidence }] : []
+        })
+        // The completion prediction refers to the first step; after a plan
+        // it only transfers to the plan's last step if Jev rated it so.
+        lookaheadCompletion = decision.completesGoal
+        decision = { ...decision, completesGoal: lookaheadQueue.length ? undefined : decision.completesGoal }
+        lookaheadSurface = observation.surface
+      }
+    }
     metrics.inputTokens += decision.usage.inputTokens
     metrics.outputTokens += decision.usage.outputTokens
+    for (const [id, value] of Object.entries(decision.risks ?? {})) {
+      const risky = observation.candidates.find(item => item.id === id)
+      if (risky) riskCache.set(targetKey(risky), value)
+    }
     let candidate = observation.candidates.find(item => item.id === decision.candidateId)
     if (!candidate || candidate.operation !== decision.operation) return finish("error", observation, "Jev selected a candidate outside the current observation")
-    const entry: GuiTaskTrace = { step: decisions, stateId: observation.fingerprint, operation: decision.operation, candidateId: candidate.id, candidate: candidate.description, confidence: decision.confidence }
+    if (typeof decision.risk === "number") riskCache.set(targetKey(candidate), decision.risk)
+    const entry: GuiTaskTrace = { step: decisions, stateId: observation.fingerprint, operation: decision.operation, candidateId: candidate.id, candidate: candidate.description, confidence: decision.confidence, source: fromMemory ? "memory" : fromLookahead ? "lookahead" : "jev" }
     trace.push(entry)
     emit({ type: "decided", step: decisions, status: "running", payload: { operation: decision.operation, candidate: candidate.description, confidence: decision.confidence, model: decision.model, latencyMs: decision.latencyMs } })
 
@@ -261,6 +432,7 @@ export async function runGuiTaskEngine({
         // that was never entered anywhere contradicts most goals. Re-ask Jev
         // with that fact made explicit; accept DONE only if it repeats it.
         const reminder = [...history, `WARNING: prepared text slots ${undelivered.map(slot => slot.id).join(", ")} were never delivered to any field; the goal mentions them.`]
+        metrics.jevCalls++
         const recheck = await decide(
           redact(input.goal),
           observation.candidates.filter(candidate => !(candidate.operation === "ACTIVATE" && !candidate.ref)).map(candidate => ({
@@ -308,9 +480,11 @@ export async function runGuiTaskEngine({
       try {
         // The fan-out decision already answered the undo-risk question for
         // this exact target; only fall back to a separate call when absent.
-        const risk = typeof decision.risk === "number"
-          ? { probability: decision.risk, usage: { inputTokens: 0, outputTokens: 0 } }
-          : await assessRisk(redact(input.goal), decision.operation, redact(candidate.description), signal)
+        const cachedRisk = typeof decision.risk === "number" ? decision.risk : riskCache.get(targetKey(candidate))
+        const risk = typeof cachedRisk === "number"
+          ? { probability: cachedRisk, usage: { inputTokens: 0, outputTokens: 0 } }
+          : (metrics.jevCalls++, await assessRisk(redact(input.goal), decision.operation, redact(candidate.description), signal))
+        riskCache.set(targetKey(candidate), risk.probability)
         metrics.inputTokens += risk.usage.inputTokens
         metrics.outputTokens += risk.usage.outputTokens
         if (risk.probability >= 0.5) {
@@ -357,6 +531,8 @@ export async function runGuiTaskEngine({
       unchangedMutations = 0
       entry.outcome = "observed_deeper"
       history.push(`DRILL ${candidate.description}`)
+      learnedSteps.push({ operation: "DRILL", identity: memoryIdentity(candidate, slots) })
+      learnedLabels.push(undefined)
       continue
     }
     if (decision.operation === "WIDEN") {
@@ -367,6 +543,8 @@ export async function runGuiTaskEngine({
       unchangedMutations = 0
       entry.outcome = "observed_window"
       history.push("WIDEN")
+      learnedSteps.push({ operation: "WIDEN", identity: memoryIdentity(candidate, slots) })
+      learnedLabels.push(undefined)
       continue
     }
     if (decision.operation === "WAIT") {
@@ -381,7 +559,11 @@ export async function runGuiTaskEngine({
 
     const actionStarted = performance.now()
     try {
-      const outcome = await executeCandidate(client, launched.app || input.target.app, candidate, input, remaining(), signal)
+      const mutating = isMutation(candidate.operation) || isContextualMutation(candidate.operation)
+      const identitiesBefore = new Set(observation.candidates.filter(item => item.ref).map(item => targetKey(item, true)))
+      const executed = await executeCandidateDetailed(client, launched.app || input.target.app, candidate, input, remaining(), signal, mutating && client.backend === "xa11y" ? Math.min(EVENT_SETTLE_TIMEOUT_MS, remaining()) : undefined)
+      const outcome = executed.delivery
+      lastExecutedKey = targetKey(candidate, true)
       actions++
       consecutiveWaits = 0
       entry.outcome = outcome
@@ -389,23 +571,62 @@ export async function runGuiTaskEngine({
       if (candidate.slotId) usedSlotIds.add(candidate.slotId)
       consecutiveFailures = 0
       allowPressEnter = ["SET_VALUE", "TYPE_TEXT", "FOCUS"].includes(decision.operation)
-      if (isMutation(candidate.operation) || isContextualMutation(candidate.operation)) {
-        // Auto-wait instead of a fixed sleep: re-observe until the tree
-        // differs from the pre-action state (or a short ceiling passes).
-        // Fast apps settle in one poll; slow renderers get up to the ceiling.
-        const before = observation.fingerprint
-        const settleDeadline = Date.now() + Math.min(SETTLE_CEILING_MS, remaining())
-        for (;;) {
-          await delay(SETTLE_POLL_MS, undefined, { signal })
+      if (mutating) {
+        const settleStarted = performance.now()
+        const observeSettled = () => observe(client, { app: launched.app || input.target.app, goal: input.goal, textSlots: input.textSlots ?? [], usedSlotIds, allowPressEnter, skipMedia: true }, { timeoutMs: remaining(), signal })
+        const before = observation.treeFingerprint ?? observation.fingerprint
+        const report = executed.settle
+        if (report?.supported) {
+          // Event-driven: the worker already blocked until the app posted
+          // accessibility notifications and went quiet. Observe once.
+          metrics.settleEvents += report.events ?? 0
+          entry.note = entry.note ?? (report.events ? `settled after ${report.events} AX events (${(report.notifications ?? []).join(",")}) in ${report.ms}ms` : `no AX events within ${report.ms}ms`)
           try {
-            const next = await observe(client, { app: launched.app || input.target.app, goal: input.goal, textSlots: input.textSlots ?? [], usedSlotIds, allowPressEnter }, { timeoutMs: remaining(), signal })
-            prefetched = next
-            if (next.fingerprint !== before || Date.now() >= settleDeadline) break
+            prefetched = await observeSettled()
           } catch {
             prefetched = undefined
-            break
+          }
+        } else {
+          // Polling fallback: re-observe until the tree differs from the
+          // pre-action state (or a short ceiling passes). Media is not read
+          // inside the loop; it is attached once below.
+          const settleDeadline = Date.now() + Math.min(SETTLE_CEILING_MS, remaining())
+          for (;;) {
+            await delay(SETTLE_POLL_MS, undefined, { signal })
+            try {
+              const next = await observeSettled()
+              prefetched = next
+              if ((next.treeFingerprint ?? next.fingerprint) !== before || Date.now() >= settleDeadline) break
+            } catch {
+              prefetched = undefined
+              break
+            }
           }
         }
+        // Busy-aware settle: the app acknowledged the action but is still
+        // working (progress/busy indicator present, or an autocomplete field
+        // was typed into and its suggestions have not arrived yet). Keep
+        // observing, bounded, instead of spending a Jev WAIT turn on it.
+        if (prefetched) {
+          const busyDeadline = Date.now() + Math.min(BUSY_CEILING_MS, remaining())
+          const awaitingSuggestions = candidate.operation === "SET_VALUE" || candidate.operation === "TYPE_TEXT"
+            ? isAutocompleteField(candidate) && !hasNewPopupList(observation.tree, prefetched.tree)
+            : false
+          let suggestionDeadline = awaitingSuggestions ? Date.now() + SUGGESTION_WAIT_MS : 0
+          while (prefetched && Date.now() < busyDeadline && (isBusy(prefetched.tree) || Date.now() < suggestionDeadline)) {
+            await delay(BUSY_POLL_MS, undefined, { signal })
+            try {
+              prefetched = await observeSettled()
+            } catch {
+              prefetched = undefined
+              break
+            }
+            if (suggestionDeadline && prefetched && hasNewPopupList(observation.tree, prefetched.tree)) suggestionDeadline = 0
+          }
+        }
+        if (prefetched?.mediaSkipped) prefetched = attachMedia(prefetched, await readMediaFact(client, { timeoutMs: Math.min(remaining(), 5_000), signal }))
+        metrics.settleMs += performance.now() - settleStarted
+        previousIdentities = identitiesBefore
       }
       // Verify inferred (speculative) actions against their expectations
       // right away, using the settled successor observation. A wrong guess is
@@ -435,7 +656,11 @@ export async function runGuiTaskEngine({
           }
         }
       }
+      // The next predicted click is only safe after this one visibly took
+      // effect (tree changed) without a verifier verdict.
+      lookaheadHealthy = !verdict && outcome !== "not_delivered" && Boolean(prefetched) && (prefetched!.treeFingerprint ?? prefetched!.fingerprint) !== (observation.treeFingerprint ?? observation.fingerprint)
       if (verdict) {
+        lookaheadQueue = []
         // A side effect disqualifies every inferred action on that target;
         // no effect only disqualifies the attempted operation (a single click
         // may select a row that a double-click would open).
@@ -458,10 +683,42 @@ export async function runGuiTaskEngine({
         root = undefined
         repeatedDrillKey = undefined
         staleRetries = 0
+        if (fromMemory) await abandonReplay(`remembered ${decision.operation} produced verdict=${verdict}`)
+        entry.ms = Math.round(performance.now() - stepStarted)
         if (unchangedMutations >= 3) return finish("blocked", settled, "Three delivered actions produced no observable accessibility change")
         continue
       }
+      if (isReplayableOperation(candidate.operation)) {
+        const learnedRisk = riskCache.get(targetKey(candidate))
+        learnedSteps.push({ operation: candidate.operation, identity: memoryIdentity(candidate, slots), ...(candidate.slotId ? { slotId: candidate.slotId } : {}), ...(typeof learnedRisk === "number" ? { risk: learnedRisk } : {}) })
+        learnedLabels.push(candidate.criteria?.sibling ? /"([^"]+)"/.exec(candidate.criteria.what ?? "")?.[1] : undefined)
+      }
+      entry.ms = Math.round(performance.now() - stepStarted)
       const historyIndex = history.push(`${decision.operation} ${candidate.description}: ${outcome}${!verdict && verdictDetail ? `; ${verdictDetail}` : ""}`) - 1
+      if (mutating && isMutation(candidate.operation)) {
+        mutationKeys.push(targetKey(candidate, true))
+        const cycle = repeatedCycle(mutationKeys)
+        if (cycle && cycle.repeats >= 3) {
+          entry.ms = Math.round(performance.now() - stepStarted)
+          return finish("blocked", prefetched ?? observation, `The same ${cycle.length}-step action sequence repeated ${cycle.repeats} times; stopping to avoid looping on application state`)
+        }
+        if (cycle && cycle.repeats === 2) history[historyIndex] += `; WARNING: this completes the same ${cycle.length}-step action sequence a second time. Its effect is already in the observation; do not start it again. Choose DONE if the goal is satisfied, otherwise a different target`
+      }
+      // Predicted completion + local evidence: finish without a separate DONE
+      // round trip. Every condition must hold; otherwise the normal loop asks.
+      const predicted = typeof decision.completesGoal === "number" ? decision.completesGoal : fromMemory && replayPlan && replayIndex >= replayPlan.length ? replayCompletion : undefined
+      if (typeof predicted === "number" && predicted >= COMPLETION_THRESHOLD && prefetched && mutating && isMutation(candidate.operation)) {
+        const evidence = completionEvidence(observation, prefetched, candidate, outcome, verdictDetail)
+        const undelivered = (input.textSlots ?? []).filter(slot => !usedSlotIds.has(slot.id))
+        const overlayOpened = prefetched.surface !== "window" && observation.surface === "window"
+        if (evidence && undelivered.length === 0 && !overlayOpened) {
+          entry.note = `${entry.note ? `${entry.note}; ` : ""}completion predicted (p=${predicted.toFixed(2)}) and confirmed by ${evidence}`
+          goalVerified = true
+          entry.outcome = `${outcome}; goal_verified_by_prediction`
+          learnedCompletion = predicted
+          return finish("done", prefetched)
+        }
+      }
       // Window activation/focus is validated by the next foreground-gated
       // action, not by an AX fingerprint change. Activating a window can leave
       // the accessibility tree byte-for-byte identical.
@@ -473,6 +730,8 @@ export async function runGuiTaskEngine({
       staleRetries = 0
     } catch (error) {
       entry.note = safeError(error)
+      lookaheadQueue = []
+      if (fromMemory) await abandonReplay(`remembered ${decision.operation} failed: ${safeError(error)}`)
       if (error instanceof AgentDesktopCommandError) lastAction = { operation: decision.operation, delivery: error.detail.disposition?.delivery }
       if (error instanceof AgentDesktopCommandError && error.safeToRetry && error.detail.code === "STALE_REF" && staleRetries < 1) {
         staleRetries++
@@ -497,7 +756,52 @@ export async function runGuiTaskEngine({
   }
 }
 
+type SettleReport = { supported?: boolean; changed?: boolean; events?: number; notifications?: string[]; ms?: number }
+
 async function executeCandidate(
+  client: AgentDesktopClient,
+  app: string,
+  candidate: DesktopCandidate,
+  input: GuiTaskInput,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<string> {
+  return (await executeCandidateDetailed(client, app, candidate, input, timeoutMs, signal)).delivery
+}
+
+/** Execute one candidate. With `settleMs` (xa11y only) the worker arms an
+ * AXObserver before dispatch and blocks until the app settles; its report is
+ * returned alongside the delivery disposition. */
+async function executeCandidateDetailed(
+  client: AgentDesktopClient,
+  app: string,
+  candidate: DesktopCandidate,
+  input: GuiTaskInput,
+  timeoutMs: number,
+  signal?: AbortSignal,
+  settleMs?: number,
+): Promise<{ delivery: string; settle?: SettleReport }> {
+  const settleArgs = settleMs && client.backend === "xa11y" ? ["--settle-timeout-ms", String(Math.round(settleMs))] : []
+  const baseClient = client
+  let settle: SettleReport | undefined
+  const wrapped: AgentDesktopClient = {
+    backend: client.backend,
+    dispose: () => client.dispose(),
+    async run<T>(args: string[], options?: { timeoutMs?: number; signal?: AbortSignal }) {
+      const isAction = !["activate-app", "snapshot", "launch", "now-playing", "menubar"].includes(args[0] === "--headed" ? args[1] : args[0])
+      const envelope = await baseClient.run<T>(isAction ? [...args, ...settleArgs] : args, isAction && settleArgs.length ? { ...options, timeoutMs: (options?.timeoutMs ?? timeoutMs) + (settleMs ?? 0) + 5_000 } : options)
+      const report = (envelope.data as { settle?: SettleReport } | undefined)?.settle
+      if (isAction && report && typeof report === "object") settle = report
+      return envelope
+    },
+  }
+  // Any mutation can change menu enabled states; never serve a stale menu.
+  if (candidate.operation !== "DRILL" && candidate.operation !== "WIDEN") invalidateMenuCache(client)
+  const delivery = await executeCandidateRaw(wrapped, app, candidate, input, timeoutMs, signal)
+  return { delivery, ...(settle ? { settle } : {}) }
+}
+
+async function executeCandidateRaw(
   client: AgentDesktopClient,
   app: string,
   candidate: DesktopCandidate,
@@ -520,6 +824,10 @@ async function executeCandidate(
   if (candidate.operation === "PRESS_ENTER") {
     const result = await client.run<Record<string, unknown>>(["press", "return", "--app", app], common)
     return delivery(result)
+  }
+  if (candidate.operation === "MENU_ITEM") {
+    if (!candidate.menuPath?.length) throw new Error("MENU_ITEM requires an observed menu path")
+    return delivery(await client.run<Record<string, unknown>>(["menu-press", JSON.stringify(candidate.menuPath), "--app", app, "--timeout-ms", String(timeoutMs)], common))
   }
   if (candidate.operation === "DISMISS") {
     return delivery(await client.run<Record<string, unknown>>(["press", "escape", "--app", app], common))
@@ -612,7 +920,7 @@ function isContextualMutation(operation: DesktopCandidate["operation"]): boolean
  * `state` and `holds` are excluded: both change as a result of the very
  * action being judged, so they cannot participate in a stable identity. */
 function targetKey(candidate: DesktopCandidate, anyOperation = false): string {
-  const { state: _state, holds: _holds, ...identity } = candidate.criteria ?? {}
+  const { state: _state, holds: _holds, new: _new, goal_match: _goalMatch, ...identity } = candidate.criteria ?? {}
   return `${anyOperation ? "*" : candidate.operation}:${candidate.criteria ? JSON.stringify(identity) : candidate.description.split(";")[0]}`
 }
 
@@ -621,6 +929,82 @@ function targetKey(candidate: DesktopCandidate, anyOperation = false): string {
  * equality is best-effort: a mismatch just falls back to the normal flow. */
 function candidateSignature(observation: DesktopObservation): string {
   return observation.candidates.map(candidate => `${candidate.operation}:${candidate.description}`).sort().join("|")
+}
+
+const BUSY_ROLES = new Set(["progress_bar", "busy_indicator", "progress_indicator"])
+
+/** An indeterminate progress/busy indicator is visible (role-based only). */
+function isBusy(root: DesktopNode): boolean {
+  const queue = [root]
+  for (let index = 0; index < queue.length && index < 4_000; index++) {
+    const node = queue[index]
+    if (BUSY_ROLES.has(node.role) && !(node.states ?? []).includes("hidden") && (node.value === undefined || node.value === "")) return true
+    queue.push(...(node.children ?? []))
+  }
+  return false
+}
+
+function isAutocompleteField(candidate: DesktopCandidate): boolean {
+  return /^combo_?box\b/i.test(candidate.criteria?.what ?? candidate.description)
+}
+
+/** A list/menu/listbox that did not exist before appeared (suggestions). */
+function hasNewPopupList(before: DesktopNode, after: DesktopNode): boolean {
+  const count = (root: DesktopNode) => {
+    let total = 0
+    const queue = [root]
+    for (let index = 0; index < queue.length; index++) {
+      if (/^(list|menu|list_box|listbox)$/.test(queue[index].role)) total++
+      queue.push(...(queue[index].children ?? []))
+    }
+    return total
+  }
+  return count(after) > count(before)
+}
+
+/** Local, application-agnostic proof that a delivered action took effect:
+ * a driver/field value readback, or an observed interface change that is
+ * not a failure indicator. Returns a short description, or undefined. */
+function completionEvidence(before: DesktopObservation, after: DesktopObservation, candidate: DesktopCandidate, outcome: string, verdictDetail?: string): string | undefined {
+  if (verdictDetail?.startsWith("verified:")) return "field value readback"
+  if (outcome === "delivered_verified" && ["SET_VALUE", "TYPE_TEXT"].includes(candidate.operation)) return "driver value readback"
+  const beforeTree = before.treeFingerprint ?? before.fingerprint
+  const afterTree = after.treeFingerprint ?? after.fingerprint
+  if (beforeTree === afterTree && before.media === after.media) return undefined
+  const diff = diffTrees(before.tree, after.tree)
+  // A new alert or error text means the action did not simply succeed.
+  if (diff.added.some(item => /^(alert|dialog|sheet)\b/.test(item) || /error|failed|错误|失败|无法/i.test(item))) return undefined
+  if (before.media !== after.media && after.media) return "media state change"
+  return `interface change (${describeDiff(diff).slice(0, 120)})`
+}
+
+/** A trailing sequence of 2-3 mutation targets repeated back to back.
+ * Single-target repeats (scrolling, "next track") are legitimate and ignored. */
+function repeatedCycle(keys: readonly string[]): { length: number; repeats: number } | undefined {
+  for (let length = 2; length <= 3; length++) {
+    if (keys.length < length * 2) continue
+    const tail = keys.slice(-length)
+    if (new Set(tail).size < 2) continue
+    let repeats = 1
+    while (keys.length >= length * (repeats + 1) && keys.slice(-length * (repeats + 1), -length * repeats).every((key, i) => key === tail[i])) repeats++
+    if (repeats >= 2) return { length, repeats }
+  }
+  return undefined
+}
+
+/** Mark candidates whose target did not exist before the last delivered
+ * action. Only informative when a minority of the interface changed; a full
+ * navigation marks nothing. */
+function markNewCandidates(observation: DesktopObservation, before: ReadonlySet<string>): DesktopObservation {
+  const targets = observation.candidates.filter(candidate => candidate.ref && candidate.criteria)
+  const fresh = new Set(targets.filter(candidate => !before.has(targetKey(candidate, true))).map(candidate => candidate.id))
+  if (fresh.size === 0 || fresh.size > MAX_NEW_MARKERS || fresh.size > targets.length * 0.6) return observation
+  return {
+    ...observation,
+    candidates: observation.candidates.map(candidate => fresh.has(candidate.id)
+      ? { ...candidate, criteria: { ...candidate.criteria, new: "appeared after the last action" } }
+      : candidate),
+  }
 }
 
 function safeError(error: unknown): string {

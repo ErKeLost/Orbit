@@ -3,6 +3,7 @@ import { createXa11yClient } from "./xa11y-client.ts"
 import type { AgentDesktopClient } from "./agent-desktop-client.ts"
 import type { GuiTaskEvent, GuiTaskInput, GuiTaskResult } from "./gui-task-contract.ts"
 import { runGuiTaskEngine } from "./gui-task-engine.ts"
+import { createFileMemory, memoryEnabled } from "./affordance-memory.ts"
 
 const taskSchema = {
   type: "object",
@@ -61,6 +62,8 @@ export function registerGuiTask(pi: ExtensionAPI): void {
           client,
           signal,
           emit: event => publishProgress(onUpdate, event),
+          // Local learned trajectories (no slot values); ORBIT_CU_MEMORY=0 disables.
+          ...(memoryEnabled() ? { memory: createFileMemory() } : {}),
           // Irreversible steps (send, delete, purchase) pause for an in-app
           // user confirmation and then continue in the same run. Without an
           // interactive client the engine stops with needs_review instead.
@@ -79,7 +82,7 @@ export function registerGuiTask(pi: ExtensionAPI): void {
           actions: 0,
           decisions: 0,
           evidence: "",
-          metrics: { elapsedMs: 0, launchMs: 0, observationMs: 0, decisionMs: 0, actionMs: 0, inputTokens: 0, outputTokens: 0 },
+          metrics: { elapsedMs: 0, launchMs: 0, observationMs: 0, decisionMs: 0, actionMs: 0, inputTokens: 0, outputTokens: 0, jevCalls: 0, replayedSteps: 0, lookaheadSteps: 0, settleMs: 0, settleEvents: 0 },
           trace: [{ step: 0, stateId: "unobserved", note: message }],
         }
         return { content: [{ type: "text", text: status === "aborted" ? "[aborted]" : `[error] ${message}` }], details: result }
@@ -116,7 +119,7 @@ function operationLabel(value: unknown): string {
 export function formatResult(input: GuiTaskInput, result: GuiTaskResult): string {
   const last = [...result.trace].reverse().find(entry => entry.operation)
   const reason = [...result.trace].reverse().find(entry => entry.note)?.note
-  const timing = `elapsed=${result.metrics.elapsedMs}ms launch=${Math.round(result.metrics.launchMs)}ms observation=${Math.round(result.metrics.observationMs)}ms decision=${Math.round(result.metrics.decisionMs)}ms action=${Math.round(result.metrics.actionMs)}ms`
+  const timing = `elapsed=${result.metrics.elapsedMs}ms launch=${Math.round(result.metrics.launchMs)}ms observation=${Math.round(result.metrics.observationMs)}ms decision=${Math.round(result.metrics.decisionMs)}ms action=${Math.round(result.metrics.actionMs)}ms settle=${Math.round(result.metrics.settleMs ?? 0)}ms jev_calls=${result.metrics.jevCalls ?? 0} replayed=${result.metrics.replayedSteps ?? 0}`
   const launch = result.appLaunched ? "已打开并读取应用界面" : "未确认应用已打开"
   const action = result.lastAction ? `最近动作=${result.lastAction.operation} 交付=${result.lastAction.delivery ?? "未知"}` : "尚无桌面动作"
   const goal = result.goalVerified ? "Jev 根据当前界面判断目标已完成" : "目标未获 Jev 验证"

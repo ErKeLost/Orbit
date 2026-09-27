@@ -8,7 +8,7 @@ import type { DesktopCandidate, DesktopObservation, TextSlot } from "./gui-task-
 // front before this cap is applied.
 const MAX_OBSERVED_ELEMENTS = 64
 const MAX_CONTEXT_CANDIDATES = 48
-const OVERLAY_ROLES = new Set(["sheet", "alert", "menu", "popover"])
+const OVERLAY_ROLES = new Set(["sheet", "alert", "dialog", "menu", "popover"])
 
 type FlatNode = DesktopNode & {
   path: string[]
@@ -22,6 +22,9 @@ type FlatNode = DesktopNode & {
   listRow?: { ordinal: number; count: number; inListContainer: boolean }
   /** Geometric facts for anonymous controls laid out in a horizontal cluster. */
   cluster?: { ordinal: number; count: number; sizeRank: number; centered: boolean }
+  /** Text summaries of the nearest ancestors (nearest first). Used to tell
+   * apart controls that share a label, such as one "Play" button per row. */
+  ancestorText?: string[]
 }
 
 const LIST_CONTAINER_ROLES = new Set(["list", "table", "outline", "grid", "collection", "list_box", "listbox", "tree", "browser"])
@@ -29,7 +32,7 @@ const SCROLL_ACTIONS = ["Scroll", "ScrollDownByPage", "ScrollUpByPage", "scroll_
 
 export async function observeDesktop(
   client: AgentDesktopClient,
-  input: { app: string; windowId?: string; root?: string; goal?: string; textSlots: TextSlot[]; usedSlotIds: ReadonlySet<string>; allowPressEnter: boolean },
+  input: { app: string; windowId?: string; root?: string; goal?: string; textSlots: TextSlot[]; usedSlotIds: ReadonlySet<string>; allowPressEnter: boolean; skipMedia?: boolean },
   options: { timeoutMs: number; signal?: AbortSignal },
 ): Promise<DesktopObservation> {
   const base = ["snapshot", "--app", input.app, "--compact", "--include-bounds"]
@@ -41,8 +44,13 @@ export async function observeDesktop(
 
   if (!input.root) {
     const surface = findOverlay(snapshot.tree)
-    if (surface) {
+    if (surface && client.backend !== "xa11y") {
       snapshot = (await client.run<SnapshotData>([...base, "--surface", surface, "--skeleton"], options)).data!
+    } else if (surface && isModalOverlay(surface)) {
+      // A modal sheet/alert blocks the window behind it: offering controls
+      // under it invites clicks that silently do nothing. Scope candidates to
+      // the overlay subtree (the xa11y worker has no --surface mode).
+      snapshot = scopeToOverlay(snapshot)
     }
   }
 
@@ -59,13 +67,20 @@ export async function observeDesktop(
     .slice(0, MAX_OBSERVED_ELEMENTS)
     .map(item => item.node)
   const windowBounds = snapshot.tree.children?.find(node => node.role === "window")?.bounds
-  let candidates = buildCandidates(offeredNodes, input.textSlots, input.usedSlotIds, Boolean(input.root), input.allowPressEnter, !snapshot.complete, windowBounds, findOverlay(snapshot.tree), client.backend)
+  const menu = client.backend === "xa11y" && !input.root && findOverlay(snapshot.tree) === undefined
+    ? await readMenuBar(client, snapshot.window.title, options)
+    : []
+  let candidates = buildCandidates(offeredNodes, input.textSlots, input.usedSlotIds, Boolean(input.root), input.allowPressEnter, !snapshot.complete, windowBounds, findOverlay(snapshot.tree), client.backend, input.goal ?? "")
+  candidates = addMenuCandidates(candidates, menu, input.goal ?? "")
   // Text slots add mutation candidates; they must never hide navigation or
   // activation candidates. The semantic layer decides whether a field is the
   // intended target after the user has identified the right surface.
-  const media = client.backend === "xa11y" ? await readNowPlaying(client, options) : undefined
+  // The OS media fact is read once per real observation, never inside the
+  // post-action settle polls (skipMedia); attachMedia completes those later.
+  const mediaSkipped = client.backend === "xa11y" && Boolean(input.skipMedia)
+  const media = client.backend === "xa11y" && !input.skipMedia ? await readNowPlaying(client, options) : undefined
   const context = buildContext(snapshot, candidates, input.root, actionableNodes.length > offeredNodes.length, media, nodes, anchorValues)
-  const fingerprint = createHash("sha256").update(JSON.stringify([nodes.map(node => ({
+  const treeFingerprint = createHash("sha256").update(JSON.stringify(nodes.map(node => ({
     role: node.role,
     name: node.name,
     description: node.description,
@@ -73,7 +88,8 @@ export async function observeDesktop(
     states: node.states,
     actions: node.available_actions,
     childrenCount: node.children_count,
-  })), media ?? null])).digest("hex")
+  })))).digest("hex")
+  const fingerprint = combineFingerprint(treeFingerprint, media)
   return {
     app: snapshot.app,
     windowId: snapshot.window.id,
@@ -86,13 +102,83 @@ export async function observeDesktop(
     candidates,
     context,
     fingerprint,
+    treeFingerprint,
+    ...(media ? { media } : {}),
+    ...(mediaSkipped ? { mediaSkipped } : {}),
     tree: snapshot.tree,
   }
 }
 
+type MenuItem = { path: string[]; enabled: boolean; shortcut?: string | null; checked?: boolean }
+const MENU_TTL_MS = 5_000
+const MAX_MENU_CANDIDATES = 120
+const menuCache = new WeakMap<AgentDesktopClient, { title: string; at: number; items: MenuItem[] }>()
+
+/** The application menu bar, cached per client for a few seconds and per
+ * window title (enabled states follow the focused window's context). */
+async function readMenuBar(client: AgentDesktopClient, title: string, options: { timeoutMs: number; signal?: AbortSignal }): Promise<MenuItem[]> {
+  const cached = menuCache.get(client)
+  if (cached && cached.title === title && Date.now() - cached.at < MENU_TTL_MS) return cached.items
+  try {
+    const data = (await client.run<{ items?: MenuItem[] }>(["menubar"], { timeoutMs: Math.min(options.timeoutMs, 3_000), signal: options.signal })).data
+    const items = Array.isArray(data?.items) ? data!.items.filter(item => Array.isArray(item.path) && item.path.length >= 2) : []
+    menuCache.set(client, { title, at: Date.now(), items })
+    return items
+  } catch {
+    menuCache.set(client, { title, at: Date.now(), items: [] })
+    return []
+  }
+}
+
+/** Invalidate the cached menu bar (after any command that may change it). */
+export function invalidateMenuCache(client: AgentDesktopClient): void {
+  menuCache.delete(client)
+}
+
+/** Enabled menu commands become declared, labeled MENU_ITEM candidates.
+ * Skipped: commands whose label a window control already offers (no
+ * duplicate route), and quitting the target application. */
+function addMenuCandidates(candidates: DesktopCandidate[], menu: MenuItem[], goal: string): DesktopCandidate[] {
+  if (menu.length === 0) return candidates
+  const windowLabels = new Set(candidates.filter(candidate => candidate.operation === "CLICK").map(candidate => /"([^"]+)"/.exec(candidate.criteria?.what ?? "")?.[1]).filter(Boolean) as string[])
+  const tail = candidates.filter(candidate => ["WAIT", "DONE", "BLOCKED"].includes(candidate.operation))
+  const head = candidates.filter(candidate => !tail.includes(candidate))
+  const added: DesktopCandidate[] = []
+  for (const item of menu) {
+    if (added.length >= MAX_MENU_CANDIDATES) break
+    const label = item.path.at(-1)!.replace(/[….]+$/, "").trim()
+    if (!item.enabled || item.shortcut === "⌘Q" || windowLabels.has(label)) continue
+    const path = item.path.join(" > ")
+    const criteria: Record<string, string> = { what: `menu_item "${sanitize(item.path.at(-1)!, 80)}"`, where: `menu bar > ${sanitize(item.path.slice(0, -1).join(" > "), 120)}`, supports: "Press" }
+    if (item.shortcut) criteria.shortcut = item.shortcut
+    if (item.checked) criteria.state = "checked"
+    if (item.path.some(segment => segment.replace(/[….]+$/, "").trim().length >= 2 && goal.includes(segment.replace(/[….]+$/, "").trim()))) criteria.goal_match = "menu path text appears in the goal"
+    added.push({ id: "", operation: "MENU_ITEM", ref: `menu:${JSON.stringify(item.path)}`, menuPath: item.path, criteria, description: `menu command ${sanitize(path, 160)}${item.shortcut ? ` (${item.shortcut})` : ""}${item.checked ? "; checked" : ""}` })
+  }
+  return [...head, ...added, ...tail].map((candidate, index) => ({ ...candidate, id: `candidate-${index + 1}` }))
+}
+
+function combineFingerprint(tree: string, media: string | undefined): string {
+  return createHash("sha256").update(JSON.stringify([tree, media ?? null])).digest("hex")
+}
+
+/** Complete an observation taken with skipMedia: insert the OS media fact
+ * into its context header and recompute the combined fingerprint, so it is
+ * indistinguishable from a regular observation. */
+export function attachMedia(observation: DesktopObservation, media: string | undefined): DesktopObservation {
+  if (!observation.mediaSkipped || !observation.treeFingerprint) return observation
+  const { mediaSkipped: _skipped, ...rest } = observation
+  const context = media ? observation.context.replace(/(candidate_context_count=\d+)/, `$1\n${media}`) : observation.context
+  return { ...rest, context, ...(media ? { media } : {}), fingerprint: combineFingerprint(observation.treeFingerprint, media) }
+}
+
+export async function readMediaFact(client: AgentDesktopClient, options: { timeoutMs: number; signal?: AbortSignal }): Promise<string | undefined> {
+  return client.backend === "xa11y" ? readNowPlaying(client, options) : undefined
+}
+
 function flatten(root: DesktopNode): FlatNode[] {
   const result: FlatNode[] = []
-  const visit = (node: DesktopNode, path: string[], siblingOrdinal?: number, siblingCount?: number, actionableAncestor?: FlatNode["actionableAncestor"], viewport?: DesktopBounds, structure: Pick<FlatNode, "listRow" | "cluster"> = {}) => {
+  const visit = (node: DesktopNode, path: string[], siblingOrdinal?: number, siblingCount?: number, actionableAncestor?: FlatNode["actionableAncestor"], viewport?: DesktopBounds, structure: Pick<FlatNode, "listRow" | "cluster"> = {}, ancestorText: string[] = []) => {
     // AX keeps list rows below the fold "visible"; compare against the nearest
     // scroll container so pointer targets outside its viewport are scrolled
     // into view first instead of being clicked blindly.
@@ -109,7 +195,9 @@ function flatten(root: DesktopNode): FlatNode[] {
       : descendantSummary && hasPrimaryCapability(node)
         ? `${node.role} containing "${sanitize(descendantSummary, 100)}"`
         : node.role
-    if (node.ref_id) result.push({ ...node, path, descendantSummary, siblingOrdinal, siblingCount, actionableAncestor, ...structure })
+    if (node.ref_id) result.push({ ...node, path, descendantSummary, siblingOrdinal, siblingCount, actionableAncestor, ...structure, ancestorText })
+    const ownText = label ?? descendantSummary
+    const nextAncestorText = ownText && node.role !== "window" && node.role !== "application" ? [ownText, ...ancestorText].slice(0, 3) : ancestorText
     const next = node.children?.length && path.at(-1) !== self ? [...path, self] : path
     const nextActionableAncestor = hasPrimaryCapability(node) && descendantSummary
       ? { description: self, bounds: node.bounds }
@@ -121,7 +209,7 @@ function flatten(root: DesktopNode): FlatNode[] {
     const clusters = detectClusters(children)
     for (const [index, child] of children.entries()) {
       const siblings = groups.get(siblingIdentity(child))!
-      visit(child, next, siblings.indexOf(index) + 1, siblings.length, nextActionableAncestor, nextViewport, { listRow: rows.get(index), cluster: clusters.get(index) })
+      visit(child, next, siblings.indexOf(index) + 1, siblings.length, nextActionableAncestor, nextViewport, { listRow: rows.get(index), cluster: clusters.get(index) }, nextAncestorText)
     }
   }
   visit(root, [])
@@ -222,7 +310,7 @@ function siblingIdentity(node: DesktopNode): string {
   return `${node.role}:${capabilities.join(",")}`
 }
 
-function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet<string>, insideRoot: boolean, allowPressEnter: boolean, allowDrill: boolean, windowBounds?: DesktopBounds, overlay?: string, backend?: string): DesktopCandidate[] {
+function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet<string>, insideRoot: boolean, allowPressEnter: boolean, allowDrill: boolean, windowBounds?: DesktopBounds, overlay?: string, backend?: string, goal = ""): DesktopCandidate[] {
   const candidates: DesktopCandidate[] = []
   const nextSlot = nextTextSlot(nodes, slots, used)
   let identity: Record<string, string> | undefined
@@ -246,6 +334,20 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
     const parts = (node.descendantSummary ?? "").split(" · ").map(part => part.trim())
     return parts.some(part => part && specificLabels.has(part))
   }
+  // Controls sharing one label (a "Play" button in every row) are only
+  // distinguishable by the item that contains them. Attach the nearest
+  // ancestor text that differs between them.
+  const labelCounts = new Map<string, number>()
+  for (const node of nodes) {
+    const label = (node.name ?? node.description ?? "").trim()
+    if (label) labelCounts.set(`${node.role}:${label}`, (labelCounts.get(`${node.role}:${label}`) ?? 0) + 1)
+  }
+  const itemContext = (node: FlatNode): string | undefined => {
+    const label = (node.name ?? node.description ?? "").trim()
+    if (!label || (labelCounts.get(`${node.role}:${label}`) ?? 0) < 2) return undefined
+    const context = node.ancestorText?.find(text => text.trim() && text.trim() !== label)
+    return context ? sanitize(context.split(" · ").filter(part => part.trim() !== label).join(" · "), 140) : undefined
+  }
   for (const node of nodes) {
     // A top-level window is not a content target, but activating it is a real
     // prerequisite when the agent process itself owns the foreground. Keep a
@@ -264,8 +366,14 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
     const ref = node.ref_id!
     const actions = new Set(node.available_actions ?? [])
     const wrapperOfSpecific = isWrapperOfSpecific(node)
-    const descriptor = describeNode(node)
+    const inItem = itemContext(node)
+    const descriptor = inItem ? `${describeNode(node)}; inside item "${inItem}"` : describeNode(node)
     identity = candidateCriteria(node, slots)
+    if (inItem) identity.in_item = inItem
+    // Local fact: the element's own label occurs verbatim in the goal. It
+    // orders truncated target lists; choosing stays with Jev.
+    const ownLabel = (node.name ?? node.description ?? "").trim()
+    if (ownLabel.length >= 2 && goal.includes(ownLabel)) identity.goal_match = "label appears in the goal"
     const webContent = node.path.some(part => /^web_?area\b/.test(part))
     const offscreen = (node.states ?? []).includes("offscreen")
     if (offscreen && (hasClickAction(actions) || actions.has("SetValue") || actions.has("TypeText") || (actions.has("SetFocus") && node.children_count))) {
@@ -273,7 +381,7 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
       continue
     }
     const passiveText = ["static_text", "label", "text"].includes(node.role.toLowerCase())
-    if (actions.has("SetFocus") && !hasClickAction(actions) && !passiveText && !isEditableTextRole(node.role) && node.bounds && node.bounds.width > 0 && node.bounds.height > 0 && node.role !== "button" && node.role !== "link") {
+    if (actions.has("SetFocus") && !hasClickAction(actions) && !passiveText && !isEditableTextRole(node.role, node) && node.bounds && node.bounds.width > 0 && node.bounds.height > 0 && node.role !== "button" && node.role !== "link") {
       const semanticItem = ["table_cell", "list_item", "row", "group"].includes(node.role.toLowerCase()) && Boolean(node.children_count)
       if (semanticItem && actions.has("Activate")) {
         add({ operation: "ACTIVATE", ref, headed: false, description: `${descriptor}; activate this observed list item through its AX semantic action` })
@@ -299,10 +407,10 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
         }
       }
     }
-    if (actions.has("SetFocus") && !hasClickAction(actions) && !passiveText && !node.children_count && !isEditableTextRole(node.role)) {
+    if (actions.has("SetFocus") && !hasClickAction(actions) && !passiveText && !node.children_count && !isEditableTextRole(node.role, node)) {
       add({ operation: "FOCUS", ref, headed: false, description: `${descriptor}; focus the observed accessibility element without activating it` })
     }
-    if (hasClickAction(actions) && !isEditableTextRole(node.role) && !wrapperOfSpecific) {
+    if (hasClickAction(actions) && !isEditableTextRole(node.role, node) && !wrapperOfSpecific) {
       if (webContent) {
         // Web content exposes a semantic press that often works (and never
         // misses the window), so offer it first; the physical pointer stays
@@ -339,13 +447,13 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
     }
     // Clearing a non-empty field is a standalone generic goal ("empty the
     // search box") and needs no caller-prepared text.
-    if (backend === "agent-desktop" && isEditableTextRole(node.role) && actions.has("SetValue") && !(node.states ?? []).includes("secure") && typeof node.value === "string" && node.value.length > 0) {
+    if (backend === "agent-desktop" && isEditableTextRole(node.role, node) && actions.has("SetValue") && !(node.states ?? []).includes("secure") && typeof node.value === "string" && node.value.length > 0) {
       add({ operation: "CLEAR", ref, description: `${descriptor}; empty this field` })
     }
     // Keep every eligible editable field as a candidate. Field-purpose
     // disambiguation belongs to the semantic decision layer, not this
     // application-agnostic AX normalization layer.
-    if (nextSlot && isEditableTextRole(node.role) && !(node.states ?? []).includes("secure")) {
+    if (nextSlot && isEditableTextRole(node.role, node) && !(node.states ?? []).includes("secure")) {
       const purpose = sanitize(nextSlot.description, 180)
       const hasCurrentValue = typeof node.value === "string" && node.value.length > 0
       // Multi-line caller text must never go through physical typing: the
@@ -382,7 +490,7 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
   // Return submits whatever the focused field holds. It is a real option
   // both right after this task typed text and whenever the focused editable
   // field already contains text (e.g. a draft left in a chat composer).
-  const focusedDraft = nodes.find(node => isEditableTextRole(node.role) && (node.states ?? []).includes("focused") && typeof node.value === "string" && node.value.trim().length > 0)
+  const focusedDraft = nodes.find(node => isEditableTextRole(node.role, node) && (node.states ?? []).includes("focused") && typeof node.value === "string" && node.value.trim().length > 0)
   if (allowPressEnter || focusedDraft) {
     const where = focusedDraft ? ` in ${describeNode(focusedDraft).split(";")[0]} which currently holds text` : ""
     add({ operation: "PRESS_ENTER", description: `Press Return to submit the text in the focused field${where}.` })
@@ -412,7 +520,7 @@ function candidateCriteria(node: FlatNode, slots: TextSlot[] = []): Record<strin
   if (value) criteria.holds = sanitize(value, 120)
   if (node.states?.length) criteria.state = node.states.join(", ")
   if ((node.siblingCount ?? 0) > 1) criteria.sibling = `item ${node.siblingOrdinal} of ${node.siblingCount} among sibling ${node.role} elements with the same capabilities`
-  if (node.children_count) criteria.contains = `${node.children_count} items not shown`
+  if (node.children_count) criteria.contains = childrenFact(node)
   const structure = structuralFacts(node)
   if (structure) criteria.structure = structure
   criteria.supports = node.available_actions?.length ? node.available_actions.join(", ") : "no declared action"
@@ -466,7 +574,7 @@ function describeNode(node: FlatNode): string {
   const path = node.path.slice(-5).join(" > ")
   if (path && !label && !derived) parts.push(`inside ${sanitize(path, 120)}`)
   if ((node.siblingCount ?? 0) > 1) parts.push(`item ${node.siblingOrdinal} of ${node.siblingCount} among sibling ${node.role} elements with the same capabilities`)
-  if (node.children_count) parts.push(`contains ${node.children_count} items not shown`)
+  if (node.children_count) parts.push(`contains ${childrenFact(node)}`)
   const structure = structuralFacts(node)
   if (structure) parts.push(structure)
   if (embedded && node.bounds && node.actionableAncestor?.bounds?.width) {
@@ -476,6 +584,17 @@ function describeNode(node: FlatNode): string {
   }
   if (!label && !derived && !value && node.bounds) parts.push(`at ${Math.round(node.bounds.x)},${Math.round(node.bounds.y)}`)
   return parts.join("; ").slice(0, 360)
+}
+
+/** "N items not shown" is only true when the observation truncated the
+ * children. When they were observed (and listed as their own candidates),
+ * saying so stops Jev from scrolling a fully visible list to "reveal" them. */
+function childrenFact(node: DesktopNode): string {
+  const observed = node.children?.length ?? 0
+  const total = node.children_count ?? 0
+  if (observed >= total && total > 0) return `${total} items, all observed`
+  if (observed > 0) return `${total} items (${observed} observed, ${total - observed} not shown)`
+  return `${total} items not shown`
 }
 
 function summarizeDescendants(node: DesktopNode): string | undefined {
@@ -498,8 +617,11 @@ function visibleValue(node: DesktopNode): string | undefined {
   return node.value
 }
 
-function isEditableTextRole(role: string): boolean {
-  return ["textfield", "textarea", "searchfield", "textbox", "editabletext"].includes(role.toLowerCase().replace(/[\s_-]/g, ""))
+function isEditableTextRole(role: string, node?: DesktopNode): boolean {
+  const normalized = role.toLowerCase().replace(/[\s_-]/g, "")
+  if (["textfield", "textarea", "searchfield", "textbox", "editabletext"].includes(normalized)) return true
+  // An editable combo box (autocomplete input) accepts text like a field.
+  return normalized === "combobox" && Boolean(node && (node.states ?? []).includes("editable") && (node.available_actions ?? []).includes("SetValue"))
 }
 
 /** OS media-session fact (title/artist/playing). App-agnostic, read-only, and
@@ -571,7 +693,7 @@ function nodePriority(node: FlatNode, anchors: string[]): number {
   // Editable fields are the only nodes that can consume the next local text
   // slot. Keep them ahead of repeated chat rows and other anchor matches so a
   // dense conversation cannot evict the composer from the bounded surface.
-  const editable = isEditableTextRole(node.role) && (node.states ?? []).includes("editable")
+  const editable = isEditableTextRole(node.role, node) && (node.states ?? []).includes("editable")
   // Skeleton observations represent dense panes as anonymous structural
   // containers. Preserve large regions so a later DRILL can expose controls
   // that are intentionally absent from the shallow tree.
@@ -583,6 +705,37 @@ function nodePriority(node: FlatNode, anchors: string[]): number {
   const labeled = Boolean(node.name || node.description || visibleValue(node))
   const wrapper = node.role === "group" && Boolean(node.children_count)
   return (editable ? -250 : 0) + (scrollable ? -210 : 0) + (structural ? -180 : 0) + (anchorMatch ? -100 : 0) + (offscreen ? 30 : 0) + (labeled ? 0 : 10) + (wrapper ? 5 : 0)
+}
+
+const MODAL_OVERLAY_ROLES = new Set(["sheet", "alert", "dialog"])
+function isModalOverlay(role: string): boolean {
+  return MODAL_OVERLAY_ROLES.has(role)
+}
+
+/** Keep the window node (for activation) but only the modal overlay beneath
+ * it, so every offered control is actually reachable. */
+function scopeToOverlay(snapshot: SnapshotData): SnapshotData {
+  const path: DesktopNode[] = []
+  const find = (node: DesktopNode): DesktopNode | undefined => {
+    if (isModalOverlay(node.role)) return node
+    for (const child of node.children ?? []) {
+      path.push(node)
+      const found = find(child)
+      if (found) return found
+      path.pop()
+    }
+    return undefined
+  }
+  const overlay = find(snapshot.tree)
+  if (!overlay) return snapshot
+  const rebuild = (index: number): DesktopNode => {
+    if (index >= path.length) return overlay
+    const node = path[index]
+    // children_count stays the real count, so the window still reports that
+    // it holds more than the overlay.
+    return { ...node, children: [rebuild(index + 1)] }
+  }
+  return { ...snapshot, tree: rebuild(0) }
 }
 
 function findOverlay(root: DesktopNode): string | undefined {

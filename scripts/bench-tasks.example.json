@@ -1,0 +1,6 @@
+[
+  { "name": "calendar-open", "goal": "打开日历并显示今天", "target": { "app": "日历" } },
+  { "name": "calculator-add", "goal": "在计算器中计算 12+30，结果显示 42", "target": { "app": "Calculator" } },
+  { "name": "textedit-type", "goal": "在 TextEdit 新文档中写入准备好的文字", "target": { "app": "TextEdit" }, "textSlots": [{ "id": "body", "value": "orbit benchmark", "description": "document text" }] },
+  { "name": "settings-readonly", "goal": "查看系统设置中当前的外观模式", "target": { "app": "System Settings" }, "readOnly": true }
+]

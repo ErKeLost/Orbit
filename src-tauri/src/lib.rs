@@ -7,6 +7,8 @@ pub mod ax;
 pub mod now_playing;
 #[cfg(target_os = "macos")]
 pub mod fast_ax;
+#[cfg(target_os = "macos")]
+pub mod ax_settle;
 mod bridge;
 mod mobile_update;
 mod remote;

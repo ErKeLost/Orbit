@@ -22,8 +22,16 @@ fn snapshot_with_renderer_activation(app: &str) -> Result<serde_json::Value, Str
     if snapshot["tree"]["window_count"].as_u64() == Some(0) {
         if let Some(pid) = app_lib::fast_ax::find_pid(app) {
             if app_lib::fast_ax::activate_renderer_accessibility(pid) {
-                std::thread::sleep(std::time::Duration::from_millis(2_200));
-                snapshot = app_lib::ax::observe(app, 2000)?;
+                // Poll through Chromium's activation debounce instead of a
+                // fixed sleep: continue as soon as a window is observable.
+                let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2_600);
+                while std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                    snapshot = app_lib::ax::observe(app, 2000)?;
+                    if snapshot["tree"]["window_count"].as_u64() != Some(0) {
+                        break;
+                    }
+                }
             }
         }
     }
@@ -55,6 +63,10 @@ fn main() {
             let data = match command {
                 "activate-app" => app_lib::ax::activate_application(app)?,
                 "now-playing" => app_lib::now_playing::now_playing(),
+                "menubar" => {
+                    let pid = app_lib::fast_ax::find_pid(app).ok_or("target application has no observable AX window")?;
+                    app_lib::fast_ax::read_menu_bar(pid)?
+                }
                 "snapshot" => {
                     ledger.clear();
                     let snapshot = snapshot_with_renderer_activation(app)?;
@@ -139,11 +151,26 @@ fn main() {
                     let value = request["value"].as_str();
                     let headed = request["headed"].as_bool().unwrap_or(false);
                     let pid = ledger.process_id().ok_or("no active process identity")?;
+                    // Arm the AX observer before dispatch so no notification
+                    // posted by the action itself can be missed.
+                    let settle_options = app_lib::ax_settle::SettleOptions::from_request(&request["settle"]);
+                    let armed = settle_options.and_then(|_| app_lib::ax_settle::Armed::arm(pid as i32));
                     let focused_key = match request["ref"].as_str() {
                         Some(key @ ("return" | "escape")) if operation == "press" => Some(key),
                         _ => None,
                     };
-                    let data = if let Some(key) = focused_key {
+                    let menu_path: Option<Vec<String>> = if operation == "menu-press" {
+                        Some(request["path"].as_array().ok_or("missing menu path")?.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+                    } else {
+                        None
+                    };
+                    let data = if let Some(path) = menu_path {
+                        // Menu items live outside the window snapshot; the
+                        // observation is still consumed so no stale ref can
+                        // act after the menu command changed the app.
+                        ledger.consume_focused(app, pid, "press").map_err(str::to_owned)?;
+                        app_lib::fast_ax::press_menu_path(pid as i32, &path)?
+                    } else if let Some(key) = focused_key {
                         ledger
                             .consume_focused(app, pid, operation)
                             .map_err(str::to_owned)?;
@@ -170,7 +197,12 @@ fn main() {
                     } else {
                         "delivered_unverified"
                     };
-                    serde_json::json!({"disposition":{"delivery":delivery,"retry":"never"},"post_state":data})
+                    let settle = match (armed, settle_options) {
+                        (Some(armed), Some(options)) => armed.wait(options),
+                        (None, Some(_)) => serde_json::json!({ "supported": false, "changed": false, "events": 0, "ms": 0 }),
+                        _ => serde_json::Value::Null,
+                    };
+                    serde_json::json!({"disposition":{"delivery":delivery,"retry":"never"},"post_state":data,"settle":settle})
                 }
                 _ => return Err(format!("unsupported command: {command}")),
             };

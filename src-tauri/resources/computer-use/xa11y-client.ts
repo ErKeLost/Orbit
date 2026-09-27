@@ -53,23 +53,36 @@ export async function createXa11yClient(signal?: AbortSignal): Promise<AgentDesk
       const id = nextId++
       const payload: Record<string, unknown> = {
         id,
-        command: ["launch", "snapshot", "activate-app", "now-playing"].includes(command) ? command : "action",
+        command: ["launch", "snapshot", "activate-app", "now-playing", "menubar"].includes(command) ? command : "action",
         app,
       }
-      if (!["launch", "snapshot", "activate-app", "now-playing"].includes(command)) {
+      if (!["launch", "snapshot", "activate-app", "now-playing", "menubar"].includes(command)) {
         payload.operation = command === "scroll"
           ? valueAfter(args, "--direction") === "up" ? "scroll-up" : "scroll-down"
           : command
         payload.ref = args[commandOffset + 1] ?? ""
+        if (command === "menu-press") {
+          payload.path = JSON.parse(args[commandOffset + 1] ?? "[]")
+          payload.ref = ""
+        }
         if (["set-value", "type"].includes(command)) payload.value = args[commandOffset + 2]
         if (headed) payload.headed = true
+        // Event-driven settle: the worker arms an AXObserver before dispatch
+        // and returns once the app has posted notifications and gone quiet.
+        const settleTimeout = Number(valueAfter(args, "--settle-timeout-ms"))
+        if (Number.isFinite(settleTimeout) && settleTimeout > 0) payload.settle = { timeoutMs: Math.round(settleTimeout), quietMs: 90, maxAfterFirstMs: 700 }
       }
       const response = await new Promise<DesktopEnvelope>((resolvePromise, reject) => {
-        pending.set(id, { resolve: resolvePromise, reject })
-        worker.stdin.write(`${JSON.stringify(payload)}\n`, error => { if (error) { pending.delete(id); reject(error) } })
-        if (options.timeoutMs) setTimeout(() => {
-          if (pending.delete(id)) reject(new Error(`xa11y request timed out after ${options.timeoutMs}ms`))
-        }, options.timeoutMs).unref()
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const settle = <A extends unknown[]>(fn: (...args: A) => void) => (...args: A) => { if (timer) clearTimeout(timer); fn(...args) }
+        pending.set(id, { resolve: settle(resolvePromise), reject: settle(reject) })
+        worker.stdin.write(`${JSON.stringify(payload)}\n`, error => { if (error && pending.delete(id)) { if (timer) clearTimeout(timer); reject(error) } })
+        if (options.timeoutMs) {
+          timer = setTimeout(() => {
+            if (pending.delete(id)) reject(new Error(`xa11y request timed out after ${options.timeoutMs}ms`))
+          }, options.timeoutMs)
+          timer.unref?.()
+        }
       })
       if (!response.ok) throw new AgentDesktopCommandError(command ?? "xa11y", response.error ?? { code: "AX_ERROR", message: "xa11y request failed" })
       if (command === "snapshot") {
