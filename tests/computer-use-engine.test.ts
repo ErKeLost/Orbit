@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { AgentDesktopClient, DesktopEnvelope } from "../src-tauri/resources/computer-use/agent-desktop-client"
+import type { DesktopDriver, DesktopEnvelope } from "../src-tauri/resources/computer-use/desktop-driver"
 import { createFileMemory, createInMemoryMemory, matchStep, memoryIdentity, memoryKey } from "../src-tauri/resources/computer-use/affordance-memory"
 import { attachMedia } from "../src-tauri/resources/computer-use/desktop-observation"
 import { runGuiTaskEngine } from "../src-tauri/resources/computer-use/gui-task-engine"
@@ -27,8 +27,8 @@ const choice = (operation: DesktopDecision["operation"], candidateId: string, ex
 
 const resolveApp = async () => ({ displayName: "Music", bundleId: "test.music", path: "/Applications/Music.app", launchId: "test.music" })
 
-function client(handler: (args: string[]) => DesktopEnvelope | Promise<DesktopEnvelope>, backend?: "xa11y" | "agent-desktop"): AgentDesktopClient {
-  return { ...(backend ? { backend } : {}), run: async <T>(args: string[]) => await handler(args) as DesktopEnvelope<T>, dispose: async () => undefined }
+function client(handler: (args: string[]) => DesktopEnvelope | Promise<DesktopEnvelope>, _legacyBackend?: string): DesktopDriver {
+  return { run: async <T>(args: string[]) => await handler(args) as DesktopEnvelope<T>, dispose: async () => undefined }
 }
 
 const ok = (command: string, data: Record<string, unknown> = {}): DesktopEnvelope => ({ version: "1", ok: true, command, data: { app: "Music", pid: 1, ...data } })
@@ -173,7 +173,7 @@ describe("affordance memory", () => {
   test("learns a done trajectory and replays it with a single Jev DONE check", async () => {
     const memory = createInMemoryMemory()
     const s = scenario()
-    const wrap = (c: AgentDesktopClient): AgentDesktopClient => ({ ...c, run: async <T>(args: string[]) => { const r = await c.run<T>(args); if (args[0] !== "launch") s.advance(); return r } })
+    const wrap = (c: DesktopDriver): DesktopDriver => ({ ...c, run: async <T>(args: string[]) => { const r = await c.run<T>(args); if (args[0] !== "launch") s.advance(); return r } })
     let jev = 0
     const decide = async (_g: string, candidates: DesktopCandidate[]) => {
       jev++
@@ -341,26 +341,6 @@ describe("V4 decision shortcuts", () => {
       decide: async () => { jev2++; return jev2 === 1 ? choice("CLICK", "play", { risk: 0.1, completesGoal: 0.95 }) : choice("DONE", "done") },
     })
     expect(second.trace.some(t => t.outcome?.includes("goal_verified_by_prediction"))).toBe(false)
-  })
-
-  test("guarded lookahead runs a predicted click without a request and stops on a repeat", async () => {
-    let step = 0
-    const c = client(args => { if (args[0] !== "launch") step++; return args[0] === "launch" ? ok("launch") : ok(args[0], { disposition: { delivery: "delivered_unverified", retry: "never" } }) })
-    const key = (n: string): DesktopCandidate => ({ id: n, operation: "CLICK", ref: `@s:${n}`, description: n, criteria: { what: `button "${n}"` } })
-    let jev = 0
-    const result = await runGuiTaskEngine({
-      input: { ...task({ textSlots: [] }), lookahead: 2 }, client: c, resolveApp,
-      observe: async () => obs(`s${step}`, [key("1"), key("2"), key("3"), done], { tree: { role: "window", children: [{ role: "static_text", name: String(step) }] } }),
-      decide: async () => {
-        jev++
-        return jev === 1
-          ? choice("CLICK", "1", { risk: 0.1, risks: { "1": 0.1, "2": 0.1, "3": 0.1 }, lookahead: [{ candidateId: "2", confidence: 0.95 }, { candidateId: "2", confidence: 0.95 }] })
-          : choice("DONE", "done")
-      },
-    })
-    expect(result.status).toBe("done")
-    expect(result.metrics.lookaheadSteps).toBe(1)
-    expect(result.trace.some(t => t.note?.includes("lookahead stopped: it repeats"))).toBe(true)
   })
 
   test("menu bar commands are offered as MENU_ITEM and pressed by exact path", async () => {

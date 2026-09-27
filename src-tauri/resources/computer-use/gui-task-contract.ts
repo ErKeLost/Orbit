@@ -1,4 +1,4 @@
-import type { DesktopNode } from "./agent-desktop-client.ts"
+import type { DesktopNode } from "./desktop-driver.ts"
 
 export type { DesktopNode }
 
@@ -10,8 +10,6 @@ export type GuiTaskInput = {
   textSlots?: TextSlot[]
   /** Only inspect the already-open view; forbid clicks, text entry and sends. */
   readOnly?: boolean
-  /** Experimental narrow lookahead depth (0 = off). Not part of the tool schema. */
-  lookahead?: number
   budget: ExecutionBudget
 }
 
@@ -104,8 +102,6 @@ export type DesktopDecision = {
   risks?: Record<string, number>
   /** Predicted probability that the chosen step completes the whole goal. */
   completesGoal?: number
-  /** Predicted following CLICK targets (narrow lookahead), in order. */
-  lookahead?: { candidateId: string; confidence: number }[]
 }
 
 export type GuiTaskMetrics = {
@@ -120,8 +116,6 @@ export type GuiTaskMetrics = {
   jevCalls: number
   /** Steps executed from Affordance Memory without asking Jev. */
   replayedSteps: number
-  /** Steps executed from a guarded lookahead prediction (no new request). */
-  lookaheadSteps: number
   /** Time spent waiting for the app to settle after actions. */
   settleMs: number
   /** Accessibility notifications observed while settling. */
@@ -141,7 +135,7 @@ export type GuiTaskTrace = {
   /** Verifier result for an inferred action. */
   verdict?: "side_effect" | "no_effect"
   /** Who chose this step. */
-  source?: "jev" | "memory" | "lookahead"
+  source?: "jev" | "memory"
   /** Wall-clock time of this step (decision + action + settle). */
   ms?: number
   note?: string

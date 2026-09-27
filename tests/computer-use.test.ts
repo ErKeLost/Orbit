@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { AgentDesktopCommandError, type AgentDesktopClient, type DesktopEnvelope, type SnapshotData } from "../src-tauri/resources/computer-use/agent-desktop-client"
+import { DesktopCommandError, type DesktopDriver, type DesktopEnvelope, type SnapshotData } from "../src-tauri/resources/computer-use/desktop-driver"
 import { observeDesktop } from "../src-tauri/resources/computer-use/desktop-observation"
 import { selectInstalledDesktopApp, type InstalledDesktopApp } from "../src-tauri/resources/computer-use/desktop-app-resolver"
 import { runGuiTaskEngine } from "../src-tauri/resources/computer-use/gui-task-engine"
@@ -42,9 +42,8 @@ const choice = (operation: DesktopDecision["operation"], candidateId: string): D
 
 const resolveApp = async () => ({ displayName: "Music", bundleId: "test.music", path: "/Applications/Music.app", launchId: "test.music" })
 
-function mockClient(handler: (args: string[]) => DesktopEnvelope | Promise<DesktopEnvelope>, backend?: string): AgentDesktopClient {
+function mockClient(handler: (args: string[]) => DesktopEnvelope | Promise<DesktopEnvelope>): DesktopDriver {
   return {
-    ...(backend ? { backend } : {}),
     run: async <T>(args: string[]) => await handler(args) as DesktopEnvelope<T>,
     dispose: async () => undefined,
   }
@@ -136,8 +135,8 @@ describe("AX-first desktop observation", () => {
       },
     }
     const client = mockClient(args => {
-      command = args
-      return { version: "2.4", ok: true, command: "snapshot", data: snapshot }
+      if (args[0] === "snapshot") command = args
+      return args[0] === "snapshot" ? { version: "2.4", ok: true, command: "snapshot", data: snapshot } : { version: "2.4", ok: true, command: args[0], data: {} }
     })
     const result = await observeDesktop(client, {
       app: "Music",
@@ -470,7 +469,7 @@ describe("AX-first desktop observation", () => {
     expect(JSON.stringify(seenCriteria)).toContain("[slot:query]")
   })
 
-  test("compiles context-menu and clear candidates only for the agent-desktop backend", async () => {
+  test("compiles context-menu and clear candidates from declared capabilities", async () => {
     const snapshot: SnapshotData = {
       app: "Music",
       complete: true,
@@ -500,13 +499,16 @@ describe("AX-first desktop observation", () => {
       },
     }
     const envelope = { version: "2.4", ok: true, command: "snapshot", data: snapshot }
-    const agentResult = await observeDesktop(mockClient(() => envelope, "agent-desktop"), { app: "Music", textSlots: [], usedSlotIds: new Set(), allowPressEnter: false }, { timeoutMs: 5_000 })
-    expect(agentResult.candidates).toEqual(expect.arrayContaining([
+    const result = await observeDesktop(mockClient(() => envelope), { app: "Music", textSlots: [], usedSlotIds: new Set(), allowPressEnter: false }, { timeoutMs: 5_000 })
+    expect(result.candidates).toEqual(expect.arrayContaining([
       expect.objectContaining({ operation: "RIGHT_CLICK", ref: "@s1:e1" }),
+      expect.objectContaining({ operation: "RIGHT_CLICK", ref: "@s1:e3" }),
       expect.objectContaining({ operation: "CLEAR", ref: "@s1:e2" }),
     ]))
-    const xaResult = await observeDesktop(mockClient(() => envelope), { app: "Music", textSlots: [], usedSlotIds: new Set(), allowPressEnter: false }, { timeoutMs: 5_000 })
-    expect(xaResult.candidates.some(candidate => ["RIGHT_CLICK", "CLEAR"].includes(candidate.operation))).toBe(false)
+    // No capability, no candidate: an empty field cannot be cleared.
+    const empty = { ...envelope, data: { ...snapshot, tree: { ...snapshot.tree, children: [{ role: "textfield", name: "搜索", ref_id: "@s1:e2", available_actions: ["SetValue"] }] } } }
+    const none = await observeDesktop(mockClient(() => empty), { app: "Music", textSlots: [], usedSlotIds: new Set(), allowPressEnter: false }, { timeoutMs: 5_000 })
+    expect(none.candidates.some(candidate => ["RIGHT_CLICK", "CLEAR"].includes(candidate.operation))).toBe(false)
   })
 
   test("routes multiline prepared text through set-value instead of physical typing", async () => {
@@ -668,7 +670,7 @@ describe("desktop goal loop", () => {
 
   test("continues when NSWorkspace attaches to an already-running helper process", async () => {
     const client = mockClient(args => {
-      if (args[0] === "launch") throw new AgentDesktopCommandError("launch", {
+      if (args[0] === "launch") throw new DesktopCommandError("launch", {
         code: "APP_UNRESPONSIVE",
         message: "NSWorkspace returned a different application while attaching",
         details: { expected_pid: 42, returned_pid: 43 },
@@ -693,7 +695,7 @@ describe("desktop goal loop", () => {
 
   test("blocks with PERM_DENIED when the Accessibility grant is missing", async () => {
     const client = mockClient(args => {
-      if (args[0] === "launch") throw new AgentDesktopCommandError("launch", {
+      if (args[0] === "launch") throw new DesktopCommandError("launch", {
         code: "PERM_DENIED",
         message: "AX_PERMISSION_DENIED: this process is not trusted for Accessibility",
         disposition: { delivery: "not_delivered", retry: "never" },
@@ -732,7 +734,8 @@ describe("desktop goal loop", () => {
     })
     expect(result.status).toBe("done")
     expect(result.actions).toBe(2)
-    expect(commands.map(args => args[0])).toEqual(["launch", "set-value", "press"])
+    // Return is keyboard delivery: the app is activated first.
+    expect(commands.map(args => args[0])).toEqual(["launch", "set-value", "activate-app", "press"])
     expect(commands[1]).toContain("private song")
   })
 
@@ -741,7 +744,7 @@ describe("desktop goal loop", () => {
     const client = mockClient(args => {
       if (args[0] === "launch") return { version: "2.4", ok: true, command: "launch", data: { app: "Music", pid: 1, window: { id: "w-1", title: "Music" } } }
       clicks++
-      throw new AgentDesktopCommandError("click", { code: "ACTION_FAILED", message: "effect unverified", disposition: { delivery: "delivered_unverified", retry: "unsafe" } })
+      throw new DesktopCommandError("click", { code: "ACTION_FAILED", message: "effect unverified", disposition: { delivery: "delivered_unverified", retry: "unsafe" } })
     })
     const current = observation("play", [{ id: "play", operation: "CLICK", ref: "@s1:e2", description: "Play" }])
     const result = await runGuiTaskEngine({
@@ -773,7 +776,8 @@ describe("desktop goal loop", () => {
       assessRisk: async () => { riskCalls++; return { probability: 0.1, model: "jev-test", latencyMs: 1, usage: { inputTokens: 1, outputTokens: 1 } } },
     })
     expect(result.status).toBe("max_actions")
-    expect(commands).toEqual(["launch", "click"])
+    // A declared (non-headed) CLICK is the semantic AX press.
+    expect(commands).toEqual(["launch", "press"])
     expect(riskCalls).toBe(1)
     expect(result.lastAction?.delivery).toBe("delivered_verified")
     expect(result.goalVerified).toBe(false)
@@ -797,7 +801,7 @@ describe("desktop goal loop", () => {
     const client = mockClient(args => {
       commands.push(args)
       if (args[0] === "launch") return { version: "2.4", ok: true, command: "launch", data: { app: "Music", pid: 1 } }
-      throw new AgentDesktopCommandError("set-value", { code: "ACTION_FAILED", message: "not settable", disposition: { delivery: "not_delivered", retry: "safe" } })
+      throw new DesktopCommandError("set-value", { code: "ACTION_FAILED", message: "not settable", disposition: { delivery: "not_delivered", retry: "safe" } })
     })
     const current = observation("field", [{ id: "type", operation: "SET_VALUE", ref: "@s1:e1", slotId: "query", description: "Search" }])
     const result = await runGuiTaskEngine({
@@ -839,7 +843,7 @@ describe("desktop goal loop", () => {
       resolveApp,
       assessRisk: async () => ({ probability: 0.1, model: "jev-test", latencyMs: 1, usage: { inputTokens: 1, outputTokens: 1 } }),
     })
-    expect(commands.map(args => args.filter(arg => arg !== "--headed")).map(args => args[0] === "press" ? `press ${args[1]}` : args[0])).toEqual(["launch", "double-click", "press escape", "click"])
+    expect(commands.map(args => args.filter(arg => arg !== "--headed")).map(args => args[0] === "press" ? `press ${args[1]}` : args[0])).toEqual(["launch", "activate-app", "double-click", "activate-app", "press escape", "activate-app", "click"])
     expect(result.trace.find(entry => entry.operation === "DOUBLE_CLICK")?.verdict).toBe("side_effect")
     expect(offered[1]).not.toContain("guess")
     expect(result.status).toBe("done")
@@ -850,7 +854,7 @@ describe("desktop goal loop", () => {
     const client = mockClient(args => {
       commands.push(args)
       if (args[0] === "launch") return { version: "2.4", ok: true, command: "launch", data: { app: "Music", pid: 1 } }
-      if (args[0] === "scroll-to") throw new AgentDesktopCommandError("scroll-to", { code: "ACTION_FAILED", message: "Target remains clipped or its visible bounds are unknown", disposition: { delivery: "not_delivered", retry: "safe" } })
+      if (args[0] === "scroll-to") throw new DesktopCommandError("scroll-to", { code: "ACTION_FAILED", message: "Target remains clipped or its visible bounds are unknown", disposition: { delivery: "not_delivered", retry: "safe" } })
       return { version: "2.4", ok: true, command: args[0], data: { app: "Music", pid: 1 } }
     })
     const offscreen = observation("feed", [
@@ -873,7 +877,7 @@ describe("desktop goal loop", () => {
       assessRisk: async () => ({ probability: 0.1, model: "jev-test", latencyMs: 1, usage: { inputTokens: 1, outputTokens: 1 } }),
     })
     expect(turn).toBe(3)
-    expect(commands.map(args => args[0])).toEqual(["launch", "scroll-to", "click"])
+    expect(commands.map(args => args[0])).toEqual(["launch", "scroll-to", "press"])
     expect(result.status).toBe("done")
     expect(result.goalVerified).toBe(true)
     expect(result.lastAction?.operation).toBe("CLICK")
@@ -918,7 +922,7 @@ describe("desktop goal loop", () => {
     const client = mockClient(args => {
       commands.push(args)
       if (args[0] === "launch") return { version: "2.4", ok: true, command: "launch", data: { app: "Music", pid: 1, window: { id: "w-1", title: "Music" } } }
-      if (args.includes("--window-id")) throw new AgentDesktopCommandError("snapshot", { code: "WINDOW_NOT_FOUND", message: "No window with id w-1" })
+      if (args.includes("--window-id")) throw new DesktopCommandError("snapshot", { code: "WINDOW_NOT_FOUND", message: "No window with id w-1" })
       return {
         version: "2.4", ok: true, command: "snapshot",
         data: {

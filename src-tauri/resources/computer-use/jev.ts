@@ -8,7 +8,6 @@ const MAX_OPTIONS = 255
 const MAX_TARGET_OPTIONS = 32
 const MAX_STATE_CHARS = 8_000
 const MAX_HISTORY_ITEMS = 6
-const MAX_LOOKAHEAD = 4
 
 type ChoiceAnswer = { type?: string; choice?: string; confidence?: number; probabilities?: Readonly<Record<string, number>> }
 export type DesktopAppChoice = { id: string; description: string }
@@ -39,7 +38,7 @@ export async function decideDesktop(
   context: string,
   history: string[],
   signal?: AbortSignal,
-  options: { knownRisks?: Readonly<Record<string, number>>; lookahead?: number } = {},
+  options: { knownRisks?: Readonly<Record<string, number>> } = {},
 ): Promise<DesktopDecision> {
   const knownRisks = options.knownRisks ?? {}
   if (candidates.length === 0) throw new Error("Jev requires at least one desktop candidate")
@@ -107,30 +106,6 @@ export async function decideDesktop(
       }
     }
   }
-  // Narrow lookahead (experimental): inside one persistent group of CLICK
-  // targets (a keypad, a button cluster), predict the 2nd..Nth clicks in
-  // goal order. Heads are independent, so each names its ordinal premise and
-  // may answer "stop" when the next step depends on an unseen result. The
-  // engine executes them only under guards, one verified step at a time.
-  const lookahead = Math.min(Math.max(0, options.lookahead ?? 0), MAX_LOOKAHEAD)
-  const clickTargets = targetGroups.get("CLICK")
-  if (lookahead > 0 && clickTargets && clickTargets.length >= 3) {
-    const criteria = Object.fromEntries([
-      ...clickTargets.map(candidate => [candidate.id, candidate.criteria ?? sanitize(candidate.description, 260)] as const),
-      ["stop", "No predictable further click: the next step depends on a result that is not visible yet, needs a different operation, or the goal will already be complete."] as const,
-    ])
-    for (let ordinal = 2; ordinal <= lookahead + 1; ordinal++) {
-      questions[`click_next_${ordinal}`] = choice({
-        goal: sanitize(goal, 1_200),
-        rules: [
-          `Assume the goal is completed by clicking visible targets in order starting now. Choose the target of click number ${ordinal} in that order (another question chooses click number 1).`,
-          "Count only clicks on the supplied targets; if the goal needs any other operation, typing, or a control that is not visible now before that click, choose stop.",
-          "Choose stop rather than guess.",
-          ...NEXT_STEP_RULES,
-        ],
-      }, criteria)
-    }
-  }
   // Completion prediction (speculative, like the target heads): if the chosen
   // step takes effect as intended, is the whole goal then satisfied? The
   // engine accepts it only together with local post-action evidence, which
@@ -169,22 +144,9 @@ export async function decideDesktop(
     ...(typeof risk === "number" && Number.isFinite(risk) ? { risk } : {}),
     ...(Object.keys(risks).length ? { risks } : {}),
     ...(finiteUnit(answers.completes_goal?.noul) ? { completesGoal: answers.completes_goal!.noul } : {}),
-    ...(operation === "CLICK" ? lookaheadPlan(answers, targetGroup, lookahead) : {}),
   }
 }
 
-/** Consecutive lookahead answers up to the first stop or invalid answer. */
-function lookaheadPlan(answers: Record<string, ChoiceAnswer>, group: DesktopCandidate[], lookahead: number): { lookahead?: { candidateId: string; confidence: number }[] } {
-  const plan: { candidateId: string; confidence: number }[] = []
-  for (let ordinal = 2; ordinal <= lookahead + 1; ordinal++) {
-    const answer = answers[`click_next_${ordinal}`]
-    if (!answer || typeof answer.choice !== "string" || answer.choice === "stop" || !group.some(candidate => candidate.id === answer.choice)) break
-    const probability = answer.probabilities?.[answer.choice]
-    if (!finiteUnit(probability)) break
-    plan.push({ candidateId: answer.choice, confidence: probability })
-  }
-  return plan.length ? { lookahead: plan } : {}
-}
 
 function finiteUnit(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1

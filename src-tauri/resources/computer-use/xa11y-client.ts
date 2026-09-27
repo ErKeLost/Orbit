@@ -2,9 +2,9 @@ import { access, constants } from "node:fs/promises"
 import { spawn } from "node:child_process"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { AgentDesktopCommandError, type AgentDesktopClient, type DesktopEnvelope, type DesktopNode, type SnapshotData } from "./agent-desktop-client.ts"
+import { DesktopCommandError, type DesktopDriver, type DesktopEnvelope, type DesktopNode, type SnapshotData } from "./desktop-driver.ts"
 
-export async function createXa11yClient(signal?: AbortSignal): Promise<AgentDesktopClient> {
+export async function createXa11yClient(signal?: AbortSignal): Promise<DesktopDriver> {
   const binary = await resolveWorker()
   await access(binary, constants.X_OK)
   const worker = spawn(binary, [], { stdio: ["pipe", "pipe", "pipe"], signal })
@@ -42,7 +42,6 @@ export async function createXa11yClient(signal?: AbortSignal): Promise<AgentDesk
   worker.on("close", code => fail(new Error(`xa11y worker exited (${code ?? "unknown"})`)))
 
   return {
-    backend: "xa11y",
     async run<T>(args: string[], options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<DesktopEnvelope<T>> {
       const headed = args[0] === "--headed"
       const commandOffset = headed ? 1 : 0
@@ -84,7 +83,7 @@ export async function createXa11yClient(signal?: AbortSignal): Promise<AgentDesk
           timer.unref?.()
         }
       })
-      if (!response.ok) throw new AgentDesktopCommandError(command ?? "xa11y", response.error ?? { code: "AX_ERROR", message: "xa11y request failed" })
+      if (!response.ok) throw new DesktopCommandError(command ?? "xa11y", response.error ?? { code: "AX_ERROR", message: "xa11y request failed" })
       if (command === "snapshot") {
         const normalized = normalizeSnapshot(response.data)
         const root = valueAfter(args, "--root")
@@ -157,7 +156,7 @@ function normalizeStates(value: unknown): string[] {
 }
 
 function mapAction(action: string): string {
-  const map: Record<string, string> = { focus: "SetFocus", activate: "Activate", press: "Click", set_value: "SetValue", type_text: "TypeText", scroll_into_view: "ScrollTo", scroll_up_by_page: "ScrollUpByPage", scroll_down_by_page: "ScrollDownByPage" }
+  const map: Record<string, string> = { focus: "SetFocus", activate: "Activate", press: "Click", set_value: "SetValue", type_text: "TypeText", scroll_into_view: "ScrollTo", scroll_up_by_page: "ScrollUpByPage", scroll_down_by_page: "ScrollDownByPage", show_menu: "RightClick" }
   return map[action] ?? action
 }
 function nonEmpty(value: unknown): string | undefined {

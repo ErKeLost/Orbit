@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises"
-import { AgentDesktopCommandError, type AgentDesktopClient, type LaunchData } from "./agent-desktop-client.ts"
+import { DesktopCommandError, type DesktopDriver, type LaunchData } from "./desktop-driver.ts"
 import { resolveDesktopApp } from "./desktop-app-resolver.ts"
 import { attachMedia, invalidateMenuCache, observeDesktop, readMediaFact } from "./desktop-observation.ts"
 import { isReplayableOperation, lookupTemplate, memoryIdentity, resolveStep, memoryKey, parameterize, type AffordanceMemory, type MemoryStep } from "./affordance-memory.ts"
@@ -24,7 +24,6 @@ const BUSY_POLL_MS = 150
 const SUGGESTION_WAIT_MS = 300
 /** Minimum predicted probability for finishing without a DONE round trip. */
 const COMPLETION_THRESHOLD = 0.75
-const LOOKAHEAD_MIN_CONFIDENCE = 0.8
 
 export async function runGuiTaskEngine({
   input,
@@ -39,7 +38,7 @@ export async function runGuiTaskEngine({
   memory,
 }: {
   input: GuiTaskInput
-  client: AgentDesktopClient
+  client: DesktopDriver
   signal?: AbortSignal
   decide?: typeof decideDesktop
   observe?: typeof observeDesktop
@@ -53,7 +52,7 @@ export async function runGuiTaskEngine({
   validateTaskInput(input)
   const startedAt = Date.now()
   const deadline = startedAt + input.budget.maxDurationMs
-  const metrics: GuiTaskMetrics = { elapsedMs: 0, launchMs: 0, observationMs: 0, decisionMs: 0, actionMs: 0, inputTokens: 0, outputTokens: 0, jevCalls: 0, replayedSteps: 0, lookaheadSteps: 0, settleMs: 0, settleEvents: 0 }
+  const metrics: GuiTaskMetrics = { elapsedMs: 0, launchMs: 0, observationMs: 0, decisionMs: 0, actionMs: 0, inputTokens: 0, outputTokens: 0, jevCalls: 0, replayedSteps: 0, settleMs: 0, settleEvents: 0 }
   const trace: GuiTaskTrace[] = []
   const history: string[] = []
   const usedSlotIds = new Set<string>()
@@ -92,13 +91,6 @@ export async function runGuiTaskEngine({
   let replayPlan: MemoryStep[] | undefined
   let replayIndex = 0
   let replayMisses = 0
-  // Narrow lookahead state (see decideDesktop options.lookahead).
-  const lookaheadDepth = input.lookahead ?? (process.env.ORBIT_CU_LOOKAHEAD ? Number(process.env.ORBIT_CU_LOOKAHEAD) : 0)
-  let lookaheadQueue: { key: string; confidence: number }[] = []
-  let lookaheadHealthy = true
-  let lookaheadSurface = "window"
-  let lookaheadCompletion: number | undefined
-  let lastExecutedKey: string | undefined
   // Completion probability recorded when the trajectory was learned; lets
   // the last replayed step finish without a DONE round trip.
   let replayCompletion: number | undefined
@@ -136,9 +128,9 @@ export async function runGuiTaskEngine({
   try {
     const resolved = await resolveApp(input.target.app, signal)
     try {
-      launched = (await client.run<LaunchData>(["launch", client.backend === "xa11y" ? resolved.displayName : resolved.launchId, "--activate", "--timeout", String(remaining())], { timeoutMs: remaining(), signal })).data!
+      launched = (await client.run<LaunchData>(["launch", resolved.displayName, "--activate", "--timeout", String(remaining())], { timeoutMs: remaining(), signal })).data!
     } catch (error) {
-      const expectedPid = error instanceof AgentDesktopCommandError && error.detail.code === "APP_UNRESPONSIVE"
+      const expectedPid = error instanceof DesktopCommandError && error.detail.code === "APP_UNRESPONSIVE"
         && error.detail.disposition?.delivery === "delivered_unverified"
         && error.detail.details && typeof error.detail.details === "object"
         ? (error.detail.details as { expected_pid?: unknown }).expected_pid
@@ -153,7 +145,7 @@ export async function runGuiTaskEngine({
   } catch (error) {
     // A missing Accessibility grant is recoverable only by the user, so it is
     // a blocked task, not an app failure; PERM_DENIED is the authoritative code.
-    if (error instanceof AgentDesktopCommandError && error.detail.code === "PERM_DENIED") {
+    if (error instanceof DesktopCommandError && error.detail.code === "PERM_DENIED") {
       return finish("blocked", undefined, safeError(error))
     }
     return finish(signal?.aborted ? "aborted" : "error", undefined, safeError(error))
@@ -204,7 +196,7 @@ export async function runGuiTaskEngine({
           : await observeOnce(launched.window?.id)
         prefetched = undefined
       } catch (error) {
-        if (error instanceof AgentDesktopCommandError && error.detail.code === "WINDOW_NOT_FOUND") {
+        if (error instanceof DesktopCommandError && error.detail.code === "WINDOW_NOT_FOUND") {
           // Window ids only live for one app session, and apps rebuilding a
           // window present no window for a moment. Drop the cached id and
           // retry with settle time before giving up.
@@ -215,7 +207,7 @@ export async function runGuiTaskEngine({
             try {
               refreshed = await observeOnce(undefined)
             } catch (retryError) {
-              if (retryError instanceof AgentDesktopCommandError && retryError.detail.code === "WINDOW_NOT_FOUND") continue
+              if (retryError instanceof DesktopCommandError && retryError.detail.code === "WINDOW_NOT_FOUND") continue
               throw retryError
             }
           }
@@ -226,7 +218,7 @@ export async function runGuiTaskEngine({
         }
       }
     } catch (error) {
-      if (error instanceof AgentDesktopCommandError && error.detail.code === "PERM_DENIED") {
+      if (error instanceof DesktopCommandError && error.detail.code === "PERM_DENIED") {
         return finish("blocked", observation, safeError(error))
       }
       return finish(signal?.aborted ? "aborted" : "error", observation, safeError(error))
@@ -319,27 +311,6 @@ export async function runGuiTaskEngine({
           await abandonReplay(`step ${replayIndex + 1} (${step.operation}) has no unique matching target`)
         }
       }
-      // Guarded lookahead: a click predicted by the previous Jev request runs
-      // without a new request only while every guard holds; any doubt drops
-      // the rest of the plan and asks Jev normally.
-      if (!replayed && lookaheadQueue.length > 0) {
-        const next = lookaheadQueue.shift()!
-        const match = offered.filter(candidate => candidate.operation === "CLICK" && targetKey(candidate, true) === next.key)
-        const risk = match.length === 1 ? riskCache.get(targetKey(match[0])) : undefined
-        const guard = next.key === lastExecutedKey ? "it repeats the step just executed (lookahead ordinal drift)"
-          : !lookaheadHealthy ? "the previous step was not verified"
-          : current.surface !== lookaheadSurface ? "the interface surface changed"
-          : match.length !== 1 ? "the predicted target is not uniquely present"
-          : next.confidence < LOOKAHEAD_MIN_CONFIDENCE ? `low confidence (${next.confidence.toFixed(2)})`
-          : typeof risk !== "number" || risk >= 0.5 ? "its undo risk is unknown or high"
-          : undefined
-        if (guard) {
-          lookaheadQueue = []
-          trace.push({ step: decisions, stateId: current.fingerprint, note: `lookahead stopped: ${guard}` })
-        } else {
-          replayed = { operation: "CLICK", candidateId: match[0].id, confidence: next.confidence, model: "jev-lookahead", latencyMs: 0, probabilities: { [match[0].id]: next.confidence }, usage: { inputTokens: 0, outputTokens: 0 }, risk: risk!, ...(lookaheadQueue.length === 0 && typeof lookaheadCompletion === "number" ? { completesGoal: lookaheadCompletion } : {}) }
-        }
-      }
       const knownRisks: Record<string, number> = {}
       for (const candidate of offered) {
         const cached = riskCache.get(targetKey(candidate))
@@ -357,7 +328,7 @@ export async function runGuiTaskEngine({
           redact(current.context),
           history.map(redact),
           signal,
-          { knownRisks, lookahead: lookaheadDepth },
+          { knownRisks },
         )
       }
       if (replayed) {
@@ -381,26 +352,7 @@ export async function runGuiTaskEngine({
     decisions++
     const stepStarted = performance.now()
     const fromMemory = decision.model === "affordance-memory"
-    const fromLookahead = decision.model === "jev-lookahead"
     if (fromMemory) metrics.replayedSteps++
-    if (fromLookahead) metrics.lookaheadSteps++
-    if (!fromMemory && !fromLookahead) {
-      // A fresh Jev decision replaces any pending plan.
-      lookaheadQueue = []
-      lookaheadCompletion = undefined
-      if (decision.operation === "CLICK" && decision.lookahead?.length) {
-        const byId = new Map(observation.candidates.map(item => [item.id, item]))
-        lookaheadQueue = decision.lookahead.flatMap(step => {
-          const target = byId.get(step.candidateId)
-          return target ? [{ key: targetKey(target, true), confidence: step.confidence }] : []
-        })
-        // The completion prediction refers to the first step; after a plan
-        // it only transfers to the plan's last step if Jev rated it so.
-        lookaheadCompletion = decision.completesGoal
-        decision = { ...decision, completesGoal: lookaheadQueue.length ? undefined : decision.completesGoal }
-        lookaheadSurface = observation.surface
-      }
-    }
     metrics.inputTokens += decision.usage.inputTokens
     metrics.outputTokens += decision.usage.outputTokens
     for (const [id, value] of Object.entries(decision.risks ?? {})) {
@@ -410,7 +362,7 @@ export async function runGuiTaskEngine({
     let candidate = observation.candidates.find(item => item.id === decision.candidateId)
     if (!candidate || candidate.operation !== decision.operation) return finish("error", observation, "Jev selected a candidate outside the current observation")
     if (typeof decision.risk === "number") riskCache.set(targetKey(candidate), decision.risk)
-    const entry: GuiTaskTrace = { step: decisions, stateId: observation.fingerprint, operation: decision.operation, candidateId: candidate.id, candidate: candidate.description, confidence: decision.confidence, source: fromMemory ? "memory" : fromLookahead ? "lookahead" : "jev" }
+    const entry: GuiTaskTrace = { step: decisions, stateId: observation.fingerprint, operation: decision.operation, candidateId: candidate.id, candidate: candidate.description, confidence: decision.confidence, source: fromMemory ? "memory" : "jev" }
     trace.push(entry)
     emit({ type: "decided", step: decisions, status: "running", payload: { operation: decision.operation, candidate: candidate.description, confidence: decision.confidence, model: decision.model, latencyMs: decision.latencyMs } })
 
@@ -561,9 +513,8 @@ export async function runGuiTaskEngine({
     try {
       const mutating = isMutation(candidate.operation) || isContextualMutation(candidate.operation)
       const identitiesBefore = new Set(observation.candidates.filter(item => item.ref).map(item => targetKey(item, true)))
-      const executed = await executeCandidateDetailed(client, launched.app || input.target.app, candidate, input, remaining(), signal, mutating && client.backend === "xa11y" ? Math.min(EVENT_SETTLE_TIMEOUT_MS, remaining()) : undefined)
+      const executed = await executeCandidateDetailed(client, launched.app || input.target.app, candidate, input, remaining(), signal, mutating ? Math.min(EVENT_SETTLE_TIMEOUT_MS, remaining()) : undefined)
       const outcome = executed.delivery
-      lastExecutedKey = targetKey(candidate, true)
       actions++
       consecutiveWaits = 0
       entry.outcome = outcome
@@ -656,11 +607,7 @@ export async function runGuiTaskEngine({
           }
         }
       }
-      // The next predicted click is only safe after this one visibly took
-      // effect (tree changed) without a verifier verdict.
-      lookaheadHealthy = !verdict && outcome !== "not_delivered" && Boolean(prefetched) && (prefetched!.treeFingerprint ?? prefetched!.fingerprint) !== (observation.treeFingerprint ?? observation.fingerprint)
       if (verdict) {
-        lookaheadQueue = []
         // A side effect disqualifies every inferred action on that target;
         // no effect only disqualifies the attempted operation (a single click
         // may select a row that a double-click would open).
@@ -730,10 +677,9 @@ export async function runGuiTaskEngine({
       staleRetries = 0
     } catch (error) {
       entry.note = safeError(error)
-      lookaheadQueue = []
       if (fromMemory) await abandonReplay(`remembered ${decision.operation} failed: ${safeError(error)}`)
-      if (error instanceof AgentDesktopCommandError) lastAction = { operation: decision.operation, delivery: error.detail.disposition?.delivery }
-      if (error instanceof AgentDesktopCommandError && error.safeToRetry && error.detail.code === "STALE_REF" && staleRetries < 1) {
+      if (error instanceof DesktopCommandError) lastAction = { operation: decision.operation, delivery: error.detail.disposition?.delivery }
+      if (error instanceof DesktopCommandError && error.safeToRetry && error.detail.code === "STALE_REF" && staleRetries < 1) {
         staleRetries++
         root = undefined
         history.push(`${decision.operation} stale before delivery; refreshed without replaying the old ref`)
@@ -744,7 +690,7 @@ export async function runGuiTaskEngine({
       // nothing happened on screen) is candidate-specific, not task-terminal:
       // record the failure and let Jev choose a different path next turn.
       // Only delivery-uncertain failures stop the task for review.
-      if (!(error instanceof AgentDesktopCommandError)) return finish("error", observation, safeError(error))
+      if (!(error instanceof DesktopCommandError)) return finish("error", observation, safeError(error))
       if (!error.safeToRetry) return finish("needs_review", observation, safeError(error))
       consecutiveFailures++
       if (consecutiveFailures >= 3) return finish("blocked", observation, `Three consecutive actions failed without delivery; last: ${safeError(error)}`)
@@ -759,7 +705,7 @@ export async function runGuiTaskEngine({
 type SettleReport = { supported?: boolean; changed?: boolean; events?: number; notifications?: string[]; ms?: number }
 
 async function executeCandidate(
-  client: AgentDesktopClient,
+  client: DesktopDriver,
   app: string,
   candidate: DesktopCandidate,
   input: GuiTaskInput,
@@ -773,7 +719,7 @@ async function executeCandidate(
  * AXObserver before dispatch and blocks until the app settles; its report is
  * returned alongside the delivery disposition. */
 async function executeCandidateDetailed(
-  client: AgentDesktopClient,
+  client: DesktopDriver,
   app: string,
   candidate: DesktopCandidate,
   input: GuiTaskInput,
@@ -781,11 +727,10 @@ async function executeCandidateDetailed(
   signal?: AbortSignal,
   settleMs?: number,
 ): Promise<{ delivery: string; settle?: SettleReport }> {
-  const settleArgs = settleMs && client.backend === "xa11y" ? ["--settle-timeout-ms", String(Math.round(settleMs))] : []
+  const settleArgs = settleMs ? ["--settle-timeout-ms", String(Math.round(settleMs))] : []
   const baseClient = client
   let settle: SettleReport | undefined
-  const wrapped: AgentDesktopClient = {
-    backend: client.backend,
+  const wrapped: DesktopDriver = {
     dispose: () => client.dispose(),
     async run<T>(args: string[], options?: { timeoutMs?: number; signal?: AbortSignal }) {
       const isAction = !["activate-app", "snapshot", "launch", "now-playing", "menubar"].includes(args[0] === "--headed" ? args[1] : args[0])
@@ -802,7 +747,7 @@ async function executeCandidateDetailed(
 }
 
 async function executeCandidateRaw(
-  client: AgentDesktopClient,
+  client: DesktopDriver,
   app: string,
   candidate: DesktopCandidate,
   input: GuiTaskInput,
@@ -810,7 +755,7 @@ async function executeCandidateRaw(
   signal?: AbortSignal,
 ): Promise<string> {
   const common = { timeoutMs, signal }
-  if (client.backend === "xa11y" && needsForeground(candidate)) {
+  if (needsForeground(candidate)) {
     // Deterministic precondition: the Rust worker rejects pointer/keyboard
     // delivery unless the target owns the foreground. Activate the app
     // (idempotent, no snapshot ref consumed) right before delivery.
@@ -834,36 +779,27 @@ async function executeCandidateRaw(
   }
   if (candidate.operation === "RIGHT_CLICK") {
     if (!candidate.ref) throw new Error("RIGHT_CLICK requires an observed element ref")
-    const args = ["right-click", candidate.ref, "--timeout-ms", String(timeoutMs)]
-    if (candidate.headed && client.backend !== "xa11y") args.unshift("--headed")
-    return delivery(await client.run(args, common))
+    return delivery(await client.run(["right-click", candidate.ref, "--timeout-ms", String(timeoutMs)], common))
   }
   if (candidate.operation === "CLEAR") {
     if (!candidate.ref) throw new Error("CLEAR requires an observed element ref")
     return delivery(await client.run(["clear", candidate.ref, "--timeout-ms", String(timeoutMs)], common))
   }
   if (candidate.operation === "ACTIVATE") {
-    if (client.backend === "xa11y" && candidate.ref) return delivery(await client.run(["activate", candidate.ref, "--timeout-ms", String(timeoutMs)], common))
-    if (client.backend === "xa11y") return delivery(await client.run(["activate-app", "--app", app, "--timeout-ms", String(timeoutMs)], common))
-    if (!candidate.ref) throw new Error("ACTIVATE requires an observed window ref for this desktop backend")
-    return delivery(await client.run(["activate", candidate.ref, "--timeout-ms", String(timeoutMs)], common))
+    if (candidate.ref) return delivery(await client.run(["activate", candidate.ref, "--timeout-ms", String(timeoutMs)], common))
+    return delivery(await client.run(["activate-app", "--app", app, "--timeout-ms", String(timeoutMs)], common))
   }
   if (!candidate.ref) throw new Error(`${candidate.operation} requires an observed element ref`)
   if (candidate.operation === "FOCUS") {
     return delivery(await client.run(["focus", candidate.ref, "--timeout-ms", String(timeoutMs)], common))
   }
+  // The worker's `press` is the semantic AX action; `click`/`double-click`
+  // are physical pointer delivery at the re-identified element's bounds.
   if (candidate.operation === "CLICK") {
-    if (client.backend === "xa11y" && !candidate.headed) {
-      return delivery(await client.run(["press", candidate.ref, "--timeout-ms", String(timeoutMs)], common))
-    }
-    const args = ["click", candidate.ref, "--timeout-ms", String(timeoutMs)]
-    if (candidate.headed && client.backend !== "xa11y") args.unshift("--headed")
-    return delivery(await client.run(args, common))
+    return delivery(await client.run([candidate.headed ? "click" : "press", candidate.ref, "--timeout-ms", String(timeoutMs)], common))
   }
   if (candidate.operation === "DOUBLE_CLICK") {
-    const args = ["double-click", candidate.ref, "--timeout-ms", String(timeoutMs)]
-    if (candidate.headed && client.backend !== "xa11y") args.unshift("--headed")
-    return delivery(await client.run(args, common))
+    return delivery(await client.run(["double-click", candidate.ref, "--timeout-ms", String(timeoutMs)], common))
   }
   if (candidate.operation === "SCROLL_TO") return delivery(await client.run(["scroll-to", candidate.ref, "--timeout-ms", String(timeoutMs)], common))
   if (candidate.operation === "CHECK") return delivery(await client.run(["check", candidate.ref, "--timeout-ms", String(timeoutMs)], common))
@@ -897,7 +833,7 @@ function needsForeground(candidate: DesktopCandidate): boolean {
   if (candidate.operation === "ACTIVATE" && !candidate.ref) return false
   if (["DRILL", "WIDEN", "WAIT", "DONE", "BLOCKED"].includes(candidate.operation)) return false
   // Background-safe semantic AX operations (see ax.rs dispatch_observed).
-  if (!candidate.headed && ["CLICK", "SET_VALUE", "TYPE_TEXT"].includes(candidate.operation)) return false
+  if (!candidate.headed && ["CLICK", "SET_VALUE", "TYPE_TEXT", "RIGHT_CLICK", "CLEAR", "SCROLL_TO", "MENU_ITEM"].includes(candidate.operation)) return false
   return true
 }
 

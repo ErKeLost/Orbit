@@ -5,7 +5,7 @@
 // addressed by snapshot refs. The real candidate compiler, engine, verifier
 // and live Jev run unchanged. Success is judged from the fixture's own state
 // (an independent postcondition), never from Jev's DONE.
-import type { AgentDesktopClient, DesktopEnvelope, DesktopNode, SnapshotData } from "../../src-tauri/resources/computer-use/agent-desktop-client.ts"
+import type { DesktopDriver, DesktopEnvelope, DesktopNode, SnapshotData } from "../../src-tauri/resources/computer-use/desktop-driver.ts"
 import type { GuiTaskInput } from "../../src-tauri/resources/computer-use/gui-task-contract.ts"
 
 export type FNode = {
@@ -482,7 +482,7 @@ export const ALL_FIXTURES: Record<string, () => Fixture> = { calculator, music, 
 // --------------------------------------------------------------- the driver
 /** A desktop client backed by a fixture. Speaks the xa11y protocol subset the
  * engine uses, including the worker's settle report. */
-export function fixtureClient(fixture: Fixture, log: string[] = []): AgentDesktopClient {
+export function fixtureClient(fixture: Fixture, log: string[] = []): DesktopDriver {
   let generation = 0
   let handlers = new Map<string, FNode>()
   // Like the real worker, every node gets a snapshot-scoped ref.
@@ -519,7 +519,6 @@ export function fixtureClient(fixture: Fixture, log: string[] = []): AgentDeskto
   const ok = (command: string, data: Record<string, unknown>): DesktopEnvelope => ({ version: "fixture", ok: true, command, data })
   const settle = { supported: true, changed: true, events: 1, notifications: ["ValueChanged"], ms: 5 }
   return {
-    backend: "xa11y",
     async run<T>(args: string[]): Promise<DesktopEnvelope<T>> {
       const clean = args.filter(arg => arg !== "--headed")
       const [command, ref] = clean

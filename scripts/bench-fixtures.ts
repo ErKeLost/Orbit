@@ -15,17 +15,16 @@ const runs = Math.max(1, Number(flag("--runs") ?? 1))
 const only = flag("--only")?.split(",")
 const verbose = args.includes("--verbose")
 const memory = args.includes("--memory") ? createInMemoryMemory() : undefined
-const lookahead = Number(flag("--lookahead") ?? 0)
 const names = Object.keys(ALL_FIXTURES).filter(name => !only || only.includes(name))
 
-type Row = { fixture: string; run: number; pass: boolean; status: string; ms: number; jev: number; replayed: number; ahead: number; actions: number; decisionMs: number; violation?: string; steps: string }
+type Row = { fixture: string; run: number; pass: boolean; status: string; ms: number; jev: number; replayed: number; actions: number; decisionMs: number; violation?: string; steps: string }
 const rows: Row[] = []
 for (let run = 1; run <= runs; run++) {
   for (const name of names) {
     const fixture = ALL_FIXTURES[name]()
     const log: string[] = []
     const result = await runGuiTaskEngine({
-      input: { ...fixture.task, budget: fixture.task.budget ?? { maxActions: 14, maxDecisions: 24, maxDurationMs: 180_000 }, ...(lookahead ? { lookahead } : {}) },
+      input: { ...fixture.task, budget: fixture.task.budget ?? { maxActions: 14, maxDecisions: 24, maxDurationMs: 180_000 } },
       client: fixtureClient(fixture, log),
       resolveApp: async app => ({ displayName: app, bundleId: `fixture.${app}`, path: `/Applications/${app}.app`, launchId: `fixture.${app}` }),
       memory,
@@ -37,7 +36,7 @@ for (let run = 1; run <= runs; run++) {
       ? result.status === "done" && log.length === 0
       : fixture.success() && !violation && result.status === "done"
     const m = result.metrics
-    rows.push({ fixture: name, run, pass, status: result.status, ms: m.elapsedMs, jev: m.jevCalls, replayed: m.replayedSteps, ahead: m.lookaheadSteps, actions: result.actions, decisionMs: Math.round(m.decisionMs), ...(violation ? { violation } : {}), steps: result.trace.filter(t => t.operation).map(t => `${t.source === "memory" ? "M:" : t.source === "lookahead" ? "L:" : ""}${t.operation}${t.verdict ? `!${t.verdict}` : ""}`).join(" ") })
+    rows.push({ fixture: name, run, pass, status: result.status, ms: m.elapsedMs, jev: m.jevCalls, replayed: m.replayedSteps, actions: result.actions, decisionMs: Math.round(m.decisionMs), ...(violation ? { violation } : {}), steps: result.trace.filter(t => t.operation).map(t => `${t.source === "memory" ? "M:" : ""}${t.operation}${t.verdict ? `!${t.verdict}` : ""}`).join(" ") })
     console.error(`[${run}] ${pass ? "PASS" : "FAIL"} ${name}: ${result.status} ${m.elapsedMs}ms jev=${m.jevCalls} actions=${result.actions}${violation ? ` VIOLATION=${violation}` : ""}`)
     if (verbose || !pass) {
       for (const t of result.trace) console.error(`    ${t.step} ${t.source ?? ""} ${t.operation ?? ""} ${t.confidence?.toFixed(2) ?? ""} ${(t.candidate ?? "").slice(0, 110)} → ${t.outcome ?? ""} ${t.verdict ?? ""} ${t.note ? `(${t.note.slice(0, 160)})` : ""}`)

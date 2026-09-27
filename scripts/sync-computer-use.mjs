@@ -1,4 +1,4 @@
-import { existsSync, cpSync, rmSync, mkdirSync, accessSync, constants, readdirSync } from "node:fs"
+import { existsSync, cpSync, rmSync, mkdirSync, readdirSync } from "node:fs"
 import { resolve } from "node:path"
 
 const root = resolve(import.meta.dirname, "..")
@@ -12,7 +12,6 @@ const clipboardPackages = existsSync(clipboardScope)
 // so make the runtime dependency explicit and fail the build if it is absent.
 const runtimePackages = [
   "@typesafe-ai",
-  "agent-desktop",
   "@mariozechner/clipboard",
   ...clipboardPackages.filter(name => name !== "@mariozechner/clipboard"),
 ]
@@ -31,22 +30,7 @@ for (const name of runtimePackages) {
   cpSync(packageSource, packageTarget, { recursive: true, dereference: true })
 }
 
-const platform = `${process.platform}-${process.arch}`
-const binaryNames = {
-  "darwin-arm64": "agent-desktop-darwin-arm64",
-  "darwin-x64": "agent-desktop-darwin-x64",
-}
-const binaryName = binaryNames[platform]
-if (!binaryName) {
-  console.warn(`agent-desktop 不支持当前平台 ${platform}，跳过 Computer Use 原生资源同步`)
-  process.exit(0)
-}
-const copiedBin = resolve(root, "src-tauri/resources/node_modules/agent-desktop/bin")
-for (const name of [binaryName, ...(process.platform === "darwin" ? ["agent-desktop-macos-helper"] : [])]) {
-  const file = resolve(copiedBin, name)
-  try { accessSync(file, constants.X_OK) }
-  catch {
-    console.error(`agent-desktop 运行文件不可用或不可执行: ${file}`)
-    process.exit(1)
-  }
-}
+// The native accessibility worker (ax_control) is built from this repository
+// and copied by scripts/sync-worker.mjs; no third-party desktop binary ships.
+// Drop a stale copy of the retired agent-desktop package from resources.
+rmSync(resolve(root, "src-tauri/resources/node_modules/agent-desktop"), { recursive: true, force: true })

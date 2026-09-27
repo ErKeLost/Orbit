@@ -116,6 +116,8 @@ impl ObservationLedger {
             "scroll-to" => target.has_bounds,
             "scroll-up" => candidate == "scroll_up_by_page" || candidate == "scroll",
             "scroll-down" => candidate == "scroll_down_by_page" || candidate == "scroll",
+            "right-click" => candidate == "show_menu",
+            "clear" => candidate == "set_value" || candidate == "set-value",
             other => candidate == other,
         });
         if !supported {
@@ -263,6 +265,25 @@ mod tests {
             .is_err());
         assert!(ledger.register(&json!({"snapshot_id":"two","app":"Example","complete":true,"tree":{"pid":42,"children":[]}})).is_err());
         assert!(ledger.authorize("Example", 42, "first", "press").is_err());
+    }
+
+    #[test]
+    fn authorizes_context_menu_and_clear_only_from_matching_ax_capabilities() {
+        let mut ledger = ObservationLedger::default();
+        let value = json!({
+            "snapshot_id": "menu-clear",
+            "app": "Example",
+            "complete": true,
+            "tree": {"pid": 42, "children": [{"ref_id": "window", "role": "window", "name": "A", "actions": [], "children": [
+                {"ref_id": "menu", "role": "button", "name": "More", "actions": ["show_menu"], "children": []},
+                {"ref_id": "field", "role": "text_field", "name": "Search", "actions": ["set_value"], "children": []}
+            ]}]}
+        });
+        ledger.register(&value).unwrap();
+        assert!(ledger.authorize("Example", 42, "menu", "right-click").is_ok());
+        assert!(ledger.authorize("Example", 42, "field", "clear").is_ok());
+        assert!(ledger.authorize("Example", 42, "field", "right-click").is_err());
+        assert!(ledger.authorize("Example", 42, "menu", "clear").is_err());
     }
 
     #[test]

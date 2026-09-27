@@ -1,7 +1,7 @@
 {
   "name": "orbit",
   "private": true,
-  "version": "0.3.22",
+  "version": "0.3.23",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -47,7 +47,6 @@
     "@tauri-apps/plugin-updater": "2.11.0",
     "@typesafe-ai/sdk": "0.6.0",
     "@zxing/browser": "^0.1.5",
-    "agent-desktop": "0.9.4",
     "ai": "7.0.94",
     "antd": "^6.6.3",
     "beautiful-mermaid": "1.1.3",
@@ -91,8 +90,5 @@
     "motion": "13.2.0",
     "react": "19.2.8",
     "react-dom": "19.2.8"
-  },
-  "trustedDependencies": [
-    "agent-desktop"
-  ]
+  }
 }

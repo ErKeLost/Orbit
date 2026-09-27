@@ -419,16 +419,17 @@ impl RuntimePaths {
                 "TypeSafe SDK",
             ),
             (
-                &node_modules.join("agent-desktop/package.json"),
-                "Desktop agent runtime",
-            ),
-            (
                 &node_modules.join("@mariozechner/clipboard/package.json"),
                 "Clipboard runtime",
             ),
         ] {
             require_file(path, label)?;
         }
+        #[cfg(target_os = "macos")]
+        require_file(
+            &resources_dir.join("computer-use/ax_control"),
+            "Accessibility worker",
+        )?;
         require_dir(&node_modules, "Node modules")?;
         let pi_version = pi_version(&node, &pi)
             .ok_or_else(|| "Orbit 内置 Pi runtime 无法启动，请重新安装应用".to_string())?;

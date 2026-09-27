@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import type { AgentDesktopClient, DesktopBounds, DesktopNode, SnapshotData } from "./agent-desktop-client.ts"
+import type { DesktopDriver, DesktopBounds, DesktopNode, SnapshotData } from "./desktop-driver.ts"
 import type { DesktopCandidate, DesktopObservation, TextSlot } from "./gui-task-contract.ts"
 
 // TypeSafe Choice accepts 255 options, but that is a protocol ceiling rather
@@ -31,7 +31,7 @@ const LIST_CONTAINER_ROLES = new Set(["list", "table", "outline", "grid", "colle
 const SCROLL_ACTIONS = ["Scroll", "ScrollDownByPage", "ScrollUpByPage", "scroll_down_by_page", "scroll_up_by_page"]
 
 export async function observeDesktop(
-  client: AgentDesktopClient,
+  client: DesktopDriver,
   input: { app: string; windowId?: string; root?: string; goal?: string; textSlots: TextSlot[]; usedSlotIds: ReadonlySet<string>; allowPressEnter: boolean; skipMedia?: boolean },
   options: { timeoutMs: number; signal?: AbortSignal },
 ): Promise<DesktopObservation> {
@@ -44,9 +44,7 @@ export async function observeDesktop(
 
   if (!input.root) {
     const surface = findOverlay(snapshot.tree)
-    if (surface && client.backend !== "xa11y") {
-      snapshot = (await client.run<SnapshotData>([...base, "--surface", surface, "--skeleton"], options)).data!
-    } else if (surface && isModalOverlay(surface)) {
+    if (surface && isModalOverlay(surface)) {
       // A modal sheet/alert blocks the window behind it: offering controls
       // under it invites clicks that silently do nothing. Scope candidates to
       // the overlay subtree (the xa11y worker has no --surface mode).
@@ -67,18 +65,18 @@ export async function observeDesktop(
     .slice(0, MAX_OBSERVED_ELEMENTS)
     .map(item => item.node)
   const windowBounds = snapshot.tree.children?.find(node => node.role === "window")?.bounds
-  const menu = client.backend === "xa11y" && !input.root && findOverlay(snapshot.tree) === undefined
+  const menu = !input.root && findOverlay(snapshot.tree) === undefined
     ? await readMenuBar(client, snapshot.window.title, options)
     : []
-  let candidates = buildCandidates(offeredNodes, input.textSlots, input.usedSlotIds, Boolean(input.root), input.allowPressEnter, !snapshot.complete, windowBounds, findOverlay(snapshot.tree), client.backend, input.goal ?? "")
+  let candidates = buildCandidates(offeredNodes, input.textSlots, input.usedSlotIds, Boolean(input.root), input.allowPressEnter, !snapshot.complete, windowBounds, findOverlay(snapshot.tree), input.goal ?? "")
   candidates = addMenuCandidates(candidates, menu, input.goal ?? "")
   // Text slots add mutation candidates; they must never hide navigation or
   // activation candidates. The semantic layer decides whether a field is the
   // intended target after the user has identified the right surface.
   // The OS media fact is read once per real observation, never inside the
   // post-action settle polls (skipMedia); attachMedia completes those later.
-  const mediaSkipped = client.backend === "xa11y" && Boolean(input.skipMedia)
-  const media = client.backend === "xa11y" && !input.skipMedia ? await readNowPlaying(client, options) : undefined
+  const mediaSkipped = Boolean(input.skipMedia)
+  const media = input.skipMedia ? undefined : await readNowPlaying(client, options)
   const context = buildContext(snapshot, candidates, input.root, actionableNodes.length > offeredNodes.length, media, nodes, anchorValues)
   const treeFingerprint = createHash("sha256").update(JSON.stringify(nodes.map(node => ({
     role: node.role,
@@ -112,11 +110,11 @@ export async function observeDesktop(
 type MenuItem = { path: string[]; enabled: boolean; shortcut?: string | null; checked?: boolean }
 const MENU_TTL_MS = 5_000
 const MAX_MENU_CANDIDATES = 120
-const menuCache = new WeakMap<AgentDesktopClient, { title: string; at: number; items: MenuItem[] }>()
+const menuCache = new WeakMap<DesktopDriver, { title: string; at: number; items: MenuItem[] }>()
 
 /** The application menu bar, cached per client for a few seconds and per
  * window title (enabled states follow the focused window's context). */
-async function readMenuBar(client: AgentDesktopClient, title: string, options: { timeoutMs: number; signal?: AbortSignal }): Promise<MenuItem[]> {
+async function readMenuBar(client: DesktopDriver, title: string, options: { timeoutMs: number; signal?: AbortSignal }): Promise<MenuItem[]> {
   const cached = menuCache.get(client)
   if (cached && cached.title === title && Date.now() - cached.at < MENU_TTL_MS) return cached.items
   try {
@@ -131,7 +129,7 @@ async function readMenuBar(client: AgentDesktopClient, title: string, options: {
 }
 
 /** Invalidate the cached menu bar (after any command that may change it). */
-export function invalidateMenuCache(client: AgentDesktopClient): void {
+export function invalidateMenuCache(client: DesktopDriver): void {
   menuCache.delete(client)
 }
 
@@ -172,8 +170,8 @@ export function attachMedia(observation: DesktopObservation, media: string | und
   return { ...rest, context, ...(media ? { media } : {}), fingerprint: combineFingerprint(observation.treeFingerprint, media) }
 }
 
-export async function readMediaFact(client: AgentDesktopClient, options: { timeoutMs: number; signal?: AbortSignal }): Promise<string | undefined> {
-  return client.backend === "xa11y" ? readNowPlaying(client, options) : undefined
+export async function readMediaFact(client: DesktopDriver, options: { timeoutMs: number; signal?: AbortSignal }): Promise<string | undefined> {
+  return readNowPlaying(client, options)
 }
 
 function flatten(root: DesktopNode): FlatNode[] {
@@ -310,7 +308,7 @@ function siblingIdentity(node: DesktopNode): string {
   return `${node.role}:${capabilities.join(",")}`
 }
 
-function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet<string>, insideRoot: boolean, allowPressEnter: boolean, allowDrill: boolean, windowBounds?: DesktopBounds, overlay?: string, backend?: string, goal = ""): DesktopCandidate[] {
+function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet<string>, insideRoot: boolean, allowPressEnter: boolean, allowDrill: boolean, windowBounds?: DesktopBounds, overlay?: string, goal = ""): DesktopCandidate[] {
   const candidates: DesktopCandidate[] = []
   const nextSlot = nextTextSlot(nodes, slots, used)
   let identity: Record<string, string> | undefined
@@ -426,8 +424,8 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
     }
     // A declared context-menu capability is the generic "more actions on this
     // item" route; the opened menu's items become candidates in the next
-    // observation. Agent-desktop backend only: it owns the right-click delivery.
-    if (backend === "agent-desktop" && actions.has("RightClick")) {
+    // observation. Delivered as the semantic AXShowMenu action.
+    if (actions.has("RightClick")) {
       add({ operation: "RIGHT_CLICK", ref, headed: false, description: `${descriptor}; open this item's context menu` })
     }
     if (actions.has("Toggle")) {
@@ -446,8 +444,8 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
       add({ operation: "SCROLL_UP", ref, description: `${descriptor}${pane}; reveal earlier content in this scrollable region` })
     }
     // Clearing a non-empty field is a standalone generic goal ("empty the
-    // search box") and needs no caller-prepared text.
-    if (backend === "agent-desktop" && isEditableTextRole(node.role, node) && actions.has("SetValue") && !(node.states ?? []).includes("secure") && typeof node.value === "string" && node.value.length > 0) {
+    // search box") and needs no caller-prepared text (AXValue = "").
+    if (isEditableTextRole(node.role, node) && actions.has("SetValue") && !(node.states ?? []).includes("secure") && typeof node.value === "string" && node.value.length > 0) {
       add({ operation: "CLEAR", ref, description: `${descriptor}; empty this field` })
     }
     // Keep every eligible editable field as a candidate. Field-purpose
@@ -626,7 +624,7 @@ function isEditableTextRole(role: string, node?: DesktopNode): boolean {
 
 /** OS media-session fact (title/artist/playing). App-agnostic, read-only, and
  * the only reliable playback evidence when transport controls are unlabeled. */
-async function readNowPlaying(client: AgentDesktopClient, options: { timeoutMs: number; signal?: AbortSignal }): Promise<string | undefined> {
+async function readNowPlaying(client: DesktopDriver, options: { timeoutMs: number; signal?: AbortSignal }): Promise<string | undefined> {
   try {
     const data = (await client.run<{ available?: boolean; title?: string; artist?: string; album?: string; playing?: boolean | null }>(["now-playing"], { timeoutMs: Math.min(options.timeoutMs, 5_000), signal: options.signal })).data
     if (!data?.available || !data.title) return undefined

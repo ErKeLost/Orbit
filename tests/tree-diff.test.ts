@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { DesktopNode } from "../src-tauri/resources/computer-use/agent-desktop-client"
+import type { DesktopNode } from "../src-tauri/resources/computer-use/desktop-driver"
 import { describeDiff, diffTrees, findNodeByIdentity } from "../src-tauri/resources/computer-use/tree-diff"
 import type { DesktopCandidate } from "../src-tauri/resources/computer-use/gui-task-contract"
 

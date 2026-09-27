@@ -226,7 +226,9 @@ pub fn dispatch_observed(
     // (Orbit) to the target app. It must be allowed while the target is in the
     // background; every other mutation remains foreground-gated.
     let activation_only = operation == "activate";
-    let background_safe = (matches!(operation, "press" | "set-value" | "type") && !headed) || operation == "scroll-to";
+    // Semantic context-menu (AXShowMenu) and clearing a field (AXValue="")
+    // are AX actions like press/set-value: safe without the foreground.
+    let background_safe = (matches!(operation, "press" | "set-value" | "type" | "right-click" | "clear") && !headed) || operation == "scroll-to";
     if !activation_only && !background_safe {
         let foreground = App::foreground(Duration::ZERO).map_err(|e| e.to_string())?;
         if foreground.data.pid != root.data.pid {
@@ -295,6 +297,21 @@ pub fn dispatch_observed(
                 .map_err(|e| e.to_string())?;
         }
         return Ok(json!({"operation": operation, "role": d.role.to_snake_case()}));
+    }
+    if operation == "right-click" {
+        if !live_actions.iter().any(|action| action == "show_menu") {
+            return Err("target does not advertise a context menu (AXShowMenu)".into());
+        }
+        element.show_menu().map_err(|e| e.to_string())?;
+        return Ok(json!({"operation": operation, "role": d.role.to_snake_case()}));
+    }
+    if operation == "clear" {
+        if !live_actions.iter().any(|action| action == "set_value") {
+            return Err("target does not advertise a settable value".into());
+        }
+        element.set_value("").map_err(|e| e.to_string())?;
+        let post = element.data();
+        return Ok(json!({"role":post.role.to_snake_case(),"name":post.name,"value":post.value,"operation":operation}));
     }
     let ax_operation = match operation {
         "click" | "focus" | "press" | "double-click" | "activate" => operation,

@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent"
 import { createXa11yClient } from "./xa11y-client.ts"
-import type { AgentDesktopClient } from "./agent-desktop-client.ts"
+import type { DesktopDriver } from "./desktop-driver.ts"
 import type { GuiTaskEvent, GuiTaskInput, GuiTaskResult } from "./gui-task-contract.ts"
 import { runGuiTaskEngine } from "./gui-task-engine.ts"
 import { createFileMemory, memoryEnabled } from "./affordance-memory.ts"
@@ -54,7 +54,7 @@ export function registerGuiTask(pi: ExtensionAPI): void {
     parameters: taskSchema,
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
       const input = params as GuiTaskInput
-      let client: AgentDesktopClient | undefined
+      let client: DesktopDriver | undefined
       try {
         client = await createXa11yClient(signal)
         const result = await runGuiTaskEngine({
@@ -82,7 +82,7 @@ export function registerGuiTask(pi: ExtensionAPI): void {
           actions: 0,
           decisions: 0,
           evidence: "",
-          metrics: { elapsedMs: 0, launchMs: 0, observationMs: 0, decisionMs: 0, actionMs: 0, inputTokens: 0, outputTokens: 0, jevCalls: 0, replayedSteps: 0, lookaheadSteps: 0, settleMs: 0, settleEvents: 0 },
+          metrics: { elapsedMs: 0, launchMs: 0, observationMs: 0, decisionMs: 0, actionMs: 0, inputTokens: 0, outputTokens: 0, jevCalls: 0, replayedSteps: 0, settleMs: 0, settleEvents: 0 },
           trace: [{ step: 0, stateId: "unobserved", note: message }],
         }
         return { content: [{ type: "text", text: status === "aborted" ? "[aborted]" : `[error] ${message}` }], details: result }
