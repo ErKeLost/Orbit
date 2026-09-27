@@ -95,6 +95,17 @@ jobs:
           security find-identity -p codesigning "$keychain"
           echo "APPLE_SIGNING_IDENTITY=Orbit Developer" >> "$GITHUB_ENV"
 
+      - name: Smoke test code signing
+        if: runner.os == 'macOS'
+        run: |
+          set -x
+          echo 'int main(){return 0;}' > "$RUNNER_TEMP/smoke.c"
+          cc -o "$RUNNER_TEMP/smoke" "$RUNNER_TEMP/smoke.c"
+          perl -e 'alarm 60; exec @ARGV' codesign --force -s "Orbit Developer" "$RUNNER_TEMP/smoke"
+          codesign --verify --strict "$RUNNER_TEMP/smoke"
+          codesign -dv "$RUNNER_TEMP/smoke" 2>&1 | grep Authority
+          rm -f "$RUNNER_TEMP/smoke" "$RUNNER_TEMP/smoke.c"
+
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
