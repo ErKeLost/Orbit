@@ -2653,7 +2653,7 @@ html[data-theme="light"] .composer-agent-mode-indicator {
 }
 .sidebar-bottom-row {
   display: flex;
-  align-items: stretch;
+  align-items: center;
   gap: 6px;
 }
 .sidebar-bottom-row .nav-item {
@@ -2662,11 +2662,27 @@ html[data-theme="light"] .composer-agent-mode-indicator {
 }
 .sidebar-update-button {
   flex-shrink: 0;
+  height: 36px !important;
+  min-height: 36px;
   gap: 5px !important;
   padding: 8px 10px !important;
-  font-size: 10px !important;
+  border-color: var(--sidebar-primary) !important;
+  background: var(--sidebar-primary) !important;
+  color: var(--sidebar-primary-foreground) !important;
+  font-size: 11px !important;
   font-weight: 600 !important;
   white-space: nowrap;
+}
+.sidebar-update-button:hover:not(:disabled) {
+  border-color: color-mix(in oklch, var(--sidebar-primary) 88%, var(--sidebar-foreground)) !important;
+  background: color-mix(in oklch, var(--sidebar-primary) 88%, var(--sidebar-foreground)) !important;
+}
+.sidebar-update-button.is-installing:disabled {
+  border-color: color-mix(in oklch, var(--sidebar-primary) 72%, var(--sidebar)) !important;
+  background: color-mix(in oklch, var(--sidebar-primary) 72%, var(--sidebar)) !important;
+  color: var(--sidebar-primary-foreground) !important;
+  opacity: 1;
+  cursor: progress;
 }
 .sidebar-update-button.is-installing svg {
   animation: sidebar-update-spin 1s linear infinite;
@@ -5509,8 +5525,9 @@ html[data-theme="light"] .composer-agent-mode-indicator {
   border-top: 1px solid var(--sidebar-border);
 }
 .sidebar-bottom .nav-item {
-  height: 30px !important;
-  min-height: 30px !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  margin: 0 !important;
   padding: 0 8px !important;
   gap: 8px !important;
 }
