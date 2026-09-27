@@ -5,6 +5,7 @@ import type { Session } from "../../lib/protocol";
 import type { LiveSession, Panel } from "../../lib/store";
 import { useWorkspace } from "../../lib/store";
 import { mergeProjects, projectExtraRoots, useProjects, type Project } from "../../lib/projects";
+import { installDesktopUpdate, useDesktopUpdate } from "../../lib/desktop-update";
 import { changeSession, connect, desktopRuntime, forgetProject, queryClient, report, retireSession, setSessionRoots } from "../../lib/rpc";
 import { mergeProjectSessions, useProjectSessionGroups } from "../../hooks/use-project-sessions";
 import { sessionGlyph } from "../../lib/session-visual";
@@ -50,6 +51,9 @@ export function WorkspaceSidebar({ sidebarOpen, onToggleSidebar, online, panel, 
   const [deletingProject, setDeletingProject] = useState<Project | null>(null);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [expandedMore, setExpandedMore] = useState<Set<string>>(() => new Set());
+  const updateOffer = useDesktopUpdate(state => state.update);
+  const updateVersion = useDesktopUpdate(state => state.version);
+  const updateInstalling = useDesktopUpdate(state => state.installing);
 
   async function syncProjectRoots(project: Project) {
     await setSessionRoots(projectExtraRoots(project));
@@ -214,7 +218,10 @@ export function WorkspaceSidebar({ sidebarOpen, onToggleSidebar, online, panel, 
       </div>
 
       <div className="sidebar-bottom">
-        <Button className="nav-item" onClick={() => { useWorkspace.getState().set({ panel: "settings", settingsPage: "general" }); onNavigate?.(); }}><Icon name="gear-six" />设置<kbd>⌘ ,</kbd></Button>
+        <div className="sidebar-bottom-row">
+          <Button className="nav-item" onClick={() => { useWorkspace.getState().set({ panel: "settings", settingsPage: "general" }); onNavigate?.(); }}><Icon name="gear-six" />设置<kbd>⌘ ,</kbd></Button>
+          {updateOffer && <Button variant="outline" className={`sidebar-update-button${updateInstalling ? " is-installing" : ""}`} title={`下载并安装 Orbit ${updateVersion}`} aria-busy={updateInstalling} disabled={updateInstalling} onClick={() => void installDesktopUpdate()}><Icon name={updateInstalling ? "circle-notch" : "download-simple"} /><span>{updateInstalling ? "更新中" : updateVersion}</span></Button>}
+        </div>
       </div>
     </aside>
     <DeleteSessionDialog open={Boolean(deletingSession)} sessionName={deletingSession?.session.name || deletingSession?.session.firstMessage || "未命名会话"} onCancel={() => setDeletingSession(null)} onConfirm={() => void deleteSelectedSession()} />

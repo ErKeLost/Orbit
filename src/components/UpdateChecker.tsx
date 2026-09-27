@@ -3,30 +3,12 @@ import { invoke, isTauri } from "@tauri-apps/api/core"
 import { getVersion } from "@tauri-apps/api/app"
 import { gooeyToast } from "goey-toast"
 import { useWorkspace } from "../lib/store"
+import { installDesktopUpdate, useDesktopUpdate } from "../lib/desktop-update"
 import { checkMobileUpdate, type MobileUpdate } from "../lib/mobile-update"
 
 const RETRY_DELAY_MS = 3_000
 
 type DesktopUpdateOptions = { notifyNoUpdate?: boolean }
-
-async function installUpdate(update: import("@tauri-apps/plugin-updater").Update) {
-  try {
-    const installation = update.downloadAndInstall()
-    gooeyToast.promise(installation, {
-      loading: "正在下载更新",
-      success: "更新已安装，正在重启",
-      error: "更新安装失败",
-      showTimestamp: false,
-    })
-    await installation
-    const { relaunch } = await import("@tauri-apps/plugin-process")
-    await relaunch()
-  } catch {
-    // gooeyToast.promise already gives the user a visible failure state.
-  } finally {
-    await update.close().catch(() => undefined)
-  }
-}
 
 export async function installMobileUpdate(update: MobileUpdate) {
   const installation = invoke("mobile_update_install", {
@@ -62,12 +44,17 @@ export async function checkForDesktopUpdate({ notifyNoUpdate = false }: DesktopU
     if (notifyNoUpdate) gooeyToast.success(`当前已是最新版本（${current}）`, { showTimestamp: false })
     return null
   }
-  gooeyToast.info(`发现 Orbit ${update.version}`, {
-    description: update.body || `当前版本 ${current}，可以安装新版本。`,
-    duration: Infinity,
-    showTimestamp: false,
-    action: { label: "更新并重启", onClick: () => void installUpdate(update) },
-  })
+  // The store keeps a persistent offer for the sidebar button; only toast when
+  // the offered version actually changed so focus/online retries don't stack.
+  const isNewOffer = useDesktopUpdate.getState().offer(update, update.version, update.body || "")
+  if (isNewOffer) {
+    gooeyToast.info(`发现 Orbit ${update.version}`, {
+      description: update.body || `当前版本 ${current}，可以安装新版本。`,
+      duration: Infinity,
+      showTimestamp: false,
+      action: { label: "更新并重启", onClick: () => void installDesktopUpdate() },
+    })
+  }
   return update
 }
 
