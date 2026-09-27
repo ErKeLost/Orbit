@@ -40,8 +40,8 @@ copyFileSync(source, target)
 // Rust's linker adds an ad-hoc signature to Mach-O executables. Tauri also
 // discovers src/bin/ax_control and copies that source into Contents/MacOS,
 // so clearing only the resource copy does not prevent codesign from trying to
-// replace the source signature. Keep the resource helper signed separately,
-// then clear the Cargo output before Tauri bundles and signs it.
+// replace the source signature. Clear both copies before Tauri bundles and
+// signs the app's executable contents.
 const codesignTimeout = Number(process.env.ORBIT_CODESIGN_TIMEOUT_MS ?? 15_000)
 const clearSignature = (path) => execFileSync(
   "/usr/bin/codesign",
@@ -49,18 +49,7 @@ const clearSignature = (path) => execFileSync(
   { stdio: "inherit", timeout: codesignTimeout },
 )
 
-const signResource = process.env.APPLE_SIGNING_IDENTITY
-  ? () => {
-      clearSignature(target)
-      execFileSync(
-        "/usr/bin/codesign",
-        ["--force", "-s", process.env.APPLE_SIGNING_IDENTITY, target],
-        { stdio: "inherit", timeout: codesignTimeout },
-      )
-    }
-  : undefined
-
 clearSignature(source)
-signResource?.()
+clearSignature(target)
 const { size } = statSync(target)
-console.log(`[sync-worker] ax_control (${source} ${profile}) ${(size / 1024 / 1024).toFixed(1)} MB → resources/computer-use/ (source signature cleared${signResource ? ", resource signed" : ""})`)
+console.log(`[sync-worker] ax_control (${source} ${profile}) ${(size / 1024 / 1024).toFixed(1)} MB → resources/computer-use/ (signatures cleared)`)
