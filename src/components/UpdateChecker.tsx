@@ -89,11 +89,17 @@ export function UpdateChecker() {
     const startup = window.setTimeout(retry, RETRY_DELAY_MS)
     window.addEventListener("online", retry)
     window.addEventListener("focus", retry)
+    // The main window mounts hidden behind the splashscreen, so the startup
+    // check above gets skipped while document.hidden. Re-run when the window
+    // becomes visible; without this a fresh launch never checks again until
+    // an unrelated focus/online event happens to fire.
+    document.addEventListener("visibilitychange", retry)
     return () => {
       disposed = true
       window.clearTimeout(startup)
       window.removeEventListener("online", retry)
       window.removeEventListener("focus", retry)
+      document.removeEventListener("visibilitychange", retry)
     }
   }, [runtimeTarget])
 
