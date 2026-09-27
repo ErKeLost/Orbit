@@ -49,7 +49,9 @@ const clearSignature = (path) => execFileSync(
   { stdio: "inherit", timeout: codesignTimeout },
 )
 
-clearSignature(source)
+for (const candidate of candidates) {
+  if (existsSync(candidate)) clearSignature(candidate)
+}
 clearSignature(target)
 const { size } = statSync(target)
 console.log(`[sync-worker] ax_control (${source} ${profile}) ${(size / 1024 / 1024).toFixed(1)} MB → resources/computer-use/ (signatures cleared)`)
