@@ -10,9 +10,10 @@ const androidAction=androidIndex<0?undefined:args[androidIndex+1]
 if(androidIndex>=0&&['build','dev'].includes(androidAction)&&!args.includes('--target'))args.push('--target','aarch64')
 const syncAndroidIcons=()=>spawnSync(process.execPath,[resolve(root,'scripts/sync-android-icons.mjs')],{cwd:root,env,stdio:'inherit'})
 if(androidIndex>=0&&syncAndroidIcons().status!==0)process.exit(1)
-// `tauri build` already runs build.beforeBuildCommand, which bundles Pi.
+// Build commands already run build.beforeBuildCommand, which bundles Pi.
 // Keep the explicit preparation for dev/info commands that do not run it.
-if(args[0]!=='build'){
+const isBuild=args[0]==='build'||(androidIndex>=0&&androidAction==='build')
+if(!isBuild){
   const bundle=spawnSync(process.execPath,[resolve(root,'scripts/bundle-pi.mjs')],{cwd:root,env,stdio:'inherit'})
   if(bundle.status!==0)process.exit(bundle.status??1)
 }
