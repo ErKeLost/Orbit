@@ -636,7 +636,8 @@
 .remote-pairing-security svg { color: #7669b4; }
 
 html.remote-native-scanning,
-html.remote-native-scanning body {
+html.remote-native-scanning body,
+html.remote-native-scanning #root {
   background: transparent !important;
 }
 

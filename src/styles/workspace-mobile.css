@@ -242,13 +242,19 @@
     --chat-content-width: calc(100% - 12px);
   }
 
-  .narrow-workspace .chat-root .tessera-conversation > .ai-conversation-content,
-  .narrow-workspace .tessera-composer-form,
-  .narrow-workspace .thinking-beam {
+  .narrow-workspace .chat-root .tessera-conversation > .ai-conversation-content {
     width: calc(100% - 12px) !important;
     max-width: none !important;
     margin-left: 6px !important;
     margin-right: 6px !important;
+  }
+
+  .narrow-workspace .chat-root.tessera-thread-root .tessera-composer-form,
+  .narrow-workspace .chat-root.tessera-thread-root .thinking-beam {
+    width: calc(100% - 4px) !important;
+    max-width: none !important;
+    margin-inline: 2px !important;
+    padding-inline: 0 !important;
   }
 
   .narrow-workspace .chat-root .tessera-conversation > .ai-conversation-content {
