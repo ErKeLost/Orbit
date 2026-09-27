@@ -17,6 +17,7 @@ jobs:
   release:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -69,6 +70,25 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         if: runner.os == 'Windows'
+
+      - name: Cache Bun packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-${{ runner.os }}-${{ matrix.name }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ matrix.name }}-
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
@@ -129,6 +149,7 @@ jobs:
   android:
     name: Android ARM64
     runs-on: ubuntu-22.04
+    timeout-minutes: 45
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
@@ -147,6 +168,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
       - name: Resolve Bun executable
         run: echo "ORBIT_BUN_PATH=$(command -v bun)" >> "$GITHUB_ENV"
@@ -166,6 +188,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
+
+      - name: Cache Bun packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: cargo-${{ runner.os }}-android-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-android-
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
