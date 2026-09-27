@@ -11,6 +11,7 @@ fn is_permission_denied(message: &str) -> bool {
 /// assistive client requests full accessibility, so an empty result first
 /// attempts the attribute-driven activation and retries once after its
 /// measured debounce before reporting failure.
+#[cfg(target_os = "macos")]
 fn snapshot_with_renderer_activation(app: &str) -> Result<serde_json::Value, String> {
     let empty = serde_json::json!({ "tree": { "window_count": 0 } });
     let mut snapshot = match app_lib::ax::observe(app, 2000) {
