@@ -82,8 +82,17 @@ jobs:
           test -n "$ORBIT_MACOS_SIGNING_P12_BASE64" || { echo "::error::Missing ORBIT_MACOS_SIGNING_P12_BASE64. macOS builds need the self-signed code signing certificate (run scripts/make-signing-cert.sh locally, then upload work/orbit-signing.p12.base64 and work/orbit-signing.password as repository secrets). Ad-hoc builds would break Accessibility grants on every update."; exit 1; }
           test -n "$ORBIT_MACOS_SIGNING_P12_PASSWORD" || { echo "::error::Missing ORBIT_MACOS_SIGNING_P12_PASSWORD."; exit 1; }
           printf '%s' "$ORBIT_MACOS_SIGNING_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/orbit-signing.p12"
-          echo "APPLE_CERTIFICATE=$(base64 -i "$RUNNER_TEMP/orbit-signing.p12" | tr -d '\n')" >> "$GITHUB_ENV"
-          echo "APPLE_CERTIFICATE_PASSWORD=$ORBIT_MACOS_SIGNING_P12_PASSWORD" >> "$GITHUB_ENV"
+          # tauri-macos-sign's APPLE_CERTIFICATE path only resolves Apple-prefixed
+          # identities, so import the self-signed P12 ourselves and let the
+          # bundler find it via APPLE_SIGNING_IDENTITY (codesign -s <name>).
+          keychain="$RUNNER_TEMP/orbit-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 16)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security list-keychain -d user -s "$keychain" $(security list-keychain -d user | tr -d '"')
+          security import "$RUNNER_TEMP/orbit-signing.p12" -k "$keychain" -P "$ORBIT_MACOS_SIGNING_P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$keychain_password" "$keychain" >/dev/null
+          security find-identity -p codesigning "$keychain"
           echo "APPLE_SIGNING_IDENTITY=Orbit Developer" >> "$GITHUB_ENV"
 
       - uses: tauri-apps/tauri-action@v1

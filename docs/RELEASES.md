@@ -21,10 +21,11 @@ Setup once per machine / repository:
    Local builds pick the identity up automatically through `scripts/tauri.mjs`.
 2. CI: add repository secrets `ORBIT_MACOS_SIGNING_P12_BASE64` (contents of
    `work/orbit-signing.p12.base64`) and `ORBIT_MACOS_SIGNING_P12_PASSWORD`
-   (contents of `work/orbit-signing.password`). The release workflow exposes
-   them as `APPLE_CERTIFICATE` / `APPLE_CERTIFICATE_PASSWORD` / `APPLE_SIGNING_IDENTITY`
-   for the bundler, which imports the P12 into a temporary keychain. Missing
-   secrets fail the macOS jobs instead of silently falling back to ad-hoc.
+   (contents of `work/orbit-signing.password`). The release workflow decodes
+   the P12 into a temporary keychain and exports `APPLE_SIGNING_IDENTITY`
+   for the bundler (its `APPLE_CERTIFICATE` path only resolves Apple-prefixed
+   identities, which a self-signed certificate never has). Missing secrets
+   fail the macOS jobs instead of silently falling back to ad-hoc.
 
 The certificate is untrusted by Apple by definition, and that is fine for this
 distribution model: the in-app updater extracts the signed `.app` bundle
