@@ -103,7 +103,7 @@ jobs:
           cc -o "$RUNNER_TEMP/smoke" "$RUNNER_TEMP/smoke.c"
           perl -e 'alarm 60; exec @ARGV' codesign --force -s "Orbit Developer" "$RUNNER_TEMP/smoke"
           codesign --verify --strict "$RUNNER_TEMP/smoke"
-          codesign -dv "$RUNNER_TEMP/smoke" 2>&1 | grep Authority
+          codesign -dvv "$RUNNER_TEMP/smoke" 2>&1 | grep -E "Authority=|CDHash="
           rm -f "$RUNNER_TEMP/smoke" "$RUNNER_TEMP/smoke.c"
 
       - uses: tauri-apps/tauri-action@v1
