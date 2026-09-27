@@ -37,7 +37,7 @@ bun run tauri build --bundles app
 
 完整功能边界与 33/33 RPC 覆盖：[CAPABILITIES.md](docs/CAPABILITIES.md)。文档与代码依据：[SOURCES.md](docs/SOURCES.md)。精确版本：[versions.json](docs/versions.json)。实际集成结果：[pi-smoke-result.json](docs/pi-smoke-result.json)。
 
-应用目前验证目标是本机 macOS；没有宣称任意 Pi 终端扩展都可移植，也没有做公开分发签名或公证。
+应用目前验证目标是本机 macOS；没有宣称任意 Pi 终端扩展都可移植。macOS 桌面构建用仓库固定的自签证书（`bun run signing:setup` 生成）签名，未公证：首次安装需右键放行一次，应用内更新不再丢失辅助功能授权，详见 [docs/RELEASES.md](docs/RELEASES.md)。
 
 ### Tauri 命令
 

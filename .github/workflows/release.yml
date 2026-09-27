@@ -73,6 +73,19 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
+      - name: Restore macOS signing certificate
+        if: runner.os == 'macOS'
+        env:
+          ORBIT_MACOS_SIGNING_P12_BASE64: ${{ secrets.ORBIT_MACOS_SIGNING_P12_BASE64 }}
+          ORBIT_MACOS_SIGNING_P12_PASSWORD: ${{ secrets.ORBIT_MACOS_SIGNING_P12_PASSWORD }}
+        run: |
+          test -n "$ORBIT_MACOS_SIGNING_P12_BASE64" || { echo "::error::Missing ORBIT_MACOS_SIGNING_P12_BASE64. macOS builds need the self-signed code signing certificate (run scripts/make-signing-cert.sh locally, then upload work/orbit-signing.p12.base64 and work/orbit-signing.password as repository secrets). Ad-hoc builds would break Accessibility grants on every update."; exit 1; }
+          test -n "$ORBIT_MACOS_SIGNING_P12_PASSWORD" || { echo "::error::Missing ORBIT_MACOS_SIGNING_P12_PASSWORD."; exit 1; }
+          printf '%s' "$ORBIT_MACOS_SIGNING_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/orbit-signing.p12"
+          echo "APPLE_CERTIFICATE=$(base64 -i "$RUNNER_TEMP/orbit-signing.p12" | tr -d '\n')" >> "$GITHUB_ENV"
+          echo "APPLE_CERTIFICATE_PASSWORD=$ORBIT_MACOS_SIGNING_P12_PASSWORD" >> "$GITHUB_ENV"
+          echo "APPLE_SIGNING_IDENTITY=Orbit Developer" >> "$GITHUB_ENV"
+
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -82,7 +95,7 @@ jobs:
           tauriScript: bun run tauri
           tagName: v__VERSION__
           releaseName: Orbit v__VERSION__
-          releaseBody: Orbit installers for macOS, Linux, and Windows. macOS builds use ad-hoc signing and are not notarized.
+          releaseBody: "Orbit installers for macOS, Linux, and Windows. macOS builds are signed with a self-signed certificate (no Apple notarization) - right-click the app on first install to approve it, and in-app updates keep Accessibility grants."
           # Keep the release out of /releases/latest until every desktop
           # matrix job has uploaded its updater metadata.
           releaseDraft: true

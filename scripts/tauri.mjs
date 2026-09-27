@@ -17,6 +17,19 @@ if(androidIndex<0&&['dev','build'].includes(args[0])){
   for(const name of ['computer-use','node_modules','node-runtime','pi-computer-use','pi-runtime'])rmSync(resolve(root,'src-tauri/target',profile,'resources',name),{recursive:true,force:true})
   rmSync(resolve(root,'src-tauri/target',profile,'bundle'),{recursive:true,force:true})
 }
+// macOS 桌面构建用固定的自签证书签名（scripts/make-signing-cert.sh 生成），
+// 让 Designated Requirement 稳定：应用内更新覆盖 .app 后辅助功能授权不再丢失。
+// APPLE_SIGNING_IDENTITY 优先级高于 tauri.conf.json 的 signingIdentity（tauri-cli 行为）。
+const MACOS_SIGNING_IDENTITY='Orbit Developer'
+if(process.platform==='darwin'&&androidIndex<0&&args[0]==='build'&&!env.APPLE_SIGNING_IDENTITY&&!env.APPLE_CERTIFICATE){
+  const found=spawnSync('security',['find-identity','-p','codesigning'],{encoding:'utf8'})
+  if((found.stdout||'').includes(`"${MACOS_SIGNING_IDENTITY}"`)){
+    env.APPLE_SIGNING_IDENTITY=MACOS_SIGNING_IDENTITY
+    console.log(`[tauri] macOS 构建签名身份："${MACOS_SIGNING_IDENTITY}"（应用内更新保留辅助功能授权）`)
+  }else{
+    console.warn(`[tauri] 未找到自签证书 "${MACOS_SIGNING_IDENTITY}"，本次构建回退 ad-hoc 签名：升级后辅助功能授权会丢失。运行 bun run signing:setup 生成。`)
+  }
+}
 if(existsSync(resolve(local,'cargo/bin/rustup'))){
   env.RUSTUP_HOME=resolve(local,'rustup')
   env.CARGO_HOME=resolve(local,'cargo')
