@@ -5732,3 +5732,22 @@ html[data-theme="light"] .composer-agent-mode-indicator {
   from { background-position: 100% center, 0 0; }
   to { background-position: 0% center, 0 0; }
 }
+
+/* Mobile composer: keep the input surface flush with the viewport. This is
+   intentionally last so the desktop composer widths cannot reintroduce the
+   large Android side gutters. */
+@media (max-width: 720px) {
+  .narrow-workspace .composer-container.tessera-composer-dock {
+    width: 100% !important;
+    padding-right: 0 !important;
+    padding-left: 0 !important;
+  }
+  .narrow-workspace .chat-root.tessera-thread-root .tessera-composer-form {
+    width: calc(100% - 4px) !important;
+    max-width: none !important;
+    margin-right: 2px !important;
+    margin-left: 2px !important;
+    padding-right: 0 !important;
+    padding-left: 0 !important;
+  }
+}
