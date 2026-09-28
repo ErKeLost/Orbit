@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { m } from "motion/react";
 import { gooeyToast } from "goey-toast";
 import { setComputerUseMode, setMultiAgentMode, report } from "../../lib/rpc";
@@ -20,7 +20,7 @@ function ModeTooltip({ label, hint, children }: { label: string; hint: string; c
   </Tooltip>;
 }
 
-export function ComposerAgentMode() {
+function ComposerAgentModeImpl() {
   const enabled = useWorkspace(state => state.multiAgentEnabled);
   const computerUse = useWorkspace(state => state.computerUseEnabled);
   const online = useWorkspace(state => state.connection === "online");
@@ -49,3 +49,5 @@ export function ComposerAgentMode() {
     </ModeTooltip>}
   </div>;
 }
+
+export const ComposerAgentMode = memo(ComposerAgentModeImpl);

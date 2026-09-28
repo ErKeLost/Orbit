@@ -174,18 +174,29 @@ export function Chat() {
 
   // 将消息列的实际渲染宽度镜像给 composer：两者宽度逐像素一致，
   // 滚动条占位、WebView 差异都无法再造成错位。
+  // 性能关键点：流式输出时消息列高度每帧都在涨，ResizeObserver 每帧都会
+  // 进来，但宽度几乎从不变。变量必须做「值变化才写入」，否则每帧 3 次
+  // setProperty 会让整棵 chat 子树重新计算样式；且变量写在 dock 上而非
+  // 根节点，把样式失效范围限制在 composer 内（宽度对 composer 本来就
+  // 恒定，写入量趋近于零）。
   useEffect(() => {
     const root = chatRootRef.current;
     const content = root?.querySelector<HTMLElement>(".tessera-conversation > .ai-conversation-content");
     const scroller = root?.querySelector<HTMLElement>(".tessera-conversation");
     const dock = root?.querySelector<HTMLElement>(".composer-container.tessera-composer-dock");
     if (!root || !content || !scroller || !dock) return;
+    const applied = new Map<string, string>();
+    const setVar = (name: string, value: string) => {
+      if (applied.get(name) === value) return;
+      applied.set(name, value);
+      dock.style.setProperty(name, value);
+    };
     const apply = () => {
       const contentRect = content.getBoundingClientRect();
       const dockRect = dock.getBoundingClientRect();
-      root.style.setProperty("--chat-content-inline-size", `${contentRect.width}px`);
-      root.style.setProperty("--chat-content-offset", `${contentRect.left - dockRect.left}px`);
-      root.style.setProperty("--chat-scrollbar-space", `${scroller.offsetWidth - scroller.clientWidth}px`);
+      setVar("--chat-content-inline-size", `${contentRect.width}px`);
+      setVar("--chat-content-offset", `${contentRect.left - dockRect.left}px`);
+      setVar("--chat-scrollbar-space", `${scroller.offsetWidth - scroller.clientWidth}px`);
     };
     apply();
     const observer = new ResizeObserver(apply);
@@ -195,8 +206,7 @@ export function Chat() {
     return () => {
       observer.disconnect();
       window.removeEventListener("resize", apply);
-      root.style.removeProperty("--chat-content-inline-size");
-      root.style.removeProperty("--chat-scrollbar-space");
+      for (const name of applied.keys()) dock.style.removeProperty(name);
     };
   }, []);
 

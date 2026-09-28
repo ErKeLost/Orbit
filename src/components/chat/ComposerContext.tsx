@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useRef, useState } from "react";
+import { memo, type RefObject, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { MetalFx } from "metal-fx";
 import { useTheme } from "next-themes";
@@ -72,7 +72,7 @@ function UsagePanel({
   </div>;
 }
 
-export function ComposerContext({ placement = "composer", container }: { placement?: "composer" | "header"; container?: RefObject<HTMLElement | null> } = {}) {
+function ComposerContextImpl({ placement = "composer", container }: { placement?: "composer" | "header"; container?: RefObject<HTMLElement | null> } = {}) {
   const { stats, runtime, online } = useMetrics();
   const state = useWorkspace(workspace => workspace.state);
   const compacting = useWorkspace(workspace => workspace.transcript.compacting);
@@ -150,3 +150,5 @@ export function ComposerContext({ placement = "composer", container }: { placeme
     {open && container?.current ? createPortal(panel, container.current) : null}
   </div>;
 }
+
+export const ComposerContext = memo(ComposerContextImpl);

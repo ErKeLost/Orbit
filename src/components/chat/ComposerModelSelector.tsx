@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "../../lib/store";
 import { modelFamily, modelLabel } from "../../lib/model-meta";
@@ -34,7 +34,7 @@ function ModelRow({ model, active, onSelect }: { model: Model; active: boolean; 
   </button>;
 }
 
-export function ComposerModelSelector() {
+function ComposerModelSelectorImpl() {
   const project = useWorkspace(state => state.cwd);
   const online = useWorkspace(state => state.connection === "online");
   const streaming = useWorkspace(state => state.transcript.running);
@@ -90,3 +90,5 @@ export function ComposerModelSelector() {
     </PopoverContent>
   </Popover></div>;
 }
+
+export const ComposerModelSelector = memo(ComposerModelSelectorImpl);

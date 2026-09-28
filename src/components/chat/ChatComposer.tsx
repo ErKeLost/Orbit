@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { AnimatePresence, m } from "motion/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState, type KeyboardEvent } from "react";
 import { useWorkspace } from "../../lib/store";
 import { report, request, stop, syncComputerUseMode, syncMultiAgentMode } from "../../lib/rpc";
 import { Beam } from "../Effects";
@@ -16,13 +16,31 @@ import { ComposerAgentMode } from "./ComposerAgentMode";
 type ImageAttachment = { kind: "image"; id: string; name: string; data: string; mimeType: string };
 type FileAttachment = { kind: "file"; id: string; name: string; path: string };
 type Attachment = ImageAttachment | FileAttachment;
-const composerCache = new Map<string, { text: string; attachments: Attachment[] }>();
+// 草稿与附件分开缓存：草稿由叶子组件自管理，附件留在 ChatComposer，
+// 两边各自维护 LRU，互不依赖对方的 state。
+const draftCache = new Map<string, string>();
+const attachmentCache = new Map<string, Attachment[]>();
 
-function cacheComposer(project: string, value: { text: string; attachments: Attachment[] }) {
-  composerCache.delete(project);
-  composerCache.set(project, value);
-  while (composerCache.size > 4) composerCache.delete(composerCache.keys().next().value!);
+function lruCache<T>(cache: Map<string, T>, key: string, value: T) {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > 4) cache.delete(cache.keys().next().value!);
 }
+
+type DraftHandle = { clear: () => void };
+
+// 草稿叶子组件：击键只会重渲染这一个 textarea。此前每次击键都会重建
+// 整个 composer（BorderBeam 动画层、模型选择器、模式切换、上下文面板），
+// 流式期间这些重渲染与聊天输出争抢主线程，是输入卡顿的主因之一。
+const ComposerTextarea = memo(forwardRef<DraftHandle, {
+  composerKey: string;
+  onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+}>(function ComposerTextarea({ composerKey, onKeyDown }, ref) {
+  const [draft, setDraft] = useState(() => useWorkspace.getState().draft || draftCache.get(composerKey) || "");
+  useImperativeHandle(ref, () => ({ clear: () => setDraft("") }), []);
+  useEffect(() => { lruCache(draftCache, composerKey, draft); }, [composerKey, draft]);
+  return <PromptInputTextarea placeholder="输入消息，发送给助手…" value={draft} onChange={event => setDraft(event.currentTarget.value)} onKeyDown={onKeyDown} />;
+}));
 
 function imageAttachments(files: Iterable<File>) {
   return Promise.all(Array.from(files).flatMap(file => file.type.startsWith("image/") ? [new Promise<Attachment>((resolve, reject) => {
@@ -85,18 +103,21 @@ function fileKindLabel(name: string): string {
   return extension ? extension.toUpperCase() : "文件";
 }
 
-export function ChatComposer({ compacting, onSubmitted }: { compacting: boolean; onSubmitted: () => void }) {
+export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted }: { compacting: boolean; onSubmitted: () => void }) {
   const project = useWorkspace(state => state.cwd);
   const connectionId = useWorkspace(state => state.connectionId);
   const transcriptRunning = useWorkspace(state => state.transcript.running);
   const online = useWorkspace(state => state.connection === "online");
   const runtimeTarget = useWorkspace(state => state.runtimeTarget);
   const composerKey = connectionId || project;
-  const [attachments, setAttachments] = useState<Attachment[]>(() => composerCache.get(composerKey)?.attachments ?? []);
-  const [draft, setDraft] = useState(() => useWorkspace.getState().draft || composerCache.get(composerKey)?.text || "");
+  const [attachments, setAttachments] = useState<Attachment[]>(() => attachmentCache.get(composerKey) ?? []);
+  const draftRef = useRef<DraftHandle>(null);
   const deliveryOverride = useRef<"steer" | "followUp" | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const composerForm = useRef<HTMLFormElement>(null);
+  const handleDraftKeyDown = useCallback((event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) deliveryOverride.current = event.altKey ? "followUp" : "steer";
+  }, []);
 
   const addFilePaths = useCallback((paths: string[]) => {
     if (!paths.length) return;
@@ -154,7 +175,7 @@ export function ChatComposer({ compacting, onSubmitted }: { compacting: boolean;
     return () => unlisten?.();
   }, [addFilePaths]);
 
-  useEffect(() => { cacheComposer(composerKey, { text: draft, attachments }); }, [attachments, composerKey, draft]);
+  useEffect(() => { lruCache(attachmentCache, composerKey, attachments); }, [attachments, composerKey]);
 
   async function submit(message: PromptInputMessage) {
     const streamingBehavior = deliveryOverride.current ?? "steer";
@@ -180,7 +201,7 @@ export function ChatComposer({ compacting, onSubmitted }: { compacting: boolean;
       }
       await request({ type: "prompt", message: text, images: images.map(attachment => ({ type: "image" as const, data: attachment.data, mimeType: attachment.mimeType })), ...(transcriptRunning ? { streamingBehavior } : {}) }, 45000, project);
       setAttachments([]);
-      setDraft("");
+      draftRef.current?.clear();
       onSubmitted();
     } catch (error) {
       if (transcriptRunning) useWorkspace.getState().event({ type: "queued_preview_revert", id: previewId });
@@ -203,7 +224,8 @@ export function ChatComposer({ compacting, onSubmitted }: { compacting: boolean;
               <Button type="button" variant="secondary" size="icon" className="attachment-remove" title={`移除 ${attachment.name}`} aria-label={`移除 ${attachment.name}`} onClick={() => setAttachments(current => current.filter(item => item.id !== attachment.id))}><Icon name="x" /></Button>
             </div>)}
         </m.div>}</AnimatePresence>
-        <PromptInputTextarea placeholder="输入消息，发送给助手…" value={draft} onChange={event => setDraft(event.currentTarget.value)} onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) deliveryOverride.current = event.altKey ? "followUp" : "steer"; }} />
+        {/* key 变化时重挂载叶子，草稿按项目/连接取缓存 */}
+        <ComposerTextarea key={composerKey} ref={draftRef} composerKey={composerKey} onKeyDown={handleDraftKeyDown} />
         <div className="composer-bottom">
           <input type="file" multiple accept="image/*" hidden ref={fileInput} onChange={event => { const files = event.target.files; if (files) void imageAttachments(files).then(next => setAttachments(current => [...current, ...next])).catch(report); event.target.value = ""; }} />
           <div className="composer-tool-cluster"><Button variant="ghost" className="size-8 rounded-full p-0 text-muted-foreground hover:text-foreground hover:bg-accent" aria-label="上传附件" title="上传图片" onClick={() => fileInput.current?.click()}><Icon name="plus" className="size-4" /></Button></div>
@@ -215,4 +237,4 @@ export function ChatComposer({ compacting, onSubmitted }: { compacting: boolean;
       </PromptInput>
     </Beam>
   </div></div>;
-}
+});

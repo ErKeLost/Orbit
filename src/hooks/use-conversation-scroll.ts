@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export function useConversationScroll() {
   const ref = useRef<HTMLDivElement>(null);
@@ -36,12 +36,14 @@ export function useConversationScroll() {
       mutationObserver.disconnect();
     };
   }, []);
-  const scrollToBottom = () => {
+  // 稳定引用：作为 onSubmitted 传给 memo 过的 ChatComposer，
+  // 避免 Chat 每次流式重渲染都把回调换新、击穿 memo。
+  const scrollToBottom = useCallback(() => {
     const element = ref.current;
     if (!element) return;
     element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
     atBottomRef.current = true;
     setAtBottom(true);
-  };
-  return { ref, atBottom, scrollToBottom };
+  }, []);
+  return { ref, atBottom, scrollToBottom } as const;
 }
