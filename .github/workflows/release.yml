@@ -25,9 +25,10 @@ jobs:
           - name: macOS Apple Silicon
             os: macos-15
             args: --target aarch64-apple-darwin
-          - name: macOS Intel
-            os: macos-15-intel
-            args: --target x86_64-apple-darwin
+          # 暂时停发 Intel 包：需要时取消注释即可恢复。
+          # - name: macOS Intel
+          #   os: macos-15-intel
+          #   args: --target x86_64-apple-darwin
           - name: Linux x86_64
             os: ubuntu-22.04
             args: ""
@@ -58,9 +59,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         if: runner.os != 'Windows'
 
-      - name: Install Intel macOS target
-        if: matrix.name == 'macOS Intel'
-        run: rustup target add x86_64-apple-darwin
+      # 暂时停发 Intel 包，随 matrix 一起注释。
+      # - name: Install Intel macOS target
+      #   if: matrix.name == 'macOS Intel'
+      #   run: rustup target add x86_64-apple-darwin
 
       - name: Install Linux build dependencies
         if: matrix.name == 'Linux x86_64'
