@@ -86,6 +86,17 @@ export function messagePlainText(message: PiMessage | undefined): string {
   return message.content.flatMap(part => part.type === 'text' && part.text ? [part.text] : []).join('\n')
 }
 const isQueuedPreview = (item: DisplayMessage) => item.id.startsWith('queued-')
+// 前端乐观预览与后端 queued_preview 事件会先后到达：内容一致且时间接近时视为同一条回声。
+const previewEcho = (existing: DisplayMessage, incoming: PiMessage) => {
+  if (!isQueuedPreview(existing) || existing.message.role !== 'user') return false
+  const fingerprint = (message: PiMessage) => {
+    const parts = Array.isArray(message.content) ? message.content : (typeof message.content === 'string' && message.content ? [{ type: 'text', text: message.content }] : [])
+    return JSON.stringify(parts.map(part => ({ type: part.type, text: (part as { text?: string }).text })))
+  }
+  if (fingerprint(existing.message) !== fingerprint(incoming)) return false
+  const a = existing.message.timestamp ?? 0, b = incoming.timestamp ?? 0
+  return !a || !b || Math.abs(a - b) < 5000
+}
 const queuedStillPending = (item: DisplayMessage, queue: Transcript['queue']) => {
   if (!isQueuedPreview(item)) return true
   const text = messagePlainText(item.message)
@@ -132,8 +143,11 @@ export function reduceEvent(previous: Transcript, event: Event): Transcript {
     case 'queue_update': return { ...state, queue: { steering: event.steering ?? [], followUp: event.followUp ?? [] } }
     case 'queued_preview': {
       if (!event.message || event.message.role !== 'user') return state
+      const message = normalizeMessage(event.message)
+      const last = state.messages[state.messages.length - 1]
+      if (last && previewEcho(last, message)) return state
       const id = typeof event.id === 'string' ? event.id : `queued-${state.messages.length}`
-      return { ...state, messages: [...state.messages, { id, message: normalizeMessage(event.message) }] }
+      return { ...state, messages: [...state.messages, { id, message }] }
     }
     case 'queued_preview_revert': {
       const id = typeof event.id === 'string' ? event.id : ''

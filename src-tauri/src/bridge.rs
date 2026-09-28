@@ -1599,7 +1599,7 @@ pub async fn list_provider_profiles() -> Result<Value, String> {
             "api": saved.get("api").and_then(Value::as_str).or_else(|| config.get("api").and_then(Value::as_str)),
             "authHeader": saved.get("authHeader").and_then(Value::as_bool).or_else(|| config.get("authHeader").and_then(Value::as_bool)),
             "isDefault": default_provider == Some(id.as_str()),
-            "defaultModel": (default_provider == Some(id.as_str())).then(|| default_model).flatten(),
+            "defaultModel": if default_provider == Some(id.as_str()) { default_model } else { saved.get("defaultModel").and_then(Value::as_str) },
             "models": config.get("models").cloned().unwrap_or_else(|| Value::Array(Vec::new())),
             "hasApiKey": stored_api_key(&auth, &id).is_some(),
             "modelCount": config.get("models").and_then(Value::as_array).map(Vec::len).unwrap_or(0)
@@ -1725,6 +1725,10 @@ pub async fn save_provider(
         .get(&provider)
         .and_then(|value| value.get("apiKey"))
         .cloned();
+    let previous_default_model = providers
+        .get(&provider)
+        .and_then(|value| value.get("defaultModel"))
+        .cloned();
     let normalized_models_url = models_url
         .as_deref()
         .map(|value| value.trim().trim_end_matches('/'))
@@ -1737,6 +1741,9 @@ pub async fn save_provider(
         .or(previous_key)
     {
         entry["apiKey"] = key;
+    }
+    if let Some(model) = previous_default_model {
+        entry["defaultModel"] = model;
     }
     providers.insert(provider.clone(), entry);
     write_provider_store(&dir, &store)?;
@@ -1881,6 +1888,11 @@ fn set_default_model_in(
         serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())? + "\n",
     )
     .map_err(|e| format!("写入 Pi 默认模型失败：{e}"))?;
+    let mut store = load_provider_store(dir)?;
+    if let Some(entry) = store.get_mut("providers").and_then(Value::as_object_mut).and_then(|providers| providers.get_mut(&provider)) {
+        entry["defaultModel"] = Value::from(model_id.clone());
+        write_provider_store(dir, &store)?;
+    }
     Ok(json!({"provider":provider,"id":model_id}))
 }
 

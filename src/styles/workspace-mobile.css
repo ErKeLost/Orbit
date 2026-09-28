@@ -514,3 +514,45 @@
     transition: none;
   }
 }
+
+/* Mobile chat and composer share the same two-pixel inset. */
+/* 聊天根容器全断点统一 gutter：消息列 / composer 在任何宽度下至少有这点留白。 */
+.chat-root.tessera-thread-root {
+  padding-inline: var(--chat-gutter) !important;
+}
+
+@media (max-width: 992px) {
+  .chat-root .tessera-conversation > .ai-conversation-content,
+  .chat-root .thinking-beam,
+  .chat-root .tessera-composer-form {
+    width: 100% !important;
+    max-width: none !important;
+    margin-inline: 0 !important;
+  }
+}
+
+/* Composer mirrors the live message-column geometry (measured in Chat.tsx):
+   same width AND same left offset, so the edges are identical by
+   construction — scrollbar space and engine quirks cannot shift it. */
+.chat-root .composer-container.tessera-composer-dock {
+  padding-right: var(--chat-scrollbar-space, 0px) !important;
+}
+.chat-root .tessera-composer-form {
+  width: var(--chat-content-inline-size, calc(100% - (var(--chat-gutter) * 2))) !important;
+  margin-left: var(--chat-content-offset, auto) !important;
+  margin-right: auto !important;
+}
+
+/* 尝试让旧引擎也用覆盖式滚动条（不认识 overlay 的引擎会回退 auto） */
+.chat-root .tessera-conversation,
+.chat-root .ai-conversation {
+  overflow-y: overlay;
+}
+
+/* ≤992px：composer 同样吃满父级 padding 内的宽度（压过 JS 镜像）。 */
+@media (max-width: 992px) {
+  .chat-root .tessera-composer-form {
+    width: 100% !important;
+    margin-inline: 0 !important;
+  }
+}

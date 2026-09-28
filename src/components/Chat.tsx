@@ -1,5 +1,5 @@
 import { Wifi } from "lucide-react";
-import { useCallback, useDeferredValue, useEffect, useId, useMemo, useState, type ClipboardEvent as ReactClipboardEvent, type RefObject } from "react";
+import { useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type RefObject } from "react";
 import { m } from "motion/react";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "../lib/store";
@@ -170,7 +170,37 @@ export function Chat() {
     saveTurnDurations(sessionFile, completed);
   }, [messageGroups, sessionFile, transcript.running]);
 
-  return <div className="chat-root tessera-thread-root">
+  const chatRootRef = useRef<HTMLDivElement | null>(null);
+
+  // 将消息列的实际渲染宽度镜像给 composer：两者宽度逐像素一致，
+  // 滚动条占位、WebView 差异都无法再造成错位。
+  useEffect(() => {
+    const root = chatRootRef.current;
+    const content = root?.querySelector<HTMLElement>(".tessera-conversation > .ai-conversation-content");
+    const scroller = root?.querySelector<HTMLElement>(".tessera-conversation");
+    const dock = root?.querySelector<HTMLElement>(".composer-container.tessera-composer-dock");
+    if (!root || !content || !scroller || !dock) return;
+    const apply = () => {
+      const contentRect = content.getBoundingClientRect();
+      const dockRect = dock.getBoundingClientRect();
+      root.style.setProperty("--chat-content-inline-size", `${contentRect.width}px`);
+      root.style.setProperty("--chat-content-offset", `${contentRect.left - dockRect.left}px`);
+      root.style.setProperty("--chat-scrollbar-space", `${scroller.offsetWidth - scroller.clientWidth}px`);
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(content);
+    observer.observe(scroller);
+    window.addEventListener("resize", apply);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", apply);
+      root.style.removeProperty("--chat-content-inline-size");
+      root.style.removeProperty("--chat-scrollbar-space");
+    };
+  }, []);
+
+  return <div className="chat-root tessera-thread-root" ref={chatRootRef}>
     {proximitySections.length > 0 && <ProximitySidebar
       sections={proximitySections}
       side="left"
