@@ -1,6 +1,6 @@
 [package]
 name = "orbit"
-version = "0.3.25"
+version = "0.3.26"
 default-run = "orbit"
 description = "A local desktop workspace for Orbit"
 authors = ["you"]

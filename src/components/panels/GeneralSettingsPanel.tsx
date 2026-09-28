@@ -328,63 +328,74 @@ export function DesktopHostSettings({ pageMode = false }: { pageMode?: boolean }
   if (pageMode) {
     const clients = host?.connectedClients ?? 0;
     const relayReady = Boolean(relay?.hasHostKey);
+    const modes = [
+      { value: "lan", label: "局域网直连" },
+      { value: "relay", label: "公网中转" },
+      { value: "auto", label: "自动选择" },
+    ] as const;
+    const heading = clients ? "手机已连接" : host ? "等待手机连接" : "连接你的手机";
+    const description = clients
+      ? `${host?.machineName ?? "电脑"} · ${clients} 台设备在线`
+      : host
+        ? connectedLabel
+        : "用手机 Orbit 扫描二维码，在手机上继续当前工作。";
+
     return <div className="mobile-access-layout">
       <div className="mobile-access-main">
-        <Card className="mobile-access-hero" data-online={Boolean(host)}>
-          <CardContent className="mobile-access-hero-content">
-            <span className="mobile-access-hero-icon"><Icon name="desktop" /></span>
-            <div className="mobile-access-hero-copy">
-              <div className="mobile-access-hero-title">
-                <strong>电脑 Host</strong>
-                <span className="mobile-access-pill" aria-live="polite"><span className="remote-host-status-dot" data-online={Boolean(host)} />{statusLabel}</span>
-              </div>
-              <p>{host ? connectedLabel : "开启后，手机可通过局域网直连，或经你自己的中转服务器从外网连接这台电脑。"}</p>
-            </div>
-            <Switch aria-label="电脑 Host" checked={Boolean(host)} disabled={loading || Boolean(busy)} onChange={checked => void (checked ? start() : stop())} />
-          </CardContent>
-        </Card>
+        <header className="mobile-access-connect-heading" data-online={clients > 0}>
+          <span className="mobile-access-connect-icon"><Icon name={clients ? "check" : "device-mobile"} /></span>
+          <div>
+            <p>ORBIT MOBILE</p>
+            <h2>{heading}</h2>
+            <span>{description}</span>
+          </div>
+          <span className="mobile-access-pill" aria-live="polite"><span className="remote-host-status-dot" data-online={Boolean(host)} />{statusLabel}</span>
+        </header>
 
-        <section className="mobile-access-section" aria-label="连接方式">
-          <Card className="mobile-access-card"><CardContent>{transportSetting}</CardContent></Card>
-        </section>
-
-        <section className="mobile-access-section" aria-label="公网中转">
-          <header className="mobile-access-section-heading">
-            <h2>公网中转</h2>
-            <span className="mobile-access-pill" data-tone={relayReady ? "ok" : undefined}><span className="remote-host-status-dot" data-online={relayReady} />{relayReady ? "已配置" : "未配置"}</span>
-          </header>
-          <Card className="mobile-access-card"><CardContent>{relaySetting}</CardContent></Card>
-        </section>
-      </div>
-
-      <aside className="mobile-access-side">
-        <Card className="mobile-access-card mobile-access-pairing">
-          <CardContent>
-            <header className="mobile-access-card-header">
-              <h2><Icon name="device-mobile" />扫码连接</h2>
+        <div className="mobile-access-setup">
+          <section className="mobile-access-pairing" aria-label="扫码连接">
+            <header className="mobile-access-section-heading">
+              <h3><Icon name="device-mobile" />扫码连接</h3>
               {host && <Button variant="ghost" size="icon" title="复制配对链接" aria-label="复制配对链接" onClick={() => void copyPairingUri()}><Icon name="copy" /></Button>}
             </header>
-            <div className="mobile-access-host-body">
-              {host ? <>
-                <div className="mobile-access-qr"><QRCode type="svg" errorLevel="M" value={host.pairingUri} size={208} bordered={false} color="#111111" bgColor="#ffffff" /></div>
-                <p className="mobile-access-qr-copy">{host.mode === "relay" ? "用手机扫描二维码，任何网络都能连接" : "用手机扫描二维码，需与电脑在同一 Wi-Fi"}</p>
-                <dl className="mobile-access-meta">
-                  <div><dt>电脑</dt><dd>{host.machineName}</dd></div>
-                  <div><dt>{host.mode === "relay" ? "中转服务器" : "局域网地址"}</dt><dd><code>{host.mode === "relay" ? host.relayUrl ?? "" : remoteAddress(host)}</code></dd></div>
-                </dl>
-                {connectionFeedback && <p className="remote-host-feedback" role="status">{connectionFeedback}</p>}
-              </> : <div className="mobile-access-qr-empty"><ScanLine /><strong>开启电脑 Host 后显示二维码</strong><span>手机扫描二维码即可连接当前电脑</span></div>}
-            </div>
-            <p className="mobile-access-security"><Icon name="shield-check" />配对二维码包含访问凭据，请只用自己的设备扫描。</p>
-          </CardContent>
-        </Card>
+            {host ? <>
+              <div className="mobile-access-qr"><QRCode type="svg" errorLevel="M" value={host.pairingUri} size={180} bordered={false} color="#111111" bgColor="#ffffff" /></div>
+              <p className="mobile-access-qr-copy">{host.mode === "relay" ? "任何网络均可连接" : "手机与电脑需连接同一 Wi-Fi"}</p>
+              {connectionFeedback && <p className="remote-host-feedback" role="status">{connectionFeedback}</p>}
+            </> : <div className="mobile-access-qr-empty"><ScanLine /><strong>开启电脑 Host 后显示二维码</strong><span>使用 Orbit 手机端扫描即可连接</span></div>}
+          </section>
 
-        <Card className="mobile-access-card mobile-access-devices">
-          <CardContent>
-            <header className="mobile-access-card-header"><h2>已连接的设备</h2><span>{clients} 台</span></header>
-            {clients ? Array.from({ length: clients }, (_, index) => <div className="remote-host-device" key={index}><Icon name="device-mobile" /><span>移动端设备 {index + 1}</span><small><i />在线</small></div>) : <p className="mobile-access-devices-empty">暂无设备连接</p>}
-          </CardContent>
-        </Card>
+          <section className="mobile-access-controls" aria-label="连接设置">
+            <div className="mobile-access-host-row">
+              <span className="mobile-access-control-icon"><Icon name="desktop" /></span>
+              <div className="mobile-access-control-copy">
+                <strong>电脑 Host</strong>
+                <span>{host ? connectedLabel : "开启后允许手机连接这台电脑"}</span>
+              </div>
+              <Switch aria-label="电脑 Host" checked={Boolean(host)} disabled={loading || Boolean(busy)} onChange={checked => void (checked ? start() : stop())} />
+            </div>
+
+            <fieldset className="mobile-access-mode-fieldset" disabled={Boolean(host) || Boolean(busy)}>
+              <legend>连接方式</legend>
+              <div className="mobile-access-mode-control" role="group" aria-label="移动端连接方式">
+                {modes.map(mode => <button key={mode.value} type="button" aria-pressed={transport === mode.value} onClick={() => setTransport(mode.value)}>{mode.label}</button>)}
+              </div>
+              <p>{transport === "lan" ? "同一 Wi-Fi 下直连电脑，连接速度更快。" : transport === "relay" ? "通过你自己的中转服务器，从外网连接电脑。" : "优先局域网直连，网络不可达时自动使用中转。"}</p>
+            </fieldset>
+
+            <details className="mobile-access-relay-settings">
+              <summary><span>公网中转配置</span><span className="mobile-access-pill"><span className="remote-host-status-dot" data-online={relayReady} />{relayReady ? "已配置" : "未配置"}</span></summary>
+              {relaySetting}
+            </details>
+          </section>
+        </div>
+
+        <Button className="mobile-access-complete" onClick={() => useWorkspace.getState().set({ panel: "chat" })}>完成</Button>
+      </div>
+
+      <aside className="mobile-access-product" aria-label="Orbit 手机端界面预览">
+        <img data-theme-image="light" src="/orbit-mobile-product-light.png" alt="Orbit 手机端界面预览" />
+        <img data-theme-image="dark" src="/orbit-mobile-product-dark.png" alt="Orbit 手机端界面预览" />
       </aside>
     </div>;
   }
@@ -491,7 +502,6 @@ export function GeneralSettingsPanel() {
     <div className="panel-heading"><div><h1><Icon name="gear-six" />常规</h1></div></div>
     <SettingsGroup title="外观" icon="palette"><ThemeSettings /></SettingsGroup>
     <SettingsGroup title="工作区" icon="folder-simple"><ProjectDirectorySettings path={path} setPath={setPath} busy={busy} running={running} status={status} onReconnect={reconnect} /><TrustSettings mode={trustMode} busy={trustBusy} desktop={desktop} onChange={changeTrustMode} /></SettingsGroup>
-    <SettingsGroup title="移动端" icon="device-mobile" description={desktop ? "从手机连接到这台电脑。" : "连接运行 Pi 的电脑。"}><MobileAccessSettings /></SettingsGroup>
     {runtimeTarget === "mobile" && <SettingsGroup title="软件更新" icon="arrows-clockwise" description="主动从 GitHub Release 检查 Android 安装包。"><MobileAppUpdateSettings /></SettingsGroup>}
     <SettingsGroup title="上下文" icon="brain" description="管理当前会话的容量与压缩方式。"><ContextSettings cwd={cwd} status={status} running={running} state={state} onCompact={manualCompact} /></SettingsGroup>
     <SettingsGroup title="消息队列" icon="chats"><QueueSettings status={status} state={state} /></SettingsGroup>

@@ -2637,7 +2637,7 @@ html[data-theme="light"] .composer-agent-mode-indicator {
 }
 
 .sidebar-bottom {
-  padding-top: 4px !important;
+  padding-top: 8px !important;
   margin-top: auto !important;
   border-top: 1px solid var(--sidebar-border) !important;
 }
@@ -2660,37 +2660,29 @@ html[data-theme="light"] .composer-agent-mode-indicator {
   flex: 1;
   min-width: 0;
 }
-.sidebar-update-button {
+.app-shell .sidebar-update-button[data-slot="button"][data-variant="outline"] {
   flex-shrink: 0;
-  height: 36px !important;
-  min-height: 36px;
-  gap: 5px !important;
-  padding: 8px 10px !important;
-  border-color: var(--sidebar-primary) !important;
-  background: var(--sidebar-primary) !important;
-  color: var(--sidebar-primary-foreground) !important;
-  font-size: 11px !important;
-  font-weight: 600 !important;
+  height: 34px !important;
+  min-height: 34px;
+  padding: 0 10px !important;
+  border-radius: 4px !important;
+  border-color: color-mix(in oklch, var(--sidebar-primary) 40%, transparent) !important;
+  background: color-mix(in oklch, var(--sidebar-primary) 26%, transparent) !important;
+  color: color-mix(in oklch, var(--sidebar-primary) 70%, white) !important;
+  font-size: 10.5px !important;
+  font-weight: 550 !important;
   white-space: nowrap;
 }
-.sidebar-update-button:hover:not(:disabled) {
-  border-color: color-mix(in oklch, var(--sidebar-primary) 88%, var(--sidebar-foreground)) !important;
-  background: color-mix(in oklch, var(--sidebar-primary) 88%, var(--sidebar-foreground)) !important;
+.app-shell .sidebar-update-button[data-slot="button"][data-variant="outline"]:hover:not(:disabled) {
+  border-color: color-mix(in oklch, var(--sidebar-primary) 58%, transparent) !important;
+  background: color-mix(in oklch, var(--sidebar-primary) 38%, transparent) !important;
 }
-.sidebar-update-button.is-installing:disabled {
-  border-color: color-mix(in oklch, var(--sidebar-primary) 72%, var(--sidebar)) !important;
-  background: color-mix(in oklch, var(--sidebar-primary) 72%, var(--sidebar)) !important;
-  color: var(--sidebar-primary-foreground) !important;
+.app-shell .sidebar-update-button[data-slot="button"][data-variant="outline"].is-installing:disabled {
+  border-color: color-mix(in oklch, var(--sidebar-primary) 30%, transparent) !important;
+  background: color-mix(in oklch, var(--sidebar-primary) 16%, transparent) !important;
+  color: color-mix(in oklch, var(--sidebar-primary) 55%, var(--sidebar-foreground)) !important;
   opacity: 1;
   cursor: progress;
-}
-.sidebar-update-button.is-installing svg {
-  animation: sidebar-update-spin 1s linear infinite;
-}
-@keyframes sidebar-update-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .transcript-error {
@@ -3776,7 +3768,7 @@ html[data-theme="light"] .composer-agent-mode-indicator {
 .sidebar {
   flex: 1 1 0 !important;
   min-height: 0;
-  padding: 12px 12px 14px !important;
+  padding: 12px 12px 8px !important;
   border-right: 0 !important;
 }
 .inspector-pane > .inspector {
@@ -5521,7 +5513,7 @@ html[data-theme="light"] .composer-agent-mode-indicator {
   display: grid;
   gap: 1px;
   margin-top: auto;
-  padding-top: 4px;
+  padding-top: 8px;
   border-top: 1px solid var(--sidebar-border);
 }
 .sidebar-bottom .nav-item {

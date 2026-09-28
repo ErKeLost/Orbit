@@ -220,7 +220,7 @@ export function WorkspaceSidebar({ sidebarOpen, onToggleSidebar, online, panel, 
       <div className="sidebar-bottom">
         <div className="sidebar-bottom-row">
           <Button className="nav-item" onClick={() => { useWorkspace.getState().set({ panel: "settings", settingsPage: "general" }); onNavigate?.(); }}><Icon name="gear-six" />设置<kbd>⌘ ,</kbd></Button>
-          {updateOffer && <Button variant="outline" className={`sidebar-update-button${updateInstalling ? " is-installing" : ""}`} title={`下载并安装 Orbit ${updateVersion}`} aria-busy={updateInstalling} disabled={updateInstalling} onClick={() => void installDesktopUpdate()}><Icon name={updateInstalling ? "circle-notch" : "download-simple"} /><span>{updateInstalling ? "更新中" : updateVersion}</span></Button>}
+          {updateOffer && <Button variant="outline" className={`sidebar-update-button${updateInstalling ? " is-installing" : ""}`} title={updateInstalling ? "正在更新 Orbit" : `下载并安装 Orbit ${updateVersion}`} aria-busy={updateInstalling} disabled={updateInstalling} onClick={() => void installDesktopUpdate()}>更新</Button>}
         </div>
       </div>
     </aside>
