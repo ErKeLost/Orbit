@@ -115,6 +115,17 @@ jobs:
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
 
+      - name: Verify packaged macOS worker signature and startup
+        if: matrix.name == 'macOS Apple Silicon'
+        run: |
+          app="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Orbit.app"
+          worker="$app/Contents/Resources/resources/computer-use/ax_control"
+          test -x "$worker"
+          codesign --verify --strict --verbose=2 "$worker"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          response="$(printf '{"id":1,"command":"signature-check","app":"Orbit"}\n' | "$worker")"
+          echo "$response" | jq -e '.id == 1 and .ok == false and .error.code == "AX_ERROR"'
+
   android:
     name: Android ARM64
     runs-on: ubuntu-22.04

@@ -43,15 +43,25 @@ if (!source) {
   process.exit(1)
 }
 copyFileSync(source, target)
-// Rust's linker adds an ad-hoc signature. Clear it before copying the worker
-// into Resources; Tauri signs the app itself ad-hoc during bundling.
+// Rust's linker signs the arm64 executable ad-hoc. Keep that embedded
+// signature: Tauri seals Resources in the app bundle but does not sign an
+// executable copied there. An unsigned worker is killed before its first RPC.
 const codesignTimeout = Number(process.env.ORBIT_CODESIGN_TIMEOUT_MS ?? 15_000)
-const clearSignature = (path) => execFileSync(
-  "/usr/bin/codesign",
-  ["--remove-signature", path],
-  { stdio: "inherit", timeout: codesignTimeout },
-)
-
-clearSignature(target)
+execFileSync("/usr/bin/codesign", ["--verify", "--strict", target], {
+  stdio: "inherit", timeout: codesignTimeout,
+})
+// Exercise the exact staged binary without touching the desktop. This also
+// catches a worker that macOS kills at exec despite a successful file copy.
+const probe = spawnSync(target, [], {
+  input: '{"id":1,"command":"signature-check","app":"Orbit"}\n',
+  encoding: "utf8",
+  timeout: 5_000,
+})
+let response
+try { response = JSON.parse(probe.stdout.trim()) } catch { /* reported below */ }
+if (probe.status !== 0 || response?.id !== 1 || response?.ok !== false || response?.error?.code !== "AX_ERROR") {
+  console.error(`[sync-worker] ax_control 启动验证失败 (status=${probe.status}, signal=${probe.signal}): ${probe.stderr || probe.stdout}`)
+  process.exit(1)
+}
 const { size } = statSync(target)
-console.log(`[sync-worker] ax_control (${source} ${profile}) ${(size / 1024 / 1024).toFixed(1)} MB → resources/computer-use/ (signature cleared)`)
+console.log(`[sync-worker] ax_control (${source} ${profile}) ${(size / 1024 / 1024).toFixed(1)} MB → resources/computer-use/ (signature verified, RPC probe passed)`)
