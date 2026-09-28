@@ -2294,6 +2294,20 @@ html[data-theme="light"] .composer-agent-mode-indicator {
   background: var(--selection-background);
   color: var(--foreground);
 }
+/* WebKit 会把选区色填进行尾/段间/单元格间隙；改由 Custom Highlight 只画文字。 */
+.chat-root.custom-selection-highlight .transcript-message ::selection,
+.chat-root.custom-selection-highlight .transcript-message :where(.md-selectable-text, .stream-char, small, strong, em, b, i, code, a, time)::selection {
+  background: transparent;
+  color: inherit;
+}
+.chat-root :where(textarea, input)::selection {
+  background: var(--selection-background);
+  color: var(--foreground);
+}
+::highlight(chat-selection) {
+  background-color: var(--selection-background);
+  color: var(--foreground);
+}
 .app-shell svg:not(.tool-activity-file-icon):not(.iconify--vscode-icons):not(.iconify--catppuccin) { color: var(--muted-foreground); }
 .app-shell .mermaid svg { color: unset; }
 .app-shell .nav-item.selected > svg,

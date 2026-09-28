@@ -14,6 +14,7 @@ import {
   ConversationScrollButton,
 } from "./ai-elements/conversation";
 import { useConversationScroll } from "../hooks/use-conversation-scroll";
+import { useSelectionHighlight } from "../hooks/use-selection-highlight";
 import LoadingState from "./ai-elements/loading-state";
 import ProximitySidebar, { type ProximitySection } from "./ui/proximity-sidebar";
 import { ChatComposer } from "./chat/ChatComposer";
@@ -171,6 +172,7 @@ export function Chat() {
   }, [messageGroups, sessionFile, transcript.running]);
 
   const chatRootRef = useRef<HTMLDivElement | null>(null);
+  useSelectionHighlight(chatRootRef);
 
   // 将消息列的实际渲染宽度镜像给 composer：两者宽度逐像素一致，
   // 滚动条占位、WebView 差异都无法再造成错位。

@@ -9,7 +9,6 @@ import { ToolActivityGroup, ToolCall } from "../ai-elements/tool-call";
 import { Message, MessageContent, MessageResponse } from "../ai-elements/message";
 import { MessageActions } from "../assistant-ui/elements/message-actions";
 import { Icon } from "../Icon";
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "../ui/context-menu";
 import { withoutRuntimeImageNotes } from "../../lib/image-note";
 
 const turnTimeFormatter = new Intl.DateTimeFormat(undefined, {
@@ -254,10 +253,6 @@ function TranscriptBody({ item, items, nodes, role, streaming, startedAt, elapse
   </Message>;
 }
 
-function MessageContextActions({ text, role, onCopy }: { text: string; role: "user" | "assistant"; onCopy: () => void }) {
-  if (!text) return null;
-  return <ContextMenuContent className="w-40"><ContextMenuItem onClick={onCopy}><Icon name="copy" />{role === "user" ? "复制消息" : "复制回复"}</ContextMenuItem></ContextMenuContent>;
-}
 
 function TranscriptMessageComponent({ items, tools, streaming, thinking, elapsedMs, activity, activityTime }: TranscriptMessageProps) {
   const item = items[0];
@@ -272,13 +267,9 @@ function TranscriptMessageComponent({ items, tools, streaming, thinking, elapsed
   if (nodes.progress.length === 0 && nodes.body.length === 0 && nodes.media.length === 0 && !activity) return null;
   const startedAt = items.find(entry => entry.startedAt !== undefined)?.startedAt;
   const markCopied = () => { setCopied(true); window.setTimeout(() => setCopied(false), 1600); };
-  const copy = () => void navigator.clipboard.writeText(text).then(markCopied).catch(() => undefined);
-  return <ContextMenu>
-    <ContextMenuTrigger render={<m.div className={`transcript-message ${role}`} initial={streaming ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.16 }} />}>
-      <TranscriptBody item={item} items={items} nodes={nodes} role={role} streaming={streaming} startedAt={startedAt} elapsedMs={elapsedMs} text={text} copied={copied} onCopied={markCopied} activity={activity} />
-    </ContextMenuTrigger>
-    <MessageContextActions text={text} role={role} onCopy={copy} />
-  </ContextMenu>;
+  return <m.div className={`transcript-message ${role}`} initial={streaming ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.16 }}>
+    <TranscriptBody item={item} items={items} nodes={nodes} role={role} streaming={streaming} startedAt={startedAt} elapsedMs={elapsedMs} text={text} copied={copied} onCopied={markCopied} activity={activity} />
+  </m.div>;
 }
 
 export const TranscriptMessage = memo(TranscriptMessageComponent, (previous, next) => {
