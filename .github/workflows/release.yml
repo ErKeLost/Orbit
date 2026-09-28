@@ -271,7 +271,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           mkdir -p "$RUNNER_TEMP/orbit-release-check"
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" > "$RUNNER_TEMP/orbit-release-check/release.json"
+          release_id="$(gh release view "$GITHUB_REF_NAME" --json databaseId --jq .databaseId)"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > "$RUNNER_TEMP/orbit-release-check/release.json"
           gh release download "$GITHUB_REF_NAME" --pattern latest.json --dir "$RUNNER_TEMP/orbit-release-check"
           python3 - "$RUNNER_TEMP/orbit-release-check/release.json" "$RUNNER_TEMP/orbit-release-check/latest.json" <<'PY'
           import json, sys
