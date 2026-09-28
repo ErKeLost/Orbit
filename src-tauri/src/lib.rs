@@ -158,6 +158,7 @@ pub fn run() {
             bridge::list_provider_profiles,
             bridge::probe_provider_models,
             bridge::save_provider,
+            bridge::delete_provider,
             bridge::sync_provider_models,
             bridge::set_default_model,
             bridge::get_project_trust_mode,

@@ -5703,6 +5703,27 @@ html[data-theme="light"] .composer-agent-mode-indicator {
 .attachment-file-meta small { font-size: 10px; color: var(--muted-foreground); }
 .attachment-file .attachment-remove { position: absolute; top: 6px; right: 6px; }
 
+/* Dialog actions share one compact control size across provider, project,
+   session, and confirmation dialogs. Portals sit outside .app-shell. */
+[data-slot="dialog-content"] [data-slot="dialog-footer"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+}
+[data-slot="dialog-content"] [data-slot="dialog-footer"] [data-slot="button"] {
+  min-width: 72px;
+  min-height: 34px;
+  height: 34px;
+  gap: 7px;
+  padding: 0 13px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
 /* Shimmer driven by CSS instead of per-frame JS style writes. */
 .shimmer-animated {
   animation: shimmer-slide var(--shimmer-duration, 2s) linear infinite;

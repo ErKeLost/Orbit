@@ -22,7 +22,7 @@ const settingsGroups: { label: string; items: { id: SettingsPage; label: string;
 function SettingsContent({ page, desktop }: { page: SettingsPage; desktop: boolean }) {
   let content: ReactNode;
   if (page === "general") content = <GeneralSettingsPanel />;
-  else if (page === "providers") content = desktop ? <><div className="panel-heading"><div><h1><Icon name="database" />Provider</h1><p>管理模型服务端点、凭据和模型目录。</p></div></div><ProviderSettings /></> : <><div className="panel-heading"><div><h1><Icon name="database" />Provider</h1></div></div><div className="empty-panel"><Icon name="desktop" /><h3>请在电脑端管理 Provider</h3><p>Provider 端点和 API Key 保存在运行 Pi 的电脑上。</p></div></>;
+  else if (page === "providers") content = desktop ? <ProviderSettings /> : <><div className="panel-heading"><div><h1><Icon name="database" />Provider</h1></div></div><div className="empty-panel"><Icon name="desktop" /><h3>请在电脑端管理 Provider</h3><p>Provider 端点和 API Key 保存在运行 Pi 的电脑上。</p></div></>;
   else if (page === "sessions") content = <SessionsPanel />;
   else if (page === "tree") content = <TreePanel />;
   else if (page === "pi-tools") content = <PiToolsPanel />;

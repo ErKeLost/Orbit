@@ -1744,6 +1744,48 @@ pub async fn save_provider(
         json!({"id":provider,"hasApiKey": read_json_file(dir.join("auth.json"), "Pi auth.json").ok().and_then(|auth| stored_api_key(&auth, &provider)).is_some()}),
     )
 }
+
+#[tauri::command]
+pub fn delete_provider(provider: String) -> Result<Value, String> {
+    if !valid_provider_id(&provider) {
+        return Err("Provider ID 只能包含字母、数字、-、_.".into());
+    }
+    let dir = agent_dir()?;
+    let models_path = dir.join("models.json");
+    let auth_path = dir.join("auth.json");
+    let settings_path = settings_path(&dir);
+    let mut models = models_path.exists().then(|| read_json_file(models_path.clone(), "Pi models.json")).transpose()?;
+    let mut auth = auth_path.exists().then(|| read_json_file(auth_path.clone(), "Pi auth.json")).transpose()?;
+    let mut store = load_provider_store(&dir)?;
+    let mut settings = settings_path.exists().then(|| read_json_file(settings_path.clone(), "Pi settings.json")).transpose()?;
+    let models_removed = models.as_mut().and_then(|value| value.get_mut("providers")).and_then(Value::as_object_mut).and_then(|items| items.remove(&provider)).is_some();
+    let auth_removed = auth.as_mut().and_then(Value::as_object_mut).and_then(|items| items.remove(&provider)).is_some();
+    let store_removed = store.get_mut("providers").and_then(Value::as_object_mut).and_then(|items| items.remove(&provider)).is_some();
+    let default_removed = settings.as_ref().and_then(|value| value.get("defaultProvider")).and_then(Value::as_str) == Some(provider.as_str());
+    if !(models_removed || auth_removed || store_removed || default_removed) {
+        return Err(format!("Provider 不存在：{provider}"));
+    }
+    if default_removed {
+        if let Some(object) = settings.as_mut().and_then(Value::as_object_mut) {
+            object.remove("defaultProvider");
+            object.remove("defaultModel");
+        }
+    }
+    if models_removed {
+        fs::write(&models_path, serde_json::to_string_pretty(&models).map_err(|e| e.to_string())? + "\n")
+            .map_err(|e| format!("写入 Pi models.json 失败：{e}"))?;
+    }
+    if auth_removed {
+        fs::write(&auth_path, serde_json::to_string_pretty(&auth).map_err(|e| e.to_string())? + "\n")
+            .map_err(|e| format!("写入 Pi auth.json 失败：{e}"))?;
+    }
+    if store_removed { write_provider_store(&dir, &store)?; }
+    if default_removed {
+        fs::write(&settings_path, serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())? + "\n")
+            .map_err(|e| format!("写入 Pi settings.json 失败：{e}"))?;
+    }
+    Ok(json!({"id": provider, "deleted": true}))
+}
 #[tauri::command]
 pub async fn sync_provider_models(provider: String) -> Result<Value, String> {
     let catalog = list_provider_models(provider.clone()).await?;
