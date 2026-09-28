@@ -178,3 +178,30 @@ html.dark .provider-fallback-mark[data-tone="3"] { background: #392b43; color: #
   .provider-detail .provider-model-title > .model-modalities { display: none; }
   .provider-dialog-grid { grid-template-columns: 1fr; }
 }
+
+@container settings-pane (max-width: 820px) {
+  .settings-content {
+    width: 100%;
+    padding-right: 24px;
+    padding-left: 24px;
+  }
+  .settings-providers-page > .provider-settings {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+  .provider-detail-header { padding-right: 20px; padding-left: 20px; }
+  .provider-detail-content { padding-right: 20px; padding-left: 20px; }
+}
+
+@container settings-pane (max-width: 620px) {
+  .settings-content { padding-right: 12px; padding-left: 12px; }
+  .settings-providers-page > .provider-settings { display: flex; flex-direction: column; overflow: auto; }
+  .provider-browser { min-height: 220px; max-height: 36%; border-right: 0; border-bottom: 1px solid var(--border); }
+  .provider-browser-list { display: flex; min-height: 0; flex-wrap: wrap; align-content: flex-start; gap: 2px; }
+  .provider-browser-group,
+  .provider-browser-presets-heading { width: 100%; }
+  .provider-browser-item { width: min(100%, 260px); }
+  .provider-detail { min-height: 560px; overflow: visible; }
+  .provider-detail-header { flex-wrap: wrap; padding-right: 14px; padding-left: 14px; }
+  .provider-detail-header > .provider-detail-actions { width: 100%; }
+  .provider-detail-content { padding: 16px 14px; overflow: visible; }
+}

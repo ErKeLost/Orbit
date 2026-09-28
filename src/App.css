@@ -3848,6 +3848,7 @@ html[data-theme="light"] .composer-agent-mode-indicator {
 }
 .settings-main {
   background: var(--background);
+  container: settings-pane / inline-size;
 }
 .settings-content {
   width: min(760px, calc(100% - 64px));
