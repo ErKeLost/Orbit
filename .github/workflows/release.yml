@@ -14,8 +14,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  prepare:
+    name: Prepare draft release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create one draft before platform jobs start
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft > "$RUNNER_TEMP/release-draft-state" 2>/dev/null; then
+            test "$(cat "$RUNNER_TEMP/release-draft-state")" = true || { echo "Release is already published" >&2; exit 1; }
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+              --title "Orbit $GITHUB_REF_NAME" --generate-notes \
+              --notes "Orbit installers for macOS, Linux, and Windows. macOS builds use fast ad-hoc signing and are not notarized; right-click the app on first install to approve it. Updating may require allowing Accessibility again."
+          fi
+
   release:
     name: ${{ matrix.name }}
+    needs: prepare
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -128,6 +149,7 @@ jobs:
 
   android:
     name: Android ARM64
+    needs: prepare
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     if: startsWith(github.ref, 'refs/tags/v')
@@ -242,6 +264,50 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+
+      - name: Verify all platform assets and updater entries
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/orbit-release-check"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" > "$RUNNER_TEMP/orbit-release-check/release.json"
+          gh release download "$GITHUB_REF_NAME" --pattern latest.json --dir "$RUNNER_TEMP/orbit-release-check"
+          python3 - "$RUNNER_TEMP/orbit-release-check/release.json" "$RUNNER_TEMP/orbit-release-check/latest.json" <<'PY'
+          import json, sys
+          release = json.load(open(sys.argv[1]))
+          update = json.load(open(sys.argv[2]))
+          version = release['tag_name'].removeprefix('v')
+          if update['version'] != version:
+              raise SystemExit('Updater version does not match release tag')
+          names = {asset['name'] for asset in release['assets']}
+          required_assets = {
+              f'Orbit_{version}_aarch64.app.tar.gz', f'Orbit_{version}_aarch64.app.tar.gz.sig', f'Orbit_{version}_aarch64.dmg',
+              f'Orbit_{version}_x64-setup.exe', f'Orbit_{version}_x64-setup.exe.sig',
+              f'Orbit_{version}_x64_en-US.msi', f'Orbit_{version}_x64_en-US.msi.sig',
+              f'Orbit_{version}_amd64.AppImage', f'Orbit_{version}_amd64.AppImage.sig',
+              f'Orbit_{version}_amd64.deb', f'Orbit_{version}_amd64.deb.sig',
+              f'Orbit-{version}-1.x86_64.rpm', f'Orbit-{version}-1.x86_64.rpm.sig',
+              f'orbit-android-arm64-v{version}.apk', 'latest.json',
+          }
+          missing = required_assets - names
+          if missing:
+              raise SystemExit(f'Missing release assets: {sorted(missing)}')
+          ids = {str(asset['id']) for asset in release['assets']}
+          required_platforms = {
+              'darwin-aarch64', 'darwin-aarch64-app',
+              'windows-x86_64', 'windows-x86_64-nsis', 'windows-x86_64-msi',
+              'linux-x86_64', 'linux-x86_64-appimage', 'linux-x86_64-deb', 'linux-x86_64-rpm',
+          }
+          missing = required_platforms - update['platforms'].keys()
+          if missing:
+              raise SystemExit(f'Missing updater platforms: {sorted(missing)}')
+          for platform in required_platforms:
+              asset_id = update['platforms'][platform]['url'].rsplit('/', 1)[-1]
+              if asset_id not in ids:
+                  raise SystemExit(f'{platform} points outside this release: {asset_id}')
+          print('All release assets and updater entries verified')
+          PY
 
       - name: Publish complete release
         env:

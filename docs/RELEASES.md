@@ -2,7 +2,9 @@
 
 Pushing a `v*` tag starts the `Release Orbit` GitHub Actions workflow. It
 publishes Apple Silicon macOS, Linux x86_64, Windows, and Android ARM64
-artifacts, then uploads `latest.json` for the desktop updater.
+artifacts, then uploads `latest.json` for the desktop updater. The workflow
+creates one draft before parallel platform jobs start and checks every package
+and updater platform before publishing it.
 
 ## macOS signing (current release configuration)
 
