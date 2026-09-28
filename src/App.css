@@ -5728,6 +5728,51 @@ html[data-theme="light"] .composer-agent-mode-indicator {
 .shimmer-animated {
   animation: shimmer-slide var(--shimmer-duration, 2s) linear infinite;
 }
+
+/* Container-first responsive layout. A resizable desktop pane can become
+   mobile-sized even when the browser viewport itself is still wide. */
+.main-content {
+  container: main-pane / inline-size;
+}
+
+@container main-pane (max-width: 992px) {
+  .chat-root.tessera-thread-root {
+    --chat-content-cap: 100%;
+    --chat-content-width: 100%;
+  }
+  .chat-root .tessera-conversation > .ai-conversation-content,
+  .chat-root.tessera-thread-root .tessera-composer-form,
+  .chat-root.tessera-thread-root .thinking-beam {
+    width: 100% !important;
+    max-width: none !important;
+    margin-inline: 0 !important;
+    left: 0 !important;
+  }
+  .chat-root .tessera-conversation > .ai-conversation-content {
+    padding-inline: 8px !important;
+  }
+  .composer-container.tessera-composer-dock {
+    padding-right: 2px !important;
+    padding-left: 2px !important;
+  }
+  .composer.studio-composer {
+    width: 100% !important;
+  }
+}
+
+@container main-pane (max-width: 560px) {
+  .chat-root .tessera-conversation > .ai-conversation-content {
+    padding-inline: 4px !important;
+  }
+  .composer-container.tessera-composer-dock {
+    padding-right: 1px !important;
+    padding-left: 1px !important;
+  }
+  .composer.studio-composer {
+    padding: 9px !important;
+    border-radius: var(--radius-xl) !important;
+  }
+}
 @keyframes shimmer-slide {
   from { background-position: 100% center, 0 0; }
   to { background-position: 0% center, 0 0; }
