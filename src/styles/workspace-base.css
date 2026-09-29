@@ -52,20 +52,24 @@
 .composer.studio-composer .composer-selectors [data-slot="select-trigger"]:first-child { min-width: 270px; }
 .composer.studio-composer .composer-selectors [data-slot="select-value"] { font-size: 18px; color: var(--foreground); }
 .composer.studio-composer .composer-selectors [data-slot="select-value"] { font-size: 18px; }
-.composer-session-modes { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; }
+/* 执行模式：与模型选择器同高、同底色的无边框胶囊；选中项是浮起的圆片。 */
+.composer-session-modes { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
 .composer-mode-tooltip { display: grid; min-width: 0; place-items: stretch; }
-.composer-agent-mode { display: inline-grid; grid-template-columns: repeat(2, 26px); height: 26px; padding: 2px; border: 1px solid color-mix(in oklch, var(--border) 76%, transparent); border-radius: var(--radius-2xl); background: var(--muted); }
-.composer-computer-use { display: grid; width: 26px; height: 26px; place-items: center; padding: 0; border: 1px solid color-mix(in oklch, var(--border) 76%, transparent); border-radius: var(--radius-2xl); background: var(--muted); color: var(--muted-foreground); }
-.composer-computer-use.selected { color: var(--foreground); background: var(--background); box-shadow: 0 1px 3px color-mix(in oklch, var(--foreground) 10%, transparent); }
-.composer-agent-mode button { position: relative; display: grid; min-width: 0; place-items: center; padding: 0; border: 0; border-radius: var(--radius-2xl); color: var(--muted-foreground); }
+.composer-agent-mode { display: inline-grid; grid-template-columns: repeat(2, 26px); height: 30px; padding: 2px; border: 0; border-radius: 999px; background: var(--muted); }
+.composer-agent-mode button { position: relative; display: grid; width: 26px; height: 26px; min-width: 0; place-items: center; padding: 0; border: 0; border-radius: 999px; background: transparent; color: var(--muted-foreground); transition: color .15s ease; }
+.composer-agent-mode button:not(:disabled):hover { color: var(--foreground); }
 .composer-agent-mode button.selected { color: var(--foreground); }
-.composer-agent-mode-indicator { position: absolute; inset: 0; border: 1px solid color-mix(in oklch, var(--border) 72%, transparent); border-radius: var(--radius-2xl); background: var(--background); box-shadow: 0 1px 3px color-mix(in oklch, var(--foreground) 10%, transparent); }
+.composer-agent-mode-indicator { position: absolute; inset: 0; border-radius: 999px; background: color-mix(in oklch, var(--foreground) 14%, var(--muted)); box-shadow: 0 0 0 1px color-mix(in oklch, var(--foreground) 8%, transparent), 0 1px 2px color-mix(in oklch, #000 24%, transparent); }
 .composer-agent-mode-content { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; }
-.composer-agent-mode-icon { width: 14px; height: 14px; }
-.composer-agent-mode button:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.composer-agent-mode-icon { width: 15px; height: 15px; }
+/* 电脑操作：独立开关。开启时浮起并带一个状态点，关闭时融入底色。 */
+.composer-computer-use { position: relative; display: grid; width: 30px; height: 30px; place-items: center; padding: 0; border: 0; border-radius: 999px; background: var(--muted); color: var(--muted-foreground); transition: color .15s ease, background-color .15s ease, box-shadow .15s ease; }
+.composer-computer-use:not(:disabled):hover { color: var(--foreground); }
+.composer-computer-use.selected { color: var(--foreground); background: color-mix(in oklch, var(--foreground) 14%, var(--muted)); box-shadow: 0 0 0 1px color-mix(in oklch, var(--foreground) 12%, transparent), 0 1px 2px color-mix(in oklch, #000 24%, transparent); }
+.composer-computer-use.selected::after { content: ""; position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: oklch(0.74 0.17 150); box-shadow: 0 0 0 2px color-mix(in oklch, var(--foreground) 14%, var(--muted)); }
+.composer-agent-mode button:focus-visible, .composer-computer-use:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 .composer-agent-mode button:disabled, .composer-computer-use:disabled { cursor: not-allowed; opacity: .45; }
 .composer-agent-mode button.selected:disabled, .composer-computer-use.selected:disabled { opacity: 1; }
-.composer-computer-use:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 .composer.studio-composer .composer-context-trigger[data-slot="button"],
 .composer.studio-composer .composer-context-trigger[data-slot="popover-trigger"] { width: 26px !important; height: 26px !important; margin-left: 0; padding: 2px !important; border: 0 !important; border-radius: 50%; background: transparent !important; box-shadow: none !important; color: var(--muted-foreground) !important; }
 .composer.studio-composer .composer-context-trigger svg { width: 16px !important; height: 16px !important; }

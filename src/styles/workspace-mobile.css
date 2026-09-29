@@ -325,7 +325,17 @@
 
   .narrow-workspace .composer-agent-mode {
     height: 40px;
-    grid-template-columns: repeat(2, 38px);
+    grid-template-columns: repeat(2, 36px);
+  }
+
+  .narrow-workspace .composer-agent-mode button {
+    width: 36px;
+    height: 36px;
+  }
+
+  .narrow-workspace .composer-computer-use {
+    width: 40px;
+    height: 40px;
   }
 
   .narrow-workspace .chat-root .transcript-message.user .ai-message-content,

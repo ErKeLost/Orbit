@@ -2274,19 +2274,20 @@ html[data-theme="light"] .composer-model-row.active {
 }
 .light .composer-agent-mode,
 html[data-theme="light"] .composer-agent-mode,
-.light .composer-computer-use,
-html[data-theme="light"] .composer-computer-use {
-  border-color: color-mix(in oklch, var(--foreground) 14%, var(--border));
-  background: color-mix(in oklch, var(--muted) 72%, var(--background));
+.light .composer-computer-use:not(.selected),
+html[data-theme="light"] .composer-computer-use:not(.selected) {
+  background: color-mix(in oklch, var(--foreground) 6%, var(--background));
 }
+.light .composer-agent-mode-indicator,
+html[data-theme="light"] .composer-agent-mode-indicator,
 .light .composer-computer-use.selected,
 html[data-theme="light"] .composer-computer-use.selected {
   background: var(--background);
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--foreground) 10%, transparent), 0 1px 3px color-mix(in oklch, var(--foreground) 14%, transparent);
 }
-.light .composer-agent-mode-indicator,
-html[data-theme="light"] .composer-agent-mode-indicator {
-  border-color: color-mix(in oklch, var(--foreground) 12%, var(--border));
-  box-shadow: 0 1px 3px color-mix(in oklch, var(--foreground) 12%, transparent);
+.light .composer-computer-use.selected::after,
+html[data-theme="light"] .composer-computer-use.selected::after {
+  box-shadow: 0 0 0 2px var(--background);
 }
 .theme-settings-controls { display: flex; align-items: center; gap: 8px; }
 .chat-root ::selection { background: transparent; color: inherit; }
