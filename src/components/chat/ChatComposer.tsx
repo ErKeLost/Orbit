@@ -210,7 +210,10 @@ export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted
   }
 
   return <div className="composer-container tessera-composer-dock"><div className="tessera-composer-form">
-    <Beam className="studio-composer-beam" size="line" borderRadius={14} active={transcriptRunning || compacting}>
+    {/* Beam 动画每帧改写可继承的 @property 变量；若包住整个 composer，输入框、选择器等所有后代每帧都要重算样式。
+        改为覆盖层：视觉不变，动画只作用于一个空层。 */}
+    <div className="composer-beam-host">
+      <div className="composer-beam-overlay" aria-hidden="true"><Beam className="studio-composer-beam" size="line" borderRadius={14} active={transcriptRunning || compacting}><div className="composer-beam-fill" /></Beam></div>
       <PromptInput ref={composerForm} onSubmit={message => void submit(message)} className="composer studio-composer" allowEmpty={attachments.length > 0}>
         <AnimatePresence>{attachments.length > 0 && <m.div className="attachments" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
           {attachments.map(attachment => attachment.kind === "image"
@@ -235,6 +238,6 @@ export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted
           <PromptInputSubmit status={transcriptRunning ? "streaming" : "ready"} disabled={!online} title={transcriptRunning ? "暂停生成" : "发送消息"} aria-label={transcriptRunning ? "暂停生成" : "发送消息"} onClick={transcriptRunning ? () => void stop().catch(report) : undefined} />
         </div>
       </PromptInput>
-    </Beam>
+    </div>
   </div></div>;
 });

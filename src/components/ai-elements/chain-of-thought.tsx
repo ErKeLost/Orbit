@@ -11,9 +11,12 @@ export function ProcessingPanel({
   startedAt,
   durationMs,
   defaultExpanded,
+  clock,
   children,
 }: {
   running: boolean;
+  /** live: 本轮计时一直挂在这一段（轮次首段）；hidden: 同一轮被 steer 拆出的后续段，不重复计时。 */
+  clock?: "live" | "hidden";
   startedAt?: number;
   durationMs?: number;
   defaultExpanded?: boolean;
@@ -33,14 +36,16 @@ export function ProcessingPanel({
         aria-controls={panelId}
         onClick={() => setExpandedOverride(!expanded)}
       >
-        <ElapsedTime
-          running={running}
-          startedAt={startedAt}
-          durationMs={durationMs}
-          locale="zh"
-          prefix={running ? "正在处理 " : "用时 "}
-          shimmer={running}
-        />
+        {clock === "hidden"
+          ? (running ? <StableShimmer text="正在处理" className="ai-elapsed-time processing-time-shimmer" /> : <span className="ai-elapsed-time"><span className="ai-elapsed-time-label">处理过程</span></span>)
+          : <ElapsedTime
+            running={running || clock === "live"}
+            startedAt={startedAt}
+            durationMs={durationMs}
+            locale="zh"
+            prefix={running || clock === "live" ? "正在处理 " : "用时 "}
+            shimmer={running || clock === "live"}
+          />}
         <Icon name="caret-right" className="turn-activity-chevron" aria-hidden="true" />
       </Button>
       <span className="turn-activity-rule" aria-hidden="true" />

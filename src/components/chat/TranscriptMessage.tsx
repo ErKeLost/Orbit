@@ -103,6 +103,7 @@ type TranscriptMessageProps = {
   streaming: boolean;
   thinking: boolean;
   elapsedMs?: number;
+  clock?: "live" | "hidden";
   activity?: ReactNode;
   activityTime?: number;
 };
@@ -226,7 +227,7 @@ function responseText(content: ProjectedPart[]) {
 
 type MessageNodes = ReturnType<typeof buildNodes>;
 
-function TranscriptBody({ item, items, nodes, role, streaming, startedAt, elapsedMs, text, copied, onCopied, activity }: {
+function TranscriptBody({ item, items, nodes, role, streaming, startedAt, elapsedMs, clock, text, copied, onCopied, activity }: {
   item: DisplayMessage;
   items: DisplayMessage[];
   nodes: MessageNodes;
@@ -234,6 +235,7 @@ function TranscriptBody({ item, items, nodes, role, streaming, startedAt, elapse
   streaming: boolean;
   startedAt?: number;
   elapsedMs?: number;
+  clock?: "live" | "hidden";
   text: string;
   copied: boolean;
   onCopied: () => void;
@@ -246,7 +248,7 @@ function TranscriptBody({ item, items, nodes, role, streaming, startedAt, elapse
   return <Message from={role}>
     {nodes.media.length > 0 && <div className="user-message-media">{nodes.media}</div>}
     {hasContent && <MessageContent>
-      {hasProgress && <ProcessingPanel key={`${item.id}-${streaming ? "running" : "complete"}`} running={streaming} defaultExpanded={nodes.defaultExpanded} startedAt={startedAt} durationMs={elapsedMs}>{nodes.progress.slice(0, activityIndex)}{renderedActivity}{nodes.progress.slice(activityIndex)}</ProcessingPanel>}
+      {hasProgress && <ProcessingPanel key={`${item.id}-${streaming ? "running" : "complete"}`} running={streaming} defaultExpanded={nodes.defaultExpanded} startedAt={startedAt} durationMs={elapsedMs} clock={clock}>{nodes.progress.slice(0, activityIndex)}{renderedActivity}{nodes.progress.slice(activityIndex)}</ProcessingPanel>}
       {nodes.body}
     </MessageContent>}
     {text && (role === "user" || !streaming) && <MessageCopyFooter message={items.at(-1)!.message} role={role} text={text} time={role === "user" ? turnTime(items) : null} copied={copied} onCopied={onCopied} />}
@@ -254,7 +256,7 @@ function TranscriptBody({ item, items, nodes, role, streaming, startedAt, elapse
 }
 
 
-function TranscriptMessageComponent({ items, tools, streaming, thinking, elapsedMs, activity, activityTime }: TranscriptMessageProps) {
+function TranscriptMessageComponent({ items, tools, streaming, thinking, elapsedMs, clock, activity, activityTime }: TranscriptMessageProps) {
   const item = items[0];
   const role = item.message.role === "user" ? "user" : "assistant";
   const [copied, setCopied] = useState(false);
@@ -268,12 +270,12 @@ function TranscriptMessageComponent({ items, tools, streaming, thinking, elapsed
   const startedAt = items.find(entry => entry.startedAt !== undefined)?.startedAt;
   const markCopied = () => { setCopied(true); window.setTimeout(() => setCopied(false), 1600); };
   return <m.div className={`transcript-message ${role}`} initial={streaming ? false : { opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.16 }}>
-    <TranscriptBody item={item} items={items} nodes={nodes} role={role} streaming={streaming} startedAt={startedAt} elapsedMs={elapsedMs} text={text} copied={copied} onCopied={markCopied} activity={activity} />
+    <TranscriptBody item={item} items={items} nodes={nodes} role={role} streaming={streaming} startedAt={startedAt} elapsedMs={elapsedMs} clock={clock} text={text} copied={copied} onCopied={markCopied} activity={activity} />
   </m.div>;
 }
 
 export const TranscriptMessage = memo(TranscriptMessageComponent, (previous, next) => {
-  if (previous.streaming !== next.streaming || previous.thinking !== next.thinking || previous.elapsedMs !== next.elapsedMs || previous.activity !== next.activity || previous.items.length !== next.items.length || previous.items.some((item, index) => item !== next.items[index])) return false;
+  if (previous.streaming !== next.streaming || previous.thinking !== next.thinking || previous.elapsedMs !== next.elapsedMs || previous.clock !== next.clock || previous.activity !== next.activity || previous.items.length !== next.items.length || previous.items.some((item, index) => item !== next.items[index])) return false;
   const content = previous.items.flatMap(item => Array.isArray(item.message.content) ? item.message.content : []);
   return content.every(part => part.type !== "toolCall" || previous.tools[part.id ?? ""] === next.tools[part.id ?? ""]);
 });

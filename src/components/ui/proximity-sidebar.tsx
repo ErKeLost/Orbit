@@ -1,5 +1,6 @@
 import {
   type ReactNode,
+  memo,
   useCallback,
   useEffect,
   useMemo,
@@ -133,7 +134,7 @@ function subscribeToScroll(
   }
 }
 
-const Dash = ({
+const Dash = memo(function Dash({
   active,
   mouseY,
   onSelect,
@@ -141,7 +142,7 @@ const Dash = ({
   section,
   sectionKind,
   side,
-}: DashProps) => {
+}: DashProps) {
   const ref = useRef<HTMLButtonElement>(null)
   const preset = DASH_PRESETS[sectionKind]
   const restWidth = active ? preset.base + Math.round(preset.bump * 0.7) : preset.base
@@ -201,15 +202,15 @@ const Dash = ({
       </div>
     </div>
   )
-}
+})
 
-const ProximitySidebar = ({
+const ProximitySidebar = memo(function ProximitySidebar({
   activeOffset = 0.4,
   className = "",
   onSelectSection,
   side = "left",
   sections,
-}: ProximitySidebarProps) => {
+}: ProximitySidebarProps) {
   const visibleSections = useMemo(() => sections.filter(section => section.level === 1 || section.level === 2), [sections])
   const mouseY = useMotionValue(Infinity)
   const shouldReduceMotion = useReducedMotion()
@@ -218,6 +219,9 @@ const ProximitySidebar = ({
   const resetTimer = useRef<number | null>(null)
   const selectFrame = useRef<number | null>(null)
   const [activeId, setActiveId] = useState(visibleSections[0]?.id)
+  const activeIdRef = useRef(activeId)
+  const onSelectRef = useRef(onSelectSection)
+  onSelectRef.current = onSelectSection
 
   const sectionIds = useMemo(
     () => visibleSections.map((section) => section.id).join("|"),
@@ -276,7 +280,8 @@ const ProximitySidebar = ({
 
   const selectSection = useCallback(
     (id: string) => {
-      onSelectSection?.(id)
+      onSelectRef.current?.(id)
+      activeIdRef.current = id
       setActiveId(id)
       pulseDash(id)
 
@@ -292,7 +297,7 @@ const ProximitySidebar = ({
         window.history.replaceState(null, "", `#${id}`)
       })
     },
-    [onSelectSection, pulseDash, shouldReduceMotion]
+    [pulseDash, shouldReduceMotion]
   )
 
   useEffect(() => () => {
@@ -339,6 +344,10 @@ const ProximitySidebar = ({
         }
       }
 
+      // 流式输出时自动贴底每帧都会触发 scroll；激活项没变就什么都不做，
+      // 否则每帧都会让所有 dash 重新测量并重启弹簧动画。
+      if (nextActiveId === activeIdRef.current) return
+      activeIdRef.current = nextActiveId
       setActiveId(nextActiveId)
 
       if (!pointerInside.current) {
@@ -405,6 +414,6 @@ const ProximitySidebar = ({
       </div>
     </nav>
   )
-}
+})
 
 export default ProximitySidebar

@@ -149,8 +149,17 @@ export function Chat() {
       if (group.elapsedMs === undefined || claimed.has(group.elapsedMs)) group.elapsedMs = undefined;
       else claimed.add(group.elapsedMs);
     }
-    return groups;
-  }, [transcript.messages, savedDurations]);
+    // 同一轮（同一个 startedAt）被 steer 拆成多段时，计时只挂在首段：
+    // 运行中首段一直显示「正在处理 Xs」且不随新段下移，后续段不再各自计时。
+    const seenTurns = new Set<number>();
+    return groups.map(group => {
+      const startedAt = group.items.find(item => item.startedAt !== undefined)?.startedAt;
+      if (startedAt === undefined) return { ...group, clock: undefined };
+      if (seenTurns.has(startedAt)) return { ...group, clock: "hidden" as const };
+      seenTurns.add(startedAt);
+      return { ...group, clock: transcript.running && startedAt === transcript.turnStartedAt ? "live" as const : undefined };
+    });
+  }, [transcript.messages, transcript.running, transcript.turnStartedAt, savedDurations]);
   const { retrying, retryDetail, compacting, compactionDetail, activeHasOutput } = deriveRunStatus(transcript, telemetry);
   const openAgent = useCallback((agent: AgentNode) => {
     if (!agent.sessionPath) return;
@@ -236,6 +245,7 @@ export function Chat() {
             streaming={transcript.running && active}
             thinking={transcript.running && active && !group.items.at(-1)?.message.stopReason}
             elapsedMs={group.elapsedMs}
+            clock={group.clock}
             activity={active && agents && (agents.active.length > 0 || agents.recent.length > 0) ? <AgentActivityFeed snapshot={agents} onOpenAgent={openAgent} /> : undefined}
             activityTime={active ? agentStartedAt : undefined}
           />;

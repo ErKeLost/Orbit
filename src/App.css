@@ -5856,3 +5856,10 @@ html[data-theme="light"] .composer-computer-use.selected::after {
     padding-left: 0 !important;
   }
 }
+
+/* Composer beam as an overlay (see ChatComposer): the animation repaints an
+   empty layer instead of invalidating styles on the whole composer subtree. */
+.composer-beam-host { position: relative; width: 100%; }
+.composer-beam-overlay { position: absolute; inset: 0; z-index: 3; pointer-events: none; contain: strict; border-radius: var(--radius-3xl); }
+.composer-beam-overlay > .studio-composer-beam { position: absolute !important; inset: 0; width: 100%; height: 100%; overflow: hidden !important; }
+.composer-beam-fill { width: 100%; height: 100%; }
