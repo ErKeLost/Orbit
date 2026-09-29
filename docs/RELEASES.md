@@ -24,8 +24,16 @@ checks against the packaged `.app` before the draft release can be published.
 
 The app is not notarized. First installation may need a one-time manual
 approval (right-click → Open, or System Settings → Privacy & Security → Open
-Anyway). An ad-hoc app update can also require Accessibility permission again
-because its code hash changes. The Tauri updater's minisign key
+Anyway).
+
+Accessibility is granted to the **Orbit Agent** runtime
+(`~/Library/Application Support/ai.pi.gui/runtime/Orbit Agent.app`,
+`ai.pi.gui.agent`), not to Orbit itself. Orbit starts Pi through
+`orbit --orbit-disclaim-exec` (`src-tauri/src/disclaim.rs`), which execs the
+Agent with a disclaimed TCC responsibility, so macOS checks the Agent's
+signature. The Agent is rebuilt only when the bundled Node changes, so its
+grant survives Orbit updates even though Orbit's ad-hoc code hash changes every
+release. The Tauri updater's minisign key
 (`TAURI_SIGNING_PRIVATE_KEY`) is separate from macOS code signing.
 
 ## Linux and Android signing

@@ -11,6 +11,8 @@ pub mod fast_ax;
 pub mod ax_settle;
 #[cfg(target_os = "macos")]
 pub mod ax_worker;
+#[cfg(target_os = "macos")]
+pub mod disclaim;
 mod bridge;
 mod mobile_update;
 mod remote;

@@ -62,7 +62,7 @@ pub fn serve<R: std::io::BufRead, W: std::io::Write>(reader: R, mut stdout: W) {
             if matches!(command, "launch" | "snapshot" | "activate-app" | "menubar" | "action")
                 && !crate::fast_ax::accessibility_trusted()
             {
-                return Err("AX_PERMISSION_DENIED: Orbit needs Accessibility permission in System Settings → Privacy & Security → Accessibility".into());
+                return Err("AX_PERMISSION_DENIED: the Orbit Agent runtime needs Accessibility permission. In System Settings → Privacy & Security → Accessibility, add and enable Orbit Agent (~/Library/Application Support/ai.pi.gui/runtime/Orbit Agent.app), then restart Orbit".into());
             }
             let data = match command {
                 "activate-app" => crate::ax::activate_application(app)?,

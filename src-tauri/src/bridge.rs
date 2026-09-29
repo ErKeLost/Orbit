@@ -2178,6 +2178,19 @@ pub async fn pi_connect(
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| cwd.clone());
         state.stop_project(&id);
+        // macOS: start Pi through Orbit's disclaim launcher so the stable
+        // Orbit Agent runtime, not Orbit itself, owns Accessibility (see
+        // disclaim.rs). Falls back to a direct spawn if the path is unknown.
+        #[cfg(target_os = "macos")]
+        let mut command = match std::env::current_exe() {
+            Ok(orbit) => {
+                let mut command = Command::new(orbit);
+                command.arg(crate::disclaim::FLAG).arg(&node);
+                command
+            }
+            Err(_) => Command::new(&node),
+        };
+        #[cfg(not(target_os = "macos"))]
         let mut command = Command::new(&node);
         command.arg(&pi).args(["--mode", "rpc", "--offline"]);
         command

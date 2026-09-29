@@ -589,8 +589,8 @@ pub fn observe_pid(pid: i32, app_name: &str, max_nodes: usize, budget: Duration)
     }))
 }
 
-/// Whether the current process has macOS Accessibility trust. The production
-/// broker calls AX inside Orbit itself, so this reflects Orbit's grant.
+/// Whether the current process has macOS Accessibility trust. The worker runs
+/// under the disclaimed Orbit Agent runtime, so this reflects Agent's grant.
 pub fn accessibility_trusted() -> bool {
     unsafe { AXIsProcessTrusted() != 0 }
 }
