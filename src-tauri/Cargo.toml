@@ -1,6 +1,6 @@
 [package]
 name = "orbit"
-version = "0.3.35"
+version = "0.3.36"
 default-run = "orbit"
 description = "A local desktop workspace for Orbit"
 authors = ["you"]
@@ -62,7 +62,6 @@ uuid = { version = "=1.26.0", features = ["v4"] }
 # input synthesis, AppKit activation). Other desktop platforms ship without
 # the engine in this release.
 [target.'cfg(target_os = "macos")'.dependencies]
-libc = "=0.2.189"
 xa11y = "=0.15.0"
 objc2-app-kit = { version = "=0.3.2", features = ["NSRunningApplication", "NSWorkspace"] }
 objc2-foundation = { version = "=0.3.2", features = ["NSURL", "NSString", "NSArray"] }

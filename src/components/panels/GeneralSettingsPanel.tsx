@@ -100,7 +100,7 @@ function ComputerUseSettings({ desktop, online, running }: { desktop: boolean; o
     finally { setBusy(false); }
   }
   return <>
-    <SettingRow title="电脑操作" description={!desktop ? "电脑操作只能在运行 Pi 的电脑上使用。" : !macos ? "Computer Use 目前只支持 macOS；此平台功能已关闭。" : "由你手动打开。macOS 请在系统设置 → 隐私与安全性 → 辅助功能中允许「Orbit」。授权后完全退出 Orbit 再打开。"}>
+    <SettingRow title="电脑操作" description={!desktop ? "电脑操作只能在运行 Pi 的电脑上使用。" : !macos ? "Computer Use 目前只支持 macOS；此平台功能已关闭。" : "由你手动打开。macOS 请在辅助功能和屏幕录制中同时允许「Orbit」与「Orbit Agent」；「Orbit Agent Dev」只属于 tauri dev。授权后完全退出 Orbit 再打开。"}>
       {desktop && macos ? <Switch aria-label="电脑操作" checked={enabled} disabled={!online || running} onChange={checked => void setComputerUseMode(checked).catch(report)} /> : <span className="remote-settings-note">{desktop ? "macOS 专用" : "电脑端设置"}</span>}
     </SettingRow>
     <SettingRow title="Jev API Key" description={desktop && macos ? "从 TypeSafe 控制台粘贴，只存在这台电脑。保存不等于打开电脑操作，开关仍由你控制。" : "Jev Key 由电脑端保管。"}>

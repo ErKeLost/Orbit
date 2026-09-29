@@ -7,20 +7,14 @@ design iterations; they are historical references, not alternate runtimes.
 ## Flow
 
 ```text
-Pi -> gui_task -> Spotlight app resolver -> private Unix socket -> Orbit host AX engine
+Pi -> gui_task -> Spotlight app resolver -> Rust ax_control worker
                                   -> AX observation -> bounded Jev choice
                                   -> one verified AX action -> successor observation
 ```
 
-The host AX engine is the only production desktop driver. It owns application launch and
+The worker is the only desktop driver. It owns application launch and
 activation, snapshot-scoped refs, live target re-identification, action
 delivery, event-driven settling, post-state reads, and retry disposition.
-The protocol is also exposed through the standalone `ax_control` binary for
-development and diagnostics. A random token and a private socket directory
-limit host requests to the Pi processes started by Orbit. Each connection has
-its own observation ledger. macOS Accessibility permission is checked inside
-Orbit before the host sends an app launch request; Orbit Agent needs no
-separate Accessibility grant.
 The TypeScript engine owns budgets, candidate compilation, text-slot privacy,
 risk checks, verification, affordance memory, and the observe/decide/act loop.
 
@@ -65,9 +59,8 @@ mismatch abandons the replay and returns to a fresh Jev decision. Set
 
 ## Packaging and Verification
 
-`scripts/sync-worker.mjs` builds the standalone `ax_control` binary with the
-`ax-control` Cargo feature and copies it to `resources/computer-use/` for
-development diagnostics. `scripts/sync-computer-use.mjs`
+`scripts/sync-worker.mjs` builds `ax_control` with the `ax-control` Cargo
+feature and copies it to `resources/computer-use/`. `scripts/sync-computer-use.mjs`
 copies the TypeSafe SDK and clipboard runtime only; no `agent-desktop` package
 or binary is shipped.
 

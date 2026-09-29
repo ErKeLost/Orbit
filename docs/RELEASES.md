@@ -15,13 +15,12 @@ The macOS app uses ad-hoc signing (`signingIdentity: "-"` in
 workflow does not select it. Do not change the app's signing identity as part
 of a worker fix: switching identities changes its Accessibility requirement.
 
-Production desktop operations now run inside the Orbit process through a
-private Unix socket, so only Orbit needs Accessibility permission. The
-`ax_control` executable remains in Resources for diagnostics. Rust gives it an
-ad-hoc linker signature, which must be kept when staging it; signing the outer
-`.app` does not sign executables inside Resources. `scripts/sync-worker.mjs`
-verifies the staged worker signature and runs a protocol probe. The macOS
-release job repeats both checks against the packaged `.app`.
+The `ax_control` desktop worker is a separate arm64 executable copied into the
+app's Resources directory. Rust gives it an ad-hoc linker signature. Keep that
+signature when staging the worker; signing the outer `.app` does not sign
+executables inside Resources. `scripts/sync-worker.mjs` verifies the staged
+worker signature and runs a protocol probe. The macOS release job repeats both
+checks against the packaged `.app` before the draft release can be published.
 
 The app is not notarized. First installation may need a one-time manual
 approval (right-click → Open, or System Settings → Privacy & Security → Open

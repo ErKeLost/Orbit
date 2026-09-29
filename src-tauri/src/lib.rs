@@ -11,8 +11,6 @@ pub mod fast_ax;
 pub mod ax_settle;
 #[cfg(target_os = "macos")]
 pub mod ax_worker;
-#[cfg(target_os = "macos")]
-mod ax_broker;
 mod bridge;
 mod mobile_update;
 mod remote;
@@ -122,8 +120,6 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            #[cfg(target_os = "macos")]
-            app.manage(ax_broker::AxBroker::start()?);
             #[cfg(desktop)]
             {
                 // Transparent, undecorated splash that floats the mascot on the desktop.
@@ -197,14 +193,6 @@ pub fn run() {
                 window.state::<remote::RemoteHost>().stop();
             }
         })
-        .build(tauri::generate_context!())
-        .expect("error while building Orbit")
-        .run(|_app, _event| {
-            #[cfg(target_os = "macos")]
-            if let tauri::RunEvent::Exit = _event {
-                if let Some(broker) = _app.try_state::<ax_broker::AxBroker>() {
-                    broker.shutdown();
-                }
-            }
-        });
+        .run(tauri::generate_context!())
+        .expect("error while running Orbit");
 }
