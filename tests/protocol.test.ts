@@ -27,6 +27,19 @@ describe('Pi 0.87.1 JSONL event projection',()=>{
   expect(state.messages[1].message).toEqual({role:'user',content:'转向',timestamp:9})
   expect(state.messages[1].id.startsWith('queued-')).toBe(false)
  })
+ test('steer delivered after a later assistant message does not overwrite that reply',()=>{
+  let state=reduceEvent(emptyTranscript(),{type:'agent_start'})
+  state=reduceEvent(state,{type:'message_start',message:{role:'assistant',content:[{type:'toolCall',id:'t1',name:'bash'}],timestamp:1}})
+  state=reduceEvent(state,{type:'queued_preview',id:'queued-1',message:{role:'user',content:'转向',timestamp:2}})
+  state=reduceEvent(state,{type:'message_start',message:{role:'assistant',content:[],timestamp:3}})
+  state=reduceEvent(state,{type:'message_end',message:{role:'assistant',content:[{type:'text',text:'最终回复'}],timestamp:3}})
+  const user={role:'user',content:[{type:'text',text:'转向'}],timestamp:4}
+  state=reduceEvent(state,{type:'message_start',message:user})
+  state=reduceEvent(state,{type:'message_end',message:user})
+  expect(state.messages.map(item=>item.message.role)).toEqual(['assistant','assistant','user'])
+  expect(state.messages[1].message.content).toEqual([{type:'text',text:'最终回复'}])
+  expect(state.messages.filter(item=>item.message.role==='user')).toHaveLength(1)
+ })
  test('undelivered queued preview is dropped on abort or settle',()=>{
   let state=reduceEvent(emptyTranscript(),{type:'agent_start'})
   state=reduceEvent(state,{type:'queued_preview',id:'queued-1',message:{role:'user',content:'转向'}})

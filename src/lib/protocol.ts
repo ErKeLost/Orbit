@@ -162,15 +162,12 @@ export function reduceEvent(previous: Transcript, event: Event): Transcript {
         message,
         ...(message.role === 'assistant' ? { startedAt: state.turnStartedAt ?? Date.now() } : {}),
       }
-      if (message.role === 'user') {
-        const preview = state.messages.findIndex(isQueuedPreview)
-        if (preview >= 0) {
-          state.messages = [...state.messages]
-          state.messages[preview] = entry
-          return state
-        }
-      }
-      state.messages = [...state.messages, entry]
+      // 投递时把预览移到末尾：预览可能早于后续 assistant 的 message_start 插入，
+      // 原位替换会让用户消息不在末尾，随后的 message_end（写最后一条）就会覆盖掉 assistant 回复。
+      const preview = message.role === 'user' ? state.messages.findIndex(isQueuedPreview) : -1
+      const base = preview >= 0 ? state.messages.filter((_, index) => index !== preview) : state.messages
+      if (preview >= 0 && state.active > preview) state.active -= 1
+      state.messages = [...base, entry]
       if (message.role === 'assistant') state.active = state.messages.length - 1
       return state
     }
@@ -204,7 +201,13 @@ export function reduceEvent(previous: Transcript, event: Event): Transcript {
         message.content = message.content.map(part => part.type === 'thinking' ? {...part,thinkingComplete:true} : part)
       }
       if (message.role === 'toolResult' && message.toolCallId) return { ...state, tools: {...state.tools,[message.toolCallId]:{...state.tools[message.toolCallId],name:message.toolName ?? 'tool',running:false,result:toolResultText(message.content),details:toolCodeDetails(message.toolName??'tool',message.details)??state.tools[message.toolCallId]?.details,isError:message.isError,usage:message.usage as ToolUsage|undefined}} }
-      const index = message.role === 'assistant' ? state.active : state.messages.length - 1
+      let index = message.role === 'assistant' ? state.active : -1
+      if (message.role !== 'assistant') {
+        for (let i = state.messages.length - 1; i >= 0; i--) {
+          const candidate = state.messages[i].message
+          if (candidate.role === message.role && !isQueuedPreview(state.messages[i]) && (candidate.timestamp === undefined || message.timestamp === undefined || candidate.timestamp === message.timestamp)) { index = i; break }
+        }
+      }
       if(index >= 0) {
         state.messages = [...state.messages]; state.messages[index] = {...state.messages[index],message}
       }
