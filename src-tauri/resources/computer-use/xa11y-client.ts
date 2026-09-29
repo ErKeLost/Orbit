@@ -1,18 +1,36 @@
 import { access, constants } from "node:fs/promises"
 import { spawn } from "node:child_process"
+import { connect } from "node:net"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { DesktopCommandError, type DesktopDriver, type DesktopEnvelope, type DesktopNode, type SnapshotData } from "./desktop-driver.ts"
 
 export async function createXa11yClient(signal?: AbortSignal): Promise<DesktopDriver> {
-  const binary = await resolveWorker()
-  await access(binary, constants.X_OK)
-  const worker = spawn(binary, [], { stdio: ["pipe", "pipe", "pipe"], signal })
+  const socketPath = process.env.ORBIT_AX_SOCKET
+  const token = process.env.ORBIT_AX_TOKEN
+  if (process.env.ORBIT_AX_REQUIRED === "1" && (!socketPath || !token)) throw new Error("Orbit desktop broker is unavailable")
+  if (Boolean(socketPath) !== Boolean(token)) throw new Error("Orbit desktop broker configuration is incomplete")
+  // Packaged Orbit executes AX inside its own host process. The standalone
+  // worker remains available for development tools that have no Orbit host.
+  const worker = socketPath ? undefined : spawn(await resolveWorker(), [], { stdio: ["pipe", "pipe", "pipe"], signal })
+  const socket = socketPath ? connect({ path: socketPath, signal }) : undefined
+  const input = socket ?? worker!.stdin
+  const output = socket ?? worker!.stdout
   const pending = new Map<number, { resolve: (value: DesktopEnvelope) => void; reject: (error: Error) => void }>()
   let nextId = 1
   let activeApp = ""
   let buffer = ""
-  worker.stdout.on("data", chunk => {
+  let terminalError: Error | undefined
+  // The broker answers a valid token with {"ready":true}; a rejected token or
+  // peer just closes. Wait for it so an auth failure is reported as such.
+  let readyResolve: (() => void) | undefined
+  const ready = socket ? new Promise<void>((resolveReady, rejectReady) => {
+    const timer = setTimeout(() => rejectReady(new Error("Orbit desktop broker did not accept the session within 5000ms")), 5_000)
+    readyResolve = () => { clearTimeout(timer); resolveReady() }
+    socket.once("close", () => { clearTimeout(timer); rejectReady(new Error("Orbit desktop broker rejected the session (authentication failed or Orbit is shutting down)")) })
+    socket.once("error", error => { clearTimeout(timer); rejectReady(error) })
+  }) : Promise.resolve()
+  output.on("data", chunk => {
     buffer += String(chunk)
     for (;;) {
       const newline = buffer.indexOf("\n")
@@ -21,7 +39,8 @@ export async function createXa11yClient(signal?: AbortSignal): Promise<DesktopDr
       buffer = buffer.slice(newline + 1)
       if (!line) continue
       try {
-        const response = JSON.parse(line) as DesktopEnvelope & { id?: number }
+        const response = JSON.parse(line) as DesktopEnvelope & { id?: number; ready?: boolean }
+        if (readyResolve && response.ready === true) { readyResolve(); readyResolve = undefined; continue }
         const id = response.id
         if (typeof id !== "number") continue
         const request = pending.get(id)
@@ -35,14 +54,25 @@ export async function createXa11yClient(signal?: AbortSignal): Promise<DesktopDr
     }
   })
   const fail = (error: Error) => {
+    terminalError = error
     for (const request of pending.values()) request.reject(error)
     pending.clear()
   }
-  worker.on("error", error => fail(error))
-  worker.on("close", code => fail(new Error(`xa11y worker exited (${code ?? "unknown"})`)))
+  worker?.on("error", error => fail(error))
+  worker?.on("close", code => fail(new Error(`xa11y worker exited (${code ?? "unknown"})`)))
+  socket?.on("error", error => fail(error))
+  socket?.on("close", () => fail(new Error("Orbit desktop broker connection closed")))
+  if (socket) socket.write(`${JSON.stringify({ token })}\n`)
+  try {
+    await ready
+  } catch (error) {
+    socket?.destroy()
+    throw error
+  }
 
   return {
     async run<T>(args: string[], options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<DesktopEnvelope<T>> {
+      if (terminalError) throw terminalError
       const headed = args[0] === "--headed"
       const commandOffset = headed ? 1 : 0
       const command = args[commandOffset]
@@ -75,7 +105,7 @@ export async function createXa11yClient(signal?: AbortSignal): Promise<DesktopDr
         let timer: ReturnType<typeof setTimeout> | undefined
         const settle = <A extends unknown[]>(fn: (...args: A) => void) => (...args: A) => { if (timer) clearTimeout(timer); fn(...args) }
         pending.set(id, { resolve: settle(resolvePromise), reject: settle(reject) })
-        worker.stdin.write(`${JSON.stringify(payload)}\n`, error => { if (error && pending.delete(id)) { if (timer) clearTimeout(timer); reject(error) } })
+        input.write(`${JSON.stringify(payload)}\n`, error => { if (error && pending.delete(id)) { if (timer) clearTimeout(timer); reject(error) } })
         if (options.timeoutMs) {
           timer = setTimeout(() => {
             if (pending.delete(id)) reject(new Error(`xa11y request timed out after ${options.timeoutMs}ms`))
@@ -92,7 +122,7 @@ export async function createXa11yClient(signal?: AbortSignal): Promise<DesktopDr
       if (command === "launch") return { ...response, data: response.data as T }
       return response as DesktopEnvelope<T>
     },
-    async dispose() { worker.kill() },
+    async dispose() { if (socket) socket.destroy(); else worker?.kill() },
   }
 }
 

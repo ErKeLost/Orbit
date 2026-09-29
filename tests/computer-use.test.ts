@@ -709,6 +709,9 @@ describe("desktop goal loop", () => {
     })
     expect(result.status).toBe("blocked")
     expect(result.trace.some(entry => entry.note?.includes("PERM_DENIED"))).toBe(true)
+    const display = formatResult(task({ goal: "open Music", textSlots: [] }), result)
+    expect(display).toContain("未能验证应用界面")
+    expect(display).not.toContain("计算器没打开")
   })
 
   test("types prepared text, submits it, then finishes", async () => {

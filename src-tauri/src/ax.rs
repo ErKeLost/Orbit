@@ -100,6 +100,10 @@ fn app(app_name: &str) -> Result<App, String> {
     if app_name.is_empty() || app_name.len() > 256 {
         return Err("invalid application name".into());
     }
+    #[cfg(target_os = "macos")]
+    if let Some(pid) = crate::fast_ax::find_pid(app_name).and_then(|pid| u32::try_from(pid).ok()) {
+        return App::by_pid(pid, Duration::ZERO).map_err(|error| error.to_string());
+    }
     App::by_name(app_name, Duration::ZERO).map_err(|e| e.to_string())
 }
 

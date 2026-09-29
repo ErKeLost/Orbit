@@ -17,6 +17,8 @@ struct Worker {
     child: Arc<Mutex<Child>>,
     stdin: ChildStdin,
     cwd: PathBuf,
+    #[cfg(target_os = "macos")]
+    _ax_permit: crate::ax_broker::AxPermit,
 }
 
 fn safe_pi_diagnostic(lines: &[String], home: &Path) -> Option<String> {
@@ -2192,6 +2194,13 @@ pub async fn pi_connect(
             &runtime.pi_version,
             &runtime.node_modules,
         );
+        #[cfg(target_os = "macos")]
+        {
+            let broker = app.state::<crate::ax_broker::AxBroker>();
+            command.env("ORBIT_AX_SOCKET", broker.socket());
+            command.env("ORBIT_AX_TOKEN", broker.token());
+            command.env("ORBIT_AX_REQUIRED", "1");
+        }
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -2199,6 +2208,8 @@ pub async fn pi_connect(
             .spawn()
             .map_err(|e| e.to_string())?;
         let pid = child.id();
+        #[cfg(target_os = "macos")]
+        let ax_permit = app.state::<crate::ax_broker::AxBroker>().permit(pid);
         let stdin = child.stdin.take().ok_or("Pi stdin unavailable")?;
         let stdout = child.stdout.take().ok_or("Pi stdout unavailable")?;
         let stderr = child.stderr.take().ok_or("Pi stderr unavailable")?;
@@ -2209,6 +2220,8 @@ pub async fn pi_connect(
                 child: child.clone(),
                 stdin,
                 cwd: path.clone(),
+                #[cfg(target_os = "macos")]
+                _ax_permit: ax_permit,
             },
         );
         let output_channel = on_event.clone();
@@ -2574,10 +2587,14 @@ mod tests {
             .spawn()
             .unwrap();
         let stdin = child.stdin.take().unwrap();
+        #[cfg(target_os = "macos")]
+        let _ax_permit = crate::ax_broker::AxBroker::start().unwrap().permit(child.id());
         Worker {
             child: Arc::new(Mutex::new(child)),
             stdin,
             cwd: std::env::temp_dir(),
+            #[cfg(target_os = "macos")]
+            _ax_permit,
         }
     }
     #[test]

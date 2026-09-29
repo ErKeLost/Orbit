@@ -508,7 +508,7 @@ pub fn observe_pid(pid: i32, app_name: &str, max_nodes: usize, budget: Duration)
     // A TCC denial is process-wide and permanent for the task's lifetime;
     // surface it as its own failure class instead of folding it into
     // WINDOW_NOT_FOUND, which would send the caller into app-restart loops.
-    if unsafe { AXIsProcessTrusted() } == 0 {
+    if !accessibility_trusted() {
         return Err(
             "AX_PERMISSION_DENIED: this process is not trusted for Accessibility. \
              Enable the host app under System Settings → Privacy & Security → Accessibility."
@@ -587,6 +587,12 @@ pub fn observe_pid(pid: i32, app_name: &str, max_nodes: usize, budget: Duration)
         "tree": body,
         "fingerprint": format!("ax:{:016x}", hasher.finish()),
     }))
+}
+
+/// Whether the current process has macOS Accessibility trust. The production
+/// broker calls AX inside Orbit itself, so this reflects Orbit's grant.
+pub fn accessibility_trusted() -> bool {
+    unsafe { AXIsProcessTrusted() != 0 }
 }
 
 /// Resolve a running GUI application's pid by localized name, bundle name or

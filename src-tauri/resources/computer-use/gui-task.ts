@@ -120,7 +120,11 @@ export function formatResult(input: GuiTaskInput, result: GuiTaskResult): string
   const last = [...result.trace].reverse().find(entry => entry.operation)
   const reason = [...result.trace].reverse().find(entry => entry.note)?.note
   const timing = `elapsed=${result.metrics.elapsedMs}ms launch=${Math.round(result.metrics.launchMs)}ms observation=${Math.round(result.metrics.observationMs)}ms decision=${Math.round(result.metrics.decisionMs)}ms action=${Math.round(result.metrics.actionMs)}ms settle=${Math.round(result.metrics.settleMs ?? 0)}ms jev_calls=${result.metrics.jevCalls ?? 0} replayed=${result.metrics.replayedSteps ?? 0}`
-  const launch = result.appLaunched ? "已打开并读取应用界面" : "未确认应用已打开"
+  const launch = result.appLaunched
+    ? "已打开并读取应用界面"
+    : result.status === "blocked" && reason?.includes("PERM_DENIED")
+      ? "辅助功能授权不足；未能验证应用界面，应用可能已经打开"
+      : "未确认应用已打开"
   const action = result.lastAction ? `最近动作=${result.lastAction.operation} 交付=${result.lastAction.delivery ?? "未知"}` : "尚无桌面动作"
   const goal = result.goalVerified ? "Jev 根据当前界面判断目标已完成" : "目标未获 Jev 验证"
   return `[${result.status}] ${input.goal}\n应用=${launch}；${action}；${goal}\nactions=${result.actions} decisions=${result.decisions} ${timing}\njev=${last?.operation ?? "not_called"}${last?.confidence === undefined ? "" : ` confidence=${last.confidence.toFixed(2)}`}${reason ? `\nreason=${reason}` : ""}\n${result.evidence}`
