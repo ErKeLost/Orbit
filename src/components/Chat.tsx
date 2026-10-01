@@ -30,6 +30,20 @@ function copyConversationSelection(event: ReactClipboardEvent<HTMLDivElement>) {
   event.clipboardData.setData("text/plain", text);
 }
 
+/** 流式期间把高频值节流到约 intervalMs 一次；active=false 时原值直通、零开销。 */
+function useThrottledValue<T>(value: T, active: boolean, intervalMs: number): T {
+  const [trailing, setTrailing] = useState(value);
+  const lastCommitAt = useRef(0);
+  useEffect(() => {
+    // 统一走定时器提交：inactive 时也立即补一次，保证下次流式开始时无陈旧窗口。
+    const commit = () => { lastCommitAt.current = Date.now(); setTrailing(value); };
+    const wait = active ? Math.max(0, intervalMs - (Date.now() - lastCommitAt.current)) : 0;
+    const timer = window.setTimeout(commit, wait);
+    return () => window.clearTimeout(timer);
+  }, [active, intervalMs, value]);
+  return active ? trailing : value;
+}
+
 function useConversationSections(
   conversationRef: RefObject<HTMLDivElement | null>,
   proximityId: string,
@@ -116,9 +130,11 @@ export function Chat() {
   const liveTranscript = useWorkspace(state => state.transcript);
   const liveTelemetry = useWorkspace(state => state.telemetry);
   // Keep typing and other high-priority UI interactions ahead of expensive
-  // streaming transcript/Markdown reconciliation.
-  const transcript = useDeferredValue(liveTranscript);
-  const telemetry = useDeferredValue(liveTelemetry);
+  // streaming transcript/Markdown reconciliation. 流式期间再把提交节流到 ~10Hz：
+  // 活跃消息每次更新都要全量重建（markdown 重解析 + 子树 reconcile），这是打字
+  // 掉帧的主力；非流式更新不节流，落定/工具结果立即生效。
+  const transcript = useDeferredValue(useThrottledValue(liveTranscript, liveTranscript.running, 100));
+  const telemetry = useDeferredValue(useThrottledValue(liveTelemetry, liveTranscript.running, 100));
   const agents = useWorkspace(state => state.agents);
   const { ref, atBottom, scrollToBottom } = useConversationScroll();
   const proximityId = useId().replace(/[^a-zA-Z0-9_-]/g, "") || "conversation";

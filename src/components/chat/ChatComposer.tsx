@@ -111,6 +111,9 @@ export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted
   const runtimeTarget = useWorkspace(state => state.runtimeTarget);
   const composerKey = connectionId || project;
   const [attachments, setAttachments] = useState<Attachment[]>(() => attachmentCache.get(composerKey) ?? []);
+  // 输入框持有焦点时暂停 Beam：border-beam 由 rAF 每帧改写注册 CSS 属性并
+  // 重绘渐变边框，恰与打字/IME 争抢主线程；焦点离开后动画恢复。
+  const [inputFocused, setInputFocused] = useState(false);
   const draftRef = useRef<DraftHandle>(null);
   const deliveryOverride = useRef<"steer" | "followUp" | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -213,8 +216,10 @@ export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted
     {/* Beam 动画每帧改写可继承的 @property 变量；若包住整个 composer，输入框、选择器等所有后代每帧都要重算样式。
         改为覆盖层：视觉不变，动画只作用于一个空层。 */}
     <div className="composer-beam-host">
-      <div className="composer-beam-overlay" aria-hidden="true"><Beam className="studio-composer-beam" size="line" borderRadius={14} active={transcriptRunning || compacting}><div className="composer-beam-fill" /></Beam></div>
-      <PromptInput ref={composerForm} onSubmit={message => void submit(message)} className="composer studio-composer" allowEmpty={attachments.length > 0}>
+      <div className="composer-beam-overlay" aria-hidden="true"><Beam className="studio-composer-beam" size="line" borderRadius={14} active={(transcriptRunning || compacting) && !inputFocused}><div className="composer-beam-fill" /></Beam></div>
+      <PromptInput ref={composerForm} onSubmit={message => void submit(message)} className="composer studio-composer" allowEmpty={attachments.length > 0}
+        onFocusCapture={() => setInputFocused(true)}
+        onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setInputFocused(false); }}>
         <AnimatePresence>{attachments.length > 0 && <m.div className="attachments" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
           {attachments.map(attachment => attachment.kind === "image"
             ? <div className="attachment-preview" key={attachment.id}><img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt={attachment.name} decoding="async" /><Button type="button" variant="secondary" size="icon" className="attachment-remove" title={`移除 ${attachment.name}`} aria-label={`移除 ${attachment.name}`} onClick={() => setAttachments(current => current.filter(item => item.id !== attachment.id))}><Icon name="x" /></Button></div>

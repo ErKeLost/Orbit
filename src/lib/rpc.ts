@@ -130,7 +130,12 @@ const burstEvents=new Set(['message_update','tool_execution_update'])
 const BURST_EVENT_WINDOW_MS=32
 function flushEvents(project:string){
  const timer=flushTimers.get(project);if(timer)clearTimeout(timer);flushTimers.delete(project)
- const queue=eventQueues.get(project);if(!queue?.length)return;eventQueues.delete(project);for(const event of queue)applyEvent(event,project)
+ const queue=eventQueues.get(project);if(!queue?.length)return;eventQueues.delete(project)
+ // burst 队列里只会是 message_update / tool_execution_update。此前逐条
+ // applyEvent，每条各做一次 patch（store 提交 + 全量订阅者通知）：快速流式时
+ // 一个窗口内多达 5~15 次提交。逐条 reduce 后只 patch 一次，结果与逐条应用一致。
+ const s=current(project)
+ patch(project,{transcript:queue.reduce((transcript,event)=>reduceEvent(transcript,event),s.transcript),telemetry:queue.reduce((telemetry,event)=>observe(telemetry,event),s.telemetry)})
 }
 function clearEvents(project:string){const timer=flushTimers.get(project);if(timer)clearTimeout(timer);flushTimers.delete(project);eventQueues.delete(project)}
 function dispatch(event:Event,project:string){

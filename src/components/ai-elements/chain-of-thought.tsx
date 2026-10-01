@@ -58,11 +58,15 @@ export function ProcessingPanel({
 
 export function ThinkingSummary({ text, running }: { text: string; running: boolean }) {
   const summary = text.replace(/\s+/g, " ").trim() || "正在思考";
+  // 流式期间这一行以 background-clip:text 的流动渐变逐帧重绘，且每批 delta
+  // 都更新一次；文本越长重绘面积越大。视觉上本来就是单行截断，这里只保留
+  // 尾部展示，完整内容仍在 title 里。
+  const visible = summary.length > 200 ? `…${summary.slice(-199)}` : summary;
   return (
     <div className="thinking-summary" data-working={running} title={summary}>
       {running
-        ? <StableShimmer text={summary} className="thinking-summary-text" />
-        : <span className="thinking-summary-text">{summary}</span>}
+        ? <StableShimmer text={visible} className="thinking-summary-text" />
+        : <span className="thinking-summary-text">{visible}</span>}
     </div>
   );
 }
