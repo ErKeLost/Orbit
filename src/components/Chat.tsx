@@ -171,10 +171,6 @@ export function Chat() {
     return groups.map((group, index) => ({ ...group, clock: clocks[index] }));
   }, [transcript.messages, transcript.running, transcript.turnStartedAt, savedDurations]);
   const { retrying, retryDetail, compacting, compactionDetail, activeHasOutput } = deriveRunStatus(transcript, telemetry);
-  // 一轮的「正在处理」只在最上面那段面板上显示；当那段（clock==="live"）已经存在时，
-  // 不再在底部补一个 LoadingState，否则 steer 后同一轮会出现两个「正在处理」。
-  const runPlaceholder = compacting || retrying
-    || (transcript.running && !activeHasOutput && !messageGroups.some(group => group.clock === "live"));
   const openAgent = useCallback((agent: AgentNode) => {
     if (!agent.sessionPath) return;
     void changeSession({ type: "switch_session", sessionPath: agent.sessionPath }).catch(report);
@@ -265,7 +261,7 @@ export function Chat() {
           />;
         })}
         {transcript.error && !transcript.running && <m.div className="transcript-message assistant" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.16 }}><ErrorOutput error={transcript.error} /></m.div>}
-        {runPlaceholder && <LoadingState icon={retrying && !compacting ? <Wifi size={16} className="shrink-0 text-muted-foreground" aria-hidden="true" /> : undefined} className="chat-loading-state" label={compacting ? "正在压缩上下文" : (transcript.phase || "正在处理")} detail={compacting ? compactionDetail : retryDetail} />}
+        {(compacting || retrying || (transcript.running && !activeHasOutput)) && <LoadingState icon={retrying && !compacting ? <Wifi size={16} className="shrink-0 text-muted-foreground" aria-hidden="true" /> : undefined} className="chat-loading-state" label={compacting ? "正在压缩上下文" : (transcript.phase || "正在处理")} detail={compacting ? compactionDetail : retryDetail} />}
       </ConversationContent>
       {!atBottom && <ConversationScrollButton onClick={scrollToBottom} />}
     </Conversation>
