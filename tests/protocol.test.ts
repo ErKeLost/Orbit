@@ -173,3 +173,31 @@ describe('turn timer ownership across steer splits',()=>{
   expect(assignTurnClocks([{startedAt:turn}],{running:true,turnStartedAt:turn+1})).toEqual([undefined])
  })
 })
+describe('streaming delta delivery',()=>{
+ // Rust 会把连发的 message_update / tool_execution_update 攒成一批再发（bridge.rs
+ // 的 PiEventBatch），JS 侧只是逐条 dispatch。这里锁住"分批投递 == 逐条投递"这个
+ // 前提：reduceEvent 是纯 fold，批只是一次多投几条，结果必须逐字节一致。
+ const deltas=[0,1,2,3,4,5,6,7].map(index=>({type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:0,delta:String(index)}}))
+ test('folding a batch matches folding events one by one',()=>{
+  const start=()=>reduceEvent(emptyTranscript(),{type:'message_start',message:{role:'assistant',content:[],timestamp:1}})
+  const oneByOne=deltas.reduce(reduceEvent,start())
+  const batched=[deltas.slice(0,3),deltas.slice(3,5),deltas.slice(5)].reduce((transcript,batch)=>batch.reduce(reduceEvent,transcript),start())
+  // 只比消息内容：message_start 会给 assistant 打一个 Date.now() 的 startedAt，
+  // 那是运行时时钟，不属于"分批是否等价"这件事。
+  expect(batched.messages).toEqual(oneByOne.messages)
+  expect(batched.active).toBe(oneByOne.active)
+ })
+ test('a batch preserves the interleaved order of thinking and text deltas',()=>{
+  const events=[
+   {type:'message_start',message:{role:'assistant',content:[],timestamp:2}},
+   {type:'message_update',assistantMessageEvent:{type:'thinking_delta',contentIndex:0,delta:'想'}},
+   {type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:1,delta:'答'}},
+   {type:'message_update',assistantMessageEvent:{type:'thinking_delta',contentIndex:0,delta:'了'}},
+   {type:'message_update',assistantMessageEvent:{type:'text_delta',contentIndex:1,delta:'案'}},
+   {type:'message_end',message:{role:'assistant',content:[{type:'text',text:'答案'}],stopReason:'stop'}},
+  ]
+  const sequential=events.reduce(reduceEvent,emptyTranscript())
+  const batched=[[events[0]],[events[1],events[2],events[3],events[4]],[events[5]]].reduce((transcript,batch)=>batch.reduce(reduceEvent,transcript),emptyTranscript())
+  expect(batched.messages).toEqual(sequential.messages)
+ })
+})

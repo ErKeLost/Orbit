@@ -9,7 +9,7 @@ use std::{
     process::{Child, ChildStdin, Command, Stdio},
     sync::{Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tauri::{ipc::Channel, path::BaseDirectory, AppHandle, Manager, State};
 
@@ -2152,6 +2152,68 @@ mod metadata_tests {
     }
 }
 
+/// Pi 流式事件在 Rust→JS 这一层的攒批策略。
+///
+/// Pi 在流式输出时会为每个 delta 写一行 JSONL（message_update /
+/// tool_execution_update，一个 32ms 窗口内可达几十条）。如果逐条 `Channel.send`，
+/// 每一条都要走一次 JSON 编码 → IPC → WebView JSON 解码 → JS 回调，主线程被切碎，
+/// 打字/IME 抢不到帧（掉帧），而 JS 侧那层 32ms 合并只合并了 store 提交，
+/// 合并不了被唤醒与编解码的次数。这里把连发事件攒成一条批量消息发过去，
+/// 内容、顺序、JS 侧的合并时机完全不变。
+///
+/// 分类沿用 JS 侧 `burstEvents`（src/lib/rpc.ts）——只有这两类会高频连发；
+/// 其余事件（message_end / agent_* / tool_execution_start 等）必须立即转发，
+/// 保证落定、错误与响应的时序和以前完全一致。
+const PI_BURST_EVENT_TYPES: [&str; 2] = ["message_update", "tool_execution_update"];
+/// 一批最多多少条。实际冲刷时机通常是"上游缓冲区排空"，这个上限只在持续满速
+/// 输出时才起作用；64 条（数十 KB）既能把 eval 次数压下来，又不会让单条 IPC 变重。
+const PI_EVENT_BATCH_MAX: usize = 64;
+/// 一批最多攒多久。只要 BufReader 缓冲区已排空就直接冲刷，所以这个上限只在
+/// 上游持续满速输出时才会用到。
+const PI_EVENT_BATCH_WINDOW: Duration = Duration::from_millis(16);
+
+fn is_pi_burst_event(value: &Value) -> bool {
+    value
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| PI_BURST_EVENT_TYPES.contains(&kind))
+}
+
+/// 攒批状态机（独立出来便于单测）。
+struct PiEventBatch {
+    events: Vec<Value>,
+    since: Instant,
+    max: usize,
+    window: Duration,
+}
+
+impl PiEventBatch {
+    fn new(max: usize, window: Duration) -> Self {
+        Self { events: Vec::new(), since: Instant::now(), max, window }
+    }
+
+    /// 记一个连发事件；`drain_more` = 上游缓冲区里还有待读数据。
+    /// 返回 `Some(批次)` 表示现在就该把这一批发出去。
+    fn push(&mut self, value: Value, drain_more: bool) -> Option<Vec<Value>> {
+        if self.events.is_empty() {
+            self.since = Instant::now();
+        }
+        self.events.push(value);
+        if drain_more && self.events.len() < self.max && self.since.elapsed() < self.window {
+            return None;
+        }
+        self.take()
+    }
+
+    /// 取出当前已攒下的事件（没有则返回 None）。
+    fn take(&mut self) -> Option<Vec<Value>> {
+        if self.events.is_empty() {
+            return None;
+        }
+        Some(std::mem::take(&mut self.events))
+    }
+}
+
 #[tauri::command]
 pub async fn pi_connect(
     app: AppHandle,
@@ -2230,13 +2292,40 @@ pub async fn pi_connect(
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
             let mut record = Vec::new();
+            let mut batch = PiEventBatch::new(PI_EVENT_BATCH_MAX, PI_EVENT_BATCH_WINDOW);
+            // 一批 = 一条 Channel 消息。顺序与逐条发送完全一致：任何别的消息
+            // （非连发事件 / 协议错误 / 退出）之前都先把已攒的批冲掉。
+            let send_batch = |events: Vec<Value>| output_channel
+                .send(json!({"kind":"rpc-batch","payloads":events}))
+                .is_ok();
             loop {
                 record.clear();
                 match reader.read_until(b'\n', &mut record) {
-                    Ok(0) => break,
+                    Ok(0) => {
+                        if let Some(events) = batch.take() {
+                            send_batch(events);
+                        }
+                        break;
+                    }
                     Ok(_) => match serde_json::from_slice::<Value>(&record) {
                         Ok(value) => {
                             crate::remote::publish_pi_event(&remote_app, &remote_project, &value);
+                            if is_pi_burst_event(&value) {
+                                // BufReader 里还有没读完的整行，说明这一波还没结束，
+                                // 可以继续攒；缓冲空了就立刻冲刷，绝不把已到手的事件
+                                // 压在批里等下一行（首 token / 慢速逐字都不额外延后）。
+                                let drain_more = !reader.buffer().is_empty();
+                                if let Some(events) = batch.push(value, drain_more) {
+                                    if !send_batch(events) {
+                                        break;
+                                    }
+                                }
+                                continue;
+                            }
+                            match batch.take() {
+                                Some(events) => if !send_batch(events) { break },
+                                None => {}
+                            }
                             if output_channel
                                 .send(json!({"kind":"rpc","payload":value}))
                                 .is_err()
@@ -2245,10 +2334,16 @@ pub async fn pi_connect(
                             }
                         }
                         Err(_) => {
+                            if let Some(events) = batch.take() {
+                                if !send_batch(events) { break }
+                            }
                             let _=output_channel.send(json!({"kind":"protocol_error","message":"Pi 输出了无效 JSONL 记录"}));
                         }
                     },
                     Err(error) => {
+                        if let Some(events) = batch.take() {
+                            send_batch(events);
+                        }
                         let _ = output_channel
                             .send(json!({"kind":"protocol_error","message":error.to_string()}));
                         break;
@@ -2522,6 +2617,55 @@ pub async fn open_pi_terminal(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pi_event_batch_holds_only_while_upstream_still_has_data() {
+        let mut batch = PiEventBatch::new(8, Duration::from_secs(60));
+        assert!(batch.push(json!({"type": "message_update"}), true).is_none());
+        assert!(batch.push(json!({"type": "message_update"}), true).is_none());
+        // 缓冲区排空 → 立刻冲刷，不把已到手的事件压着等下一行
+        let flushed = batch.push(json!({"type": "message_update"}), false).unwrap();
+        assert_eq!(flushed.len(), 3);
+        assert!(batch.take().is_none(), "flush 之后批必须是空的");
+    }
+
+    #[test]
+    fn pi_event_batch_flushes_at_the_size_cap() {
+        let mut batch = PiEventBatch::new(3, Duration::from_secs(60));
+        assert!(batch.push(json!({"type": "message_update"}), true).is_none());
+        assert!(batch.push(json!({"type": "message_update"}), true).is_none());
+        let flushed = batch.push(json!({"type": "message_update"}), true).unwrap();
+        assert_eq!(flushed.len(), 3);
+    }
+
+    #[test]
+    fn pi_event_batch_take_is_none_when_empty() {
+        let mut batch = PiEventBatch::new(8, Duration::from_secs(60));
+        assert!(batch.take().is_none());
+    }
+
+    #[test]
+    fn pi_event_batching_only_swallows_burst_events() {
+        // 只有连发的流式事件允许进批；落定/响应/错误类必须逐条立即转发。
+        for kind in ["message_update", "tool_execution_update"] {
+            assert!(is_pi_burst_event(&json!({"type": kind, "payload": {}})));
+        }
+        for kind in [
+            "message_start",
+            "message_end",
+            "agent_start",
+            "agent_end",
+            "agent_settled",
+            "tool_execution_start",
+            "tool_execution_end",
+            "response",
+            "queue_update",
+        ] {
+            assert!(!is_pi_burst_event(&json!({"type": kind})), "{kind} must not be batched");
+        }
+        assert!(!is_pi_burst_event(&json!({"type": 12})));
+        assert!(!is_pi_burst_event(&json!({})));
+    }
 
     fn temporary_root(label: &str) -> PathBuf {
         let suffix = std::time::SystemTime::now()

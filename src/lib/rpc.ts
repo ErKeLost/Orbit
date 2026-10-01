@@ -248,10 +248,14 @@ async function startConnection(cwd:string,id:string,options?:{restoreLast?:boole
   }catch(error){connections.delete(id);projectActive.delete(cwd);failPending(id,'连接失败');patch(id,{connection:'offline'});throw error}
   return
  }
- const onEvent=new Channel<{kind:string;payload?:Event;message?:string;code?:number}>()
+ const onEvent=new Channel<{kind:string;payload?:Event;payloads?:Event[];message?:string;code?:number}>()
  onEvent.onmessage=event=>{
   if(connections.get(id)?.token!==token)return
   if(event.kind==='rpc'&&event.payload)dispatch(event.payload,id)
+  // Rust 侧把连发的 message_update / tool_execution_update 攒成一批（bridge.rs 的
+  // PI_EVENT_BATCH_*）。逐条 dispatch，顺序与逐条 IPC 完全一致，dispatch 内部
+  // 仍然按 32ms 窗口合并 store 提交。
+  if(event.kind==='rpc-batch'&&event.payloads){for(const payload of event.payloads)dispatch(payload,id)}
   if(event.kind==='exit'){const cwd=connections.get(id)?.cwd,s=current(id),detail=event.message?`：${event.message}`:'';flushEvents(id);clearEvents(id);connections.delete(id);if(cwd&&projectActive.get(cwd)===id)projectActive.delete(cwd);for(const [file,owner] of [...sessionOwners]) if(owner===id) sessionOwners.delete(file);patch(id,{connection:'offline',error:`Pi 进程已退出（${event.code??'signal'}）${detail}`,transcript:{...s.transcript,running:false,compacting:false}});failPending(id,'Pi 进程已退出')}
   if(event.kind==='protocol_error')patch(id,{error:event.message})
  }
