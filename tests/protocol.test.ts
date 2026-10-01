@@ -1,5 +1,5 @@
 import {describe,test,expect} from 'bun:test'
-import {emptyTranscript,groupDisplayMessages,reduceEvent,hydrate,toolResultText} from '../src/lib/protocol'
+import {assignTurnClocks,emptyTranscript,groupDisplayMessages,reduceEvent,hydrate,toolResultText} from '../src/lib/protocol'
 import { summarizeToolCalls } from '../src/lib/tool-activity'
 import { turnDurationId } from '../src/lib/turn-duration'
 describe('Pi 0.87.1 JSONL event projection',()=>{
@@ -148,4 +148,28 @@ test('turn duration ids survive live-to-history message id changes',()=>{
  const history={...live,id:'history-4-1789546873294'}
  expect(turnDurationId([live])).toBe('timestamp:1789546873294')
  expect(turnDurationId([history])).toBe(turnDurationId([live]))
+})
+describe('turn timer ownership across steer splits',()=>{
+ const turn=1_790_000_000_000
+ test('shows 正在处理 only on the topmost segment of a steered turn',()=>{
+  // 19:40 那条 steer：第一段 + steer 出来的第二段共享同一个 startedAt。
+  const groups=[{startedAt:turn},{startedAt:undefined},{startedAt:turn}]
+  expect(assignTurnClocks(groups,{running:true,turnStartedAt:turn})).toEqual(['live',undefined,'hidden'])
+ })
+ test('never repeats 正在处理 on later segments of the same turn',()=>{
+  const groups=[{startedAt:turn},{startedAt:turn},{startedAt:turn}]
+  expect(assignTurnClocks(groups,{running:true,turnStartedAt:turn})).toEqual(['live','hidden','hidden'])
+ })
+ test('keeps the settled duration on the topmost segment too',()=>{
+  // 运行时把 elapsedMs 写在轮次首段，刚好就是保留 live 的那一段。
+  const groups=[{startedAt:turn,elapsedMs:52_000},{startedAt:turn},{startedAt:turn}]
+  expect(assignTurnClocks(groups,{running:false,turnStartedAt:null})).toEqual([undefined,'hidden','hidden'])
+ })
+ test('leaves ordinary single-segment turns unchanged',()=>{
+  expect(assignTurnClocks([{startedAt:turn}],{running:true,turnStartedAt:turn})).toEqual(['live'])
+  expect(assignTurnClocks([{startedAt:turn}],{running:false,turnStartedAt:null})).toEqual([undefined])
+ })
+ test('starts no timer before the running turn produced a segment',()=>{
+  expect(assignTurnClocks([{startedAt:turn}],{running:true,turnStartedAt:turn+1})).toEqual([undefined])
+ })
 })

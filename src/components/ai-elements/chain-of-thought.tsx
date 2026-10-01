@@ -15,7 +15,7 @@ export function ProcessingPanel({
   children,
 }: {
   running: boolean;
-  /** live: 本轮计时一直挂在这一段（轮次首段）；hidden: 同一轮被 steer 拆出的后续段，不重复计时。 */
+  /** live: 这一轮最上面那段负责显示「正在处理 Xs / 用时 Xs」；hidden: 同一轮被 steer 拆出的后续段，只显示「处理过程」标题。 */
   clock?: "live" | "hidden";
   startedAt?: number;
   durationMs?: number;
@@ -37,7 +37,9 @@ export function ProcessingPanel({
         onClick={() => setExpandedOverride(!expanded)}
       >
         {clock === "hidden"
-          ? (running ? <StableShimmer text="正在处理" className="ai-elapsed-time processing-time-shimmer" /> : <span className="ai-elapsed-time"><span className="ai-elapsed-time-label">处理过程</span></span>)
+          // 一轮只允许最上面那段显示「正在处理」，被 steer 拆出的后续段即使正在流式输出
+          // 也不再重复第二个正在处理，只保留一个静态的处理过程标题。
+          ? <span className="ai-elapsed-time"><span className="ai-elapsed-time-label">处理过程</span></span>
           : <ElapsedTime
             running={running || clock === "live"}
             startedAt={startedAt}

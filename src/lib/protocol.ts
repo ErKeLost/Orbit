@@ -52,6 +52,32 @@ export function groupDisplayMessages(messages: DisplayMessage[]): DisplayMessage
     return groups
   }, [])
 }
+
+/**
+ * 面板表头计时器的归属：``live`` 表示这一段负责显示「正在处理 Xs / 用时 Xs」，
+ * ``hidden`` 表示同一轮的后续段（只显示「处理过程」标题，不再出现第二个"正在处理"）。
+ */
+export type TurnClock = 'live' | 'hidden' | undefined
+
+/**
+ * steer / follow-up 会把一轮拆成共享同一个 startedAt 的多段。一次 turn 只在**最上面**
+ * 那段计时：运行时显示「正在处理 Xs」，结束后显示「用时 Xs」；下面被 steer 拆出来的段
+ * 只返回 ``hidden``，无论是否正在流式输出都不再重复「正在处理」，避免一轮里两个闪烁的
+ * 处理面板。
+ */
+export function assignTurnClocks(
+  groups: readonly { startedAt?: number }[],
+  turn: { running: boolean; turnStartedAt: number | null },
+): TurnClock[] {
+  const runningTurn = turn.running ? turn.turnStartedAt : null
+  const seenTurns = new Set<number>()
+  return groups.map(group => {
+    if (group.startedAt === undefined) return undefined
+    if (seenTurns.has(group.startedAt)) return 'hidden'
+    seenTurns.add(group.startedAt)
+    return runningTurn !== null && group.startedAt === runningTurn ? 'live' : undefined
+  })
+}
 export function formatTranscriptError(raw: string): string {
   const text = raw.trim()
   if (!text) return '会话异常'

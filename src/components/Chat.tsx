@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "../lib/store";
 import { changeSession, getSessionTurnDurations, persistedSessionFile, report } from "../lib/rpc";
 import type { AgentNode } from "../lib/agents";
-import { formatTranscriptError, groupDisplayMessages, type Transcript } from "../lib/protocol";
+import { assignTurnClocks, formatTranscriptError, groupDisplayMessages, type Transcript } from "../lib/protocol";
 import type { Telemetry } from "../lib/telemetry";
 import { readTurnDurations, saveTurnDurations, turnDurationId } from "../lib/turn-duration";
 import {
@@ -152,11 +152,11 @@ export function Chat() {
   }), [historicalDurations.data, sessionFile]);
   // Steer/follow-up splits one turn into several assistant groups sharing the
   // same turnStartedAt; resolve each group's duration (runtime or saved) and
-  // keep only the first group per identical value so the turn duration shows
-  // once, on the leading segment.
+  // keep one claim per identical value so the turn duration shows once.
   const messageGroups = useMemo(() => {
     const groups = groupDisplayMessages(transcript.messages).map(group => ({
       ...group,
+      startedAt: group.items.find(item => item.startedAt !== undefined)?.startedAt,
       elapsedMs: ([...group.items].reverse().find(item => item.elapsedMs !== undefined)?.elapsedMs
         ?? savedDurations[turnDurationId(group.items) ?? ""]) as number | undefined,
     }));
@@ -165,18 +165,16 @@ export function Chat() {
       if (group.elapsedMs === undefined || claimed.has(group.elapsedMs)) group.elapsedMs = undefined;
       else claimed.add(group.elapsedMs);
     }
-    // 同一轮（同一个 startedAt）被 steer 拆成多段时，计时只挂在首段：
-    // 运行中首段一直显示「正在处理 Xs」且不随新段下移，后续段不再各自计时。
-    const seenTurns = new Set<number>();
-    return groups.map(group => {
-      const startedAt = group.items.find(item => item.startedAt !== undefined)?.startedAt;
-      if (startedAt === undefined) return { ...group, clock: undefined };
-      if (seenTurns.has(startedAt)) return { ...group, clock: "hidden" as const };
-      seenTurns.add(startedAt);
-      return { ...group, clock: transcript.running && startedAt === transcript.turnStartedAt ? "live" as const : undefined };
-    });
+    // 一次 turn 只在最上面那段显示「正在处理 Xs / 用时 Xs」；被 steer 拆出来的
+    // 后续段一律 hidden，只显示「处理过程」，不再在下面重复一个正在处理。
+    const clocks = assignTurnClocks(groups, { running: transcript.running, turnStartedAt: transcript.turnStartedAt });
+    return groups.map((group, index) => ({ ...group, clock: clocks[index] }));
   }, [transcript.messages, transcript.running, transcript.turnStartedAt, savedDurations]);
   const { retrying, retryDetail, compacting, compactionDetail, activeHasOutput } = deriveRunStatus(transcript, telemetry);
+  // 一轮的「正在处理」只在最上面那段面板上显示；当那段（clock==="live"）已经存在时，
+  // 不再在底部补一个 LoadingState，否则 steer 后同一轮会出现两个「正在处理」。
+  const runPlaceholder = compacting || retrying
+    || (transcript.running && !activeHasOutput && !messageGroups.some(group => group.clock === "live"));
   const openAgent = useCallback((agent: AgentNode) => {
     if (!agent.sessionPath) return;
     void changeSession({ type: "switch_session", sessionPath: agent.sessionPath }).catch(report);
@@ -267,7 +265,7 @@ export function Chat() {
           />;
         })}
         {transcript.error && !transcript.running && <m.div className="transcript-message assistant" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.16 }}><ErrorOutput error={transcript.error} /></m.div>}
-        {(compacting || retrying || (transcript.running && !activeHasOutput)) && <LoadingState icon={retrying && !compacting ? <Wifi size={16} className="shrink-0 text-muted-foreground" aria-hidden="true" /> : undefined} className="chat-loading-state" label={compacting ? "正在压缩上下文" : (transcript.phase || "正在处理")} detail={compacting ? compactionDetail : retryDetail} />}
+        {runPlaceholder && <LoadingState icon={retrying && !compacting ? <Wifi size={16} className="shrink-0 text-muted-foreground" aria-hidden="true" /> : undefined} className="chat-loading-state" label={compacting ? "正在压缩上下文" : (transcript.phase || "正在处理")} detail={compacting ? compactionDetail : retryDetail} />}
       </ConversationContent>
       {!atBottom && <ConversationScrollButton onClick={scrollToBottom} />}
     </Conversation>

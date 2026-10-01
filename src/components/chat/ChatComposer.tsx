@@ -5,7 +5,7 @@ import { AnimatePresence, m } from "motion/react";
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState, type KeyboardEvent } from "react";
 import { useWorkspace } from "../../lib/store";
 import { report, request, stop, syncComputerUseMode, syncMultiAgentMode } from "../../lib/rpc";
-import { Beam } from "../Effects";
+// import { Beam } from "../Effects";
 import { Icon } from "../Icon";
 import { PromptInput, PromptInputSubmit, PromptInputTextarea, type PromptInputMessage } from "../ai-elements/prompt-input";
 import { Button } from "../ui/button";
@@ -103,7 +103,8 @@ function fileKindLabel(name: string): string {
   return extension ? extension.toUpperCase() : "文件";
 }
 
-export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted }: { compacting: boolean; onSubmitted: () => void }) {
+// compacting 原本只喂给 Beam 的 active；Beam 注释后入参保留（_ 前缀）以便一行恢复。
+export const ChatComposer = memo(function ChatComposer({ compacting: _compacting, onSubmitted }: { compacting: boolean; onSubmitted: () => void }) {
   const project = useWorkspace(state => state.cwd);
   const connectionId = useWorkspace(state => state.connectionId);
   const transcriptRunning = useWorkspace(state => state.transcript.running);
@@ -113,7 +114,7 @@ export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted
   const [attachments, setAttachments] = useState<Attachment[]>(() => attachmentCache.get(composerKey) ?? []);
   // 输入框持有焦点时暂停 Beam：border-beam 由 rAF 每帧改写注册 CSS 属性并
   // 重绘渐变边框，恰与打字/IME 争抢主线程；焦点离开后动画恢复。
-  const [inputFocused, setInputFocused] = useState(false);
+  // const [inputFocused, setInputFocused] = useState(false);
   const draftRef = useRef<DraftHandle>(null);
   const deliveryOverride = useRef<"steer" | "followUp" | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -213,13 +214,13 @@ export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted
   }
 
   return <div className="composer-container tessera-composer-dock"><div className="tessera-composer-form">
-    {/* Beam 动画每帧改写可继承的 @property 变量；若包住整个 composer，输入框、选择器等所有后代每帧都要重算样式。
-        改为覆盖层：视觉不变，动画只作用于一个空层。 */}
+    {/* Beam（边框流光）按需求注释掉：border-beam 每帧改写可继承的 @property 变量并重绘
+        渐变边框，是打字/流式时的主要掉帧来源。composer-beam-host 保留，布局不变。
+        恢复时解开下面这一行，并一起恢复 Effects 的 Beam import、inputFocused state
+        和 PromptInput 上的 onFocusCapture/onBlurCapture。 */}
     <div className="composer-beam-host">
-      <div className="composer-beam-overlay" aria-hidden="true"><Beam className="studio-composer-beam" size="line" borderRadius={14} active={(transcriptRunning || compacting) && !inputFocused}><div className="composer-beam-fill" /></Beam></div>
-      <PromptInput ref={composerForm} onSubmit={message => void submit(message)} className="composer studio-composer" allowEmpty={attachments.length > 0}
-        onFocusCapture={() => setInputFocused(true)}
-        onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setInputFocused(false); }}>
+      {/* <div className="composer-beam-overlay" aria-hidden="true"><Beam className="studio-composer-beam" size="line" borderRadius={14} active={(transcriptRunning || compacting) && !inputFocused}><div className="composer-beam-fill" /></Beam></div> */}
+      <PromptInput ref={composerForm} onSubmit={message => void submit(message)} className="composer studio-composer" allowEmpty={attachments.length > 0}>
         <AnimatePresence>{attachments.length > 0 && <m.div className="attachments" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
           {attachments.map(attachment => attachment.kind === "image"
             ? <div className="attachment-preview" key={attachment.id}><img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt={attachment.name} decoding="async" /><Button type="button" variant="secondary" size="icon" className="attachment-remove" title={`移除 ${attachment.name}`} aria-label={`移除 ${attachment.name}`} onClick={() => setAttachments(current => current.filter(item => item.id !== attachment.id))}><Icon name="x" /></Button></div>

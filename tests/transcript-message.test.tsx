@@ -204,3 +204,28 @@ describe("whole-turn process history", () => {
     expect(html.indexOf("子 agent timeline")).toBeLessThan(html.indexOf("父任务继续读取"));
   });
 });
+
+describe("turn activity clock", () => {
+  const items: DisplayMessage[] = [{ id: "live", message: { role: "assistant", content: [
+    { type: "toolCall", id: "read", name: "read", arguments: { path: "src/app.ts" } },
+  ] } }];
+  const tools = { read: { name: "read", running: true, result: "" } };
+  const header = (html: string) => html.match(/turn-activity-header[^>]*>([\s\S]*?)<\/button>/)?.[1]?.replace(/<[^>]+>/g, "");
+
+  test("shows a counting duration while the segment owns the live clock", () => {
+    const html = renderToStaticMarkup(<TranscriptMessage items={items} tools={tools} streaming thinking={false} clock="live" />);
+    expect(header(html)).toMatch(/\d+秒/);
+  });
+
+  test("never shows 正在处理 on steered segments below the top one", () => {
+    const whileStreaming = renderToStaticMarkup(<TranscriptMessage items={items} tools={tools} streaming thinking={false} clock="hidden" />);
+    const settled = renderToStaticMarkup(<TranscriptMessage items={items} tools={tools} streaming={false} thinking={false} clock="hidden" />);
+    expect(header(whileStreaming)).toBe("处理过程");
+    expect(settled).not.toContain("正在处理");
+  });
+
+  test("shows the finished duration on the segment that displays it", () => {
+    const html = renderToStaticMarkup(<TranscriptMessage items={items} tools={tools} streaming={false} thinking={false} elapsedMs={52000} />);
+    expect(header(html)).toBe("用时52秒");
+  });
+});
