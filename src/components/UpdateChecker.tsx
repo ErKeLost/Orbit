@@ -25,8 +25,8 @@ export async function installMobileUpdate(update: MobileUpdate) {
 }
 
 export function offerMobileUpdate(update: MobileUpdate) {
+  // 只出标题和操作按钮：release notes 长文案（英文、多行）在通知里没有阅读价值。
   gooeyToast.info(`发现 Orbit ${update.version}`, {
-    description: update.body,
     duration: Infinity,
     showTimestamp: false,
     action: {
@@ -49,7 +49,6 @@ export async function checkForDesktopUpdate({ notifyNoUpdate = false }: DesktopU
   const isNewOffer = useDesktopUpdate.getState().offer(update, update.version, update.body || "")
   if (isNewOffer) {
     gooeyToast.info(`发现 Orbit ${update.version}`, {
-      description: update.body || `当前版本 ${current}，可以安装新版本。`,
       duration: Infinity,
       showTimestamp: false,
       action: { label: "更新并重启", onClick: () => void installDesktopUpdate() },
