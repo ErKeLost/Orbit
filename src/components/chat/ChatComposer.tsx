@@ -118,9 +118,8 @@ export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted
   const runtimeTarget = useWorkspace(state => state.runtimeTarget);
   const composerKey = connectionId || project;
   const [attachments, setAttachments] = useState<Attachment[]>(() => attachmentCache.get(composerKey) ?? []);
-  // 输入框持有焦点时暂停 Beam：border-beam 由 rAF 每帧改写注册 CSS 属性并
-  // 重绘渐变边框，恰与打字/IME 争抢主线程；焦点离开后动画恢复。
-  const [inputFocused, setInputFocused] = useState(false);
+  // Beam 只要回合在跑就一直转，不再看输入框是否聚焦：v0.3.41 曾用“聚焦暂停”换打字
+  // 流暢，但那样一打字就完全看不到动画；流式卡顿已由 delta 批量 IPC 解决。
   const draftRef = useRef<DraftHandle>(null);
   const deliveryOverride = useRef<"steer" | "followUp" | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -230,10 +229,8 @@ export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted
     {/* Beam 动画每帧改写可继承的 @property 变量；若包住整个 composer，输入框、选择器等所有后代每帧都要重算样式。
         改为覆盖层：视觉不变，动画只作用于一个空层。 */}
     <div className="composer-beam-host">
-      <div className="composer-beam-overlay" aria-hidden="true"><Beam className="studio-composer-beam" size="line" borderRadius={14} active={(transcriptRunning || compacting) && !inputFocused}><div className="composer-beam-fill" /></Beam></div>
-      <PromptInput ref={composerForm} onSubmit={message => void submit(message)} className="composer studio-composer" allowEmpty={attachments.length > 0}
-        onFocusCapture={() => setInputFocused(true)}
-        onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setInputFocused(false); }}>
+      <div className="composer-beam-overlay" aria-hidden="true"><Beam className="studio-composer-beam" size="line" borderRadius={14} active={transcriptRunning || compacting}><div className="composer-beam-fill" /></Beam></div>
+      <PromptInput ref={composerForm} onSubmit={message => void submit(message)} className="composer studio-composer" allowEmpty={attachments.length > 0}>
         <AnimatePresence>{attachments.length > 0 && <m.div className="attachments" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
           {attachments.map(attachment => attachment.kind === "image"
             ? <ImageAttachmentPreview key={attachment.id} attachment={attachment} onRemove={() => setAttachments(current => current.filter(item => item.id !== attachment.id))} />
