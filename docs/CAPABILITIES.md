@@ -1,6 +1,6 @@
 # Pi 功能覆盖与边界
 
-以 Pi 0.87.1 官方 RPC / SDK / extensions 文档为基准（2026-09-25 复核）。这里区分原生 GUI、控制台和原始终端入口，不把“有个按钮”当作已支持。
+以 Pi 1.0.0 官方 RPC / SDK / extensions 文档为基准（2026-10-02 复核）。这里区分原生 GUI、控制台和原始终端入口，不把“有个按钮”当作已支持。
 
 ## 覆盖结论
 
@@ -32,6 +32,12 @@
 | 会话导入、分享、重命名、复制 | Pi 工具面板接入 `/import`、`/share`、`set_session_name`、`get_last_assistant_text` |
 | Scoped Models、资源重载、快捷键、变更记录 | Pi 工具面板提供官方命令入口；需要 TUI 交互的命令打开原生 Pi 终端 |
 | Pi Package 管理 | Pi 工具面板使用官方 `pi install`、`pi remove`、`pi update --extensions` 命令 |
+| MCP 服务器（stdio / streamable HTTP） | 设置 → Pi 1.0 能力：Rust 读写 `~/.pi/agent/mcp.json`（写入前备份，密钥值只留在磁盘，列表只暴露 key 名与 OAuth 登录名）；连接状态、工具数量和 exposure 来自扩展的 `pi.getMcpServers()` 与工具 namespace。会话内临时注册用 `pi.registerMcpServer()`；OAuth 登录仍走 `/mcp` 或原始终端 |
+| Codemode 与 Tool Search | 设置开关通过 `gui-tools-set` 激活这两个内置扩展工具；`codemode` 与 `tool_search` 在 Pi 1.0 中是 `model-only` 暴露，未激活时不计入 prompt 工具集。`codemode.mode`（on/only）由设置写入 settings.json |
+| 工具暴露分类 | `gui-capabilities` 报告 direct / model-only / codemode / deferred / hidden 的数量；MCP 服务器可逐个切换 exposure（写入 `mcp.json`） |
+| 图片生成与分类器模型 | `gui-media` 用 `getModelsOfType()` + `hasConfiguredAuth()` 列出可用图片/分类器模型；codemode 脚本可用 `models.generateImages()`、`models.classify()`，GUI 触发的生成结果写入 `~/.pi/agent/orbit-media/` 并提示路径 |
+| 虚拟（路由）模型 | 扩展调用 `pi.registerVirtualModel()`；`/gui-virtual-model register` 接收数据驱动的路由规则，continuation/retry 默认粘在上一次成功回答的物理模型上以保缓存；`gui-virtual-models` 列出已注册项 |
+| 缓存预热与 Codemode 设置 | 设置写入 `~/.pi/agent/settings.json` 的白名单键（`cacheWarming`、`codemode`），Rust 侧先校验取值；非白名单键直接拒绝 |
 | 分支摘要导航 | 会话树同时提供普通导航和 `navigateTree({ summarize: true })` |
 | 会话附加项目 | 顶栏标题弹出 roots；同一 session 可挂多个侧栏项目，扩展写入会话记录并注入根列表与各项目 AGENTS.md |
 | 动态多 agent | 父 Pi 通过 `spawn_agent` / `spawn_agents` 以完成结果为边界进行 supervisor 委派；子进程复用 Orbit 内置 Pi，支持显式并行、嵌套、消息、跟进、等待、中止、状态树与持久化子会话。架构见 [MULTI_AGENT.md](MULTI_AGENT.md) |
@@ -59,13 +65,16 @@
 - 实时压缩没有虚构百分比；测试确认压缩后 contextUsage 返回 null 时显示待更新。
 - LobeHub Markdown、AI Elements Conversation/PromptInput/Shimmer、assistant-ui ToolCall、组件库控件、Motion 交互动画及 Pierre 文件/差异视图已实际接入。连接提示、版本页脚、快捷键说明和原生 window.prompt 已从常用界面移除。
 
-## Pi 0.87.1 升级备注（2026-09-25）
+## Pi 1.0.0 升级备注（2026-10-02）
 
-项目已升级到 npm / GitHub 最新正式版 0.87.1。该版本包含此前 main 分支上的模型、压缩、重试、队列输入和工具采样改进；Orbit 继续使用稳定的 RPC 命令和 JSONL 事件边界，不需要改写前端协议。
+项目已升级到 npm 最新正式版 1.0.0，并把内置 runtime 重新打包为 `orbit-pi-runtime` 1.0.0。RPC 命令集仍是 33 个且类型未变，因此聊天、会话、树、队列、压缩等既有协议不需要改写；新增能力集中在扩展/SDK 侧，通过 GUI 扩展的状态通道暴露。
 
-| 已发布变化 | 对 GUI 的影响 |
+| Pi 1.0 变化 | 对 GUI 的影响 |
 | --- | --- |
-| 模型注册表流式调用 | 扩展可通过已配置 provider 发起嵌套模型调用；没有新增 RPC 命令，GUI 继续显示标准消息、工具和扩展 UI 事件。 |
-| 按模型压缩预算 | Pi 支持按模型覆盖 `reserveTokens` / `keepRecentTokens`；Orbit 当前仍展示和控制全局压缩设置。 |
-| 重试退避上限 | Pi 提供默认 60 秒的 agent/摘要重试退避上限；Orbit 继续显示真实重试事件，不虚构进度。 |
-| 内置工具严格采样与队列输入处理 | Pi 内部请求和 steer/follow-up 扩展输入处理改进；工具事件和 RPC 命令结构保持兼容。 |
+| Codemode、MCP、Tool Search 成为内置扩展（`builtin:mcp`、`builtin:codemode`、`builtin:tool-search`） | 默认加载但工具不激活；GUI 用现有工具开关激活，并新增能力面板管理 MCP 配置与 exposure |
+| 工具暴露 `exposure` / `namespace` / `prepareLoadout` | `getAllTools()` 返回 exposure 与 namespace；`gui-tools` 状态一并发布，面板显示暴露分类 |
+| `pi.getSettings()`、`pi.registerVirtualModel()`、`pi.registerMcpServer()`、`pi.getMcpServers()` | 扩展不再需要自行加载 `SettingsManager`；新增 `/gui-capabilities`、`/gui-mcp`、`/gui-virtual-model`、`/gui-media` |
+| 新事件 `mcp_servers_change`、`session_info_changed`、`cache_warming_decision`、`context_with_system`、`agent_before_settle`、`provider_stream_event` | GUI 用前三个保持能力快照与标题同步；`context_with_system` / `agent_before_settle` / `provider_stream_event` 暂不接入，避免改变既有上下文与落定语义 |
+| 图片与分类器模型进入 ModelRegistry（`generateImages` / `classify` / `getModelsOfType`） | `gui-media` 暴露目录与调用入口；凭据缺失时如实报告“无可用凭据” |
+| `cacheWarming` 与 `codemode` 设置、默认全屏 TUI、`quietStartup` | Orbit 使用 RPC 模式，不受 TUI/全屏设置影响；前两项可在设置面板写入 |
+| 0.86–0.87 已含的缓存预热、`/bug`、transcript-aware 指令与工具更新、canonical context edits | 0.87.1 起已在基线内；本次升级不改变这些行为的呈现方式 |

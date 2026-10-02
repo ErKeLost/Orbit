@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-09-25T02:05:00.000Z",
+  "checkedAt": "2026-10-02T00:58:23.663Z",
   "packageManager": "bun@1.4.2",
   "js": [
     {
@@ -11,8 +11,8 @@
     },
     {
       "name": "@earendil-works/pi-coding-agent",
-      "installed": "0.87.1",
-      "latest": "0.87.1",
+      "installed": "1.0.0",
+      "latest": "1.0.0",
       "matches": true,
       "source": "https://registry.npmjs.org/%40earendil-works%2Fpi-coding-agent/latest"
     },
@@ -24,11 +24,32 @@
       "source": "https://registry.npmjs.org/%40fontsource-variable%2Finter/latest"
     },
     {
+      "name": "@fontsource/dm-mono",
+      "installed": "5.3.0",
+      "latest": "5.3.0",
+      "matches": true,
+      "source": "https://registry.npmjs.org/%40fontsource%2Fdm-mono/latest"
+    },
+    {
       "name": "@iconify-json/catppuccin",
       "installed": "1.2.17",
       "latest": "1.2.17",
       "matches": true,
       "source": "https://registry.npmjs.org/%40iconify-json%2Fcatppuccin/latest"
+    },
+    {
+      "name": "@iconify-json/devicon",
+      "installed": "1.2.64",
+      "latest": "1.2.68",
+      "matches": false,
+      "source": "https://registry.npmjs.org/%40iconify-json%2Fdevicon/latest"
+    },
+    {
+      "name": "@iconify-json/fluent-color",
+      "installed": "1.2.21",
+      "latest": "1.2.21",
+      "matches": true,
+      "source": "https://registry.npmjs.org/%40iconify-json%2Ffluent-color/latest"
     },
     {
       "name": "@iconify-json/ph",
@@ -40,8 +61,8 @@
     {
       "name": "@iconify-json/vscode-icons",
       "installed": "1.2.77",
-      "latest": "1.2.77",
-      "matches": true,
+      "latest": "1.2.83",
+      "matches": false,
       "source": "https://registry.npmjs.org/%40iconify-json%2Fvscode-icons/latest"
     },
     {
@@ -52,129 +73,129 @@
       "source": "https://registry.npmjs.org/%40iconify%2Freact/latest"
     },
     {
-      "name": "@lobehub/fluent-emoji",
-      "installed": "4.1.1",
-      "latest": "4.1.1",
-      "matches": true,
-      "source": "https://registry.npmjs.org/%40lobehub%2Ffluent-emoji/latest"
-    },
-    {
       "name": "@lobehub/icons",
       "installed": "5.18.0",
-      "latest": "5.18.0",
-      "matches": true,
+      "latest": "5.22.0",
+      "matches": false,
       "source": "https://registry.npmjs.org/%40lobehub%2Ficons/latest"
     },
     {
       "name": "@lobehub/streamdown",
       "installed": "1.3.1",
-      "latest": "1.3.1",
-      "matches": true,
+      "latest": "1.4.0",
+      "matches": false,
       "source": "https://registry.npmjs.org/%40lobehub%2Fstreamdown/latest"
+    },
+    {
+      "name": "@mariozechner/clipboard",
+      "installed": "0.3.9",
+      "latest": "0.3.9",
+      "matches": true,
+      "source": "https://registry.npmjs.org/%40mariozechner%2Fclipboard/latest"
     },
     {
       "name": "@pierre/diffs",
       "installed": "1.4.1",
-      "latest": "1.4.2",
+      "latest": "1.5.1",
       "matches": false,
       "source": "https://registry.npmjs.org/%40pierre%2Fdiffs/latest"
     },
     {
-      "name": "@radix-ui/react-dialog",
-      "installed": "1.1.23",
-      "latest": "1.1.23",
-      "matches": true,
-      "source": "https://registry.npmjs.org/%40radix-ui%2Freact-dialog/latest"
-    },
-    {
-      "name": "@radix-ui/react-dropdown-menu",
-      "installed": "2.1.24",
-      "latest": "2.1.24",
-      "matches": true,
-      "source": "https://registry.npmjs.org/%40radix-ui%2Freact-dropdown-menu/latest"
-    },
-    {
-      "name": "@radix-ui/react-hover-card",
-      "installed": "1.1.23",
-      "latest": "1.1.23",
-      "matches": true,
-      "source": "https://registry.npmjs.org/%40radix-ui%2Freact-hover-card/latest"
-    },
-    {
-      "name": "@radix-ui/react-select",
-      "installed": "2.3.7",
-      "latest": "2.3.7",
-      "matches": true,
-      "source": "https://registry.npmjs.org/%40radix-ui%2Freact-select/latest"
-    },
-    {
-      "name": "@radix-ui/react-separator",
-      "installed": "1.1.15",
-      "latest": "1.1.15",
-      "matches": true,
-      "source": "https://registry.npmjs.org/%40radix-ui%2Freact-separator/latest"
-    },
-    {
-      "name": "@radix-ui/react-tooltip",
-      "installed": "1.2.16",
-      "latest": "1.2.16",
-      "matches": true,
-      "source": "https://registry.npmjs.org/%40radix-ui%2Freact-tooltip/latest"
-    },
-    {
       "name": "@tanstack/react-query",
       "installed": "5.102.8",
-      "latest": "5.102.8",
-      "matches": true,
+      "latest": "5.104.0",
+      "matches": false,
       "source": "https://registry.npmjs.org/%40tanstack%2Freact-query/latest"
     },
     {
       "name": "@tauri-apps/api",
       "installed": "2.11.1",
-      "latest": "2.11.1",
-      "matches": true,
+      "latest": "2.12.1",
+      "matches": false,
       "source": "https://registry.npmjs.org/%40tauri-apps%2Fapi/latest"
+    },
+    {
+      "name": "@tauri-apps/plugin-barcode-scanner",
+      "installed": "2.4.6",
+      "latest": "2.5.1",
+      "matches": false,
+      "source": "https://registry.npmjs.org/%40tauri-apps%2Fplugin-barcode-scanner/latest"
+    },
+    {
+      "name": "@tauri-apps/plugin-clipboard-manager",
+      "installed": "2.3.3",
+      "latest": "2.4.1",
+      "matches": false,
+      "source": "https://registry.npmjs.org/%40tauri-apps%2Fplugin-clipboard-manager/latest"
     },
     {
       "name": "@tauri-apps/plugin-dialog",
       "installed": "2.7.3",
-      "latest": "2.7.3",
-      "matches": true,
+      "latest": "2.8.1",
+      "matches": false,
       "source": "https://registry.npmjs.org/%40tauri-apps%2Fplugin-dialog/latest"
+    },
+    {
+      "name": "@tauri-apps/plugin-opener",
+      "installed": "2.5.5",
+      "latest": "2.7.0",
+      "matches": false,
+      "source": "https://registry.npmjs.org/%40tauri-apps%2Fplugin-opener/latest"
     },
     {
       "name": "@tauri-apps/plugin-process",
       "installed": "2.3.1",
-      "latest": "2.3.1",
-      "matches": true,
+      "latest": "2.4.0",
+      "matches": false,
       "source": "https://registry.npmjs.org/%40tauri-apps%2Fplugin-process/latest"
     },
     {
       "name": "@tauri-apps/plugin-updater",
       "installed": "2.11.0",
-      "latest": "2.11.0",
-      "matches": true,
+      "latest": "2.13.1",
+      "matches": false,
       "source": "https://registry.npmjs.org/%40tauri-apps%2Fplugin-updater/latest"
+    },
+    {
+      "name": "@typesafe-ai/sdk",
+      "installed": "0.6.0",
+      "latest": "0.6.0",
+      "matches": true,
+      "source": "https://registry.npmjs.org/%40typesafe-ai%2Fsdk/latest"
+    },
+    {
+      "name": "@zxing/browser",
+      "installed": "0.1.5",
+      "latest": "0.2.1",
+      "matches": false,
+      "source": "https://registry.npmjs.org/%40zxing%2Fbrowser/latest"
     },
     {
       "name": "ai",
       "installed": "7.0.94",
-      "latest": "7.0.102",
+      "latest": "7.0.127",
       "matches": false,
       "source": "https://registry.npmjs.org/ai/latest"
     },
     {
       "name": "antd",
       "installed": "6.6.3",
-      "latest": "6.6.4",
+      "latest": "6.6.5",
       "matches": false,
       "source": "https://registry.npmjs.org/antd/latest"
     },
     {
+      "name": "beautiful-mermaid",
+      "installed": "1.1.3",
+      "latest": "1.1.3",
+      "matches": true,
+      "source": "https://registry.npmjs.org/beautiful-mermaid/latest"
+    },
+    {
       "name": "border-beam",
       "installed": "1.3.0",
-      "latest": "1.3.0",
-      "matches": true,
+      "latest": "1.4.1",
+      "matches": false,
       "source": "https://registry.npmjs.org/border-beam/latest"
     },
     {
@@ -185,16 +206,9 @@
       "source": "https://registry.npmjs.org/class-variance-authority/latest"
     },
     {
-      "name": "cmdk",
-      "installed": "1.1.1",
-      "latest": "1.1.1",
-      "matches": true,
-      "source": "https://registry.npmjs.org/cmdk/latest"
-    },
-    {
       "name": "cn",
       "installed": "0.2.6",
-      "latest": "0.3.0",
+      "latest": "0.4.0",
       "matches": false,
       "source": "https://registry.npmjs.org/cn/latest"
     },
@@ -208,30 +222,30 @@
     {
       "name": "katex",
       "installed": "0.18.7",
-      "latest": "0.18.7",
-      "matches": true,
+      "latest": "0.19.0",
+      "matches": false,
       "source": "https://registry.npmjs.org/katex/latest"
     },
     {
       "name": "lucide-react",
       "installed": "1.43.0",
-      "latest": "1.46.0",
+      "latest": "1.49.0",
       "matches": false,
       "source": "https://registry.npmjs.org/lucide-react/latest"
     },
     {
-      "name": "motion",
-      "installed": "13.2.0",
-      "latest": "13.3.0",
+      "name": "metal-fx",
+      "installed": "2.0.10",
+      "latest": "2.0.11",
       "matches": false,
-      "source": "https://registry.npmjs.org/motion/latest"
+      "source": "https://registry.npmjs.org/metal-fx/latest"
     },
     {
-      "name": "nanoid",
-      "installed": "6.0.1",
-      "latest": "6.0.1",
-      "matches": true,
-      "source": "https://registry.npmjs.org/nanoid/latest"
+      "name": "motion",
+      "installed": "13.2.0",
+      "latest": "13.5.0",
+      "matches": false,
+      "source": "https://registry.npmjs.org/motion/latest"
     },
     {
       "name": "next-themes",
@@ -257,8 +271,8 @@
     {
       "name": "react-resizable-panels",
       "installed": "4.12.4",
-      "latest": "4.12.4",
-      "matches": true,
+      "latest": "4.14.1",
+      "matches": false,
       "source": "https://registry.npmjs.org/react-resizable-panels/latest"
     },
     {
@@ -285,9 +299,23 @@
     {
       "name": "shadcn",
       "installed": "4.21.0",
-      "latest": "4.21.0",
-      "matches": true,
+      "latest": "4.21.1",
+      "matches": false,
       "source": "https://registry.npmjs.org/shadcn/latest"
+    },
+    {
+      "name": "shiki",
+      "installed": "4.4.3",
+      "latest": "4.5.0",
+      "matches": false,
+      "source": "https://registry.npmjs.org/shiki/latest"
+    },
+    {
+      "name": "tokenlens",
+      "installed": "1.3.1",
+      "latest": "1.3.1",
+      "matches": true,
+      "source": "https://registry.npmjs.org/tokenlens/latest"
     },
     {
       "name": "tw-animate-css",
@@ -297,11 +325,11 @@
       "source": "https://registry.npmjs.org/tw-animate-css/latest"
     },
     {
-      "name": "use-stick-to-bottom",
-      "installed": "1.1.6",
-      "latest": "1.1.6",
+      "name": "tw-shimmer",
+      "installed": "0.4.13",
+      "latest": "0.4.13",
       "matches": true,
-      "source": "https://registry.npmjs.org/use-stick-to-bottom/latest"
+      "source": "https://registry.npmjs.org/tw-shimmer/latest"
     },
     {
       "name": "zustand",
@@ -320,14 +348,14 @@
     {
       "name": "@tauri-apps/cli",
       "installed": "2.11.4",
-      "latest": "2.11.4",
-      "matches": true,
+      "latest": "2.12.1",
+      "matches": false,
       "source": "https://registry.npmjs.org/%40tauri-apps%2Fcli/latest"
     },
     {
       "name": "@types/node",
       "installed": "26.5.0",
-      "latest": "22.20.3",
+      "latest": "26.6.4",
       "matches": false,
       "source": "https://registry.npmjs.org/%40types%2Fnode/latest"
     },
@@ -353,16 +381,9 @@
       "source": "https://registry.npmjs.org/%40vitejs%2Fplugin-react/latest"
     },
     {
-      "name": "bun",
-      "installed": "1.4.2",
-      "latest": "1.4.2",
-      "matches": true,
-      "source": "https://registry.npmjs.org/bun/latest"
-    },
-    {
       "name": "oxlint",
       "installed": "1.82.0",
-      "latest": "1.83.0",
+      "latest": "1.86.0",
       "matches": false,
       "source": "https://registry.npmjs.org/oxlint/latest"
     },
@@ -390,7 +411,7 @@
     {
       "name": "vite",
       "installed": "8.2.2",
-      "latest": "8.3.0",
+      "latest": "8.3.2",
       "matches": false,
       "source": "https://registry.npmjs.org/vite/latest"
     }

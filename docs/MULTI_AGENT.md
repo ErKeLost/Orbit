@@ -1,6 +1,6 @@
 # Multi-agent architecture
 
-Orbit adds a collaboration control plane on top of Pi 0.87.1. Pi remains the execution engine for every agent; Orbit owns parent/child lifecycle, transport projection, and UI.
+Orbit adds a collaboration control plane on top of Pi 1.0.0. Pi remains the execution engine for every agent; Orbit owns parent/child lifecycle, transport projection, and UI.
 
 ## Runtime model
 

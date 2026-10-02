@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { confirm } from "@tauri-apps/plugin-dialog";
@@ -10,7 +10,8 @@ import QRCode from "antd/es/qr-code";
 import type { RpcCommand, RpcSessionState } from "@earendil-works/pi-coding-agent";
 import { useWorkspace } from "../../lib/store";
 import { useRuntimeDiscovery, type RuntimeDiscovery } from "../../lib/runtime-diagnostics";
-import { clearSessionHistory, computerUseKeyStatus, connect, desktopRuntime, disconnect, getProjectTrustMode, loadMessages, native, refresh, report, request, saveComputerUseKey, setComputerUseMode, setProjectTrustMode, type ProjectTrustMode } from "../../lib/rpc";
+import { clearSessionHistory, computerUseKeyStatus, connect, deleteMcpServer, desktopRuntime, disconnect, getGuiSettings, getProjectTrustMode, listMcpServers, loadMessages, mcpConfigLocation, native, refresh, refreshCapabilities, report, request, saveComputerUseKey, saveMcpServer, setComputerUseMode, setGuiSetting, setProjectTrustMode, type McpServerView, type ProjectTrustMode } from "../../lib/rpc";
+import { CACHE_WARMING_LABELS, CODEMODE_TOOL, MCP_EXPOSURE_LABELS, TOOL_SEARCH_TOOL, inactiveCapabilityTools, parseCapabilities, availableMediaModels } from "../../lib/capabilities";
 import { getRemoteHost, relaySettingsStatus, saveRelaySettings, startRemoteHost, stopRemoteHost, type RelaySettingsStatus, type RemoteHostInfo } from "../../lib/remote-host";
 import { checkMobileUpdate, mobileUpdateErrorMessage } from "../../lib/mobile-update";
 import { checkForDesktopUpdate, offerMobileUpdate } from "../UpdateChecker";
@@ -27,7 +28,125 @@ async function applySetting(command: RpcCommand) {
   gooeyToast.success("设置已更新", { showTimestamp: false });
 }
 
-type GuiTools = { tools: { name: string; description: string }[]; active: string[] };
+type GuiTools = { tools: { name: string; description: string; exposure?: string; namespace?: string }[]; active: string[] };
+
+const MCP_TEMPLATE = `{\n  "name": "filesystem",\n  "command": "npx",\n  "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]\n}`;
+
+function mcpViewToConfig(view: McpServerView): Record<string, unknown> {
+  const config: Record<string, unknown> = {};
+  if (view.transport === "stdio" && view.command) { config.command = view.command; config.args = view.args; }
+  if (view.transport === "http" && view.url) config.url = view.url;
+  if (view.description) config.description = view.description;
+  if (view.exposure) config.exposure = view.exposure;
+  if (!view.enabled) config.enabled = false;
+  if (view.timeout) config.timeout = view.timeout;
+  return config;
+}
+
+/** Pi 1.0 surfaces that the RPC protocol does not cover: MCP, codemode, tool search, media and routing models. */
+function PiCapabilitiesSettings({ desktop, online, running, tools }: { desktop: boolean; online: boolean; running: boolean; tools: GuiTools }) {
+  const ask = usePrompt();
+  const capabilitiesText = useWorkspace(state => state.statuses["gui-capabilities"]);
+  const capabilities = useMemo(() => parseCapabilities(capabilitiesText), [capabilitiesText]);
+  const mcpQuery = useQuery({ queryKey: ["pi", "mcp", "servers"], queryFn: listMcpServers, enabled: desktop && online });
+  const config = mcpQuery.data ?? null;
+  const guiSettings = useQuery({ queryKey: ["pi", "gui-settings"], queryFn: getGuiSettings, enabled: desktop });
+  const [busy, setBusy] = useState(false);
+  const liveTools = useMemo(() => new Map((capabilities?.mcp ?? []).map(server => [server.name, server])), [capabilities]);
+
+  const reload = () => mcpQuery.refetch();
+  useEffect(() => { if (online && capabilitiesText === undefined) void refreshCapabilities().catch(report); }, [online, capabilitiesText]);
+
+  const missing = inactiveCapabilityTools(capabilities, tools.active);
+
+  async function toggleTool(tool: string, enabled: boolean) {
+    const next = new Set(tools.active);
+    if (enabled) next.add(tool); else next.delete(tool);
+    try {
+      await request({ type: "prompt", message: `/gui-tools-set ${JSON.stringify([...next])}` }, 30000);
+      await refreshCapabilities();
+      gooeyToast.success(`${tool} 已${enabled ? "启用" : "关闭"}`, { showTimestamp: false });
+    } catch (error) { report(error); }
+  }
+  async function addServer() {
+    const raw = await ask({ title: "MCP 服务器配置（JSON）", initial: config?.servers.length ? "" : MCP_TEMPLATE, multiline: true });
+    if (raw === null) return;
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { report("MCP 配置不是有效 JSON"); return; }
+    if (typeof parsed !== "object" || parsed === null) { report("MCP 配置必须是对象"); return; }
+    const { name, ...rest } = parsed as { name?: unknown } & Record<string, unknown>;
+    const serverName = typeof name === "string" ? name.trim() : await ask({ title: "MCP 服务器名" });
+    if (!serverName) return;
+    const serverConfig = typeof rest.config === "object" && rest.config !== null && Object.keys(rest).length === 1 ? rest.config as Record<string, unknown> : rest;
+    setBusy(true);
+    try {
+      await saveMcpServer(serverName, serverConfig);
+      await reload();
+      gooeyToast.success("MCP 服务器已保存", { description: "运行 /reload 或重连项目后生效", showTimestamp: false });    } catch (error) { report(error); }
+    finally { setBusy(false); }
+  }
+  async function removeServer(name: string) {
+    setBusy(true);
+    try {
+      await deleteMcpServer(name);
+      await reload();
+      gooeyToast.success(`已移除 ${name}`, { showTimestamp: false });
+    } catch (error) { report(error); }
+    finally { setBusy(false); }
+  }
+  async function changeServer(view: McpServerView, patch: Record<string, unknown>) {
+    setBusy(true);
+    try { await saveMcpServer(view.name, { ...mcpViewToConfig(view), ...patch }); await reload(); }
+    catch (error) { report(error); }
+    finally { setBusy(false); }
+  }
+  async function showPaths() {
+    try { const paths = await mcpConfigLocation(); gooeyToast.info("MCP 配置路径", { description: `${paths.path}\n${paths.logPath}`, showTimestamp: false }); }
+    catch (error) { report(error); }
+  }
+  async function writeSetting(key: "cacheWarming" | "codemode", value: unknown) {
+    try { await setGuiSetting(key, value); await guiSettings.refetch(); gooeyToast.success("Pi 设置已写入 settings.json", { description: "重连项目或运行 /reload 后生效", showTimestamp: false }); }
+    catch (error) { report(error); }
+  }
+  const images = availableMediaModels(capabilities?.media.image ?? []);
+  const classifiers = availableMediaModels(capabilities?.media.classifier ?? []);
+  return <>
+    <SettingRow title="Codemode" description={capabilities?.tools.codemode ? "模型写 JavaScript 调用工具（含 MCP），支持并行、图片生成和分类器。" : "当前 runtime 未提供 codemode 工具。"}>
+      {capabilities?.tools.codemode ? <Switch aria-label="Codemode" checked={tools.active.includes(CODEMODE_TOOL)} disabled={!online || running} onChange={checked => void toggleTool(CODEMODE_TOOL, checked)} /> : <span className="remote-settings-note">不可用</span>}
+    </SettingRow>
+    <SettingRow title="Tool Search" description={capabilities?.tools.toolSearch ? "按需把 deferred 工具（主要是 MCP）声明给模型，避免 prompt 膨胀。" : "当前 runtime 未提供 tool_search 工具。"}>
+      {capabilities?.tools.toolSearch ? <Switch aria-label="Tool Search" checked={tools.active.includes(TOOL_SEARCH_TOOL)} disabled={!online || running} onChange={checked => void toggleTool(TOOL_SEARCH_TOOL, checked)} /> : <span className="remote-settings-note">不可用</span>}
+    </SettingRow>
+    {!!missing.length && <SettingRow title="建议启用" description={`${missing.join("、")} 已在目录中但未启用。`}><Button variant="outline" disabled={!online || running} onClick={() => void Promise.all(missing.map(tool => toggleTool(tool, true))).catch(report)}>一键启用</Button></SettingRow>}
+    <SettingRow title="MCP 服务器" description={desktop ? (config ? `用户级配置：${config.path}` : "读取 ~/.pi/agent/mcp.json") : "MCP 服务器请在电脑端管理。"}>
+      {desktop ? <div className="settings-directory-actions"><Button variant="ghost" disabled={busy} onClick={() => void showPaths()}>路径</Button><Button variant="outline" disabled={busy} onClick={() => void reload()}>刷新</Button><Button variant="default" disabled={busy} onClick={() => void addServer()}>添加</Button></div> : <span className="remote-settings-note">电脑端设置</span>}
+    </SettingRow>
+    {(config?.servers ?? []).map(server => {
+      const live = liveTools.get(server.name);
+      const authenticated = config?.authenticated.includes(server.name) ?? false;
+      const exposure = live?.exposure ?? server.exposure ?? undefined;
+      const detail = [server.transport === "stdio" ? server.command : server.transport === "http" ? server.url : "配置无效", live ? `${live.tools.length} 个工具` : "未连接", exposure ? MCP_EXPOSURE_LABELS[exposure] ?? exposure : null, authenticated ? "已登录" : null, server.enabled ? null : "已禁用"].filter(Boolean).join(" · ");
+      return <SettingRow key={server.name} title={server.name} description={<><span>{detail}</span>{server.envKeys.length + server.headerKeys.length > 0 && <span className="remote-settings-note">密钥：{[...server.envKeys, ...server.headerKeys].join("、")}</span>}</>}>
+        <div className="settings-directory-actions">
+          {exposure && <Select aria-label={`${server.name} 工具暴露`} disabled={busy} value={exposure} onChange={event => void changeServer(server, { exposure: event.target.value })}><option value="codemode">Codemode 脚本</option><option value="direct">直接声明</option><option value="deferred">tool_search</option><option value="hidden">隐藏</option></Select>}
+          <Button variant="outline" disabled={busy} onClick={() => void changeServer(server, { enabled: !server.enabled })}>{server.enabled ? "禁用" : "启用"}</Button>
+          <Button variant="outline" disabled={busy} onClick={() => void removeServer(server.name)}>移除</Button>
+        </div>
+      </SettingRow>;
+    })}
+    {!config?.servers.length && <SettingRow title="没有 MCP 服务器" description="添加后可以用 codemode 脚本、tool_search 或直接工具调用远程与本地 MCP。"><span className="remote-settings-note">{desktop ? "未配置" : "电脑端设置"}</span></SettingRow>}
+    <SettingRow title="图片模型" description={images.length ? images.map(model => `${model.provider}/${model.id}`).join("、") : "需要带图片生成能力的 provider 凭据（如 OpenRouter）。"}><span className="remote-settings-note">{images.length ? `${images.length} 个可用` : "无可用凭据"}</span></SettingRow>
+    <SettingRow title="分类器模型" description={classifiers.length ? classifiers.map(model => `${model.provider}/${model.id}`).join("、") : "可用 Jev 或 llama.cpp 分类器模型运行 codemode 中的 models.classify()。"}><span className="remote-settings-note">{classifiers.length ? `${classifiers.length} 个可用` : "无可用凭据"}</span></SettingRow>
+    <SettingRow title="缓存预热" description="长工具调用期间保活可缓存的 prompt 前缀，按避免的缓存未命中成本决定是否刷新。写入 ~/.pi/agent/settings.json。">
+      {desktop ? <Select aria-label="缓存预热" value={typeof guiSettings.data?.settings.cacheWarming === "string" ? guiSettings.data.settings.cacheWarming : ""} onChange={event => void writeSetting("cacheWarming", event.target.value || null)}><option value="">跟随 Pi 默认（运行中）</option><option value="streaming">运行中</option><option value="idle">运行中与空闲</option><option value="off">关闭</option></Select> : <span className="remote-settings-note">{CACHE_WARMING_LABELS[capabilities?.settings?.cacheWarming ?? ""] ?? "—"}</span>}
+    </SettingRow>
+    <SettingRow title="Codemode 模式" description="on：声明给模型的工具仅在 codemode 里被调用；only：其他工具全部隐藏，模型只能通过脚本调用。">
+      {desktop ? <Select aria-label="Codemode 模式" value={guiSettings.data?.settings.codemode?.mode ?? ""} onChange={event => void writeSetting("codemode", event.target.value ? { mode: event.target.value, ...(guiSettings.data?.settings.codemode?.inlineBudget !== undefined ? { inlineBudget: guiSettings.data.settings.codemode.inlineBudget } : {}) } : null)}><option value="">跟随 Pi 默认（on）</option><option value="on">on</option><option value="only">only</option></Select> : <span className="remote-settings-note">电脑端设置</span>}
+    </SettingRow>
+    <SettingRow title="虚拟模型" description={capabilities?.virtualModels.length ? capabilities.virtualModels.map(model => `${model.provider}/${model.id}`).join("、") : "用 /gui-virtual-model 注册按请求路由的模型（如 router/auto）。"}><span className="remote-settings-note">{capabilities?.virtualModels.length ? `${capabilities.virtualModels.length} 个已注册` : "未注册"}</span></SettingRow>
+    <SettingRow title="工具暴露" description={capabilities ? Object.entries(capabilities.tools.exposure).map(([exposure, count]) => `${MCP_EXPOSURE_LABELS[exposure] ?? exposure} ${count}`).join(" · ") : "连接 Pi 后读取。"}><span className="remote-settings-note">{capabilities ? `${capabilities.tools.active}/${capabilities.tools.total} 启用` : "—"}</span></SettingRow>
+  </>;
+}
 
 function SettingsGroup({ title, icon, description, children }: { title: string; icon: string; description?: string; children: ReactNode }) {
   return <section className="settings-group">
@@ -509,6 +628,7 @@ export function GeneralSettingsPanel() {
     <SettingsGroup title="更新" icon="arrows-clockwise"><DesktopUpdateSettings desktop={desktop} /></SettingsGroup>
     <SettingsGroup title="电脑操作" icon="desktop" description="让当前 Pi 模型通过界面观察和点击桌面应用。有可靠 API 或 CLI 时不要用。"><ComputerUseSettings desktop={desktop} online={status === "online"} running={running} /></SettingsGroup>
     <SettingsGroup title="工具与终端" icon="wrench"><ToolsSettings tools={tools} running={running} /><TerminalSettings cwd={cwd} desktop={desktop} /></SettingsGroup>
+    <SettingsGroup title="Pi 1.0 能力" icon="plugs-connected" description="MCP、Codemode、Tool Search、图片与分类器模型、虚拟路由模型。"><PiCapabilitiesSettings desktop={desktop} online={status === "online"} running={running} tools={tools} /></SettingsGroup>
     <SettingsGroup title="数据管理" icon="trash" description="管理保存在电脑上的会话历史。"><HistorySettings cwd={cwd} desktop={desktop} busy={historyBusy} setBusy={setHistoryBusy} /></SettingsGroup>
   </>;
 }

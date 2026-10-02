@@ -1480,6 +1480,369 @@ pub fn set_project_trust_mode(mode: String) -> Result<String, String> {
     Ok(mode)
 }
 
+fn mcp_config_path(dir: &std::path::Path) -> PathBuf {
+    dir.join("mcp.json")
+}
+
+fn valid_mcp_server_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+}
+
+/// List view of one `mcpServers` entry. Secrets stay on disk: only the keys of
+/// `env` and `headers` leave this function.
+fn mcp_server_view(name: &str, config: &Value) -> Value {
+    let command = config.get("command").and_then(Value::as_str);
+    let url = config.get("url").and_then(Value::as_str);
+    let transport = if command.is_some() {
+        "stdio"
+    } else if url.is_some() {
+        "http"
+    } else {
+        "invalid"
+    };
+    let keys = |field: &str| {
+        config
+            .get(field)
+            .and_then(Value::as_object)
+            .map(|map| map.keys().cloned().collect::<Vec<String>>())
+            .unwrap_or_default()
+    };
+    json!({
+        "name": name,
+        "transport": transport,
+        "command": command,
+        "args": config.get("args").and_then(Value::as_array).cloned().unwrap_or_default(),
+        "url": url,
+        "envKeys": keys("env"),
+        "headerKeys": keys("headers"),
+        "enabled": config.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+        "exposure": config.get("exposure").and_then(Value::as_str),
+        "description": config.get("description").and_then(Value::as_str),
+        "timeout": config.get("timeout").and_then(Value::as_f64),
+    })
+}
+
+fn read_mcp_config(path: &Path) -> Result<Value, String> {
+    let config = read_json_file(path.to_path_buf(), "Pi mcp.json")?;
+    if !config.is_object() {
+        return Err("Pi mcp.json 不是有效配置对象".into());
+    }
+    Ok(config)
+}
+
+fn write_mcp_config(path: &Path, config: &Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建 Pi 配置目录失败：{e}"))?;
+    }
+    fs::write(
+        path,
+        serde_json::to_string_pretty(config).map_err(|e| e.to_string())? + "\n",
+    )
+    .map_err(|e| format!("写入 Pi mcp.json 失败：{e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
+/// Server names with stored OAuth credentials, from Pi's `mcp-auth.json`.
+fn mcp_authenticated_servers(dir: &Path) -> Vec<String> {
+    read_json_file(dir.join("mcp-auth.json"), "Pi mcp-auth.json")
+        .ok()
+        .and_then(|value| value.as_object().map(|map| map.keys().cloned().collect()))
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn list_mcp_servers() -> Result<Value, String> {
+    let dir = agent_dir()?;
+    let path = mcp_config_path(&dir);
+    let config = path.exists().then(|| read_mcp_config(&path)).transpose()?;
+    let servers = config
+        .as_ref()
+        .and_then(|value| value.get("mcpServers"))
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let mut views: Vec<Value> = servers
+        .iter()
+        .map(|(name, entry)| mcp_server_view(name, entry))
+        .collect();
+    views.sort_by(|left, right| {
+        left.get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .cmp(right.get("name").and_then(Value::as_str).unwrap_or_default())
+    });
+    Ok(json!({
+        "path": path,
+        "servers": views,
+        "authenticated": mcp_authenticated_servers(&dir),
+    }))
+}
+
+#[tauri::command]
+pub fn save_mcp_server(name: String, config: Value) -> Result<Value, String> {
+    if !valid_mcp_server_name(&name) {
+        return Err("MCP 服务器名只能包含字母、数字、-、_".into());
+    }
+    let Some(entry) = config.as_object() else {
+        return Err("MCP 服务器配置必须是对象".into());
+    };
+    if entry.get("command").and_then(Value::as_str).is_none()
+        && entry.get("url").and_then(Value::as_str).is_none()
+    {
+        return Err("MCP 服务器需要 command（stdio）或 url（HTTP）".into());
+    }
+    if let Some(server_type) = entry.get("type").and_then(Value::as_str) {
+        if !matches!(server_type, "stdio" | "http" | "streamable-http") {
+            return Err(format!("不支持的 MCP type：{server_type}"));
+        }
+    }
+    if entry.get("sse").is_some() {
+        return Err("Pi 不支持旧版 SSE 传输，请改用 streamable HTTP 的 url".into());
+    }
+    let dir = agent_dir()?;
+    let path = mcp_config_path(&dir);
+    let mut root = if path.exists() {
+        read_mcp_config(&path)?
+    } else {
+        json!({})
+    };
+    if path.exists() {
+        let _ = fs::copy(&path, dir.join("mcp.json.pi-gui.bak"));
+    }
+    if !root.is_object() {
+        root = json!({});
+    }
+    let servers = root
+        .as_object_mut()
+        .unwrap()
+        .entry("mcpServers")
+        .or_insert_with(|| json!({}));
+    if !servers.is_object() {
+        *servers = json!({});
+    }
+    servers[name.as_str()] = Value::Object(entry.clone());
+    write_mcp_config(&path, &root)?;
+    Ok(mcp_server_view(&name, &config))
+}
+
+#[tauri::command]
+pub fn delete_mcp_server(name: String) -> Result<Value, String> {
+    if !valid_mcp_server_name(&name) {
+        return Err("MCP 服务器名只能包含字母、数字、-、_".into());
+    }
+    let dir = agent_dir()?;
+    let path = mcp_config_path(&dir);
+    if !path.exists() {
+        return Err(format!("MCP 服务器不存在：{name}"));
+    }
+    let mut root = read_mcp_config(&path)?;
+    let removed = root
+        .get_mut("mcpServers")
+        .and_then(Value::as_object_mut)
+        .and_then(|servers| servers.remove(&name))
+        .is_some();
+    if !removed {
+        return Err(format!("MCP 服务器不存在：{name}"));
+    }
+    let _ = fs::copy(&path, dir.join("mcp.json.pi-gui.bak"));
+    write_mcp_config(&path, &root)?;
+    Ok(json!({"name": name, "deleted": true}))
+}
+
+#[tauri::command]
+pub fn mcp_config_location() -> Result<Value, String> {
+    let dir = agent_dir()?;
+    Ok(json!({
+        "path": mcp_config_path(&dir),
+        "authPath": dir.join("mcp-auth.json"),
+        "logPath": dir.join("mcp.log"),
+    }))
+}
+
+/// Pi 1.0 settings Orbit can edit. `cacheWarming` and `codemode` only exist in
+/// the global settings file, so the GUI needs its own validated write path.
+const GUI_SETTING_KEYS: [&str; 2] = ["cacheWarming", "codemode"];
+
+fn validate_gui_setting(key: &str, value: &Value) -> Result<(), String> {
+    match key {
+        "cacheWarming" => match value.as_str() {
+            Some("off" | "streaming" | "idle") => Ok(()),
+            None if value.is_null() => Ok(()),
+            Some(other) => Err(format!("不支持的 cacheWarming：{other}")),
+            None => Err("cacheWarming 需要字符串或 null".into()),
+        },
+        "codemode" => {
+            if value.is_null() {
+                return Ok(());
+            }
+            let Some(object) = value.as_object() else {
+                return Err("codemode 需要对象或 null".into());
+            };
+            if let Some(mode) = object.get("mode") {
+                match mode.as_str() {
+                    Some("on" | "only") => {}
+                    _ => return Err("codemode.mode 只能是 on 或 only".into()),
+                }
+            }
+            if let Some(budget) = object.get("inlineBudget") {
+                let Some(budget) = budget.as_u64() else {
+                    return Err("codemode.inlineBudget 需要非负整数".into());
+                };
+                if budget > 100_000 {
+                    return Err("codemode.inlineBudget 不能超过 100000".into());
+                }
+            }
+            Ok(())
+        }
+        other => Err(format!("Orbit 不能修改 Pi 设置 {other}")),
+    }
+}
+
+#[tauri::command]
+pub fn get_gui_settings() -> Result<Value, String> {
+    let dir = agent_dir()?;
+    let path = settings_path(&dir);
+    let settings = path
+        .exists()
+        .then(|| read_json_file(path.clone(), "Pi settings.json"))
+        .transpose()?
+        .unwrap_or_else(|| json!({}));
+    let mut view = serde_json::Map::new();
+    for key in GUI_SETTING_KEYS {
+        view.insert(
+            key.to_string(),
+            settings.get(key).cloned().unwrap_or(Value::Null),
+        );
+    }
+    Ok(json!({"path": path, "settings": Value::Object(view)}))
+}
+
+#[tauri::command]
+pub fn set_gui_setting(key: String, value: Value) -> Result<Value, String> {
+    validate_gui_setting(&key, &value)?;
+    let dir = agent_dir()?;
+    fs::create_dir_all(&dir).map_err(|e| format!("创建 Pi 配置目录失败：{e}"))?;
+    let path = settings_path(&dir);
+    let mut settings = if path.exists() {
+        read_json_file(path.clone(), "Pi settings.json")?
+    } else {
+        json!({})
+    };
+    if !settings.is_object() {
+        settings = json!({});
+    }
+    if value.is_null() {
+        settings.as_object_mut().unwrap().remove(&key);
+    } else {
+        settings[&key] = value.clone();
+    }
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())? + "\n",
+    )
+    .map_err(|e| format!("写入 Pi settings.json 失败：{e}"))?;
+    Ok(json!({"key": key, "value": value}))
+}
+
+#[cfg(test)]
+mod gui_settings_tests {
+    use super::*;
+
+    #[test]
+    fn cache_warming_accepts_only_the_modes_pi_understands() {
+        for mode in ["off", "streaming", "idle"] {
+            assert!(validate_gui_setting("cacheWarming", &json!(mode)).is_ok());
+        }
+        assert!(validate_gui_setting("cacheWarming", &Value::Null).is_ok());
+        assert!(validate_gui_setting("cacheWarming", &json!("always")).is_err());
+        assert!(validate_gui_setting("cacheWarming", &json!(2)).is_err());
+    }
+
+    #[test]
+    fn codemode_settings_are_range_checked() {
+        assert!(validate_gui_setting("codemode", &json!({"mode":"on","inlineBudget":3000})).is_ok());
+        assert!(validate_gui_setting("codemode", &json!({"mode":"only"})).is_ok());
+        assert!(validate_gui_setting("codemode", &json!({})).is_ok());
+        assert!(validate_gui_setting("codemode", &Value::Null).is_ok());
+        assert!(validate_gui_setting("codemode", &json!({"mode":"both"})).is_err());
+        assert!(validate_gui_setting("codemode", &json!({"inlineBudget":-1})).is_err());
+        assert!(validate_gui_setting("codemode", &json!({"inlineBudget":200000})).is_err());
+        assert!(validate_gui_setting("codemode", &json!("only")).is_err());
+    }
+
+    #[test]
+    fn unknown_settings_are_rejected_instead_of_written() {
+        assert!(validate_gui_setting("deviceId", &json!("x")).is_err());
+        assert!(validate_gui_setting("defaultProjectTrust", &json!("always")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod mcp_config_tests {
+    use super::*;
+
+    fn temporary_dir(label: &str) -> PathBuf {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("pi-gui-{label}-{suffix}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn server_names_match_the_pi_grammar() {
+        for name in ["filesystem", "my-server", "my_server", "mcp2"] {
+            assert!(valid_mcp_server_name(name), "{name} must be accepted");
+        }
+        for name in ["", "my server", "my/server", "mcp.server", "\u{5de5}\u{5177}"] {
+            assert!(!valid_mcp_server_name(name), "{name} must be rejected");
+        }
+    }
+
+    #[test]
+    fn list_views_mask_env_and_header_values() {
+        let view = mcp_server_view(
+            "filesystem",
+            &json!({"command":"npx","args":["-y","server"],"env":{"API_KEY":"secret"},"headers":{"Authorization":"Bearer secret"},"description":"files"}),
+        );
+        assert_eq!(view["transport"], "stdio");
+        assert_eq!(view["envKeys"][0], "API_KEY");
+        assert_eq!(view["headerKeys"][0], "Authorization");
+        // \u503c\u4e0d\u80fd\u51fa\u73b0\u5728\u5217\u8868\u91cc\uff1a\u754c\u9762\u53ea\u9700\u8981\u77e5\u9053\u6709\u54ea\u4e9b\u5bc6\u94a5\u3002
+        assert!(!view.to_string().contains("secret"));
+        assert_eq!(mcp_server_view("remote", &json!({"url":"https://example.com/mcp"}))["transport"], "http");
+        assert_eq!(mcp_server_view("broken", &json!({"args":[]}))["transport"], "invalid");
+        assert_eq!(mcp_server_view("off", &json!({"command":"x","enabled":false}))["enabled"], false);
+    }
+
+    #[test]
+    fn config_round_trip_keeps_unrelated_servers() {
+        let dir = temporary_dir("mcp-config");
+        let path = mcp_config_path(&dir);
+        write_mcp_config(&path, &json!({"mcpServers":{"filesystem":{"command":"npx"}}})).unwrap();
+        let mut root = read_mcp_config(&path).unwrap();
+        root["mcpServers"]["docs"] = json!({"url":"https://example.com/mcp"});
+        write_mcp_config(&path, &root).unwrap();
+        let stored = read_mcp_config(&path).unwrap();
+        assert_eq!(stored["mcpServers"]["filesystem"]["command"], "npx");
+        assert_eq!(stored["mcpServers"]["docs"]["url"], "https://example.com/mcp");
+        assert_eq!(mcp_authenticated_servers(&dir), Vec::<String>::new());
+        fs::write(dir.join("mcp-auth.json"), r#"{"sentry":{"access":"token"}}"#).unwrap();
+        assert_eq!(mcp_authenticated_servers(&dir), vec!["sentry".to_string()]);
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
+
 fn load_provider_store(dir: &std::path::Path) -> Result<Value, String> {
     let path = provider_store_path(dir);
     if path.exists() {

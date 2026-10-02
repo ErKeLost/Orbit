@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-09-25T02:07:22.620Z",
+  "checkedAt": "2026-10-02T01:48:40.963Z",
   "results": [
     "SDK live context and compaction configuration",
     "state: active model and thinking level returned",
@@ -12,6 +12,10 @@
     "GUI extension: computer-use mode command",
     "GUI extension: computer-use mode disabled",
     "real Bash execution through RPC",
-    "commands enumerated"
+    "commands enumerated",
+    "Pi 1.0 capability snapshot: tool exposure, MCP, media, virtual models",
+    "image and classifier model catalog",
+    "MCP server registration through pi.registerMcpServer",
+    "virtual model registration through pi.registerVirtualModel"
   ]
 }
