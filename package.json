@@ -1,7 +1,7 @@
 {
   "name": "orbit",
   "private": true,
-  "version": "0.3.51",
+  "version": "0.3.52",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -72,6 +72,7 @@
     "zustand": "5.0.15"
   },
   "devDependencies": {
+    "@earendil-works/pi-codemode": "1.0.0",
     "@tailwindcss/vite": "4.3.3",
     "@tauri-apps/cli": "2.11.4",
     "@types/node": "26.5.0",

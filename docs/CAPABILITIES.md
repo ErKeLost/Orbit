@@ -79,3 +79,15 @@
 | 图片与分类器模型进入 ModelRegistry（`generateImages` / `classify` / `getModelsOfType`） | `gui-media` 暴露目录与调用入口；凭据缺失时如实报告“无可用凭据” |
 | `cacheWarming` 与 `codemode` 设置、默认全屏 TUI、`quietStartup` | Orbit 使用 RPC 模式，不受 TUI/全屏设置影响；前两项可在设置面板写入 |
 | 0.86–0.87 已含的缓存预热、`/bug`、transcript-aware 指令与工具更新、canonical context edits | 0.87.1 起已在基线内；本次升级不改变这些行为的呈现方式 |
+
+### Codemode 打包（2026-10-03 修复）
+
+codemode 的沙盒是 `@earendil-works/pi-codemode`：QuickJS（`quickjs-wasi`）编译成 WebAssembly，跑在独立 worker 线程里，脚本只有 `tools` / `models` / `text` / `image` / `exit` / `store` / `load`，没有 fs、网络、进程或定时器。
+
+打包后的运行时里，Pi 的 `getCodemodeWorkerSpecifier()` 走 `bundled-node` 分支，要求 runtime 目录下存在 `codemode-worker.js`；`getQuickJSWasmPath()` 用 `createRequire(...).resolve("quickjs-wasi/quickjs.wasm")` 找 wasm。`bun build` 不会自动产出这两个文件，因此 `scripts/bundle-pi.mjs` 现在：
+
+- 用独立打包把 `scripts/codemode-worker.ts` 输出为 runtime 根目录的 `codemode-worker.js`；
+- 复制 `quickjs-wasi` 的 `package.json` 与 `quickjs.wasm` 到 `pi-runtime/node_modules/quickjs-wasi/`；
+- 构建后运行 `scripts/check-codemode.mjs`，真实启动一次沙盒（`return 1+1` + 一次工具调用），失败即中断构建。
+
+`bundle-pi.mjs` 的 `buildFormat` 因此升到 5；`scripts/smoke-pi.mjs` 也在隔离资源目录上复跑同一校验。

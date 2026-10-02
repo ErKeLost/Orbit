@@ -25,6 +25,11 @@ const child=spawn(runtimeNode,[cli,'--mode','rpc','--offline','--no-session','--
 let buffer='',sequence=0,errors='',toolState,runtimeInfo,capabilities,media,virtualModels,mcpServers
 const pending=new Map(),results=[]
 const collaborationTools=['spawn_agent','send_message','followup_task','wait_agent','interrupt_agent','list_agents']
+// The release runtime must start the codemode sandbox from its own artifacts:
+// the isolated copy has no project node_modules to fall back on.
+const codemode=spawnSync(process.execPath,[resolve(root,'scripts/check-codemode.mjs'),resolve(resources,'pi-runtime')],{cwd,stdio:'pipe'})
+assert.equal(codemode.status,0,'bundled codemode sandbox starts: '+(codemode.stderr?.toString()||codemode.stdout?.toString()||''))
+results.push('bundled codemode sandbox: worker + quickjs wasm start')
 child.on('exit',code=>{for(const p of pending.values())p.reject(new Error('Pi exited: '+code));pending.clear()})
 child.stderr.on('data',chunk=>{errors+=chunk.toString()})
 child.stdout.setEncoding('utf8')
