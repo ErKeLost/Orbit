@@ -2,18 +2,20 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { AnimatePresence, m } from "motion/react";
-import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState, type KeyboardEvent } from "react";
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useWorkspace } from "../../lib/store";
 import { report, request, stop, syncComputerUseMode, syncMultiAgentMode } from "../../lib/rpc";
 import { Beam } from "../Effects";
 import { Icon } from "../Icon";
+import { base64ToBlob, blobToBase64 } from "../../lib/image-bytes";
+import { encodeClipboardImage } from "../../lib/image-encode";
 import { PromptInput, PromptInputSubmit, PromptInputTextarea, type PromptInputMessage } from "../ai-elements/prompt-input";
 import { Button } from "../ui/button";
 import { ComposerModelSelector } from "./ComposerModelSelector";
 import { ComposerContext } from "./ComposerContext";
 import { ComposerAgentMode } from "./ComposerAgentMode";
 
-type ImageAttachment = { kind: "image"; id: string; name: string; data: string; mimeType: string };
+type ImageAttachment = { kind: "image"; id: string; name: string; mimeType: string; blob: Blob };
 type FileAttachment = { kind: "file"; id: string; name: string; path: string };
 type Attachment = ImageAttachment | FileAttachment;
 // 草稿与附件分开缓存：草稿由叶子组件自管理，附件留在 ChatComposer，
@@ -43,43 +45,48 @@ const ComposerTextarea = memo(forwardRef<DraftHandle, {
 }));
 
 function imageAttachments(files: Iterable<File>) {
-  return Promise.all(Array.from(files).flatMap(file => file.type.startsWith("image/") ? [new Promise<Attachment>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve({ kind: "image", id: crypto.randomUUID(), name: file.name || "粘贴的图片", data: String(reader.result).split(",")[1], mimeType: file.type });
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  })] : []));
+  // 直接把 File 当 Blob 存：不转 data URL、不重新编码，省掉一份 base64 常驻。
+  return Promise.resolve(Array.from(files).flatMap(file => file.type.startsWith("image/")
+    ? [{ kind: "image", id: crypto.randomUUID(), name: file.name || "粘贴的图片", mimeType: file.type, blob: file } as Attachment]
+    : []));
 }
 
-function blobData(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1]);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
+async function readClipboardImage(): Promise<ImageAttachment | null> {
+  const image = await readImage();
+  try {
+    const [{ width, height }, rgba] = await Promise.all([image.size(), image.rgba()]);
+    // 编码 + 降采样在 Worker 里做（主线程不被 50~170ms 的 PNG 编码顶住）。
+    const blob = await encodeClipboardImage({ width, height, rgba });
+    return { kind: "image", id: crypto.randomUUID(), name: "粘贴的图片.png", mimeType: "image/png", blob };
+  } finally {
+    await image.close();
+  }
 }
 
+/**
+ * Worker 编码失败（或 Worker/OffscreenCanvas 不可用）时，重读一次剪贴板在主线程
+ * 上编码，保证"粘贴截图"这条路永远能用。
+ */
 async function nativeClipboardImage(): Promise<ImageAttachment | null> {
   try {
-    const image = await readImage();
-    try {
-      const [{ width, height }, rgba] = await Promise.all([image.size(), image.rgba()]);
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const context = canvas.getContext("2d");
-      if (!context) return null;
-      context.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
-      const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, "image/png"));
-      if (!blob) return null;
-      return { kind: "image", id: crypto.randomUUID(), name: "粘贴的图片.png", data: await blobData(blob), mimeType: "image/png" };
-    } finally {
-      await image.close();
-    }
+    return await readClipboardImage();
   } catch {
-    return null;
+    try {
+      return await readClipboardImage();
+    } catch {
+      return null;
+    }
   }
+}
+
+/** 附件在 state 里只有 Blob；预览用 object URL，卸载时释放。 */
+function ImageAttachmentPreview({ attachment, onRemove }: { attachment: ImageAttachment; onRemove: () => void }) {
+  const url = useMemo(() => URL.createObjectURL(attachment.blob), [attachment.blob]);
+  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  return <div className="attachment-preview">
+    <img src={url} alt={attachment.name} decoding="async" />
+    <Button type="button" variant="secondary" size="icon" className="attachment-remove" title={`移除 ${attachment.name}`} aria-label={`移除 ${attachment.name}`} onClick={onRemove}><Icon name="x" /></Button>
+  </div>;
 }
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
@@ -129,7 +136,8 @@ export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted
       if (IMAGE_EXTENSIONS.has(name.includes(".") ? name.split(".").pop()!.toLowerCase() : "")) {
         try {
           const file = await invoke<{ name: string; data: string; mimeType: string }>("read_file_attachment", { path });
-          return { kind: "image", id: crypto.randomUUID(), ...file } as Attachment;
+          // Tauri 只能给 base64；立刻转成 Blob，别把多 MB 字符串留在 state 里。
+          return { kind: "image", id: crypto.randomUUID(), name: file.name, mimeType: file.mimeType, blob: base64ToBlob(file.data, file.mimeType) } as Attachment;
         } catch { /* fall through to a path chip */ }
       }
       return { kind: "file", id: crypto.randomUUID(), name, path } as Attachment;
@@ -191,10 +199,16 @@ export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted
     const images = attachments.filter((attachment): attachment is ImageAttachment => attachment.kind === "image");
     const prefix = fileChips.map(attachment => `[文件] ${attachment.path}`).join("\n");
     const text = prefix ? `${prefix}\n\n${message.text}`.trim() : message.text;
+      // base64 只在这一刻生成：state / 预览里都不留大字符串。
+      const imagePayload = await Promise.all(images.map(async attachment => ({
+        type: "image" as const,
+        data: await blobToBase64(attachment.blob),
+        mimeType: attachment.mimeType,
+      })));
       if (transcriptRunning) {
         const content = [
           ...(text ? [{ type: "text" as const, text }] : []),
-          ...images.map(attachment => ({ type: "image" as const, data: attachment.data, mimeType: attachment.mimeType })),
+          ...imagePayload,
         ];
         useWorkspace.getState().event({
           type: "queued_preview",
@@ -202,7 +216,7 @@ export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted
           message: { role: "user", content: content.length === 1 && content[0]?.type === "text" ? text : content, timestamp: Date.now() },
         });
       }
-      await request({ type: "prompt", message: text, images: images.map(attachment => ({ type: "image" as const, data: attachment.data, mimeType: attachment.mimeType })), ...(transcriptRunning ? { streamingBehavior } : {}) }, 45000, project);
+      await request({ type: "prompt", message: text, images: imagePayload, ...(transcriptRunning ? { streamingBehavior } : {}) }, 45000, project);
       setAttachments([]);
       draftRef.current?.clear();
       onSubmitted();
@@ -222,7 +236,7 @@ export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted
         onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setInputFocused(false); }}>
         <AnimatePresence>{attachments.length > 0 && <m.div className="attachments" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
           {attachments.map(attachment => attachment.kind === "image"
-            ? <div className="attachment-preview" key={attachment.id}><img src={`data:${attachment.mimeType};base64,${attachment.data}`} alt={attachment.name} decoding="async" /><Button type="button" variant="secondary" size="icon" className="attachment-remove" title={`移除 ${attachment.name}`} aria-label={`移除 ${attachment.name}`} onClick={() => setAttachments(current => current.filter(item => item.id !== attachment.id))}><Icon name="x" /></Button></div>
+            ? <ImageAttachmentPreview key={attachment.id} attachment={attachment} onRemove={() => setAttachments(current => current.filter(item => item.id !== attachment.id))} />
             : <div className="attachment-file" key={attachment.id}>
               <span className={`attachment-file-badge tone-${fileBadge(attachment.name).tone}`}>{fileBadge(attachment.name).text}</span>
               <span className="attachment-file-meta">
