@@ -265,6 +265,6 @@ export function Chat() {
       </ConversationContent>
       {!atBottom && <ConversationScrollButton onClick={scrollToBottom} />}
     </Conversation>
-    <ChatComposer compacting={compacting} onSubmitted={scrollToBottom} />
+    <ChatComposer onSubmitted={scrollToBottom} />
   </div>;
 }

@@ -45,7 +45,6 @@
 .chat-root .tessera-conversation>.ai-conversation-content{width:min(920px,calc(100% - 48px));min-height:0;margin:0 auto!important;position:relative!important;left:0!important;padding:42px 0 28px}
 .composer-container.tessera-composer-dock{grid-row:3;display:block!important;position:relative!important;width:100%!important;min-height:0;flex:none!important;margin:0!important;padding:12px 0 calc(20px + env(safe-area-inset-bottom))!important;background:var(--background)!important;z-index:5}
 .tessera-composer-form{width:min(920px,calc(100% - 48px))!important;min-width:0;margin:0 auto!important;position:relative!important;left:0!important}
-.studio-composer-beam{width:100%;border-radius: var(--radius-3xl)}
 .composer.studio-composer{display:block!important;width:100%!important;min-height:158px!important;padding:14px!important;border:1px solid var(--border)!important;border-radius: var(--radius-3xl)!important;background:var(--background)!important;}
 .composer.studio-composer .composer-input{display:block;min-height:86px!important;max-height:180px;padding:16px 18px!important;border:1px solid var(--border)!important;border-radius: var(--radius-xl)!important;background:var(--background)!important;color:var(--foreground)!important;font-size:16px;line-height:1.55}
 .composer.studio-composer .composer-input::placeholder{color:var(--foreground)!important}.composer.studio-composer .composer-bottom{min-height:40px;margin-top:12px;gap:7px}
@@ -488,7 +487,7 @@ body,
   flex: 0 1 125px;
 }
 
-/* Keep the input itself borderless; BorderBeam is the only animated edge. */
+/* Keep the input itself borderless; the composer edge is the only border. */
 .composer.studio-composer {
   min-height: 0 !important;
   padding: 10px !important;
@@ -587,20 +586,9 @@ body,
   background: var(--card) !important;
 }
 
-.composer-beam {
-  display: block !important;
-  width: 100% !important;
-  border-radius: var(--radius-3xl) !important;
+.composer.studio-composer {
+  position: relative;
   overflow: visible !important;
-}
-
-.composer-beam > .studio-composer {
-  width: 100% !important;
-}
-
-.composer-beam[data-beam]::before,
-.composer-beam[data-beam]::after {
-  filter: grayscale(1) !important;
 }
 
 .composer.studio-composer .composer-input {
@@ -694,10 +682,6 @@ body,
   .composer.studio-composer {
     min-height: 138px !important;
     padding: 10px !important;
-    border-radius: var(--radius-2xl) !important;
-  }
-
-  .composer-beam {
     border-radius: var(--radius-2xl) !important;
   }
 
@@ -2187,9 +2171,6 @@ body,
   width: 16px !important;
   height: 16px !important;
 }
-.composer-beam,
-.composer-beam [data-border-beam] { }
-
 /* Light surfaces need explicit edges because the page, cards, and popovers are
    all near-white. Dark mode already has enough contrast from its surface tokens. */
 .light .composer.studio-composer,
@@ -2200,14 +2181,6 @@ html[data-theme="light"] .composer.studio-composer {
 .light .composer.studio-composer:focus-within,
 html[data-theme="light"] .composer.studio-composer:focus-within {
   border-color: color-mix(in oklch, var(--foreground) 24%, var(--border)) !important;
-}
-.light .studio-composer-beam[data-beam]:not([data-active]):not([data-fading])::after,
-html[data-theme="light"] .studio-composer-beam[data-beam]:not([data-active]):not([data-fading])::after {
-  background: transparent !important;
-}
-.light .studio-composer-beam[data-beam]::after,
-html[data-theme="light"] .studio-composer-beam[data-beam]::after {
-  opacity: 0 !important;
 }
 .light .composer.studio-composer,
 html[data-theme="light"] .composer.studio-composer {
@@ -4736,9 +4709,6 @@ html[data-theme="light"] .composer-computer-use.selected::after {
   box-shadow: 0 18px 50px color-mix(in oklch, var(--foreground) 8%, transparent);
   color: var(--foreground);
 }
-.studio-composer-beam {
-  overflow: visible !important;
-}
 .composer.studio-composer {
   position: relative;
   overflow: visible !important;
@@ -5691,7 +5661,7 @@ html[data-theme="light"] .composer-computer-use.selected::after {
   overscroll-behavior: contain;
 }
 
-/* Keep the composer and thinking beam flush with the conversation text:
+/* Keep the composer and the run-status row flush with the conversation text:
    same inline gutter, same visual edges, like Codex. */
 .chat-root.tessera-thread-root .tessera-composer-form,
 .chat-root.tessera-thread-root .thinking-beam {
@@ -5857,9 +5827,3 @@ html[data-theme="light"] .composer-computer-use.selected::after {
   }
 }
 
-/* Composer beam as an overlay (see ChatComposer): the animation repaints an
-   empty layer instead of invalidating styles on the whole composer subtree. */
-.composer-beam-host { position: relative; width: 100%; }
-.composer-beam-overlay { position: absolute; inset: 0; z-index: 3; pointer-events: none; contain: strict; border-radius: var(--radius-3xl); }
-.composer-beam-overlay > .studio-composer-beam { position: absolute !important; inset: 0; width: 100%; height: 100%; overflow: hidden !important; }
-.composer-beam-fill { width: 100%; height: 100%; }

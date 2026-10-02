@@ -5,7 +5,6 @@ import { AnimatePresence, m } from "motion/react";
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useWorkspace } from "../../lib/store";
 import { report, request, stop, syncComputerUseMode, syncMultiAgentMode } from "../../lib/rpc";
-import { Beam } from "../Effects";
 import { Icon } from "../Icon";
 import { base64ToBlob, blobToBase64 } from "../../lib/image-bytes";
 import { encodeClipboardImage } from "../../lib/image-encode";
@@ -32,8 +31,8 @@ function lruCache<T>(cache: Map<string, T>, key: string, value: T) {
 type DraftHandle = { clear: () => void };
 
 // 草稿叶子组件：击键只会重渲染这一个 textarea。此前每次击键都会重建
-// 整个 composer（BorderBeam 动画层、模型选择器、模式切换、上下文面板），
-// 流式期间这些重渲染与聊天输出争抢主线程，是输入卡顿的主因之一。
+// 整个 composer（模型选择器、模式切换、上下文面板），流式期间这些重渲染
+// 与聊天输出争抢主线程，是输入卡顿的主因之一。
 const ComposerTextarea = memo(forwardRef<DraftHandle, {
   composerKey: string;
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
@@ -110,7 +109,7 @@ function fileKindLabel(name: string): string {
   return extension ? extension.toUpperCase() : "文件";
 }
 
-export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted }: { compacting: boolean; onSubmitted: () => void }) {
+export const ChatComposer = memo(function ChatComposer({ onSubmitted }: { onSubmitted: () => void }) {
   const project = useWorkspace(state => state.cwd);
   const connectionId = useWorkspace(state => state.connectionId);
   const transcriptRunning = useWorkspace(state => state.transcript.running);
@@ -118,8 +117,6 @@ export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted
   const runtimeTarget = useWorkspace(state => state.runtimeTarget);
   const composerKey = connectionId || project;
   const [attachments, setAttachments] = useState<Attachment[]>(() => attachmentCache.get(composerKey) ?? []);
-  // Beam 只要回合在跑就一直转，不再看输入框是否聚焦：v0.3.41 曾用“聚焦暂停”换打字
-  // 流暢，但那样一打字就完全看不到动画；流式卡顿已由 delta 批量 IPC 解决。
   const draftRef = useRef<DraftHandle>(null);
   const deliveryOverride = useRef<"steer" | "followUp" | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -226,34 +223,29 @@ export const ChatComposer = memo(function ChatComposer({ compacting, onSubmitted
   }
 
   return <div className="composer-container tessera-composer-dock"><div className="tessera-composer-form">
-    {/* Beam 动画每帧改写可继承的 @property 变量；若包住整个 composer，输入框、选择器等所有后代每帧都要重算样式。
-        改为覆盖层：视觉不变，动画只作用于一个空层。 */}
-    <div className="composer-beam-host">
-      <div className="composer-beam-overlay" aria-hidden="true"><Beam className="studio-composer-beam" size="line" borderRadius={14} active={transcriptRunning || compacting}><div className="composer-beam-fill" /></Beam></div>
-      <PromptInput ref={composerForm} onSubmit={message => void submit(message)} className="composer studio-composer" allowEmpty={attachments.length > 0}>
-        <AnimatePresence>{attachments.length > 0 && <m.div className="attachments" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-          {attachments.map(attachment => attachment.kind === "image"
-            ? <ImageAttachmentPreview key={attachment.id} attachment={attachment} onRemove={() => setAttachments(current => current.filter(item => item.id !== attachment.id))} />
-            : <div className="attachment-file" key={attachment.id}>
-              <span className={`attachment-file-badge tone-${fileBadge(attachment.name).tone}`}>{fileBadge(attachment.name).text}</span>
-              <span className="attachment-file-meta">
-                <strong title={attachment.name}>{attachment.name}</strong>
-                <small>{fileKindLabel(attachment.name)}</small>
-              </span>
-              <Button type="button" variant="secondary" size="icon" className="attachment-remove" title={`移除 ${attachment.name}`} aria-label={`移除 ${attachment.name}`} onClick={() => setAttachments(current => current.filter(item => item.id !== attachment.id))}><Icon name="x" /></Button>
-            </div>)}
-        </m.div>}</AnimatePresence>
-        {/* key 变化时重挂载叶子，草稿按项目/连接取缓存 */}
-        <ComposerTextarea key={composerKey} ref={draftRef} composerKey={composerKey} onKeyDown={handleDraftKeyDown} />
-        <div className="composer-bottom">
-          <input type="file" multiple accept="image/*" hidden ref={fileInput} onChange={event => { const files = event.target.files; if (files) void imageAttachments(files).then(next => setAttachments(current => [...current, ...next])).catch(report); event.target.value = ""; }} />
-          <div className="composer-tool-cluster"><Button variant="ghost" className="size-8 rounded-full p-0 text-muted-foreground hover:text-foreground hover:bg-accent" aria-label="上传附件" title="上传图片" onClick={() => fileInput.current?.click()}><Icon name="plus" className="size-4" /></Button></div>
-          <ComposerModelSelector />
-          <ComposerAgentMode />
-          {runtimeTarget !== "mobile" && <ComposerContext container={composerForm} />}
-          <PromptInputSubmit status={transcriptRunning ? "streaming" : "ready"} disabled={!online} title={transcriptRunning ? "暂停生成" : "发送消息"} aria-label={transcriptRunning ? "暂停生成" : "发送消息"} onClick={transcriptRunning ? () => void stop().catch(report) : undefined} />
-        </div>
-      </PromptInput>
-    </div>
+    <PromptInput ref={composerForm} onSubmit={message => void submit(message)} className="composer studio-composer" allowEmpty={attachments.length > 0}>
+      <AnimatePresence>{attachments.length > 0 && <m.div className="attachments" initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+        {attachments.map(attachment => attachment.kind === "image"
+          ? <ImageAttachmentPreview key={attachment.id} attachment={attachment} onRemove={() => setAttachments(current => current.filter(item => item.id !== attachment.id))} />
+          : <div className="attachment-file" key={attachment.id}>
+            <span className={`attachment-file-badge tone-${fileBadge(attachment.name).tone}`}>{fileBadge(attachment.name).text}</span>
+            <span className="attachment-file-meta">
+              <strong title={attachment.name}>{attachment.name}</strong>
+              <small>{fileKindLabel(attachment.name)}</small>
+            </span>
+            <Button type="button" variant="secondary" size="icon" className="attachment-remove" title={`移除 ${attachment.name}`} aria-label={`移除 ${attachment.name}`} onClick={() => setAttachments(current => current.filter(item => item.id !== attachment.id))}><Icon name="x" /></Button>
+          </div>)}
+      </m.div>}</AnimatePresence>
+      {/* key 变化时重挂载叶子，草稿按项目/连接取缓存 */}
+      <ComposerTextarea key={composerKey} ref={draftRef} composerKey={composerKey} onKeyDown={handleDraftKeyDown} />
+      <div className="composer-bottom">
+        <input type="file" multiple accept="image/*" hidden ref={fileInput} onChange={event => { const files = event.target.files; if (files) void imageAttachments(files).then(next => setAttachments(current => [...current, ...next])).catch(report); event.target.value = ""; }} />
+        <div className="composer-tool-cluster"><Button variant="ghost" className="size-8 rounded-full p-0 text-muted-foreground hover:text-foreground hover:bg-accent" aria-label="上传附件" title="上传图片" onClick={() => fileInput.current?.click()}><Icon name="plus" className="size-4" /></Button></div>
+        <ComposerModelSelector />
+        <ComposerAgentMode />
+        {runtimeTarget !== "mobile" && <ComposerContext container={composerForm} />}
+        <PromptInputSubmit status={transcriptRunning ? "streaming" : "ready"} disabled={!online} title={transcriptRunning ? "暂停生成" : "发送消息"} aria-label={transcriptRunning ? "暂停生成" : "发送消息"} onClick={transcriptRunning ? () => void stop().catch(report) : undefined} />
+      </div>
+    </PromptInput>
   </div></div>;
 });
