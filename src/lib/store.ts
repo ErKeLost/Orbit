@@ -4,7 +4,7 @@ import { emptyTranscript, reduceEvent, type Event, type Transcript, type RpcSess
 import { parseAgentSnapshot, type AgentSnapshot } from './agents'
 import type { RemoteTheme } from './remote-protocol'
 export type Panel = 'chat' | 'sessions' | 'tree' | 'commands' | 'settings' | 'mobile-access' | 'console' | 'changes' | 'pi-tools'
-export type SettingsPage = 'general' | 'providers' | 'sessions' | 'tree' | 'pi-tools' | 'changes' | 'console'
+export type SettingsPage = 'general' | 'providers' | 'computer-use' | 'sessions' | 'tree' | 'pi-tools' | 'changes' | 'console'
 export type WorkspaceMode = 'project' | 'home'
 export type RuntimeTarget = 'unknown' | 'browser' | 'desktop' | 'mobile'
 export type LiveSession = { path: string; cwd: string; title: string; running: boolean }

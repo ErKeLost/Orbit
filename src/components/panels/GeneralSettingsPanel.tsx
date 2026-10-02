@@ -10,7 +10,7 @@ import QRCode from "antd/es/qr-code";
 import type { RpcCommand, RpcSessionState } from "@earendil-works/pi-coding-agent";
 import { useWorkspace } from "../../lib/store";
 import { useRuntimeDiscovery, type RuntimeDiscovery } from "../../lib/runtime-diagnostics";
-import { clearSessionHistory, computerUseKeyStatus, connect, deleteMcpServer, desktopRuntime, disconnect, getGuiSettings, getProjectTrustMode, listMcpServers, loadMessages, mcpConfigLocation, native, refresh, refreshCapabilities, report, request, saveComputerUseKey, saveMcpServer, setComputerUseMode, setGuiSetting, setProjectTrustMode, type McpServerView, type ProjectTrustMode } from "../../lib/rpc";
+import { clearSessionHistory, connect, deleteMcpServer, desktopRuntime, disconnect, getGuiSettings, getProjectTrustMode, listMcpServers, loadMessages, mcpConfigLocation, native, refresh, refreshCapabilities, report, request, saveMcpServer, setGuiSetting, setProjectTrustMode, type McpServerView, type ProjectTrustMode } from "../../lib/rpc";
 import { CACHE_WARMING_LABELS, CODEMODE_TOOL, MCP_EXPOSURE_LABELS, TOOL_SEARCH_TOOL, inactiveCapabilityTools, parseCapabilities, availableMediaModels } from "../../lib/capabilities";
 import { getRemoteHost, relaySettingsStatus, saveRelaySettings, startRemoteHost, stopRemoteHost, type RelaySettingsStatus, type RemoteHostInfo } from "../../lib/remote-host";
 import { checkMobileUpdate, mobileUpdateErrorMessage } from "../../lib/mobile-update";
@@ -148,14 +148,14 @@ function PiCapabilitiesSettings({ desktop, online, running, tools }: { desktop: 
   </>;
 }
 
-function SettingsGroup({ title, icon, description, children }: { title: string; icon: string; description?: string; children: ReactNode }) {
+export function SettingsGroup({ title, icon, description, children }: { title: string; icon: string; description?: string; children: ReactNode }) {
   return <section className="settings-group">
     <header className="settings-group-heading"><h2><Icon name={icon} />{title}</h2>{description && <p>{description}</p>}</header>
     <Card className="settings-group-card"><CardContent>{children}</CardContent></Card>
   </section>;
 }
 
-function SettingRow({ title, description, children, className = "" }: { title: string; description: ReactNode; children: ReactNode; className?: string }) {
+export function SettingRow({ title, description, children, className = "" }: { title: string; description: ReactNode; children: ReactNode; className?: string }) {
   return <div className={`settings-item ${className}`}>
     <div className="settings-item-copy"><strong>{title}</strong><p>{description}</p></div>
     <div className="settings-item-control">{children}</div>
@@ -198,34 +198,6 @@ function ContextSettings({ cwd, status, running, state, onCompact }: { cwd: stri
 
 function QueueSettings({ status, state }: { status: string; state: RpcSessionState | null }) {
   return <>{(["steering", "followUp"] as const).map(kind => <SettingRow key={kind} title={kind === "steering" ? "引导消息" : "跟进消息"} description={kind === "steering" ? "当前工具调用完成后交给模型。" : "本轮任务全部结束后交给模型。"}><Select aria-label={kind === "steering" ? "引导消息模式" : "跟进消息模式"} disabled={status !== "online"} value={kind === "steering" ? state?.steeringMode : state?.followUpMode} onChange={event => void applySetting({ type: kind === "steering" ? "set_steering_mode" : "set_follow_up_mode", mode: event.target.value as "all" | "one-at-a-time" }).catch(report)}><option value="one-at-a-time">每次一条</option><option value="all">全部送入</option></Select></SettingRow>)}</>;
-}
-
-function ComputerUseSettings({ desktop, online, running }: { desktop: boolean; online: boolean; running: boolean }) {
-  const platform = useWorkspace(state => state.runtimePlatform);
-  const macos = platform === "macos";
-  const enabled = useWorkspace(state => state.computerUseEnabled);
-  const [apiKey, setApiKey] = useState("");
-  const [hasKey, setHasKey] = useState(false);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { if (desktop && macos) void computerUseKeyStatus().then(status => setHasKey(status.hasKey)).catch(report); }, [desktop, macos]);
-  async function saveKey() {
-    setBusy(true);
-    try {
-      const status = await saveComputerUseKey(apiKey);
-      setHasKey(status.hasKey);
-      setApiKey("");
-      gooeyToast.success(status.hasKey ? "Jev Key 已保存" : "Jev Key 已清除", { showTimestamp: false });
-    } catch (error) { report(error); }
-    finally { setBusy(false); }
-  }
-  return <>
-    <SettingRow title="电脑操作" description={!desktop ? "电脑操作只能在运行 Pi 的电脑上使用。" : !macos ? "Computer Use 目前只支持 macOS；此平台功能已关闭。" : "由你手动打开。macOS 请在 系统设置 → 隐私与安全性 → 辅助功能 中允许「Orbit Agent」（列表里显示为「Orbit」，位于 ~/Library/Application Support/ai.pi.gui/runtime）。只需授权一次，之后更新 Orbit 不会失效；「Orbit Agent Dev」只属于 tauri dev。授权后完全退出 Orbit 再打开。"}>
-      {desktop && macos ? <Switch aria-label="电脑操作" checked={enabled} disabled={!online || running} onChange={checked => void setComputerUseMode(checked).catch(report)} /> : <span className="remote-settings-note">{desktop ? "macOS 专用" : "电脑端设置"}</span>}
-    </SettingRow>
-    <SettingRow title="Jev API Key" description={desktop && macos ? "从 TypeSafe 控制台粘贴，只存在这台电脑。保存不等于打开电脑操作，开关仍由你控制。" : "Jev Key 由电脑端保管。"}>
-      {desktop && macos ? <div className="settings-directory-control"><Input type="password" value={apiKey} onChange={event => setApiKey(event.target.value)} placeholder={hasKey ? "已保存，留空再保存可覆盖" : "粘贴 TypeSafe API Key"} autoComplete="off" aria-label="Jev API Key" /><div className="settings-directory-actions"><Button variant="default" disabled={busy || !apiKey.trim()} onClick={() => void saveKey()}>{busy ? "保存中…" : "保存"}</Button><Button variant="outline" disabled={busy || !hasKey} onClick={() => { setApiKey(""); void saveComputerUseKey("").then(status => { setHasKey(status.hasKey); gooeyToast.success(status.hasKey ? "已清除 Orbit 保存的 Key，当前仍检测到环境 Key" : "Jev Key 已清除", { showTimestamp: false }); }).catch(report); }}>清除</Button></div></div> : <span className="remote-settings-note">{hasKey ? "电脑端已保存" : "电脑端设置"}</span>}
-    </SettingRow>
-  </>;
 }
 
 function ToolsSettings({ tools, running }: { tools: GuiTools; running: boolean }) {
@@ -626,7 +598,6 @@ export function GeneralSettingsPanel() {
     <SettingsGroup title="消息队列" icon="chats"><QueueSettings status={status} state={state} /></SettingsGroup>
     <SettingsGroup title="运行环境" icon="terminal-window" description="Pi、Node、配置和资源目录的实际解析结果。"><RuntimeSettings desktop={desktop} cwd={cwd} /></SettingsGroup>
     <SettingsGroup title="更新" icon="arrows-clockwise"><DesktopUpdateSettings desktop={desktop} /></SettingsGroup>
-    <SettingsGroup title="电脑操作" icon="desktop" description="让当前 Pi 模型通过界面观察和点击桌面应用。有可靠 API 或 CLI 时不要用。"><ComputerUseSettings desktop={desktop} online={status === "online"} running={running} /></SettingsGroup>
     <SettingsGroup title="工具与终端" icon="wrench"><ToolsSettings tools={tools} running={running} /><TerminalSettings cwd={cwd} desktop={desktop} /></SettingsGroup>
     <SettingsGroup title="Pi 1.0 能力" icon="plugs-connected" description="MCP、Codemode、Tool Search、图片与分类器模型、虚拟路由模型。"><PiCapabilitiesSettings desktop={desktop} online={status === "online"} running={running} tools={tools} /></SettingsGroup>
     <SettingsGroup title="数据管理" icon="trash" description="管理保存在电脑上的会话历史。"><HistorySettings cwd={cwd} desktop={desktop} busy={historyBusy} setBusy={setHistoryBusy} /></SettingsGroup>

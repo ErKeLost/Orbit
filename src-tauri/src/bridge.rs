@@ -599,6 +599,31 @@ fn apply_orbit_runtime_env(
     if let Ok(key_path) = typesafe_key_path() {
         command.env("ORBIT_TYPESAFE_KEY_PATH", key_path);
     }
+    // Computer Use decision backend: Jev (TypeSafe/SystemOne) or Cloudflare
+    // Clef. The non-secret selection travels as plain values; secrets are
+    // passed as file paths so no key is copied into the process environment.
+    let computer_use = read_computer_use_config();
+    command.env(
+        "ORBIT_CU_DECISION_MODEL",
+        computer_use_decision_model(&computer_use),
+    );
+    if let Some(account) = computer_use
+        .get("cloudflareAccountId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        command.env("ORBIT_CF_ACCOUNT_ID", account);
+    }
+    if let Some(base) = computer_use
+        .get("systemoneBaseUrl")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        command.env("ORBIT_CU_SYSTEMONE_BASE_URL", base);
+    }
+    if let Ok(token_path) = cloudflare_token_path() {
+        command.env("ORBIT_CF_API_TOKEN_PATH", token_path);
+    }
     // Extension imports are resolved only from Orbit's pinned resources.
     // User NODE_PATH entries can contain incompatible copies of these packages.
     command.env("NODE_PATH", node_modules);
@@ -768,6 +793,221 @@ pub fn save_computer_use_key(api_key: Option<String>) -> Result<Value, String> {
         }
     }
     Ok(json!({ "hasKey": typesafe_api_key().is_some() }))
+}
+
+fn computer_use_config_path() -> Result<PathBuf, String> {
+    Ok(agent_dir()?.join("computer-use.json"))
+}
+
+fn cloudflare_token_path() -> Result<PathBuf, String> {
+    Ok(agent_dir()?.join("cloudflare-api-token"))
+}
+
+/// Normalized Computer Use decision-backend config. Unknown or missing fields
+/// fall back to Jev so existing installations keep working unchanged.
+fn read_computer_use_config() -> Value {
+    let mut config = json!({
+        "decisionModel": "jev",
+        "cloudflareAccountId": "",
+        "systemoneBaseUrl": "",
+    });
+    if let Ok(path) = computer_use_config_path() {
+        if let Ok(text) = fs::read_to_string(&path) {
+            if let Ok(stored) = serde_json::from_str::<Value>(&text) {
+                if let Some(object) = stored.as_object() {
+                    for (key, value) in object {
+                        config[key] = value.clone();
+                    }
+                }
+            }
+        }
+    }
+    config
+}
+
+fn computer_use_decision_model(config: &Value) -> String {
+    match config.get("decisionModel").and_then(Value::as_str) {
+        // The 27B `clef` variant was retired from the selector; route the old
+        // value to Clef-flash so existing configs keep working.
+        Some("clef") | Some("clef-flash") => "clef-flash".into(),
+        _ => "jev".into(),
+    }
+}
+
+fn cloudflare_api_token() -> Option<String> {
+    if let Ok(token) = std::env::var("CLOUDFLARE_API_TOKEN") {
+        let token = token.trim().to_string();
+        if !token.is_empty() {
+            return Some(token);
+        }
+    }
+    if let Ok(path) = cloudflare_token_path() {
+        if let Ok(text) = fs::read_to_string(path) {
+            let token = text.trim().to_string();
+            if !token.is_empty() {
+                return Some(token);
+            }
+        }
+    }
+    None
+}
+
+/// The config the settings page reads: normalized selection, non-secret
+/// fields, and which credentials currently resolve. Both the read and write
+/// commands return this same shape so the UI can replace its state wholesale.
+fn computer_use_config_view() -> Value {
+    let config = read_computer_use_config();
+    json!({
+        "decisionModel": computer_use_decision_model(&config),
+        "cloudflareAccountId": config.get("cloudflareAccountId").and_then(Value::as_str).unwrap_or(""),
+        "systemoneBaseUrl": config.get("systemoneBaseUrl").and_then(Value::as_str).unwrap_or(""),
+        "keys": {
+            "jev": typesafe_api_key().is_some(),
+            "cloudflare": cloudflare_api_token().is_some(),
+        },
+    })
+}
+
+#[tauri::command]
+pub fn computer_use_config() -> Result<Value, String> {
+    Ok(computer_use_config_view())
+}
+
+/// Persist the non-secret Computer Use config. Only known keys are accepted;
+/// values are trimmed so a pasted Account ID cannot carry whitespace.
+#[tauri::command]
+pub fn save_computer_use_config(config: Value) -> Result<Value, String> {
+    let mut current = read_computer_use_config();
+    if let Some(object) = config.as_object() {
+        for key in ["decisionModel", "cloudflareAccountId", "systemoneBaseUrl"] {
+            if let Some(value) = object.get(key) {
+                current[key] = match value {
+                    Value::String(text) => Value::String(text.trim().to_string()),
+                    other => other.clone(),
+                };
+            }
+        }
+    }
+    let path = computer_use_config_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败：{e}"))?;
+    }
+    let serialized = serde_json::to_string_pretty(&current).map_err(|e| e.to_string())?;
+    fs::write(&path, serialized).map_err(|e| format!("写入电脑操作配置失败：{e}"))?;
+    Ok(computer_use_config_view())
+}
+
+#[tauri::command]
+pub fn save_computer_use_cloudflare_token(token: Option<String>) -> Result<Value, String> {
+    let path = cloudflare_token_path()?;
+    match token.map(|value| value.trim().to_string()) {
+        Some(value) if !value.is_empty() => write_secret_file(&path, &value)?,
+        _ => {
+            if path.exists() {
+                fs::remove_file(&path).map_err(|e| format!("删除密钥失败：{e}"))?;
+            }
+        }
+    }
+    Ok(json!({ "hasToken": cloudflare_api_token().is_some() }))
+}
+
+/// One real round trip against the selected backend. This is the "能用么"
+/// button: it exercises the exact request shape gui_task sends (SystemOne
+/// questions) and reports latency, model, answer and token usage.
+#[tauri::command]
+pub async fn test_computer_use_decision() -> Result<Value, String> {
+    let config = read_computer_use_config();
+    let model = computer_use_decision_model(&config);
+    let state = json!({
+        "goal": "Connectivity check for the Orbit Computer Use decision backend",
+        "note": "A yes answer means the request reached the model.",
+    });
+    let questions = json!({
+        "reachable": {
+            "type": "noul",
+            "instructions": "Does this connection test reach the decision model?",
+        },
+    });
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let started = Instant::now();
+    if model == "jev" {
+        let key = typesafe_api_key().ok_or("未找到 Jev Key，请先在设置中保存")?;
+        let base = config
+            .get("systemoneBaseUrl")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("https://api.typesafe.ai")
+            .trim_end_matches('/')
+            .to_string();
+        let response = client
+            .post(format!("{base}/v1/systemone"))
+            .bearer_auth(key)
+            .json(&json!({ "model": "jev-latest", "state": state, "questions": questions }))
+            .send()
+            .await
+            .map_err(|e| format!("Jev 请求失败：{e}"))?;
+        let status = response.status();
+        let body = response
+            .json::<Value>()
+            .await
+            .map_err(|e| format!("Jev 响应不是有效 JSON：{e}"))?;
+        if !status.is_success() {
+            let message = body
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .unwrap_or("请求被拒绝");
+            return Err(format!("Jev 返回 {status}：{message}"));
+        }
+        return Ok(json!({
+            "ok": true,
+            "provider": "jev",
+            "model": body.get("model").cloned().unwrap_or(json!("jev-latest")),
+            "latencyMs": started.elapsed().as_millis() as u64,
+            "answer": body.get("answers").cloned(),
+            "usage": body.get("usage").cloned(),
+        }));
+    }
+    let account = config
+        .get("cloudflareAccountId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or("未配置 Cloudflare Account ID")?;
+    let token = cloudflare_api_token().ok_or("未找到 Cloudflare API Token，请先在设置中保存")?;
+    let endpoint = format!(
+        "https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/@cf/cloudflare/{model}"
+    );
+    let response = client
+        .post(endpoint)
+        .bearer_auth(token)
+        .json(&json!({ "model": model, "state": state, "questions": questions }))
+        .send()
+        .await
+        .map_err(|e| format!("Clef 请求失败：{e}"))?;
+    let status = response.status();
+    let payload = response
+        .json::<Value>()
+        .await
+        .map_err(|e| format!("Clef 响应不是有效 JSON：{e}"))?;
+    if !status.is_success() || payload.get("success").and_then(Value::as_bool) == Some(false) {
+        let message = payload
+            .pointer("/errors/0/message")
+            .and_then(Value::as_str)
+            .unwrap_or("请求被拒绝");
+        return Err(format!("Clef 返回 {status}：{message}"));
+    }
+    let result = payload.get("result").cloned().unwrap_or(Value::Null);
+    Ok(json!({
+        "ok": true,
+        "provider": "clef",
+        "model": result.get("model").cloned().unwrap_or_else(|| json!(model)),
+        "latencyMs": started.elapsed().as_millis() as u64,
+        "answer": result.get("answers").cloned(),
+        "usage": result.get("usage").cloned(),
+    }))
 }
 fn project(cwd: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(cwd)

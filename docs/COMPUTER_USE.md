@@ -45,6 +45,26 @@ delivery. A retry is allowed only for an explicitly safe stale reference.
 Read-only tasks reject mutation, contextual-menu, and submit operations even
 if a stale candidate survives into the current turn.
 
+## Decision Backend
+
+`gui_task` speaks the Jev/SystemOne protocol and ships two interchangeable
+backends, selected in Settings → 操作电脑 (stored in
+`~/.pi/agent/computer-use.json`):
+
+- **Jev (TypeSafe)** — the default; key at `~/.pi/agent/typesafe-api-key`.
+- **Clef-flash (Cloudflare)** — Cloudflare's open 9B decision model on
+  Workers AI; Account ID in the config, API Token at
+  `~/.pi/agent/cloudflare-api-token`.
+
+Clef is hosted behind Workers AI rather than a SystemOne root, so
+`decision-provider.ts` gives the TypeSafe SDK a custom `fetch` that rewrites
+`POST /v1/systemone` to the Workers AI run endpoint and lifts `result` back to
+the top level. The engine, prompts, budgets, verification and text-slot
+privacy are identical for both backends; only transport and credentials
+differ. The selection is read by the Pi process at spawn time, so change it and
+reconnect the project. The same page has a connection test that performs one
+real SystemOne round trip and reports latency, model, answer and token usage.
+
 ## Jev and Memory
 
 Jev chooses one operation and target from the current bounded candidate set.

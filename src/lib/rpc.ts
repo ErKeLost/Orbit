@@ -227,6 +227,13 @@ export async function unregisterSessionMcpServer(name:string,target=useWorkspace
 export async function setProjectTrustMode(mode:ProjectTrustMode):Promise<ProjectTrustMode> { if(!desktopRuntime()) throw new Error('项目权限请在电脑端设置'); return invoke<ProjectTrustMode>('set_project_trust_mode',{mode}) }
 export async function computerUseKeyStatus():Promise<{hasKey:boolean}> { if(!desktopRuntime()) throw new Error('Jev Key 请在电脑端设置'); return invoke<{hasKey:boolean}>('computer_use_key_status') }
 export async function saveComputerUseKey(apiKey?:string):Promise<{hasKey:boolean}> { if(!desktopRuntime()) throw new Error('Jev Key 请在电脑端设置'); return invoke<{hasKey:boolean}>('save_computer_use_key',{apiKey:apiKey?.trim()||null}) }
+export type ComputerUseModel='jev'|'clef-flash'
+export type ComputerUseConfig={decisionModel:ComputerUseModel;cloudflareAccountId:string;systemoneBaseUrl:string;keys:{jev:boolean;cloudflare:boolean}}
+export type ComputerUseTestResult={ok:boolean;provider:string;model:string;latencyMs:number;answer:Record<string,unknown>|null;usage:{input_tokens?:number;output_tokens?:number}|null}
+export async function computerUseConfig():Promise<ComputerUseConfig> { if(!desktopRuntime()) throw new Error('电脑操作请在电脑端设置'); return invoke<ComputerUseConfig>('computer_use_config') }
+export async function saveComputerUseConfig(patch:Partial<Pick<ComputerUseConfig,'decisionModel'|'cloudflareAccountId'|'systemoneBaseUrl'>>):Promise<ComputerUseConfig> { if(!desktopRuntime()) throw new Error('电脑操作请在电脑端设置'); return invoke<ComputerUseConfig>('save_computer_use_config',{config:patch}) }
+export async function saveComputerUseCloudflareToken(token?:string):Promise<{hasToken:boolean}> { if(!desktopRuntime()) throw new Error('Cloudflare Token 请在电脑端设置'); return invoke<{hasToken:boolean}>('save_computer_use_cloudflare_token',{token:token?.trim()||null}) }
+export async function testComputerUseDecision():Promise<ComputerUseTestResult> { if(!desktopRuntime()) throw new Error('电脑操作请在电脑端设置'); return invoke<ComputerUseTestResult>('test_computer_use_decision') }
 export async function loadMessages(target=useWorkspace.getState().cwd){
  const id=route(target),data=await request<{messages:PiMessage[]}>({type:'get_messages'},30000,id)
  patch(id,{transcript:hydrate(data.messages)})

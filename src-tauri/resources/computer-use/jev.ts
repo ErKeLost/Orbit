@@ -3,6 +3,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { choice, noul, TypeSafeClient } from "@typesafe-ai/sdk"
 import type { DesktopCandidate, DesktopDecision, TextSlot } from "./gui-task-contract.ts"
+import { createDecisionClient } from "./decision-provider.ts"
 
 const MAX_OPTIONS = 255
 const MAX_TARGET_OPTIONS = 32
@@ -182,7 +183,7 @@ const NEXT_STEP_RULES = [
 let cachedClient: TypeSafeClient | undefined
 /** Reuse one client (and its keep-alive HTTP connection) for the whole run. */
 function sharedClient(): TypeSafeClient {
-  cachedClient ??= new TypeSafeClient({ apiKey: loadApiKey(), logLevel: "off" })
+  cachedClient ??= createDecisionClient(loadApiKey)
   return cachedClient
 }
 
