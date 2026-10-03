@@ -7,6 +7,7 @@ import { WorkspaceTitlebar } from './components/workspace/WorkspaceTitlebar'
 import { WorkspaceLayout } from './components/workspace/WorkspaceLayout'
 import { mergeProjectSessions, useProjectSessions } from './hooks/use-project-sessions'
 import { useWorkspaceBootstrap, useWorkspaceShortcuts } from './hooks/use-workspace-shell'
+import { useDesktopNotifications } from './hooks/use-desktop-integration'
 import { useNarrowWorkspace } from './hooks/use-narrow-workspace'
 import { WorkspaceNavigationDrawer } from './components/workspace/WorkspaceDrawer'
 import { RemotePairingScreen } from './components/remote/RemotePairingScreen'
@@ -39,6 +40,7 @@ export default function App(){
  }),[narrow])
  const bootstrap=useWorkspaceBootstrap()
  useWorkspaceShortcuts(online,setSidebarOpen)
+ useDesktopNotifications()
  const sessions=useProjectSessions(cwd)
  useEffect(()=>{
   localStorage.setItem('pi-gui.sidebarOpen',String(sidebarVisibility.wide))

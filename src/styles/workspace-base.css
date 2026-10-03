@@ -798,3 +798,6 @@ html[data-theme="dark"] .markdown-renderer :is(.md-autolink, .md-external-link):
 .proximity-preview-markdown { min-width: 0; color: inherit; }
 .proximity-preview-markdown > :first-child { margin-top: 0 !important; }
 .proximity-preview-markdown > :last-child { margin-bottom: 0 !important; }
+.tool-image-generation{display:grid;gap:12px;margin:10px 0;max-width:min(460px,100%)}
+.tool-image-generation [data-slot="grid-reveal"],.tool-image-generation>div{border-radius:var(--radius-lg);overflow:hidden}
+.tool-image-meta{margin-top:8px;font-size:10px;line-height:1.6;color:var(--foreground);opacity:.7;word-break:break-all}

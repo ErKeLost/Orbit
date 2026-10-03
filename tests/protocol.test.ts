@@ -1,5 +1,5 @@
 import {describe,test,expect} from 'bun:test'
-import {assignTurnClocks,emptyTranscript,groupDisplayMessages,reduceEvent,hydrate,toolResultText} from '../src/lib/protocol'
+import {assignTurnClocks,emptyTranscript,groupDisplayMessages,reduceEvent,hydrate,toolResultImages,toolResultText} from '../src/lib/protocol'
 import { summarizeToolCalls } from '../src/lib/tool-activity'
 import { turnDurationId } from '../src/lib/turn-duration'
 describe('Pi 0.87.1 JSONL event projection',()=>{
@@ -182,9 +182,10 @@ describe('streaming delta delivery',()=>{
   const start=()=>reduceEvent(emptyTranscript(),{type:'message_start',message:{role:'assistant',content:[],timestamp:1}})
   const oneByOne=deltas.reduce(reduceEvent,start())
   const batched=[deltas.slice(0,3),deltas.slice(3,5),deltas.slice(5)].reduce((transcript,batch)=>batch.reduce(reduceEvent,transcript),start())
-  // 只比消息内容：message_start 会给 assistant 打一个 Date.now() 的 startedAt，
-  // 那是运行时时钟，不属于"分批是否等价"这件事。
-  expect(batched.messages).toEqual(oneByOne.messages)
+  // 只比消息内容：message_start 给 assistant 打的 startedAt 是运行时时钟，
+  // 两次折叠可能差一毫秒，不属于"分批是否等价"这件事。
+  const content=(transcript:ReturnType<typeof reduceEvent>)=>transcript.messages.map(({message})=>({message}))
+  expect(content(batched)).toEqual(content(oneByOne))
   expect(batched.active).toBe(oneByOne.active)
  })
  test('a batch preserves the interleaved order of thinking and text deltas',()=>{
@@ -198,6 +199,21 @@ describe('streaming delta delivery',()=>{
   ]
   const sequential=events.reduce(reduceEvent,emptyTranscript())
   const batched=[[events[0]],[events[1],events[2],events[3],events[4]],[events[5]]].reduce((transcript,batch)=>batch.reduce(reduceEvent,transcript),emptyTranscript())
-  expect(batched.messages).toEqual(sequential.messages)
+  const content=(transcript:ReturnType<typeof reduceEvent>)=>transcript.messages.map(({message})=>({message}))
+  expect(content(batched)).toEqual(content(sequential))
+ })
+ test('image tool results keep their media for the chat renderer',()=>{
+  const result={content:[{type:'text',text:'已生成 1 张图片'},{type:'image',data:'AAAA',mimeType:'image/jpeg'}]}
+  const running=reduceEvent(emptyTranscript(),{type:'tool_execution_start',toolCallId:'c1',toolName:'generate_image',args:{prompt:'一只猫'}})
+  const done=reduceEvent(running,{type:'tool_execution_end',toolCallId:'c1',toolName:'generate_image',result})
+  expect(done.tools.c1.images).toEqual([{data:'AAAA',mimeType:'image/jpeg'}])
+  const hydrated=hydrate([{role:'toolResult',toolCallId:'c1',toolName:'generate_image',content:result.content}])
+  expect(hydrated.tools.c1.images).toEqual([{data:'AAAA',mimeType:'image/jpeg'}])
+ })
+ test('toolResultImages ignores non-image content and reads nested content arrays',()=>{
+  expect(toolResultImages('plain')).toEqual([])
+  expect(toolResultImages({content:[{type:'text',text:'x'}]})).toEqual([])
+  expect(toolResultImages([{type:'image',data:'CC'}])).toEqual([])
+  expect(toolResultImages([{type:'image',data:'BB',mimeType:'image/webp'}])).toEqual([{data:'BB',mimeType:'image/webp'}])
  })
 })

@@ -117,6 +117,28 @@ pub fn run() {
     let builder = builder.on_web_content_process_terminate(|webview| {
         let _ = webview.reload();
     });
+    // Desktop integration. single-instance must be registered before every other
+    // plugin: a second launch focuses the running window instead of starting a
+    // second bundled Pi runtime and accessibility grant.
+    // Skipped in debug builds so a dev instance can run next to the installed
+    // app, which shares its identifier.
+    #[cfg(all(desktop, not(debug_assertions)))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }));
+    #[cfg(desktop)]
+    let builder = builder
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build());
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -178,6 +200,8 @@ pub fn run() {
             bridge::computer_use_config,
             bridge::save_computer_use_config,
             bridge::save_computer_use_cloudflare_token,
+            bridge::image_config,
+            bridge::save_image_config,
             bridge::test_computer_use_decision,
             bridge::clipboard_file_paths,
             bridge::read_file_attachment,

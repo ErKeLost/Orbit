@@ -153,6 +153,12 @@ export function useWorkspaceShortcuts(
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key.toLowerCase() === "r") {
+        // Browser-style refresh: reloads the webview, so a dev rebuild is picked
+        // up without quitting the app.
+        event.preventDefault();
+        window.location.reload();
+      }
       if (event.key === "n") {
         event.preventDefault();
         if (online) void changeSession({ type: "new_session" }).catch(report);

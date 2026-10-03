@@ -1,11 +1,12 @@
 import { useWorkspace } from "../../lib/store";
 import { branchFromMessage, report } from "../../lib/rpc";
-import { Fragment, memo, useState, type ReactNode } from "react";
+import { Fragment, memo, useEffect, useState, type ReactNode } from "react";
 import { m } from "motion/react";
 import type { DisplayMessage, Part, PiMessage, Tool } from "../../lib/protocol";
-import { formatTranscriptError, toolResultText } from "../../lib/protocol";
+import { formatTranscriptError, IMAGE_TOOL_NAME, toolResultText } from "../../lib/protocol";
 import { ProcessingPanel, Thinking } from "../RichMessage";
 import { ToolActivityGroup, ToolCall } from "../ai-elements/tool-call";
+import { GridReveal } from "../ui/grid-reveal";
 import { Message, MessageContent, MessageResponse } from "../ai-elements/message";
 import { MessageActions } from "../assistant-ui/elements/message-actions";
 import { Icon } from "../Icon";
@@ -36,11 +37,59 @@ function ThinkingPart({ part, thinking }: PartViewProps) {
   return <Thinking text={part.thinking ?? ""} running={active} />;
 }
 
+/** Read the requested frame ratio from the tool arguments (`16:9`). */
+function requestedAspect(value: unknown): number | undefined {
+  if (typeof value !== "string") return undefined;
+  const match = /^(\d+):(\d+)$/.exec(value);
+  if (!match) return undefined;
+  return Number(match[1]) / Number(match[2]);
+}
+
+/** A tool call that is generating an image, or already returned one. */
+function isImageTool(part: Part, tools: Record<string, Tool>): boolean {
+  return (part.name ?? tools[part.id ?? ""]?.name) === IMAGE_TOOL_NAME || (tools[part.id ?? ""]?.images?.length ?? 0) > 0;
+}
+
+/** Renders the reveal only once the frame ratio is known: the ratio the tool
+ * requested, or the real pixel ratio once the image exists. Without one the card
+ * stays unrendered, so a placeholder frame never resizes into the real ratio
+ * mid-reveal. */
+function GeneratedImage({ src, knownAspect, prompt }: { src: string | null; knownAspect?: number; prompt?: string }) {
+  const [measuredAspect, setMeasuredAspect] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    if (!src) return;
+    let active = true;
+    const element = new Image();
+    element.onload = () => {
+      if (active && element.naturalWidth > 0 && element.naturalHeight > 0) setMeasuredAspect(element.naturalWidth / element.naturalHeight);
+    };
+    element.src = src;
+    return () => { active = false; element.onload = null; };
+  }, [src]);
+  const aspect = measuredAspect ?? knownAspect;
+  if (aspect === undefined) return null;
+  return <GridReveal src={src} aspect={aspect} alt={prompt ?? "生成的图片"} caption={prompt} />;
+}
+
 function ToolPart({ part, tools }: PartViewProps) {
   const tool = tools[part.id ?? ""];
+  const name = part.name ?? tool?.name ?? "工具";
+  const images = tool?.images ?? [];
+  const prompt = typeof part.arguments?.prompt === "string" ? part.arguments.prompt : undefined;
+  // Image generation renders through GridReveal instead of a tool card. A failed
+  // run falls through to the ordinary card so the error stays readable.
+  if (name === IMAGE_TOOL_NAME && !tool?.isError) {
+    const knownAspect = requestedAspect(part.arguments?.aspect);
+    const sources = images.length ? images.map(image => `data:${image.mimeType};base64,${image.data}`) : [null];
+    const info = tool?.image;
+    return <div className="tool-image-generation">
+      {sources.map((src, index) => <GeneratedImage key={`${part.id ?? "image"}-${index}`} src={src} knownAspect={knownAspect} prompt={index === 0 ? prompt : undefined} />)}
+      {info && <p className="tool-image-meta">{info.model}{info.size ? ` · ${info.size}` : ""}</p>}
+    </div>;
+  }
   const result = tool?.result;
   return <ToolCall
-    toolName={part.name ?? tool?.name ?? "工具"}
+    toolName={name}
     request={part.argsText ?? JSON.stringify(part.arguments ?? {})}
     result={toolResultText(result)}
     details={tool?.details}
@@ -155,7 +204,7 @@ function buildNodes(content: ProjectedPart[], items: DisplayMessage[], tools: Re
       if (part.type === "image") media.push(node);
       else body.push(node);
     }
-    return { progress: [], media, body, defaultExpanded: false, activityIndex: undefined, activityConsumed: false };
+    return { progress: [], media, body, defaultExpanded: false, keepProcessOpen: false, activityIndex: undefined, activityConsumed: false };
   }
 
   let processParts: ProjectedPart[] = [];
@@ -183,6 +232,7 @@ function buildNodes(content: ProjectedPart[], items: DisplayMessage[], tools: Re
           toolNames={toolParts.map(({ part }) => part.name ?? tools[part.id ?? ""]?.name ?? "工具")}
           running={toolParts.some(({ part }) => tools[part.id ?? ""]?.running)}
           hasError={toolParts.some(({ part }) => tools[part.id ?? ""]?.isError)}
+          defaultOpen={toolParts.some(({ part }) => isImageTool(part, tools))}
         >
           {toolRows}
         </ToolActivityGroup>,
@@ -218,7 +268,10 @@ function buildNodes(content: ProjectedPart[], items: DisplayMessage[], tools: Re
     }
     activityConsumed = true;
   }
-  return { progress: progress.map(entry => entry.node), media, body, defaultExpanded: !hasFinalResponse, activityIndex: undefined, activityConsumed };
+  // A turn that generated an image keeps its process open so the picture stays
+  // visible; every step around it keeps its place in time order.
+  const generatedImage = content.some(({ part }) => part.type === "toolCall" && isImageTool(part, tools));
+  return { progress: progress.map(entry => entry.node), media, body, defaultExpanded: !hasFinalResponse, keepProcessOpen: generatedImage, activityIndex: undefined, activityConsumed };
 }
 
 function responseText(content: ProjectedPart[]) {
@@ -248,7 +301,7 @@ function TranscriptBody({ item, items, nodes, role, streaming, startedAt, elapse
   return <Message from={role}>
     {nodes.media.length > 0 && <div className="user-message-media">{nodes.media}</div>}
     {hasContent && <MessageContent>
-      {hasProgress && <ProcessingPanel key={`${item.id}-${streaming ? "running" : "complete"}`} running={streaming} defaultExpanded={nodes.defaultExpanded} startedAt={startedAt} durationMs={elapsedMs} clock={clock}>{nodes.progress.slice(0, activityIndex)}{renderedActivity}{nodes.progress.slice(activityIndex)}</ProcessingPanel>}
+      {hasProgress && <ProcessingPanel key={`${item.id}-${streaming ? "running" : "complete"}`} running={streaming} defaultExpanded={nodes.defaultExpanded || nodes.keepProcessOpen} startedAt={startedAt} durationMs={elapsedMs} clock={clock}>{nodes.progress.slice(0, activityIndex)}{renderedActivity}{nodes.progress.slice(activityIndex)}</ProcessingPanel>}
       {nodes.body}
     </MessageContent>}
     {text && (role === "user" || !streaming) && <MessageCopyFooter message={items.at(-1)!.message} role={role} text={text} time={role === "user" ? turnTime(items) : null} copied={copied} onCopied={onCopied} />}

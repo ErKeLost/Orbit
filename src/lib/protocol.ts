@@ -6,7 +6,9 @@ export type PiMessage = { role: string; content?: string | Part[]; command?: str
 export type DisplayMessage = { id: string; message: PiMessage; startedAt?: number; elapsedMs?: number }
 export type DisplayMessageGroup = { id: string; items: DisplayMessage[]; indexes: number[] }
 export type ToolUsage = { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost?: { total?: number } }
-export type Tool = { name: string; args?: Record<string, Json>; result?: unknown; details?: { patch: string }; running: boolean; isError?: boolean; usage?: ToolUsage }
+export type ToolImage = { data: string; mimeType: string }
+export type ToolImageInfo = { model: string; size?: string }
+export type Tool = { name: string; args?: Record<string, Json>; result?: unknown; details?: { patch: string }; images?: ToolImage[]; image?: ToolImageInfo; running: boolean; isError?: boolean; usage?: ToolUsage }
 export type Event = { type: string; message?: PiMessage; toolCallId?: string; toolName?: string; args?: Record<string, Json>; result?: unknown; partialResult?: unknown; isError?: boolean; details?: unknown; errorMessage?: string; assistantMessageEvent?: { type: string; contentIndex: number; delta?: string; content?: string; id?: string; toolName?: string; toolCall?: Part }; steering?: string[]; followUp?: string[]; [key: string]: unknown }
 export type Transcript = { messages: DisplayMessage[]; active: number; running: boolean; compacting: boolean; phase: string; tools: Record<string, Tool>; error: string | null; queue: { steering: string[]; followUp: string[] }; bash: { id?: string; command?: string; output: string; running: boolean } | null; turnStartedAt: number | null }
 export const emptyTranscript = (): Transcript => ({ messages: [], active: -1, running: false, compacting: false, phase: '就绪', tools: {}, error: null, queue: { steering: [], followUp: [] }, bash: null, turnStartedAt: null })
@@ -39,6 +41,33 @@ export function toolResultText(value:unknown):string {
     }
   }
   return '工具执行完成'
+}
+/** Tool that generates images; its results carry media plus the model that ran. */
+export const IMAGE_TOOL_NAME = 'generate_image'
+export function toolResultImages(value:unknown):ToolImage[] {
+  const images:ToolImage[] = []
+  const visit=(input:unknown)=>{
+    if(Array.isArray(input)){for(const item of input)visit(item);return}
+    if(!input||typeof input!=='object')return
+    const record=input as Record<string,unknown>
+    if(record.type==='image'&&typeof record.data==='string'&&record.data&&typeof record.mimeType==='string'&&record.mimeType){
+      images.push({data:record.data,mimeType:record.mimeType})
+      return
+    }
+    if('content' in record)visit(record.content)
+  }
+  visit(value)
+  return images
+}
+/** The model (and pixel size) a tool result reports, so the card can name it. */
+function toolImageInfo(toolName:string,source:unknown):ToolImageInfo|undefined {
+  if(toolName!==IMAGE_TOOL_NAME)return undefined
+  const details=(source as {details?:unknown}|null)?.details
+  if(!details||typeof details!=='object')return undefined
+  const record=details as Record<string,unknown>
+  const model=typeof record.model==='string'?record.model:undefined
+  if(!model)return undefined
+  return {model,...(typeof record.size==='string'?{size:record.size}:{})}
 }
 export function groupDisplayMessages(messages: DisplayMessage[]): DisplayMessageGroup[] {
   return messages.reduce<DisplayMessageGroup[]>((groups, item, index) => {
@@ -133,7 +162,7 @@ export function hydrate(messages: PiMessage[]): Transcript {
   for (const raw of messages) {
     if(raw.role==='custom' && raw.display===false)continue
     const message=normalizeMessage(raw)
-    if (message.role === 'toolResult' && message.toolCallId) state.tools[message.toolCallId] = {name: message.toolName ?? 'tool', result: toolResultText(message.content), details:toolCodeDetails(message.toolName??'tool',message.details), running: false, isError: message.isError, usage: message.usage as ToolUsage|undefined}
+    if (message.role === 'toolResult' && message.toolCallId) state.tools[message.toolCallId] = {name: message.toolName ?? 'tool', result: toolResultText(message.content), details:toolCodeDetails(message.toolName??'tool',message.details), images:toolResultImages(message.content), image:toolImageInfo(message.toolName??'tool',message), running: false, isError: message.isError, usage: message.usage as ToolUsage|undefined}
     else state.messages.push({ id: `history-${state.messages.length}-${message.timestamp ?? 0}`, message })
   }
   return state
@@ -226,7 +255,7 @@ export function reduceEvent(previous: Transcript, event: Event): Transcript {
       if (message.role === 'assistant' && Array.isArray(message.content)) {
         message.content = message.content.map(part => part.type === 'thinking' ? {...part,thinkingComplete:true} : part)
       }
-      if (message.role === 'toolResult' && message.toolCallId) return { ...state, tools: {...state.tools,[message.toolCallId]:{...state.tools[message.toolCallId],name:message.toolName ?? 'tool',running:false,result:toolResultText(message.content),details:toolCodeDetails(message.toolName??'tool',message.details)??state.tools[message.toolCallId]?.details,isError:message.isError,usage:message.usage as ToolUsage|undefined}} }
+      if (message.role === 'toolResult' && message.toolCallId) return { ...state, tools: {...state.tools,[message.toolCallId]:{...state.tools[message.toolCallId],name:message.toolName ?? 'tool',running:false,result:toolResultText(message.content),details:toolCodeDetails(message.toolName??'tool',message.details)??state.tools[message.toolCallId]?.details,images:toolResultImages(message.content),image:toolImageInfo(message.toolName??'tool',message),isError:message.isError,usage:message.usage as ToolUsage|undefined}} }
       let index = message.role === 'assistant' ? state.active : -1
       if (message.role !== 'assistant') {
         for (let i = state.messages.length - 1; i >= 0; i--) {
@@ -248,7 +277,9 @@ export function reduceEvent(previous: Transcript, event: Event): Transcript {
       const name=event.toolName ?? tool?.name ?? 'tool'
       const result = event.result !== undefined ? toolResultText(event.result) : event.partialResult !== undefined ? toolResultText(event.partialResult) : tool?.result
       const details=event.result!==undefined?toolCodeDetails(name,event.result)??tool?.details:tool?.details
-      return { ...state, phase: event.type === 'tool_execution_end' ? '正在运行' : `执行 ${event.toolName}`, tools: {...state.tools,[event.toolCallId]:{...tool,name,args:event.args ?? tool?.args,result,details,running:event.type !== 'tool_execution_end',isError:event.isError}} }
+      const images=event.result!==undefined?toolResultImages(event.result):tool?.images
+      const image=event.result!==undefined?toolImageInfo(name,event.result):tool?.image
+      return { ...state, phase: event.type === 'tool_execution_end' ? '正在运行' : `执行 ${event.toolName}`, tools: {...state.tools,[event.toolCallId]:{...tool,name,args:event.args ?? tool?.args,result,details,images,image,running:event.type !== 'tool_execution_end',isError:event.isError}} }
     }
     default: return state
   }

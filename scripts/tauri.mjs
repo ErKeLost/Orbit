@@ -5,6 +5,11 @@ const root=resolve(import.meta.dirname,'..')
 const local=resolve(root,'work/toolchain')
 const env={...process.env}
 const args=process.argv.slice(2)
+// Another project's Vite (or a second checkout) can already hold the default dev
+// port. ORBIT_DEV_PORT moves both the Vite server and Tauri's devUrl together.
+if(args[0]==='dev'&&env.ORBIT_DEV_PORT){
+  args.push('--config',JSON.stringify({build:{devUrl:`http://localhost:${env.ORBIT_DEV_PORT}`}}))
+}
 const androidIndex=args.indexOf('android')
 const androidAction=androidIndex<0?undefined:args[androidIndex+1]
 if(androidIndex>=0&&['build','dev'].includes(androidAction)&&!args.includes('--target'))args.push('--target','aarch64')

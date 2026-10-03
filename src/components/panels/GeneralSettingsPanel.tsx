@@ -10,9 +10,10 @@ import QRCode from "antd/es/qr-code";
 import type { RpcCommand, RpcSessionState } from "@earendil-works/pi-coding-agent";
 import { useWorkspace } from "../../lib/store";
 import { useRuntimeDiscovery, type RuntimeDiscovery } from "../../lib/runtime-diagnostics";
-import { clearSessionHistory, connect, deleteMcpServer, desktopRuntime, disconnect, getGuiSettings, getProjectTrustMode, listMcpServers, loadMessages, mcpConfigLocation, native, refresh, refreshCapabilities, report, request, saveMcpServer, setGuiSetting, setProjectTrustMode, type McpServerView, type ProjectTrustMode } from "../../lib/rpc";
+import { clearSessionHistory, connect, deleteMcpServer, desktopRuntime, disconnect, getGuiSettings, getProjectTrustMode, imageConfig, listMcpServers, loadMessages, mcpConfigLocation, native, refresh, refreshCapabilities, report, request, saveImageConfig, saveMcpServer, setGuiSetting, setProjectTrustMode, type ImageConfig, type McpServerView, type ProjectTrustMode } from "../../lib/rpc";
 import { CACHE_WARMING_LABELS, CODEMODE_TOOL, MCP_EXPOSURE_LABELS, TOOL_SEARCH_TOOL, inactiveCapabilityTools, parseCapabilities, availableMediaModels } from "../../lib/capabilities";
 import { getRemoteHost, relaySettingsStatus, saveRelaySettings, startRemoteHost, stopRemoteHost, type RelaySettingsStatus, type RemoteHostInfo } from "../../lib/remote-host";
+import { GLOBAL_SHORTCUT, NOTIFY_ON_COMPLETE_KEY, readAutostart, readGlobalShortcut, writeAutostart, writeGlobalShortcut } from "../../lib/desktop-integration";
 import { checkMobileUpdate, mobileUpdateErrorMessage } from "../../lib/mobile-update";
 import { checkForDesktopUpdate, offerMobileUpdate } from "../UpdateChecker";
 import { Button, Input, Select, Switch } from "../UI";
@@ -110,6 +111,12 @@ function PiCapabilitiesSettings({ desktop, online, running, tools }: { desktop: 
   }
   const images = availableMediaModels(capabilities?.media.image ?? []);
   const classifiers = availableMediaModels(capabilities?.media.classifier ?? []);
+  const imageOptions = capabilities?.media.imageOptions ?? { resolutions: [], aspects: [] };
+  const imageSettings = useQuery({ queryKey: ["pi", "image-config"], queryFn: imageConfig, enabled: desktop });
+  async function writeImageSetting(patch: Partial<ImageConfig>) {
+    try { await saveImageConfig(patch); await imageSettings.refetch(); gooeyToast.success("图片设置已更新", { showTimestamp: false }); }
+    catch (error) { report(error); }
+  }
   return <>
     <SettingRow title="Codemode" description={capabilities?.tools.codemode ? "模型写 JavaScript 调用工具（含 MCP），支持并行、图片生成和分类器。" : "当前 runtime 未提供 codemode 工具。"}>
       {capabilities?.tools.codemode ? <Switch aria-label="Codemode" checked={tools.active.includes(CODEMODE_TOOL)} disabled={!online || running} onChange={checked => void toggleTool(CODEMODE_TOOL, checked)} /> : <span className="remote-settings-note">不可用</span>}
@@ -135,7 +142,22 @@ function PiCapabilitiesSettings({ desktop, online, running, tools }: { desktop: 
       </SettingRow>;
     })}
     {!config?.servers.length && <SettingRow title="没有 MCP 服务器" description="添加后可以用 codemode 脚本、tool_search 或直接工具调用远程与本地 MCP。"><span className="remote-settings-note">{desktop ? "未配置" : "电脑端设置"}</span></SettingRow>}
-    <SettingRow title="图片模型" description={images.length ? images.map(model => `${model.provider}/${model.id}`).join("、") : "需要带图片生成能力的 provider 凭据（如 OpenRouter）。"}><span className="remote-settings-note">{images.length ? `${images.length} 个可用` : "无可用凭据"}</span></SettingRow>
+    <SettingRow title="图片模型" description={images.length ? "generate_image 默认使用的模型；工具参数可覆盖，分辨率与画幅只作为默认值。" : "需要带图片生成能力的 provider 凭据（如火山方舟）。"}>
+      {desktop && images.length ? <div className="settings-directory-actions">
+        <Select aria-label="图片模型" value={imageSettings.data?.model ?? ""} onChange={event => void writeImageSetting({ model: event.target.value })}>
+          <option value="">默认（第一个可用）</option>
+          {images.map(model => <option key={`${model.provider}/${model.id}`} value={model.id}>{model.name ?? model.id}</option>)}
+        </Select>
+        <Select aria-label="默认分辨率" value={imageSettings.data?.resolution ?? ""} onChange={event => void writeImageSetting({ resolution: event.target.value })}>
+          <option value="">默认分辨率</option>
+          {imageOptions.resolutions.map(resolution => <option key={resolution} value={resolution}>{resolution}</option>)}
+        </Select>
+        <Select aria-label="默认画幅" value={imageSettings.data?.aspect ?? ""} onChange={event => void writeImageSetting({ aspect: event.target.value })}>
+          <option value="">画幅自动</option>
+          {imageOptions.aspects.map(aspect => <option key={aspect} value={aspect}>{aspect}</option>)}
+        </Select>
+      </div> : <span className="remote-settings-note">{images.length ? `${images.length} 个可用` : "无可用凭据"}</span>}
+    </SettingRow>
     <SettingRow title="分类器模型" description={classifiers.length ? classifiers.map(model => `${model.provider}/${model.id}`).join("、") : "可用 Jev 或 llama.cpp 分类器模型运行 codemode 中的 models.classify()。"}><span className="remote-settings-note">{classifiers.length ? `${classifiers.length} 个可用` : "无可用凭据"}</span></SettingRow>
     <SettingRow title="缓存预热" description="长工具调用期间保活可缓存的 prompt 前缀，按避免的缓存未命中成本决定是否刷新。写入 ~/.pi/agent/settings.json。">
       {desktop ? <Select aria-label="缓存预热" value={typeof guiSettings.data?.settings.cacheWarming === "string" ? guiSettings.data.settings.cacheWarming : ""} onChange={event => void writeSetting("cacheWarming", event.target.value || null)}><option value="">跟随 Pi 默认（运行中）</option><option value="streaming">运行中</option><option value="idle">运行中与空闲</option><option value="off">关闭</option></Select> : <span className="remote-settings-note">{CACHE_WARMING_LABELS[capabilities?.settings?.cacheWarming ?? ""] ?? "—"}</span>}
@@ -198,6 +220,35 @@ function ContextSettings({ cwd, status, running, state, onCompact }: { cwd: stri
 
 function QueueSettings({ status, state }: { status: string; state: RpcSessionState | null }) {
   return <>{(["steering", "followUp"] as const).map(kind => <SettingRow key={kind} title={kind === "steering" ? "引导消息" : "跟进消息"} description={kind === "steering" ? "当前工具调用完成后交给模型。" : "本轮任务全部结束后交给模型。"}><Select aria-label={kind === "steering" ? "引导消息模式" : "跟进消息模式"} disabled={status !== "online"} value={kind === "steering" ? state?.steeringMode : state?.followUpMode} onChange={event => void applySetting({ type: kind === "steering" ? "set_steering_mode" : "set_follow_up_mode", mode: event.target.value as "all" | "one-at-a-time" }).catch(report)}><option value="one-at-a-time">每次一条</option><option value="all">全部送入</option></Select></SettingRow>)}</>;
+}
+
+function DesktopIntegrationSettings({ desktop }: { desktop: boolean }) {
+  const [notify, setNotify] = useState(() => localStorage.getItem(NOTIFY_ON_COMPLETE_KEY) !== "false");
+  const [shortcut, setShortcut] = useState(false);
+  const [autostart, setAutostart] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!desktop) return;
+    void readGlobalShortcut().then(setShortcut).catch(report);
+    void readAutostart().then(setAutostart).catch(report);
+  }, [desktop]);
+  async function apply(change: () => Promise<void>, label: string) {
+    setBusy(true);
+    try { await change(); gooeyToast.success(`${label}已更新`, { showTimestamp: false }); }
+    catch (error) { report(error); }
+    finally { setBusy(false); }
+  }
+  return <>
+    <SettingRow title="完成通知" description="任务跑完时发系统通知；Orbit 在前台时不打扰。">
+      {desktop ? <Switch aria-label="完成通知" checked={notify} onChange={checked => { setNotify(checked); localStorage.setItem(NOTIFY_ON_COMPLETE_KEY, String(checked)); }} /> : <span className="remote-settings-note">电脑端设置</span>}
+    </SettingRow>
+    <SettingRow title="全局快捷键" description={`${GLOBAL_SHORTCUT.replace("CommandOrControl", "⌘/Ctrl")} 显示或隐藏 Orbit 窗口，Orbit 不在前台也有效。`}>
+      {desktop ? <Switch aria-label="全局快捷键" checked={shortcut} disabled={busy} onChange={checked => void apply(async () => { await writeGlobalShortcut(checked); setShortcut(checked); }, "全局快捷键")} /> : <span className="remote-settings-note">电脑端设置</span>}
+    </SettingRow>
+    <SettingRow title="开机自启" description="登录时自动启动 Orbit。">
+      {desktop ? <Switch aria-label="开机自启" checked={autostart} disabled={busy} onChange={checked => void apply(async () => { await writeAutostart(checked); setAutostart(checked); }, "开机自启")} /> : <span className="remote-settings-note">电脑端设置</span>}
+    </SettingRow>
+  </>;
 }
 
 function ToolsSettings({ tools, running }: { tools: GuiTools; running: boolean }) {
@@ -592,6 +643,7 @@ export function GeneralSettingsPanel() {
   return <>
     <div className="panel-heading"><div><h1><Icon name="gear-six" />常规</h1></div></div>
     <SettingsGroup title="外观" icon="palette"><ThemeSettings /></SettingsGroup>
+    <SettingsGroup title="桌面集成" icon="desktop" description="系统通知、全局快捷键与开机自启。"><DesktopIntegrationSettings desktop={desktop} /></SettingsGroup>
     <SettingsGroup title="工作区" icon="folder-simple"><ProjectDirectorySettings path={path} setPath={setPath} busy={busy} running={running} status={status} onReconnect={reconnect} /><TrustSettings mode={trustMode} busy={trustBusy} desktop={desktop} onChange={changeTrustMode} /></SettingsGroup>
     {runtimeTarget === "mobile" && <SettingsGroup title="软件更新" icon="arrows-clockwise" description="主动从 GitHub Release 检查 Android 安装包。"><MobileAppUpdateSettings /></SettingsGroup>}
     <SettingsGroup title="上下文" icon="brain" description="管理当前会话的容量与压缩方式。"><ContextSettings cwd={cwd} status={status} running={running} state={state} onCompact={manualCompact} /></SettingsGroup>

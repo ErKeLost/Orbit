@@ -14,6 +14,7 @@ export const native=isTauri()
 export type ProviderModel={
   id:string
   name?:string
+  type?:string
   context_window?:number
   max_output_tokens?:number
   input_modalities?:string[]
@@ -234,6 +235,9 @@ export async function computerUseConfig():Promise<ComputerUseConfig> { if(!deskt
 export async function saveComputerUseConfig(patch:Partial<Pick<ComputerUseConfig,'decisionModel'|'cloudflareAccountId'|'systemoneBaseUrl'>>):Promise<ComputerUseConfig> { if(!desktopRuntime()) throw new Error('电脑操作请在电脑端设置'); return invoke<ComputerUseConfig>('save_computer_use_config',{config:patch}) }
 export async function saveComputerUseCloudflareToken(token?:string):Promise<{hasToken:boolean}> { if(!desktopRuntime()) throw new Error('Cloudflare Token 请在电脑端设置'); return invoke<{hasToken:boolean}>('save_computer_use_cloudflare_token',{token:token?.trim()||null}) }
 export async function testComputerUseDecision():Promise<ComputerUseTestResult> { if(!desktopRuntime()) throw new Error('电脑操作请在电脑端设置'); return invoke<ComputerUseTestResult>('test_computer_use_decision') }
+export type ImageConfig={model:string;resolution:string;aspect:string}
+export async function imageConfig():Promise<ImageConfig> { if(!desktopRuntime()) throw new Error('图片模型请在电脑端设置'); return invoke<ImageConfig>('image_config') }
+export async function saveImageConfig(patch:Partial<ImageConfig>):Promise<ImageConfig> { if(!desktopRuntime()) throw new Error('图片模型请在电脑端设置'); return invoke<ImageConfig>('save_image_config',{config:patch}) }
 export async function loadMessages(target=useWorkspace.getState().cwd){
  const id=route(target),data=await request<{messages:PiMessage[]}>({type:'get_messages'},30000,id)
  patch(id,{transcript:hydrate(data.messages)})

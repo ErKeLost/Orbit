@@ -1,7 +1,7 @@
 {
   "name": "orbit",
   "private": true,
-  "version": "0.3.52",
+  "version": "0.3.53",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -39,9 +39,12 @@
     "@pierre/diffs": "1.4.1",
     "@tanstack/react-query": "5.102.8",
     "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/plugin-autostart": "2.5.1",
     "@tauri-apps/plugin-barcode-scanner": "2.4.6",
     "@tauri-apps/plugin-clipboard-manager": "2.3.3",
     "@tauri-apps/plugin-dialog": "2.7.3",
+    "@tauri-apps/plugin-global-shortcut": "2.3.2",
+    "@tauri-apps/plugin-notification": "2.4.0",
     "@tauri-apps/plugin-opener": "2.5.5",
     "@tauri-apps/plugin-process": "2.3.1",
     "@tauri-apps/plugin-updater": "2.11.0",

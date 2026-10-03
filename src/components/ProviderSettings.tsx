@@ -12,6 +12,8 @@ import {
   request,
   refresh,
   persistDefaultModel,
+  imageConfig,
+  saveImageConfig,
   type ProviderModel,
   type ProviderProfile,
 } from "../lib/rpc";
@@ -111,7 +113,22 @@ const formatPricing = (pricing?: Record<string, number>) => {
   return parts.length ? parts.map(([key, value]) => `$${value}/M ${key}`).join(" · ") : undefined;
 };
 
-function ModelDetails({ model, onUse, disabled }: { model: ProviderModel; onUse: () => void; disabled: boolean }) {
+function ModelDetails({ model, onUse, disabled, imageDefault }: { model: ProviderModel; onUse: () => void; disabled: boolean; imageDefault?: { currentId: string; onUse: (model: ProviderModel) => void } }) {
+  // Image-only providers have no chat model to switch to: the row's job is to
+  // pick the model the generate_image tool uses.
+  if (imageDefault) return (
+    <div className="provider-model-details">
+      <dl className="provider-meta-grid">
+        <div><dt>ID</dt><dd>{display(model.id)}</dd></div>
+        <div><dt>名称</dt><dd>{display(modelDisplayName(model))}</dd></div>
+        <div><dt>用途</dt><dd>图片生成（generate_image）</dd></div>
+      </dl>
+      <Button variant="outline" className="provider-use-model" disabled={disabled || imageDefault.currentId === model.id} onClick={() => imageDefault.onUse(model)}>
+        <Icon name={imageDefault.currentId === model.id ? "check" : "image-square"} />
+        {imageDefault.currentId === model.id ? "当前图片默认模型" : "设为图片默认模型"}
+      </Button>
+    </div>
+  );
   const inputs = modelModalities(model, "input");
   const outputs = modelModalities(model, "output");
   return (
@@ -360,6 +377,18 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
     } catch (error) { report(error); } finally { update({ busy: null }); }
   }
 
+  const imageSettings = useQuery({ queryKey: ["pi", "image-config"], queryFn: imageConfig });
+  // An image-only provider has no chat model to switch to; its rows pick the
+  // model the generate_image tool uses instead.
+  const imageProvider = models.length > 0 && models.every(model => model.type === "image");
+  const currentImageModel = imageSettings.data?.model || models.find(model => model.type === "image")?.id || "";
+  async function setDefaultImageModel(model: ProviderModel) {
+    try {
+      await saveImageConfig({ model: model.id });
+      await imageSettings.refetch();
+      gooeyToast.success("已设为图片默认模型", { description: model.id, showTimestamp: false });
+    } catch (error) { report(error); }
+  }
   const visibleModels = useMemo(() => models.filter((model) => `${model.id} ${modelDisplayName(model)}`.toLowerCase().includes(search.toLowerCase())), [models, search]);
   const selectDefaultModel = (id: string) => update({ defaultModelId: id });
   return (
@@ -381,13 +410,14 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
 
       <div className="provider-detail">
         {selected ? <>
-          <header className="provider-detail-header"><span className="provider-detail-mark"><ProviderMark id={selected.id} name={selected.name} /></span><div><h2>{selected.name || selected.id}</h2><p>{activeProvider === selected.id ? "当前使用" : "已添加"} · {models.length} 个模型{switchingProviderId === selected.id ? " · 处理中…" : ""}</p></div><div className="provider-detail-actions"><Button variant="outline" disabled={Boolean(switchingProviderId)} onClick={() => setEditorOpen(true)}><Icon name="pencil-simple" />编辑配置</Button><Button variant="default" disabled={Boolean(switchingProviderId) || running} onClick={() => void applySelectedProvider()}><Icon name="check" />{switchingProviderId === selected.id ? "应用中…" : "应用配置"}</Button><Button variant="ghost" className="provider-delete-button" disabled={Boolean(switchingProviderId)} onClick={() => confirmDelete(selected)}><Icon name="trash" />删除</Button></div></header>
+          <header className="provider-detail-header"><span className="provider-detail-mark"><ProviderMark id={selected.id} name={selected.name} /></span><div><h2>{selected.name || selected.id}</h2><p>{activeProvider === selected.id ? "当前使用" : "已添加"} · {models.length} 个{imageProvider ? "图片模型" : "模型"}{switchingProviderId === selected.id ? " · 处理中…" : ""}</p></div><div className="provider-detail-actions"><Button variant="outline" disabled={Boolean(switchingProviderId)} onClick={() => setEditorOpen(true)}><Icon name="pencil-simple" />编辑配置</Button>{!imageProvider && <Button variant="default" disabled={Boolean(switchingProviderId) || running} onClick={() => void applySelectedProvider()}><Icon name="check" />{switchingProviderId === selected.id ? "应用中…" : "应用配置"}</Button>}<Button variant="ghost" className="provider-delete-button" disabled={Boolean(switchingProviderId)} onClick={() => confirmDelete(selected)}><Icon name="trash" />删除</Button></div></header>
           <div className="provider-detail-content">
             <div className="provider-connection"><span>基础 URL</span><code>{selected.baseUrl || "未配置"}</code><span className="provider-connection-note"><Icon name="shield-check" />{selected.hasApiKey ? "凭据已保存在本机" : "未保存 API Key"}</span></div>
-            <div className="provider-models-heading"><strong>模型 <span>· {models.length}</span></strong><Button variant="outline" disabled={!!busy} onClick={() => void probe()}><Icon name="arrows-clockwise" />{busy === "probe" ? "刷新中…" : "刷新模型"}</Button></div>
+            <div className="provider-models-heading"><strong>{imageProvider ? "图片模型" : "模型"} <span>· {models.length}</span></strong>{!imageProvider && <Button variant="outline" disabled={!!busy} onClick={() => void probe()}><Icon name="arrows-clockwise" />{busy === "probe" ? "刷新中…" : "刷新模型"}</Button>}</div>
+            {imageProvider && <p className="provider-models-note">这些模型供 generate_image 使用；端点与模型列表由图片工具内置，不受此处的 Base URL 影响。</p>}
             <label className="provider-model-search"><Icon name="magnifying-glass" /><Input aria-label="搜索模型名称或 ID" value={search} onChange={event => update({ search: event.target.value })} placeholder="搜索模型名称或 ID" /></label>
             <div className="provider-model-list provider-settings-list">
-              {visibleModels.map(model => { const inputs = modelModalities(model, "input"); const outputs = modelModalities(model, "output"); return <Disclosure key={model.id} title={<span className="provider-model-title"><span className="provider-model-name"><ModelLogo modelId={model.id} size={19} /><strong>{modelDisplayName(model)}</strong></span><span className="provider-model-context">{typeof model.context_window === "number" ? formatContextLength(model.context_window) : "—"}{typeof model.context_window === "number" && <small> tokens</small>}</span><ModelModalities values={inputs} /><ModelModalities values={outputs} /></span>}><ModelDetails model={model} disabled={!!busy || running || !cwd} onUse={() => void applyModel(model)} /></Disclosure>; })}
+              {visibleModels.map(model => { const inputs = modelModalities(model, "input"); const outputs = modelModalities(model, "output"); return <Disclosure key={model.id} title={<span className="provider-model-title"><span className="provider-model-name"><ModelLogo modelId={model.id} size={19} /><strong>{modelDisplayName(model)}</strong>{model.type === "image" && <span className="provider-model-badge">图片</span>}</span><span className="provider-model-context">{typeof model.context_window === "number" ? formatContextLength(model.context_window) : "—"}{typeof model.context_window === "number" && <small> tokens</small>}</span><ModelModalities values={inputs} /><ModelModalities values={outputs} /></span>}><ModelDetails model={model} disabled={imageProvider ? !!busy : (!!busy || running || !cwd)} onUse={() => void applyModel(model)} imageDefault={imageProvider ? { currentId: currentImageModel, onUse: model => void setDefaultImageModel(model) } : undefined} /></Disclosure>; })}
               {!models.length && <div className="provider-models-empty"><Icon name="cpu" /><strong>还没有模型目录</strong><p>刷新模型后会在这里显示可用模型。</p></div>}
               {models.length > 0 && !visibleModels.length && <div className="provider-models-empty"><p>没有匹配的模型。</p></div>}
             </div>

@@ -69,11 +69,11 @@ function renderedRequest(request: string) {
   return value.length <= MAX_PLAIN_DETAIL_CHARS ? value : `${value.slice(0, MAX_PLAIN_DETAIL_CHARS)}\n\n[请求过长，已省略]`;
 }
 
-export function ToolActivityGroup({ toolNames, running, hasError = false, children }: { toolNames: string[]; running: boolean; hasError?: boolean; children: ReactNode }) {
+export function ToolActivityGroup({ toolNames, running, hasError = false, defaultOpen = false, children }: { toolNames: string[]; running: boolean; hasError?: boolean; defaultOpen?: boolean; children: ReactNode }) {
   const [openOverride, setOpenOverride] = useState<boolean | null>(null);
   const listId = useId();
   const summary = summarizeToolCalls(toolNames) || "工具调用";
-  const open = openOverride ?? hasError;
+  const open = openOverride ?? (hasError || defaultOpen);
   return <section className="tool-activity-group" data-open={open} data-error={hasError || undefined}>
     <Button type="button" variant="ghost" className="tool-activity-group-header" aria-expanded={open} aria-controls={listId} onClick={() => setOpenOverride(!open)}>
       <Icon name={hasError ? "warning-circle" : "code"} aria-hidden="true" />{running ? <StableShimmer text={summary} className="tool-activity-group-summary" /> : <span className="tool-activity-group-summary">{summary}</span>}<Icon name="caret-right" className="tool-activity-group-chevron" aria-hidden="true" />

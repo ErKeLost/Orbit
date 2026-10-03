@@ -1,6 +1,6 @@
 [package]
 name = "orbit"
-version = "0.3.52"
+version = "0.3.53"
 default-run = "orbit"
 description = "A local desktop workspace for Orbit"
 authors = ["you"]
@@ -56,6 +56,14 @@ openssl = { version = "=0.10.73", features = ["vendored"] }
 openssl-probe = "=0.1.6"
 tauri-plugin-updater = "2.11.0"
 tauri-plugin-process = "2.3.1"
+# Desktop integration: one Orbit at a time, remembered window geometry, system
+# notifications, launch at login, and a global show/hide hotkey. Pinned to the
+# newest releases that still accept the tauri version pinned above.
+tauri-plugin-single-instance = "=2.4.5"
+tauri-plugin-window-state = "=2.4.1"
+tauri-plugin-notification = "=2.4.0"
+tauri-plugin-autostart = "=2.5.1"
+tauri-plugin-global-shortcut = "=2.3.2"
 tungstenite = { version = "=0.26.2", default-features = false, features = ["handshake", "native-tls"] }
 uuid = { version = "=1.26.0", features = ["v4"] }
 # Native macOS accessibility backend for the desktop AX collector (worker,

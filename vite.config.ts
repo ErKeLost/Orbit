@@ -37,5 +37,5 @@ export default defineConfig({
   clearScreen: false,
   // Second entry for the native Tauri splashscreen window.
   build: { rollupOptions: { input: { main: path.resolve(import.meta.dirname, 'index.html'), splashscreen: path.resolve(import.meta.dirname, 'splashscreen.html') } } },
-  server: { port: 5173, strictPort: true, host: '127.0.0.1', watch: { ignored: ['**/src-tauri/target/**', path.join(import.meta.dirname, 'work', '**')] } },
+  server: { port: Number(process.env.ORBIT_DEV_PORT ?? 5173), strictPort: true, host: '127.0.0.1', watch: { ignored: ['**/src-tauri/target/**', path.join(import.meta.dirname, 'work', '**')] } },
 })

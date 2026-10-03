@@ -205,3 +205,5 @@ html.dark .provider-fallback-mark[data-tone="3"] { background: #392b43; color: #
   .provider-detail-header > .provider-detail-actions { width: 100%; }
   .provider-detail-content { padding: 16px 14px; overflow: visible; }
 }
+.provider-model-badge{margin-left:2px;padding:1px 6px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:9px;font-weight:500;color:var(--foreground)}
+.provider-models-note{margin:0 0 10px;font-size:10px;line-height:1.7;color:var(--foreground);opacity:.75}

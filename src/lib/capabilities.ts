@@ -26,7 +26,7 @@ export type PiCapabilities = {
     mcpTools: number;
   };
   mcp: McpServerInfo[];
-  media: { image: MediaModelInfo[]; classifier: MediaModelInfo[] };
+  media: { image: MediaModelInfo[]; classifier: MediaModelInfo[]; imageOptions: { resolutions: string[]; aspects: string[] } };
   virtualModels: VirtualModelInfo[];
   settings: {
     cacheWarming?: string | null;
@@ -69,6 +69,13 @@ function readMediaModels(value: unknown): MediaModelInfo[] {
     if (!isRecord(item) || typeof item.provider !== "string" || typeof item.id !== "string") return [];
     return [{ provider: item.provider, id: item.id, name: typeof item.name === "string" ? item.name : undefined, available: item.available === true }];
   });
+}
+
+/** Resolutions and aspect ratios the image tool accepts, published by the extension. */
+function readModelOptions(value: unknown): { resolutions: string[]; aspects: string[] } {
+  if (!isRecord(value)) return { resolutions: [], aspects: [] };
+  const list = (input: unknown) => Array.isArray(input) ? input.filter((item): item is string => typeof item === "string") : [];
+  return { resolutions: list(value.resolutions), aspects: list(value.aspects) };
 }
 
 function readMcpServers(value: unknown): McpServerInfo[] {
@@ -115,7 +122,7 @@ export function parseCapabilities(raw: string | undefined): PiCapabilities | nul
         mcpTools: typeof tools.mcpTools === "number" ? tools.mcpTools : 0,
       },
       mcp: readMcpServers(value.mcp),
-      media: { image: readMediaModels(media.image), classifier: readMediaModels(media.classifier) },
+      media: { image: readMediaModels(media.image), classifier: readMediaModels(media.classifier), imageOptions: readModelOptions(media.imageOptions) },
       virtualModels: readVirtualModels(value.virtualModels),
       settings: settings ? {
         cacheWarming: typeof settings.cacheWarming === "string" ? settings.cacheWarming : null,

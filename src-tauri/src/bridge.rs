@@ -911,6 +911,74 @@ pub fn save_computer_use_cloudflare_token(token: Option<String>) -> Result<Value
     Ok(json!({ "hasToken": cloudflare_api_token().is_some() }))
 }
 
+fn image_config_path() -> Result<PathBuf, String> {
+    Ok(agent_dir()?.join("image.json"))
+}
+
+/// Image-generation preferences. Missing keys stay absent so the image tool can
+/// keep its own defaults; the file is the only place these are stored.
+fn read_image_config() -> Value {
+    if let Ok(path) = image_config_path() {
+        if let Ok(text) = fs::read_to_string(&path) {
+            if let Ok(stored) = serde_json::from_str::<Value>(&text) {
+                return stored;
+            }
+        }
+    }
+    json!({})
+}
+
+fn image_config_view() -> Value {
+    let config = read_image_config();
+    let field = |key: &str| {
+        config
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    json!({
+        "model": field("model"),
+        "resolution": field("resolution"),
+        "aspect": field("aspect"),
+    })
+}
+
+#[tauri::command]
+pub fn image_config() -> Result<Value, String> {
+    Ok(image_config_view())
+}
+
+/// Persist image preferences. Only the three known keys are accepted, and empty
+/// strings are stored as-is so the UI can express "use the built-in default".
+#[tauri::command]
+pub fn save_image_config(config: Value) -> Result<Value, String> {
+    let mut current = read_image_config();
+    if !current.is_object() {
+        current = json!({});
+    }
+    if let Some(object) = config.as_object() {
+        for key in ["model", "resolution", "aspect"] {
+            if let Some(value) = object.get(key) {
+                current[key] = match value {
+                    Value::String(text) => Value::String(text.trim().to_string()),
+                    other => other.clone(),
+                };
+            }
+        }
+    }
+    let path = image_config_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败：{e}"))?;
+    }
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&current).map_err(|e| e.to_string())? + "\n",
+    )
+    .map_err(|e| format!("写入图片配置失败：{e}"))?;
+    Ok(image_config_view())
+}
+
 /// One real round trip against the selected backend. This is the "能用么"
 /// button: it exercises the exact request shape gui_task sends (SystemOne
 /// questions) and reports latency, model, answer and token usage.

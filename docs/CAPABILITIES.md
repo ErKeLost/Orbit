@@ -91,3 +91,9 @@ codemode 的沙盒是 `@earendil-works/pi-codemode`：QuickJS（`quickjs-wasi`�
 - 构建后运行 `scripts/check-codemode.mjs`，真实启动一次沙盒（`return 1+1` + 一次工具调用），失败即中断构建。
 
 `bundle-pi.mjs` 的 `buildFormat` 因此升到 5；`scripts/smoke-pi.mjs` 也在隔离资源目录上复跑同一校验。
+
+### 图片模型（2026-10-03）
+
+Pi 只有 `openrouter-images` 一个内置图片 API（OpenRouter 的 chat completions + `modalities`）；`models.json` 里的模型一律被 `modelFromJson()` 归一成 chat，无法定义图片模型。因此图片模型只能由扩展通过 `pi.registerProvider({ api, models: [{ type: "image" }], images })` 注册。
+
+本机只用火山方舟（`https://ark.cn-beijing.volces.com/api/v3`，OpenAI 式 `POST /images/generations`），所以 `gui-extension.ts` 注册一个 `volcengine` provider：三个 Seedream 模型（`doubao-seedream-5-0-flash-260915` / `-5-0-pro-260628` / `-4-0-20260415`）与一个 `openai-images` 出图实现，请求 `response_format: "b64_json"`。密钥按 Pi 常规从 `~/.pi/agent/auth.json` 的 `volcengine` 读取，扩展不保存密钥。`gui-media` 与 codemode 的 `models.generateImages()` 都走这条路径。

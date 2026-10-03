@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "desktop",
-  "description": "Desktop-only process and updater permissions",
+  "description": "Desktop-only process, updater, and desktop integration permissions",
   "platforms": ["macOS", "windows", "linux"],
   "windows": [
     "main"
@@ -9,6 +9,11 @@
   "permissions": [
     "process:default",
     "updater:default",
-    "clipboard-manager:allow-read-image"
+    "clipboard-manager:allow-read-image",
+    "notification:default",
+    "autostart:default",
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
+    "global-shortcut:allow-is-registered"
   ]
 }
