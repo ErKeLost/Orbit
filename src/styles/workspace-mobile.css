@@ -304,14 +304,14 @@
     max-width: 100%;
   }
 
-  .narrow-workspace .composer-agent-mode {
+  .narrow-workspace .composer-mode-toggle {
     margin-left: auto;
   }
 
   .narrow-workspace .composer.studio-composer .composer-bottom > [data-slot="button"],
   .narrow-workspace .composer-context-trigger[data-slot="button"],
   .narrow-workspace .composer-context-trigger[data-slot="popover-trigger"],
-  .narrow-workspace .composer-agent-mode {
+  .narrow-workspace .composer-mode-toggle {
     min-height: 40px !important;
   }
 
@@ -323,17 +323,15 @@
     height: 40px !important;
   }
 
-  .narrow-workspace .composer-agent-mode {
+  .narrow-workspace .composer-mode-toggle {
     height: 40px;
-    grid-template-columns: repeat(2, 36px);
   }
 
-  .narrow-workspace .composer-agent-mode button {
-    width: 36px;
-    height: 36px;
+  .narrow-workspace .composer-mode-toggle-label {
+    display: none;
   }
 
-  .narrow-workspace .composer-computer-use {
+  .narrow-workspace .composer-mode-toggle {
     width: 40px;
     height: 40px;
   }

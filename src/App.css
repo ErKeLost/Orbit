@@ -2245,21 +2245,12 @@ html[data-theme="light"] .composer-model-row:hover,
 html[data-theme="light"] .composer-model-row.active {
   background: color-mix(in oklch, var(--foreground) 6%, var(--background));
 }
-.light .composer-agent-mode,
-html[data-theme="light"] .composer-agent-mode,
-.light .composer-computer-use:not(.selected),
-html[data-theme="light"] .composer-computer-use:not(.selected) {
-  background: color-mix(in oklch, var(--foreground) 6%, var(--background));
+.light .composer-mode-toggle.selected,
+html[data-theme="light"] .composer-mode-toggle.selected {
+  color: var(--foreground);
 }
-.light .composer-agent-mode-indicator,
-html[data-theme="light"] .composer-agent-mode-indicator,
-.light .composer-computer-use.selected,
-html[data-theme="light"] .composer-computer-use.selected {
-  background: var(--background);
-  box-shadow: 0 0 0 1px color-mix(in oklch, var(--foreground) 10%, transparent), 0 1px 3px color-mix(in oklch, var(--foreground) 14%, transparent);
-}
-.light .composer-computer-use.selected::after,
-html[data-theme="light"] .composer-computer-use.selected::after {
+.light .composer-mode-toggle.selected::after,
+html[data-theme="light"] .composer-mode-toggle.selected::after {
   box-shadow: 0 0 0 2px var(--background);
 }
 .theme-settings-controls { display: flex; align-items: center; gap: 8px; }
@@ -4962,15 +4953,6 @@ html[data-theme="light"] .composer-computer-use.selected::after {
 }
 .settings-content .theme-settings-controls [data-slot="select-trigger"] {
   min-width: 112px !important;
-}
-.app-shell [data-slot="switch"] [data-slot="switch-thumb"] {
-  transform: translateX(0);
-}
-.app-shell [data-slot="switch"][data-size="default"][data-checked] [data-slot="switch-thumb"] {
-  transform: translateX(18px);
-}
-.app-shell [data-slot="switch"][data-size="sm"][data-checked] [data-slot="switch-thumb"] {
-  transform: translateX(16px);
 }
 
 /* Project tree sidebar: every saved directory owns its own Pi session list. */
