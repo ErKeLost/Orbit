@@ -895,7 +895,7 @@ fn start_pipeline(
 }
 
 /// The governor's quality scale mapped onto an H.264 bitrate.
-fn governor_bitrate(quality: u8) -> u32 {
+pub(crate) fn governor_bitrate(quality: u8) -> u32 {
     let quality = u32::from(quality.clamp(20, 95));
     H264_MIN_BITRATE + (quality - 20) * H264_BITRATE_STEP
 }
@@ -1011,7 +1011,6 @@ fn pipeline_loop(
 ) {
     let codec = encoder.codec();
     let mut governor = Governor::new(resolved.quality, resolved.max_fps, codec);
-    let mut last_published = Instant::now() - Duration::from_secs(1);
     let mut last_window = Instant::now();
     let mut window_bytes = 0_u64;
     let mut window_frames = 0_u64;
@@ -1145,7 +1144,6 @@ fn pipeline_loop(
                     stats.dropped.fetch_add(1, Ordering::AcqRel);
                     continue;
                 }
-                last_published = Instant::now();
                 seq += 1;
                 let bytes = encoded.bytes.len();
                 let data = base64::engine::general_purpose::STANDARD.encode(&encoded.bytes);

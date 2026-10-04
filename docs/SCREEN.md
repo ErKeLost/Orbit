@@ -206,6 +206,23 @@ H.264 在静止画面上只要几百字节，JPEG 要几十 KB；但 H.264 需�
 WebCodecs，拿不到就明确向主机要 JPEG。所以不存在"发出去才发现解不了"的路径，
 而且 WebView 缺少 WebCodecs 的环境（以及任何需要逐帧独立可丢的场合）仍然可用。
 
+## 依赖取舍：能换就换，但不能拿性能换省事
+
+| 环节 | 用什么 | 为什么 |
+|---|---|---|
+| macOS 平台绑定 | `objc2-*`（生成的绑定） | 手写 FFI 没有意义 |
+| **H.264 编码** | **`videotoolbox` 0.21 + `apple-cf` 0.11** | 会话、输出回调、帧槽、阻塞式 `encode`、AVCC NAL 提取、参数集遍历全部由包提供。自写部分从 626 行降到 346 行，**unsafe 从多处降到 0**。它吃 `&IOSurface`，所以零拷贝保住 |
+| JPEG | `image` | 纯 Rust，够快 |
+| **屏幕采集** | **自己写（`objc2-screen-capture-kit`）** | `scap`/`xcap` 的 `get_next_frame()` 返回 **CPU 字节**，换过去等于丢掉"VideoToolbox 直接读 IOSurface"这条零拷贝路径。**用包把性能换掉不叫省事** |
+| 帧总线 / 门控 / 调节器 / 跟随应用 / 输入映射 | 自己写 | 没有包做这些；这些是产品本身 |
+| WebRTC 传输（P4） | 待定：`str0m` 0.24 / `webrtc` 0.21 / GStreamer `gst-plugin-webrtc` 0.15 | 不要手写 ICE/DTLS/SRTP |
+
+`apple-cf` 用的是自己的类型，与 `objc2-core-video` 不是同一套，所以采集层出来的
+像素缓冲要在两者之间过一次指针：`CMSampleBufferGetImageBuffer` 返回的是 +1 保留的
+缓冲区，而对视频样本缓冲来说它**就是** `CVPixelBuffer`（CoreVideo 里
+`CVImageBuffer`/`CVPixelBuffer` 的区分是名义上的），所以那是"用另一个类型重新解释
+同一个指针"，不是转换。`from_raw` 接管那一个 +1 引用，因此不能再单独释放。
+
 ## 已实现的取舍
 
 这几条都是"看起来能省事、实际会变坑"的地方，所以写下来：

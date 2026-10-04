@@ -147,8 +147,11 @@ impl Encoder {
     pub fn encode(&mut self, frame: &RawFrame) -> Result<Vec<Encoded>, String> {
         match &mut self.inner {
             Inner::Jpeg(encoder) => encoder.encode(frame).map(|encoded| encoded.into_iter().collect()),
+            // `videotoolbox`'s `encode` blocks until the encoder emits this
+            // frame, so there is exactly one access unit to report — unlike a
+            // hand-driven session, no output can still be in flight.
             #[cfg(target_os = "macos")]
-            Inner::H264(encoder) => encoder.encode(frame),
+            Inner::H264(encoder) => encoder.encode(frame).map(|encoded| vec![encoded]),
             #[cfg(not(target_os = "macos"))]
             Inner::Unsupported => Err("此平台没有可用的 H.264 编码器".into()),
         }

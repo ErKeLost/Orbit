@@ -1,6 +1,6 @@
 [package]
 name = "orbit"
-version = "0.5.2"
+version = "0.5.3"
 default-run = "orbit"
 description = "A local desktop workspace for Orbit"
 authors = ["you"]
@@ -87,11 +87,18 @@ objc2 = "=0.6.4"
 objc2-core-foundation = { version = "=0.3.2", features = ["CFArray", "CFDictionary", "CFNumber", "CFString", "CFCGTypes"] }
 objc2-core-graphics = { version = "=0.3.2", features = ["CGDirectDisplay", "CGWindow", "CGEvent"] }
 objc2-core-media = { version = "=0.3.2", features = ["CMTime", "CMSampleBuffer", "objc2-core-video"] }
-objc2-core-video = { version = "=0.3.2", features = ["CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn"] }
+# The pixel path runs on `apple-cf` (see below) so the iOSurface/pixel-buffer
+# wrappers are shared with the encoder instead of hand-written twice.
 objc2-screen-capture-kit = { version = "=0.3.2", features = ["SCShareableContent", "SCStream", "SCError", "block2", "dispatch2"] }
 # Hardware H.264 for the screen channel. VideoToolbox reads the IOSurface the
 # capturer already produced, so the encoder path never touches the CPU.
-objc2-video-toolbox = { version = "=0.3.2", features = ["VTCompressionSession", "VTDecompressionSession"] }
+# Hardware H.264 through a maintained wrapper rather than a hand-written
+# session + output callback + NAL extraction. It consumes the same IOSurface the
+# capturer produced, so the zero-copy path is preserved, and its
+# `apple-cf` types are `Send + Sync`, which removes a hand-written
+# `unsafe impl Send` along with the rest.
+videotoolbox = "=0.21.0"
+apple-cf = { version = "=0.11.0", features = ["cg", "cm", "cv", "iosurface"] }
 dispatch2 = "=0.3.1"
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]

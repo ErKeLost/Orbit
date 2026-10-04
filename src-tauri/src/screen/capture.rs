@@ -73,8 +73,12 @@ impl DisplayInfo {
 pub enum Pixels {
     /// Retained, IOSurface-backed, zero-copy. The preferred form: the H.264
     /// encoder consumes it directly.
+    ///
+    /// `apple_cf::cv::CVPixelBuffer` is already `Send + Sync` in that crate, so
+    /// this replacing a hand-written wrapper also removed a hand-written
+    /// `unsafe impl Send`.
     #[cfg(target_os = "macos")]
-    PixelBuffer(PixelBufferHandle),
+    PixelBuffer(apple_cf::cv::CVPixelBuffer),
     /// Tightly packed BGRA with a row stride. Used by tests and by any future
     /// capturer that can only hand out bytes.
     #[allow(
@@ -103,14 +107,24 @@ impl Pixels {
         match self {
             #[cfg(target_os = "macos")]
             Pixels::PixelBuffer(buffer) => {
-                let locked = buffer
-                    .lock()
-                    .ok_or_else(|| "无法锁定捕获帧的内存".to_string())?;
-                if locked.bytes_per_row() < stride {
+                let guard = buffer
+                    .lock_read_only()
+                    .map_err(|status| format!("无法锁定捕获帧的内存（{status}）"))?;
+                let bytes_per_row = buffer.bytes_per_row();
+                let rows = height.min(buffer.height());
+                if bytes_per_row < stride {
                     return Err("捕获帧的行跨距异常".into());
                 }
-                for row in 0..height.min(locked.height()) {
-                    visit(&locked.row(row)[..stride]);
+                let base = guard.base_address();
+                if base.is_null() {
+                    return Err("捕获帧没有可读内存".into());
+                }
+                for row in 0..rows {
+                    // SAFETY: `row < height` and the row lies inside the locked
+                    // buffer, which the guard keeps locked for this scope.
+                    let start = unsafe { base.add(row * bytes_per_row) };
+                    let bytes = unsafe { std::slice::from_raw_parts(start, stride) };
+                    visit(bytes);
                 }
                 Ok(())
             }
@@ -159,123 +173,6 @@ pub struct RawFrame {
     pub captured_at_ms: u128,
     pub pixels: Pixels,
 }
-
-#[cfg(target_os = "macos")]
-mod pixel_buffer {
-    use objc2_core_foundation::CFRetained;
-    use objc2_core_video::{
-        CVImageBuffer, CVPixelBuffer, CVPixelBufferGetBaseAddress, CVPixelBufferGetBytesPerRow,
-        CVPixelBufferGetHeight, CVPixelBufferGetWidth, CVPixelBufferLockBaseAddress,
-        CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
-    };
-
-    /// A retained `CVPixelBuffer` that may be moved between threads.
-    ///
-    /// # Safety rationale
-    ///
-    /// `CVPixelBuffer` is not `Sync` and is not thread-safe for *concurrent*
-    /// access, which is exactly what this wrapper does not permit: the handle
-    /// is moved along a channel, so precisely one thread owns it at a time,
-    /// and its pixels are only reachable through a `&self` borrow held on that
-    /// thread. CoreVideo objects use atomic reference counting, so handing a
-    /// reference from the capture callback to the pipeline is well defined —
-    /// this is the same ownership transfer Apple's own sample code performs
-    /// when it dispatches frames off the sample-handler queue.
-    pub struct PixelBufferHandle(CFRetained<CVPixelBuffer>);
-
-    unsafe impl Send for PixelBufferHandle {}
-
-    impl PixelBufferHandle {
-        #[must_use]
-        pub fn new(buffer: CFRetained<CVPixelBuffer>) -> Self {
-            Self(buffer)
-        }
-
-        /// Borrow the buffer in the form VideoToolbox wants.
-        #[must_use]
-        pub fn image_buffer(&self) -> &CVImageBuffer {
-            &self.0
-        }
-
-        #[must_use]
-        pub fn width(&self) -> u32 {
-            CVPixelBufferGetWidth(&self.0) as u32
-        }
-
-        #[must_use]
-        pub fn height(&self) -> u32 {
-            CVPixelBufferGetHeight(&self.0) as u32
-        }
-
-        /// Lock for reading; the matching unlock happens when the guard drops.
-        #[must_use]
-        pub fn lock(&self) -> Option<LockedPixels<'_>> {
-            // SAFETY: a plain lock on a buffer we hold a reference to.
-            if unsafe {
-                CVPixelBufferLockBaseAddress(&self.0, CVPixelBufferLockFlags::ReadOnly)
-            } != 0
-            {
-                return None;
-            }
-            // SAFETY: valid until the unlock in `Drop`.
-            let base = CVPixelBufferGetBaseAddress(&self.0).cast::<u8>();
-            if base.is_null() {
-                // SAFETY: matches the successful lock above.
-                unsafe {
-                    CVPixelBufferUnlockBaseAddress(&self.0, CVPixelBufferLockFlags::ReadOnly);
-                }
-                return None;
-            }
-            Some(LockedPixels {
-                buffer: &self.0,
-                base,
-                bytes_per_row: CVPixelBufferGetBytesPerRow(&self.0),
-                height: CVPixelBufferGetHeight(&self.0),
-            })
-        }
-    }
-
-    /// A read-locked pixel buffer. Unlocks on drop, so no early return can
-    /// leave a buffer locked and stall every later frame.
-    pub struct LockedPixels<'a> {
-        buffer: &'a CVPixelBuffer,
-        base: *const u8,
-        bytes_per_row: usize,
-        height: usize,
-    }
-
-    impl LockedPixels<'_> {
-        #[must_use]
-        pub fn bytes_per_row(&self) -> usize {
-            self.bytes_per_row
-        }
-
-        #[must_use]
-        pub fn height(&self) -> usize {
-            self.height
-        }
-
-        #[must_use]
-        pub fn row(&self, index: usize) -> &[u8] {
-            debug_assert!(index < self.height);
-            // SAFETY: `index < height` and the row is `bytes_per_row` bytes
-            // inside a buffer at least that large, held locked by `self`.
-            unsafe { std::slice::from_raw_parts(self.base.add(index * self.bytes_per_row), self.bytes_per_row) }
-        }
-    }
-
-    impl Drop for LockedPixels<'_> {
-        fn drop(&mut self) {
-            // SAFETY: matches the lock that produced this guard.
-            unsafe {
-                CVPixelBufferUnlockBaseAddress(self.buffer, CVPixelBufferLockFlags::ReadOnly);
-            }
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-pub use pixel_buffer::PixelBufferHandle;
 
 /// A live capture session.
 ///

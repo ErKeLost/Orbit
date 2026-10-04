@@ -19,19 +19,18 @@ use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
 use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, AllocAnyThread, DefinedClass};
-use objc2_core_foundation::CFRetained;
 use objc2_core_graphics::{CGPreflightScreenCaptureAccess, CGRequestScreenCaptureAccess};
 use objc2_core_media::{CMSampleBuffer, CMTime};
-use objc2_core_video::CVPixelBuffer;
 use objc2_foundation::{NSArray, NSError, NSObject};
 use objc2_screen_capture_kit::{
     SCContentFilter, SCDisplay, SCShareableContent, SCStream, SCStreamConfiguration,
     SCStreamDelegate, SCStreamOutput, SCStreamOutputType, SCWindow,
 };
 
-use super::{
-    Capture, CaptureRequest, DisplayInfo, PixelBufferHandle, Pixels, RawFrame, TargetKind,
-};
+use apple_cf::cm::CMSampleBuffer as CfSampleBuffer;
+use apple_cf::cv::CVPixelBuffer;
+
+use super::{Capture, CaptureRequest, DisplayInfo, Pixels, RawFrame, TargetKind};
 
 /// `'BGRA'` as an `OSType`: packed 8-bit components, which both the JPEG
 /// encoder and a future `CVPixelBuffer`-native encoder accept directly.
@@ -152,11 +151,18 @@ impl StreamOutput {
 /// `sample_buffer` must be a valid screen sample buffer owned by the caller
 /// for the duration of the call.
 unsafe fn retain_frame(sample_buffer: &CMSampleBuffer) -> Option<RawFrame> {
-    // SAFETY: guarded by the caller's contract. The sample buffer does not
-    // transfer its reference, so `image_buffer` takes one of its own.
-    let buffer: CFRetained<CVPixelBuffer> = unsafe { sample_buffer.image_buffer() }?;
-    let handle = PixelBufferHandle::new(buffer);
-    let (width, height) = (handle.width(), handle.height());
+    // The Objective-C sample buffer is borrowed only long enough to read the
+    // pixel buffer out of it; `apple_cf` takes its own reference.
+    let raw = std::ptr::from_ref(sample_buffer).cast_mut().cast::<std::ffi::c_void>();
+    let sample = unsafe { CfSampleBuffer::from_raw_borrowed(raw) }?;
+    // `CMSampleBufferGetImageBuffer` returns a +1 retained buffer, and for a
+    // video sample buffer that buffer *is* a `CVPixelBuffer`: CoreVideo's
+    // `CVImageBuffer`/`CVPixelBuffer` split is nominal, so this adopts the same
+    // pointer rather than converting anything. `from_raw` takes ownership of
+    // exactly that +1 reference, which is why it is not also released here.
+    let raw_buffer = unsafe { apple_cf::ffi::cm_sample_buffer_copy_image_buffer(sample.as_ptr()) };
+    let pixels = unsafe { CVPixelBuffer::from_raw(raw_buffer) }?;
+    let (width, height) = (pixels.width() as u32, pixels.height() as u32);
     if width == 0 || height == 0 {
         return None;
     }
@@ -164,7 +170,7 @@ unsafe fn retain_frame(sample_buffer: &CMSampleBuffer) -> Option<RawFrame> {
         width,
         height,
         captured_at_ms: now_ms(),
-        pixels: Pixels::PixelBuffer(handle),
+        pixels: Pixels::PixelBuffer(pixels),
     })
 }
 
