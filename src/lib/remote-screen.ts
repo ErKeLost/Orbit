@@ -436,7 +436,7 @@ class ScreenChannel {
       this.windowStart = receivedAt
       this.windowFrames = 0
     }
-    this.startFpsDecay()
+    this.startWatchdog()
     // Compare on the host's clock. The handshake offset is the only thing that
     // makes a cross-device latency figure mean anything.
     const encodedAt = frame.encodedAt > 0 ? frame.encodedAt : receivedAt
@@ -499,7 +499,12 @@ class ScreenChannel {
     // garbage over a good picture.
     if (this.decodedSeq !== 0 && frame.seq > this.decodedSeq + 1) this.desynced = true
 
-    if (this.desynced && !frame.keyframe) return
+    if (this.desynced && !frame.keyframe) {
+      // Waiting. The watchdog below asks the host for a keyframe if one does not
+      // arrive on its own.
+      this.waitingForKeyframeSince ??= Date.now()
+      return
+    }
 
     if (this.desynced) {
       // Coming back from a break: `reset` drops whatever was queued for the
@@ -529,6 +534,7 @@ class ScreenChannel {
       decoder.decode(chunk)
       this.decodedSeq = frame.seq
       this.desynced = false
+      this.waitingForKeyframeSince = null
     } catch (error) {
       this.emit({ error: message(error) })
     }
@@ -556,6 +562,17 @@ class ScreenChannel {
    */
   private backlogTicks = 0
   private fpsCooldownUntil = 0
+  /**
+   * When the decoder started waiting for a keyframe, if it is waiting.
+   *
+   * A decoder that lost its reference chain needs a keyframe before it can draw
+   * anything, and the host has no way to know: on a single connection the frames
+   * it sends are contiguous, so its own gap detection never fires. Nothing else
+   * asks for one either — which meant a desync waited forever and the only
+   * recovery was closing the window. This is the request that was missing.
+   */
+  private waitingForKeyframeSince: number | null = null
+  private keyframeRequestedAt = 0
 
   private configureDecoder(width: number, height: number): boolean {
     const decoder = this.decoder
@@ -627,24 +644,39 @@ class ScreenChannel {
   }
 
   /**
-   * Decay the frame-rate reading when frames stop.
+   * A watchdog on the picture, on a half-second cadence.
    *
-   * Without this the last measured value stays on screen for as long as the
-   * stream is quiet, which reads as "it is still running" — and a static desktop
-   * legitimately produces no frames at all, so the two cases are otherwise
-   * indistinguishable. A number that falls to zero when nothing arrives is the
-   * honest one.
+   * Two jobs, both about a picture that has stopped moving:
+   *
+   * * **Decay the frame-rate reading.** The last measured value otherwise stays
+   *   on screen for as long as the stream is quiet, which reads as "it is still
+   *   running". A static desktop legitimately produces almost no frames, so
+   *   without this the two cases look identical — which is exactly what made
+   *   one of these bugs hard to read.
+   * * **Rescue a stalled decoder.** A decoder that lost its reference chain
+   *   will not recover on its own and nothing else asks the host for a keyframe.
    */
-  private startFpsDecay(): void {
-    this.fpsDecay ??= setInterval(() => {
+  private startWatchdog(): void {
+    this.watchdog ??= setInterval(() => {
       const frame = this.snapshot.frame
-      if (!frame || this.snapshot.receivedFps <= 0) return
-      if (Date.now() - frame.receivedAt < 1200) return
-      this.emit({ receivedFps: 0 })
+      if (frame && this.snapshot.receivedFps > 0 && Date.now() - frame.receivedAt >= 1200) {
+        this.emit({ receivedFps: 0 })
+      }
+      const waitingSince = this.waitingForKeyframeSince
+      if (waitingSince === null) return
+      if (Date.now() - waitingSince < 800) return
+      // One request per few seconds: the host forces a keyframe immediately, so
+      // a repeat would only mean the request itself is not getting through.
+      if (Date.now() - this.keyframeRequestedAt < 4000) return
+      this.keyframeRequestedAt = Date.now()
+      this.waitingForKeyframeSince = null
+      // `start` with unchanged settings does not restart capture — the host sees
+      // the same shape and answers by forcing a keyframe for this subscriber.
+      void this.start(this.settings).catch(() => undefined)
     }, 500)
   }
 
-  private fpsDecay: ReturnType<typeof setInterval> | null = null
+  private watchdog: ReturnType<typeof setInterval> | null = null
 
   private startStatsPolling(): void {
     if (this.statsTimer) return
@@ -699,8 +731,8 @@ class ScreenChannel {
     if (this.statsTimer) clearInterval(this.statsTimer)
     this.statsTimer = null
     this.statsPending = false
-    if (this.fpsDecay) clearInterval(this.fpsDecay)
-    this.fpsDecay = null
+    if (this.watchdog) clearInterval(this.watchdog)
+    this.watchdog = null
   }
 
   private releaseFrameUrl(): void {

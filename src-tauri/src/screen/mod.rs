@@ -1532,6 +1532,32 @@ mod tests {
     }
 
     #[test]
+    fn re_subscribing_requests_a_keyframe_without_a_restart() {
+        // The phone's rescue path: when its decoder loses the reference chain it
+        // re-sends `screen.start` with the same settings. The host must answer
+        // that with a keyframe — and must *not* tear the capture session down,
+        // which is what makes the rescue cheap enough to do from a watchdog.
+        let bus = Arc::new(ScreenBus::default());
+        let subscription = ScreenSubscription::new(bus.clone());
+        subscription.activate();
+        let _ = bus.take_refresh();
+        assert!(bus.needs_frame(), "the first frame is wanted");
+
+        bus.publish(frame(1));
+        subscription.poll().expect("frame");
+        let _ = bus.take_refresh();
+
+        // Same subscriber, same settings, nothing else changed.
+        subscription.activate();
+        assert!(
+            bus.take_refresh(),
+            "re-subscribing must force a keyframe, not merely do nothing"
+        );
+        assert!(subscription.is_active(), "and it must stay subscribed");
+        assert!(bus.needs_frame(), "so the pipeline produces that keyframe");
+    }
+
+    #[test]
     fn skipping_frames_requests_a_keyframe() {
         let bus = Arc::new(ScreenBus::default());
         let subscription = ScreenSubscription::new(bus.clone());
