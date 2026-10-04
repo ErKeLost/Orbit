@@ -72,38 +72,42 @@ mod desktop {
         Aes256Gcm, KeyInit, Nonce,
     };
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-    use serde_json::{json, Value};
+    use futures_util::{SinkExt, StreamExt};
     use serde::{Deserialize, Serialize};
+    use serde_json::{json, Value};
     use std::{
         collections::{HashMap, HashSet},
         fs,
-        io::{ErrorKind, Read, Write},
-        net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket},
+        net::{IpAddr, SocketAddr, TcpListener, UdpSocket},
         path::PathBuf,
+        pin::Pin,
         sync::{
             atomic::{AtomicBool, Ordering},
-            mpsc::{self, Receiver, SyncSender, TrySendError},
+            mpsc::{self, Receiver, SyncSender},
             Arc, Mutex,
         },
         thread,
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
     use tauri::{AppHandle, Manager, State};
-    use tungstenite::{accept_hdr, handshake::server::ErrorResponse, Message, WebSocket};
+    use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufStream};
+    use tokio::net::TcpStream;
+    use tokio_tungstenite::{
+        accept_hdr_async, client_async,
+        tungstenite::client::IntoClientRequest,
+        tungstenite::handshake::server::ErrorResponse,
+        tungstenite::Message, WebSocketStream,
+    };
     use uuid::Uuid;
 
     const EVENT_BATCH_WINDOW: Duration = Duration::from_millis(16);
     const EVENT_QUEUE_CAPACITY: usize = 4096;
     const CLIENT_QUEUE_CAPACITY: usize = 256;
-    /// How long a connection thread will block in `read` before it gets a
-    /// chance to flush what is waiting to be sent.
+    /// How often a connection task checks whether the host was asked to stop.
     ///
-    /// This is a pure latency tax on everything the phone receives: a frame, a
-    /// thinking token, and an input reply all wait up to one interval for the
-    /// thread to come back around. It was 25 ms, which put a floor of about
-    /// that under every round trip; 6 ms costs a few more idle wakeups per
-    /// connection and removes most of it.
-    const SOCKET_POLL_INTERVAL: Duration = Duration::from_millis(6);
+    /// Not a data path: reads, writes and frame wakeups are all events. This
+    /// only bounds how long a shutdown takes to be noticed.
+    const SHUTDOWN_CHECK_INTERVAL: Duration = Duration::from_millis(250);
 
     #[derive(Clone, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -115,7 +119,10 @@ mod desktop {
     }
 
     struct Client {
-        sender: SyncSender<String>,
+        /// A tokio channel, because the senders are the connection tasks. The
+        /// map stays a `std::sync::Mutex`: it is only ever held for a lookup,
+        /// never across an await.
+        sender: tokio::sync::mpsc::Sender<String>,
         projects: Arc<Mutex<HashSet<String>>>,
         /// The screen channel this connection is watching. Never read here:
         /// the send loops reach the subscription directly, and holding it on
@@ -134,7 +141,31 @@ mod desktop {
         screen: Arc<ScreenSubscription>,
     }
 
-    type Clients = Arc<Mutex<HashMap<Uuid, Client>>>;
+    /// Every connected client, plus a signal for "somebody queued something".
+    ///
+    /// The signal exists because of how the relay path is shaped: one task owns
+    /// one relay socket and serves *many* clients, so it cannot simply await its
+    /// own queue the way a LAN connection does. Outbound work is queued by an
+    /// arbitrary thread (a Pi event, a screen frame), and without a signal the
+    /// relay would only notice it on the next socket message or heartbeat — up
+    /// to fifteen seconds. `Notify` is the right primitive rather than a
+    /// channel: `notify_one` stores a permit when no task is waiting, so a
+    /// signal raised during the drain is not lost, and there is no capacity to
+    /// manage.
+    #[derive(Clone)]
+    struct Clients {
+        map: Arc<Mutex<HashMap<Uuid, Client>>>,
+        work: Arc<tokio::sync::Notify>,
+    }
+
+    impl Clients {
+        fn new() -> Self {
+            Self {
+                map: Arc::new(Mutex::new(HashMap::new())),
+                work: Arc::new(tokio::sync::Notify::new()),
+            }
+        }
+    }
 
     struct PiBroadcast {
         project: String,
@@ -145,14 +176,14 @@ mod desktop {
         info: RemoteHostInfo,
         stop: Arc<AtomicBool>,
         relay_connected: Arc<AtomicBool>,
-        clients: Clients,
+        clients: Arc<Clients>,
         events: SyncSender<PiBroadcast>,
     }
 
     struct RelayClient {
         local_id: Uuid,
         attached: Arc<Mutex<HashSet<String>>>,
-        incoming: Receiver<String>,
+        incoming: tokio::sync::mpsc::Receiver<String>,
         screen: Arc<ScreenSubscription>,
     }
 
@@ -177,6 +208,7 @@ mod desktop {
             let mut info = host.info.clone();
             info.connected_clients = host
                 .clients
+                .map
                 .lock()
                 .map(|clients| clients.len())
                 .unwrap_or(0);
@@ -218,7 +250,7 @@ mod desktop {
             if let Ok(mut slot) = self.running.lock() {
                 if let Some(host) = slot.take() {
                     host.stop.store(true, Ordering::Release);
-                    host.clients.lock().ok().map(|mut clients| clients.clear());
+                    host.clients.map.lock().ok().map(|mut clients| clients.clear());
                 }
             }
         }
@@ -501,13 +533,16 @@ mod desktop {
     /// Deliver at most one pending screen frame on this connection.
     ///
     /// Returns `false` when the socket is gone and the caller should stop. The
-    /// envelope is built once per frame and shared by every subscriber, so
-    /// only the (optional) encryption runs per connection.
-    fn send_screen_frame<S: Read + Write>(
-        socket: &mut WebSocket<S>,
+    /// envelope is built once per frame and shared by every subscriber, so only
+    /// the (optional) encryption runs per connection.
+    async fn send_screen_frame<S>(
+        socket: &mut WebSocketStream<S>,
         subscription: &ScreenSubscription,
         key: Option<&[u8; 32]>,
-    ) -> bool {
+    ) -> bool
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         let Some(frame) = subscription.poll() else {
             return true;
         };
@@ -518,14 +553,15 @@ mod desktop {
             },
             None => frame.envelope.to_string(),
         };
-        socket.send(Message::text(payload)).is_ok()
+        socket.send(Message::text(payload)).await.is_ok()
     }
 
     fn broadcast(clients: &Clients, project: &str, frame: String) {
-        let Ok(mut clients) = clients.lock() else {
+        let Ok(mut map) = clients.map.lock() else {
             return;
         };
-        clients.retain(|_, client| {
+        let mut queued = false;
+        map.retain(|_, client| {
             let subscribed = client
                 .projects
                 .lock()
@@ -533,24 +569,41 @@ mod desktop {
             if !subscribed {
                 return true;
             }
+            // A full queue is a slow client: dropping the connection is the
+            // same policy the blocking version had, and it is what bounds
+            // memory when a phone stops reading.
             match client.sender.try_send(frame.clone()) {
-                Ok(()) => true,
-                Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => false,
+                Ok(()) => {
+                    queued = true;
+                    true
+                }
+                Err(_) => false,
             }
         });
+        if queued {
+            clients.work.notify_one();
+        }
     }
 
     fn broadcast_all(clients: &Clients, frame: String) {
-        let Ok(mut clients) = clients.lock() else {
+        let Ok(mut map) = clients.map.lock() else {
             return;
         };
-        clients.retain(|_, client| match client.sender.try_send(frame.clone()) {
-            Ok(()) => true,
-            Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => false,
+        let mut queued = false;
+        map.retain(|_, client| {
+            if client.sender.try_send(frame.clone()).is_ok() {
+                queued = true;
+                true
+            } else {
+                false
+            }
         });
+        if queued {
+            clients.work.notify_one();
+        }
     }
 
-    fn broadcast_loop(receiver: Receiver<PiBroadcast>, clients: Clients, stop: Arc<AtomicBool>) {
+    fn broadcast_loop(receiver: Receiver<PiBroadcast>, clients: Arc<Clients>, stop: Arc<AtomicBool>) {
         while !stop.load(Ordering::Acquire) {
             let first = match receiver.recv_timeout(Duration::from_millis(100)) {
                 Ok(event) => event,
@@ -608,22 +661,18 @@ mod desktop {
             .expect("static HTTP response")
     }
 
-    fn is_websocket_request(stream: &TcpStream) -> std::io::Result<bool> {
-        let mut buffer = [0_u8; 2048];
-        let read = stream.peek(&mut buffer)?;
-        let request = String::from_utf8_lossy(&buffer[..read]).to_ascii_lowercase();
-        Ok(request.contains("upgrade: websocket"))
+    fn looks_like_websocket(head: &[u8]) -> bool {
+        String::from_utf8_lossy(head).to_ascii_lowercase().contains("upgrade: websocket")
     }
 
-    fn serve_http(mut stream: TcpStream) {
-        let mut request = [0_u8; 2048];
-        let _ = stream.read(&mut request);
+    /// The plain-HTTP answer, kept because `curl host:port` is how a person
+    /// checks whether the Host is listening at all.
+    fn status_response() -> String {
         let body = json!({"service":"Orbit Host","protocol":PROTOCOL,"running":true}).to_string();
-        let response = format!(
+        format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             body.len(), body
-        );
-        let _ = stream.write_all(response.as_bytes());
+        )
     }
 
     fn response(request_id: Option<&str>, result: Result<Value, String>) -> String {
@@ -639,28 +688,26 @@ mod desktop {
         }
     }
 
-    fn run_operation(
+    async fn run_operation(
         app: &AppHandle,
         operation: super::RemoteHostOperation,
     ) -> Result<Value, String> {
-        tauri::async_runtime::block_on(async {
-            match operation {
-                super::RemoteHostOperation::SessionList { cwd } => {
-                    crate::bridge::list_sessions(app.clone(), cwd).await
-                }
-                super::RemoteHostOperation::ProjectFiles { cwd } => {
-                    crate::bridge::list_project_files(cwd).await
-                }
-                super::RemoteHostOperation::SessionTurnDurations { session_path } => {
-                    crate::bridge::session_turn_durations(app.clone(), session_path).await
-                }
-                super::RemoteHostOperation::SessionDelete { session_path } => {
-                    crate::bridge::delete_session(session_path)
-                        .await
-                        .map(|()| Value::Null)
-                }
+        match operation {
+            super::RemoteHostOperation::SessionList { cwd } => {
+                crate::bridge::list_sessions(app.clone(), cwd).await
             }
-        })
+            super::RemoteHostOperation::ProjectFiles { cwd } => {
+                crate::bridge::list_project_files(cwd).await
+            }
+            super::RemoteHostOperation::SessionTurnDurations { session_path } => {
+                crate::bridge::session_turn_durations(app.clone(), session_path).await
+            }
+            super::RemoteHostOperation::SessionDelete { session_path } => {
+                crate::bridge::delete_session(session_path)
+                    .await
+                    .map(|()| Value::Null)
+            }
+        }
     }
 
     /// Handle one client message.
@@ -669,7 +716,7 @@ mod desktop {
     /// micro-optimisation: input events arrive continuously while a finger is
     /// on the screen, and a reply for each one would consume the same socket
     /// that the acknowledge would travel on.
-    fn handle_request(app: &AppHandle, raw: &str, session: &Session) -> Option<String> {
+    async fn handle_request(app: &AppHandle, raw: &str, session: &Session) -> Option<String> {
         let request = match serde_json::from_str::<Value>(raw) {
             Ok(request) => request,
             Err(_) => {
@@ -693,10 +740,10 @@ mod desktop {
             }
             return Some(response(request_id.as_deref(), result));
         }
-        Some(handle_host_request(app, request, session, request_id.as_deref()))
+        Some(handle_host_request(app, request, session, request_id.as_deref()).await)
     }
 
-    fn handle_host_request(
+    async fn handle_host_request(
         app: &AppHandle,
         request: Value,
         session: &Session,
@@ -726,10 +773,11 @@ mod desktop {
                         serde_json::from_value::<super::RemoteHostOperation>(value)
                             .map_err(|_| "host.operation 无效".to_string())
                     });
-                response(
-                    request_id,
-                    operation.and_then(|operation| run_operation(app, operation)),
-                )
+                let result = match operation {
+                    Ok(operation) => run_operation(app, operation).await,
+                    Err(error) => Err(error),
+                };
+                response(request_id, result)
             }
             Some("connection.attach") => {
                 let Some(connection_id) = request
@@ -787,49 +835,73 @@ mod desktop {
         }
     }
 
-    fn client_loop(
+    /// Serve one LAN connection.
+    ///
+    /// Async so the socket can be read and written at the same time. The
+    /// blocking version had to poll `read` on a timer to notice outbound work,
+    /// which put a floor under the latency of *everything* the phone receives —
+    /// frames, thinking tokens, and input replies alike. Here each source of
+    /// work is an event: a queued message, an incoming frame, a published screen
+    /// frame, or the shutdown flag.
+    async fn client_loop(
         app: AppHandle,
         stream: TcpStream,
         token: String,
-        clients: Clients,
+        clients: Arc<Clients>,
         stop: Arc<AtomicBool>,
         host_id: String,
         encryption_key: Arc<[u8; 32]>,
     ) {
-        if is_websocket_request(&stream).ok() != Some(true) {
-            serve_http(stream);
-            return;
+        // Peek at the request without consuming it: a plain HTTP request gets
+        // the status page, and a real upgrade is handed to the library's
+        // handshake with its bytes still buffered. `BufStream` is what makes
+        // that possible — it implements both directions.
+        let mut stream = BufStream::new(stream);
+        match stream.fill_buf().await {
+            Ok(head) if !looks_like_websocket(head) => {
+                let response = status_response();
+                let socket = stream.get_mut();
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.flush().await;
+                return;
+            }
+            Ok(_) => {}
+            Err(_) => return,
         }
+
         let expected = token;
         let encrypted_request = Arc::new(AtomicBool::new(false));
         let encrypted_request_for_handshake = encrypted_request.clone();
-        let Ok(mut socket) = accept_hdr(
+        let Ok(socket) = accept_hdr_async(
             stream,
-            move |request: &tungstenite::handshake::server::Request, response| {
+            move |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+                  response| {
                 if authorized(request.uri(), &expected) {
-                    encrypted_request_for_handshake.store(e2ee_requested(request.uri()), Ordering::Release);
+                    encrypted_request_for_handshake
+                        .store(e2ee_requested(request.uri()), Ordering::Release);
                     Ok(response)
                 } else {
                     Err(rejected())
                 }
             },
-        ) else {
+        )
+        .await
+        else {
             return;
         };
-        let _ = socket
-            .get_mut()
-            .set_read_timeout(Some(SOCKET_POLL_INTERVAL));
+        let mut socket = socket;
         let encrypted = encrypted_request.load(Ordering::Acquire);
         let hello = json!({"type":"host.hello","protocol":PROTOCOL,"hostId":host_id,"serverTime":unix_millis(),"theme":app.state::<RemoteHost>().theme(),"machineName":app.state::<RemoteHost>().info().map(|info| info.machine_name).unwrap_or_else(|| "Orbit Desktop".into())}).to_string();
         let hello = if encrypted { encrypt_relay_frame(&hello, &encryption_key).unwrap_or(hello) } else { hello };
-        let _ = socket.send(Message::text(hello));
+        let _ = socket.send(Message::text(hello)).await;
+
         let client_id = Uuid::new_v4();
-        let (outbound, incoming) = mpsc::sync_channel::<String>(CLIENT_QUEUE_CAPACITY);
+        let (outbound, mut incoming) = tokio::sync::mpsc::channel::<String>(CLIENT_QUEUE_CAPACITY);
         let session = Session {
             attached: Arc::new(Mutex::new(HashSet::new())),
             screen: ScreenSubscription::new(app.state::<ScreenHost>().bus()),
         };
-        if let Ok(mut connected) = clients.lock() {
+        if let Ok(mut connected) = clients.map.lock() {
             connected.insert(
                 client_id,
                 Client {
@@ -839,72 +911,99 @@ mod desktop {
                 },
             );
         }
+
         let screen_key = encrypted.then_some(&*encryption_key);
-        while !stop.load(Ordering::Acquire) {
-            while let Ok(frame) = incoming.try_recv() {
-                let frame = if encrypted { encrypt_relay_frame(&frame, &encryption_key).unwrap_or(frame) } else { frame };
-                if socket.send(Message::text(frame)).is_err() {
-                    break;
-                }
-            }
-            if !send_screen_frame(&mut socket, &session.screen, screen_key) {
-                break;
-            }
-            match socket.read() {
-                Ok(Message::Text(text)) => {
-                    let text = if encrypted {
-                        match decrypt_relay_frame(&text, &encryption_key) {
-                            Ok(plain) => plain,
-                            Err(_) => break,
-                        }
-                    } else {
-                        text.to_string()
-                    };
-                    let Some(response) = handle_request(&app, &text, &session) else {
-                        continue;
-                    };
-                    let response = if encrypted { encrypt_relay_frame(&response, &encryption_key).unwrap_or(response) } else { response };
-                    if socket
-                        .send(Message::text(response))
-                        .is_err()
-                    {
+        // The receiver is owned here, and the bus signals it on every publish,
+        // so a frame never waits for a timer to be noticed.
+        let mut screen_wake = session.screen.take_wake();
+        let mut shutdown = tokio::time::interval(SHUTDOWN_CHECK_INTERVAL);
+        shutdown.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        loop {
+            tokio::select! {
+                // Control traffic first: a queued reply must not wait behind a
+                // screen frame that is still going out.
+                biased;
+                Some(frame) = incoming.recv() => {
+                    let frame = if encrypted { encrypt_relay_frame(&frame, &encryption_key).unwrap_or(frame) } else { frame };
+                    if socket.send(Message::text(frame)).await.is_err() {
                         break;
                     }
                 }
-                Ok(Message::Close(_)) => break,
-                Ok(_) => {}
-                Err(tungstenite::Error::Io(error))
-                    if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
-                Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {
-                    break
+                Some(message) = socket.next() => {
+                    match message {
+                        Ok(Message::Text(text)) => {
+                            let text = if encrypted {
+                                match decrypt_relay_frame(&text, &encryption_key) {
+                                    Ok(plain) => plain,
+                                    Err(_) => break,
+                                }
+                            } else {
+                                text.to_string()
+                            };
+                            let Some(response) = handle_request(&app, &text, &session).await else {
+                                continue;
+                            };
+                            let response = if encrypted { encrypt_relay_frame(&response, &encryption_key).unwrap_or(response) } else { response };
+                            if socket.send(Message::text(response)).await.is_err() {
+                                break;
+                            }
+                        }
+                        Ok(Message::Close(_)) => break,
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
                 }
-                Err(_) => break,
+                Some(()) = wake(&mut screen_wake) => {
+                    if !send_screen_frame(&mut socket, &session.screen, screen_key).await {
+                        break;
+                    }
+                }
+                _ = shutdown.tick() => {
+                    if stop.load(Ordering::Acquire) {
+                        break;
+                    }
+                }
             }
         }
-        if let Ok(mut connected) = clients.lock() {
+
+        if let Ok(mut connected) = clients.map.lock() {
             connected.remove(&client_id);
         }
     }
 
-    fn set_relay_timeout(stream: &mut openssl::ssl::SslStream<TcpStream>) {
-        // Keep the relay loop responsive to outbound Pi events. A one-second
-        // blocking read made every phone update appear noticeably delayed.
-        let timeout = Some(SOCKET_POLL_INTERVAL);
-        let _ = stream.get_ref().set_read_timeout(timeout);
-        let _ = stream.get_ref().set_write_timeout(timeout);
+    /// Await the screen wake signal, or never resolve when there is none.
+    ///
+    /// (`select!` needs a future for every branch, and a subscription whose
+    /// receiver was already taken has nothing to wait on.)
+    async fn wake(receiver: &mut Option<tokio::sync::mpsc::Receiver<()>>) -> Option<()> {
+        match receiver {
+            Some(receiver) => receiver.recv().await,
+            // A subscription whose receiver was already taken has nothing to
+            // wait on, so this branch simply never fires.
+            None => std::future::pending().await,
+        }
     }
 
-    /// The relay connection deliberately uses OpenSSL instead of rustls:
-    /// some domestic ISP middleboxes reset TLS handshakes from less common
-    /// client fingerprints, and the OpenSSL fingerprint is reliably allowed.
-    fn relay_connect(
+    /// Open a WebSocket to the relay.
+    ///
+    /// The TLS stays OpenSSL on purpose: some domestic ISP middleboxes reset
+    /// handshakes from less common client fingerprints, and OpenSSL's is
+    /// reliably allowed. That is also why this goes through
+    /// [`client_async`](tokio_tungstenite::client_async) with an OpenSSL stream
+    /// rather than the crate's own TLS connectors — those are rustls or
+    /// Security.framework, which would change the fingerprint this exists to
+    /// keep.
+    ///
+    /// The upgrade request itself is now the library's, which is a correctness
+    /// gain over the hand-written one it replaces.
+    async fn relay_connect(
         relay_url: &str,
         host_id: &str,
         token: &str,
-    ) -> Result<WebSocket<openssl::ssl::SslStream<TcpStream>>, String> {
+    ) -> Result<WebSocketStream<tokio_openssl::SslStream<TcpStream>>, String> {
         use openssl::ssl::{SslConnector, SslMethod};
-        use std::io::{Read as _, Write as _};
-        let uri = tungstenite::http::Uri::try_from(relay_url)
+        let uri = tokio_tungstenite::tungstenite::http::Uri::try_from(relay_url)
             .map_err(|_| "Relay 地址无效".to_string())?;
         let host = uri
             .host()
@@ -916,61 +1015,40 @@ mod desktop {
             uri.path().trim_end_matches('/')
         );
         let tcp = TcpStream::connect((host.as_str(), port))
+            .await
             .map_err(|error| format!("连接 Relay 失败：{error}"))?;
         tcp.set_nodelay(true).ok();
+
         let mut builder =
             SslConnector::builder(SslMethod::tls()).map_err(|error| error.to_string())?;
         // Vendored OpenSSL ships no trust store; load the system roots.
         if let Some(cert_file) = openssl_probe::probe().cert_file {
             if let Ok(pem) = std::fs::read(cert_file) {
-                for cert in openssl::x509::X509::stack_from_pem(&pem)
-                    .into_iter()
-                    .flatten()
-                {
+                for cert in openssl::x509::X509::stack_from_pem(&pem).into_iter().flatten() {
                     let _ = builder.cert_store_mut().add_cert(cert);
                 }
             }
         }
-        let connector = builder.build();
-        let mut tls = connector
-            .connect(&host, tcp)
+        let ssl = builder
+            .build()
+            .configure()
+            .map_err(|error| error.to_string())?
+            .into_ssl(&host)
+            .map_err(|error| error.to_string())?;
+        let mut tls = tokio_openssl::SslStream::new(ssl, tcp).map_err(|error| error.to_string())?;
+        Pin::new(&mut tls)
+            .connect()
+            .await
             .map_err(|error| format!("Relay TLS 握手失败：{error}"))?;
-        let nonce = *uuid::Uuid::new_v4().as_bytes();
-        let key = base64::engine::general_purpose::STANDARD.encode(nonce);
-        let request = format!(
-            "GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\nUser-Agent: Orbit\r\n\r\n"
-        );
-        tls.write_all(request.as_bytes())
-            .map_err(|error| format!("Relay 升级请求发送失败：{error}"))?;
-        let mut buffer = Vec::new();
-        let mut chunk = [0_u8; 1024];
-        loop {
-            let read = tls
-                .read(&mut chunk)
-                .map_err(|error| format!("Relay 升级响应读取失败：{error}"))?;
-            if read == 0 {
-                return Err("Relay 关闭了连接".into());
-            }
-            buffer.extend_from_slice(&chunk[..read]);
-            if buffer.windows(4).rposition(|w| w == b"\r\n\r\n").is_some() {
-                break;
-            }
-            if buffer.len() > 16 * 1024 {
-                return Err("Relay 升级响应异常".into());
-            }
-        }
-        let head = String::from_utf8_lossy(&buffer);
-        if !head.starts_with("HTTP/1.1 101") && !head.starts_with("HTTP/1.0 101") {
-            return Err(format!(
-                "Relay 拒绝了连接（{}）",
-                head.lines().next().unwrap_or("未知响应")
-            ));
-        }
-        Ok(WebSocket::from_raw_socket(
-            tls,
-            tungstenite::protocol::Role::Client,
-            None,
-        ))
+
+        // `wss://` so the library builds the request; the TLS is already up.
+        let request = format!("wss://{host}:{port}{path}")
+            .into_client_request()
+            .map_err(|error| format!("Relay 升级请求无效：{error}"))?;
+        let (socket, _response) = client_async(request, tls)
+            .await
+            .map_err(|error| format!("Relay 升级失败：{error}"))?;
+        Ok(socket)
     }
 
     fn relay_envelope(client_id: &str, data: String) -> Message {
@@ -1013,13 +1091,13 @@ mod desktop {
         encryption_key: &[u8; 32],
     ) -> Option<Message> {
         if let Some(previous) = relay_clients.remove(client_id) {
-            clients.lock().ok()?.remove(&previous.local_id);
+            clients.map.lock().ok()?.remove(&previous.local_id);
         }
-        let (outbound, incoming) = mpsc::sync_channel::<String>(CLIENT_QUEUE_CAPACITY);
+        let (outbound, incoming) = tokio::sync::mpsc::channel::<String>(CLIENT_QUEUE_CAPACITY);
         let attached = Arc::new(Mutex::new(HashSet::new()));
         let local_id = Uuid::new_v4();
         let screen = ScreenSubscription::new(app.state::<ScreenHost>().bus());
-        clients.lock().ok()?.insert(
+        clients.map.lock().ok()?.insert(
             local_id,
             Client {
                 sender: outbound,
@@ -1051,7 +1129,7 @@ mod desktop {
     }
 
     fn clear_relay_clients(clients: &Clients, relay_clients: &mut HashMap<String, RelayClient>) {
-        if let Ok(mut connected) = clients.lock() {
+        if let Ok(mut connected) = clients.map.lock() {
             for relay_client in relay_clients.values() {
                 connected.remove(&relay_client.local_id);
             }
@@ -1059,27 +1137,30 @@ mod desktop {
         relay_clients.clear();
     }
 
-    fn relay_loop(
+    /// Keep the host registered with the relay and serve its clients.
+    ///
+    /// Async for the same reason as the LAN loop: reading and writing the same
+    /// socket at once means neither has to wait for a timer to notice the other.
+    async fn relay_loop(
         app: AppHandle,
         relay_url: String,
         host_id: String,
         host_key: String,
         client_token: String,
         encryption_key: Arc<[u8; 32]>,
-        clients: Clients,
+        clients: Arc<Clients>,
         relay_connected: Arc<AtomicBool>,
         stop: Arc<AtomicBool>,
     ) {
         while !stop.load(Ordering::Acquire) {
-            let mut socket = match relay_connect(&relay_url, &host_id, &client_token) {
+            let mut socket = match relay_connect(&relay_url, &host_id, &client_token).await {
                 Ok(socket) => socket,
                 Err(error) => {
                     log::warn!("Relay 连接失败：{error}");
-                    thread::sleep(Duration::from_secs(2));
+                    sleep_or_stop(&stop, Duration::from_secs(2)).await;
                     continue;
                 }
             };
-            set_relay_timeout(socket.get_mut());
             // Prove the desktop identity with the host key before the relay
             // accepts any client traffic for this host id.
             let register = json!({
@@ -1088,159 +1169,175 @@ mod desktop {
                 "clientToken": client_token,
             })
             .to_string();
-            if socket.send(Message::text(register)).is_err() {
-                let _ = socket.close(None);
-                thread::sleep(Duration::from_secs(2));
+            if socket.send(Message::text(register)).await.is_err() {
+                let _ = socket.close(None).await;
+                sleep_or_stop(&stop, Duration::from_secs(2)).await;
                 continue;
             }
             // Registration is confirmed asynchronously: the relay acks with
-            // {"relay":"registered"} which the read loop below ignores, and
-            // client traffic only arrives once registration succeeded.
+            // {"relay":"registered"} which the read arm below ignores, and client
+            // traffic only arrives once registration succeeded.
             relay_connected.store(true, Ordering::Release);
             let mut relay_clients = HashMap::<String, RelayClient>::new();
-            let mut last_ping = Instant::now();
-            while !stop.load(Ordering::Acquire) {
-                if last_ping.elapsed() >= Duration::from_secs(15) {
-                    if socket.send(Message::Ping(Vec::new().into())).is_err() {
-                        log::warn!("Relay 心跳发送失败，准备重连");
-                        break;
-                    }
-                    last_ping = Instant::now();
+            let mut heartbeat = tokio::time::interval(Duration::from_secs(15));
+            heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+            'connection: loop {
+                if stop.load(Ordering::Acquire) {
+                    break;
                 }
-                let mut outbound = relay_clients
-                    .iter()
-                    .flat_map(|(client_id, client)| {
-                        client
-                            .incoming
-                            .try_iter()
-                            .map(move |data| (client_id.clone(), data))
-                    })
-                    .collect::<Vec<_>>();
-                // Screen frames join the same encrypted relay envelope as
-                // every other payload, but they are pulled from the
-                // single-slot bus so a slow relay link skips frames rather
-                // than building a backlog.
-                outbound.extend(relay_clients.iter().filter_map(|(client_id, client)| {
-                    client
-                        .screen
-                        .poll()
-                        .map(|frame| (client_id.clone(), frame.envelope.to_string()))
-                }));
-                let mut failed = false;
+                // Outbound work: what each client has queued, plus the newest
+                // frame for each subscribed client. Built before the select so a
+                // client that appeared mid-iteration is not skipped.
+                let mut outbound: Vec<(String, String)> = Vec::new();
+                for (client_id, client) in relay_clients.iter_mut() {
+                    while let Ok(data) = client.incoming.try_recv() {
+                        outbound.push((client_id.clone(), data));
+                    }
+                    if let Some(frame) = client.screen.poll() {
+                        outbound.push((client_id.clone(), frame.envelope.to_string()));
+                    }
+                }
                 for (client_id, data) in outbound {
                     let frame = match encrypt_relay_frame(&data, &encryption_key) {
                         Ok(frame) => frame,
-                        Err(_) => {
-                            failed = true;
-                            break;
-                        }
+                        Err(_) => break 'connection,
                     };
-                    if socket.send(relay_envelope(&client_id, frame)).is_err() {
-                        failed = true;
-                        break;
+                    if socket.send(relay_envelope(&client_id, frame)).await.is_err() {
+                        break 'connection;
                     }
                 }
-                if failed {
-                    break;
-                }
-                match socket.read() {
-                    Ok(Message::Text(text)) => {
-                        let Ok(frame) = serde_json::from_str::<Value>(&text) else {
-                            continue;
-                        };
-                        let Some(client_id) = frame.get("clientId").and_then(Value::as_str) else {
-                            continue;
-                        };
-                        match frame.get("relay").and_then(Value::as_str) {
-                            Some("connect") => {
-                                if let Some(hello) = add_relay_client(
-                                    &app,
-                                    client_id,
-                                    &host_id,
-                                    &clients,
-                                    &mut relay_clients,
-                                    &encryption_key,
-                                ) {
-                                    if socket.send(hello).is_err() {
-                                        break;
-                                    }
-                                }
-                            }
-                            Some("disconnect") => {
-                                if let Some(client) = relay_clients.remove(client_id) {
-                                    clients
-                                        .lock()
-                                        .ok()
-                                        .map(|mut connected| connected.remove(&client.local_id));
-                                }
-                            }
-                            Some("frame") => {
-                                if !relay_clients.contains_key(client_id) {
-                                    if let Some(hello) = add_relay_client(
-                                        &app,
-                                        client_id,
-                                        &host_id,
-                                        &clients,
-                                        &mut relay_clients,
-                                        &encryption_key,
-                                    ) {
-                                        if socket.send(hello).is_err() {
-                                            break;
+
+                tokio::select! {
+                    // Outbound work queued by any thread, for any client. Without
+                    // this branch the drain above would only run when the relay
+                    // socket happened to wake the loop.
+                    () = clients.work.notified() => {}
+                    _ = heartbeat.tick() => {
+                        if socket.send(Message::Ping(Vec::new().into())).await.is_err() {
+                            log::warn!("Relay 心跳发送失败，准备重连");
+                            break 'connection;
+                        }
+                    }
+                    // Waiting on the socket is what makes the loop event driven;
+                    // the outbound drain above runs once per wakeup, and a queued
+                    // message wakes it because the sender is the one doing the
+                    // sending. When nothing is queued and nothing arrives, this
+                    // parks with no timer at all.
+                    message = socket.next() => {
+                        match message {
+                            Some(Ok(Message::Text(text))) => {
+                                let Ok(frame) = serde_json::from_str::<Value>(&text) else {
+                                    continue;
+                                };
+                                let Some(client_id) = frame.get("clientId").and_then(Value::as_str) else {
+                                    continue;
+                                };
+                                match frame.get("relay").and_then(Value::as_str) {
+                                    Some("connect") => {
+                                        if let Some(hello) = add_relay_client(
+                                            &app,
+                                            client_id,
+                                            &host_id,
+                                            &clients,
+                                            &mut relay_clients,
+                                            &encryption_key,
+                                        ) {
+                                            if socket.send(hello).await.is_err() {
+                                                break 'connection;
+                                            }
                                         }
                                     }
-                                }
-                                let Some(data) = frame.get("data").and_then(Value::as_str) else {
-                                    continue;
-                                };
-                                let Some(client) = relay_clients.get(client_id) else {
-                                    continue;
-                                };
-                                let plain = match decrypt_relay_frame(data, &encryption_key) {
-                                    Ok(plain) => plain,
-                                    Err(_) => continue,
-                                };
-                                let session = Session {
-                                    attached: client.attached.clone(),
-                                    screen: client.screen.clone(),
-                                };
-                                let Some(response) = handle_request(&app, &plain, &session) else {
-                                    continue;
-                                };
-                                let encrypted =
-                                    match encrypt_relay_frame(&response, &encryption_key) {
-                                        Ok(encrypted) => encrypted,
-                                        Err(_) => break,
-                                    };
-                                if socket.send(relay_envelope(client_id, encrypted)).is_err() {
-                                    break;
+                                    Some("disconnect") => {
+                                        if let Some(client) = relay_clients.remove(client_id) {
+                                            clients
+                                                .map
+                                                .lock()
+                                                .ok()
+                                                .map(|mut connected| connected.remove(&client.local_id));
+                                        }
+                                    }
+                                    Some("frame") => {
+                                        if !relay_clients.contains_key(client_id) {
+                                            if let Some(hello) = add_relay_client(
+                                                &app,
+                                                client_id,
+                                                &host_id,
+                                                &clients,
+                                                &mut relay_clients,
+                                                &encryption_key,
+                                            ) {
+                                                if socket.send(hello).await.is_err() {
+                                                    break 'connection;
+                                                }
+                                            }
+                                        }
+                                        let Some(data) = frame.get("data").and_then(Value::as_str) else {
+                                            continue;
+                                        };
+                                        let Some(client) = relay_clients.get(client_id) else {
+                                            continue;
+                                        };
+                                        let plain = match decrypt_relay_frame(data, &encryption_key) {
+                                            Ok(plain) => plain,
+                                            Err(_) => continue,
+                                        };
+                                        let session = Session {
+                                            attached: client.attached.clone(),
+                                            screen: client.screen.clone(),
+                                        };
+                                        let Some(response) = handle_request(&app, &plain, &session).await else {
+                                            continue;
+                                        };
+                                        let encrypted =
+                                            match encrypt_relay_frame(&response, &encryption_key) {
+                                                Ok(encrypted) => encrypted,
+                                                Err(_) => break 'connection,
+                                            };
+                                        if socket.send(relay_envelope(client_id, encrypted)).await.is_err() {
+                                            break 'connection;
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
-                            _ => {}
+                            Some(Ok(Message::Ping(payload))) => {
+                                if socket.send(Message::Pong(payload)).await.is_err() {
+                                    break 'connection;
+                                }
+                            }
+                            Some(Ok(Message::Close(frame))) => {
+                                log::warn!("Relay 主动关闭 Host 连接：{frame:?}");
+                                break 'connection;
+                            }
+                            Some(Ok(_)) => {}
+                            Some(Err(error)) => {
+                                log::warn!("Relay Host 连接断开：{error}");
+                                break 'connection;
+                            }
+                            None => break 'connection,
                         }
                     }
-                    Ok(Message::Ping(payload)) => {
-                        if socket.send(Message::Pong(payload)).is_err() {
-                            break;
+                    _ = tokio::time::sleep(SHUTDOWN_CHECK_INTERVAL) => {
+                        if stop.load(Ordering::Acquire) {
+                            break 'connection;
                         }
-                    }
-                    Ok(Message::Close(frame)) => {
-                        log::warn!("Relay 主动关闭 Host 连接：{frame:?}");
-                        break;
-                    }
-                    Ok(_) => {}
-                    Err(tungstenite::Error::Io(error))
-                        if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
-                    Err(error) => {
-                        log::warn!("Relay Host 连接断开：{error}");
-                        break;
                     }
                 }
             }
             clear_relay_clients(&clients, &mut relay_clients);
             relay_connected.store(false, Ordering::Release);
             if !stop.load(Ordering::Acquire) {
-                thread::sleep(Duration::from_secs(1));
+                sleep_or_stop(&stop, Duration::from_secs(1)).await;
             }
+        }
+    }
+
+    /// Sleep, but wake early when the host is asked to stop.
+    async fn sleep_or_stop(stop: &AtomicBool, duration: Duration) {
+        let deadline = Instant::now() + duration;
+        while !stop.load(Ordering::Acquire) && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(100).min(duration)).await;
         }
     }
 
@@ -1318,7 +1415,7 @@ mod desktop {
             relay_connected: false,
         };
         let stop = Arc::new(AtomicBool::new(false));
-        let clients = Arc::new(Mutex::new(HashMap::new()));
+        let clients = Arc::new(Clients::new());
         let (events, event_receiver) = mpsc::sync_channel(EVENT_QUEUE_CAPACITY);
         let broadcast_clients = clients.clone();
         let broadcast_stop = stop.clone();
@@ -1338,25 +1435,36 @@ mod desktop {
             events,
         });
         drop(slot);
-        thread::spawn(move || {
-            while !accept_stop.load(Ordering::Acquire) {
-                match listener.accept() {
-                    Ok((stream, _)) => {
-                        let app = accept_app.clone();
-                        let token = accept_token.clone();
-                        let clients = accept_clients.clone();
-                        let stop = accept_stop.clone();
-                        let host_id = accept_host_id.clone();
-                        let encryption_key = accept_key.clone();
-                        thread::spawn(move || {
-                            client_loop(app, stream, token, clients, stop, host_id, encryption_key)
-                        });
-                    }
-                    Err(error) if error.kind() == ErrorKind::WouldBlock => {
-                        thread::sleep(SOCKET_POLL_INTERVAL)
-                    }
-                    Err(_) => thread::sleep(SOCKET_POLL_INTERVAL),
+        tauri::async_runtime::spawn(async move {
+            let listener = match tokio::net::TcpListener::from_std(listener) {
+                Ok(listener) => listener,
+                Err(error) => {
+                    log::warn!("Orbit Host 监听器无法交给异步运行时：{error}");
+                    return;
                 }
+            };
+            loop {
+                if accept_stop.load(Ordering::Acquire) {
+                    return;
+                }
+                // `select!` with the shutdown flag rather than a polling accept:
+                // this loop has no work to poll for, it waits.
+                let accepted = tokio::select! {
+                    accepted = listener.accept() => accepted,
+                    _ = tokio::time::sleep(SHUTDOWN_CHECK_INTERVAL) => continue,
+                };
+                let Ok((stream, _)) = accepted else {
+                    continue;
+                };
+                let app = accept_app.clone();
+                let token = accept_token.clone();
+                let clients = accept_clients.clone();
+                let stop = accept_stop.clone();
+                let host_id = accept_host_id.clone();
+                let encryption_key = accept_key.clone();
+                tauri::async_runtime::spawn(async move {
+                    client_loop(app, stream, token, clients, stop, host_id, encryption_key).await
+                });
             }
         });
         Ok(info)
@@ -1405,19 +1513,17 @@ mod desktop {
         };
         let relay_url = settings.relay_url;
         let host_key = settings.host_key;
-        thread::spawn(move || {
-            relay_loop(
-                app,
-                relay_url,
-                host_id,
-                host_key,
-                token,
-                Arc::new(key_bytes),
-                clients,
-                relay_connected,
-                stop,
-            );
-        });
+        tauri::async_runtime::spawn(relay_loop(
+            app,
+            relay_url,
+            host_id,
+            host_key,
+            token,
+            Arc::new(key_bytes),
+            clients,
+            relay_connected,
+            stop,
+        ));
         let mut info = state.info().ok_or_else(|| "Orbit Host 启动失败".to_string())?;
         info.pairing_uri = pairing_uri;
         Ok(info)
@@ -1456,7 +1562,7 @@ mod desktop {
             relay_connected: false,
         };
         let stop = Arc::new(AtomicBool::new(false));
-        let clients = Arc::new(Mutex::new(HashMap::new()));
+        let clients = Arc::new(Clients::new());
         let (events, event_receiver) = mpsc::sync_channel(EVENT_QUEUE_CAPACITY);
         let broadcast_clients = clients.clone();
         let broadcast_stop = stop.clone();
@@ -1482,7 +1588,7 @@ mod desktop {
             events,
         });
         drop(slot);
-        thread::spawn(move || {
+        {
             let (
                 app,
                 relay_url,
@@ -1494,7 +1600,7 @@ mod desktop {
                 relay_connected,
                 stop,
             ) = relay_args;
-            relay_loop(
+            tauri::async_runtime::spawn(relay_loop(
                 app,
                 relay_url,
                 host_id,
@@ -1504,8 +1610,8 @@ mod desktop {
                 clients,
                 relay_connected,
                 stop,
-            );
-        });
+            ));
+        }
         Ok(info)
     }
 
@@ -1629,8 +1735,9 @@ mod desktop {
 
         #[test]
         fn theme_broadcast_reaches_clients_before_project_attachment() {
-            let (sender, receiver) = mpsc::sync_channel(1);
-            let clients = Arc::new(Mutex::new(HashMap::from([(
+            let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+            let clients = Arc::new(Clients::new());
+            clients.map.lock().expect("map").insert(
                 Uuid::new_v4(),
                 Client {
                     sender,
@@ -1639,7 +1746,7 @@ mod desktop {
                         crate::screen::ScreenBus::default(),
                     )),
                 },
-            )])));
+            );
             broadcast_all(
                 &clients,
                 json!({"type":"host.theme","theme":"dark"}).to_string(),

@@ -253,6 +253,12 @@ pub struct EncodedFrame {
     pub envelope: Arc<str>,
 }
 
+/// One subscriber's delivery state.
+struct Entry {
+    cursor: u64,
+    wake: tokio::sync::mpsc::Sender<()>,
+}
+
 /// Single-slot fan-out for encoded frames.
 pub struct ScreenBus {
     latest: Mutex<Option<Arc<EncodedFrame>>>,
@@ -268,17 +274,24 @@ pub struct ScreenBus {
     /// Set when a subscriber skipped frames, meaning its decoder lost the
     /// reference chain and needs a fresh keyframe.
     resync: AtomicBool,
-    /// Per-subscriber delivered sequence, keyed by subscription id.
+    /// Per-subscriber state, keyed by subscription id.
     ///
-    /// This exists to compute [`ScreenBus::delivered`], the *slowest*
-    /// subscriber's position. That single number is what keeps an inter-frame
-    /// codec legal: the pipeline publishes only while every subscriber has
-    /// consumed the previous frame, so a frame is never produced that the
-    /// transport would have to drop. A counter would be enough for one
-    /// subscriber, but a minimum over a handful of entries costs nothing and
-    /// stays correct when two devices watch at once.
-    cursors: Mutex<std::collections::HashMap<u64, u64>>,
-    /// Cached minimum of `cursors`.
+    /// Two facts live here, and both exist for the same reason — that the frame
+    /// path must not poll:
+    ///
+    /// * the **cursor**: where this subscriber has been delivered to, whose
+    ///   minimum is [`ScreenBus::delivered`]. That single number is what keeps
+    ///   an inter-frame codec legal: the pipeline publishes only while every
+    ///   subscriber has consumed the previous frame, so a frame is never
+    ///   produced that the transport would have to drop.
+    /// * the **wake channel**: how the connection loop learns a frame exists.
+    ///   Without it a loop can only ask on a timer, and a timer is a latency
+    ///   floor under every frame. Capacity one plus `try_send` is the right
+    ///   shape for a single-slot bus: the signal is a *fact* ("something is
+    ///   pending"), not a queue, so signalling while one is already pending is a
+    ///   no-op rather than a backlog.
+    entries: Mutex<std::collections::HashMap<u64, Entry>>,
+    /// Cached minimum of the cursors.
     delivered: AtomicU64,
     next_subscription_id: AtomicU64,
 }
@@ -292,7 +305,7 @@ impl Default for ScreenBus {
             published: AtomicU64::new(0),
             refresh: AtomicBool::new(false),
             resync: AtomicBool::new(false),
-            cursors: Mutex::new(std::collections::HashMap::new()),
+            entries: Mutex::new(std::collections::HashMap::new()),
             delivered: AtomicU64::new(0),
             next_subscription_id: AtomicU64::new(1),
         }
@@ -320,6 +333,13 @@ impl ScreenBus {
         // so a reader that observes a new version cannot read a stale frame.
         self.version.store(seq, Ordering::Release);
         self.published.fetch_add(1, Ordering::AcqRel);
+        // Wake every subscriber's sender. A full channel already means "there is
+        // something to send", so the failure case needs no handling.
+        if let Ok(entries) = self.entries.lock() {
+            for entry in entries.values() {
+                let _ = entry.wake.try_send(());
+            }
+        }
     }
 
     fn clear(&self) {
@@ -356,13 +376,30 @@ impl ScreenBus {
         self.delivered.load(Ordering::Acquire)
     }
 
+    /// Register a subscriber and its wake channel.
+    fn register(&self, subscription: u64, cursor: u64, wake: tokio::sync::mpsc::Sender<()>) {
+        let minimum = match self.entries.lock() {
+            Ok(mut entries) => {
+                entries.insert(subscription, Entry { cursor, wake });
+                entries.values().map(|entry| entry.cursor).min().unwrap_or(cursor)
+            }
+            Err(_) => cursor,
+        };
+        self.delivered.store(minimum, Ordering::Release);
+    }
+
     /// Record where one subscription has been delivered to, and refresh the
     /// cached minimum.
     fn ack(&self, subscription: u64, seq: u64) {
-        let minimum = match self.cursors.lock() {
-            Ok(mut cursors) => {
-                cursors.insert(subscription, seq);
-                cursors.values().copied().min().unwrap_or(seq)
+        let minimum = match self.entries.lock() {
+            Ok(mut entries) => {
+                match entries.get_mut(&subscription) {
+                    Some(entry) => entry.cursor = seq,
+                    // A delivery from a subscription that already unregistered
+                    // (a disconnect racing a final frame) is not an error.
+                    None => return,
+                }
+                entries.values().map(|entry| entry.cursor).min().unwrap_or(seq)
             }
             Err(_) => seq,
         };
@@ -370,12 +407,12 @@ impl ScreenBus {
     }
 
     fn forget(&self, subscription: u64) {
-        let minimum = match self.cursors.lock() {
-            Ok(mut cursors) => {
-                cursors.remove(&subscription);
+        let minimum = match self.entries.lock() {
+            Ok(mut entries) => {
+                entries.remove(&subscription);
                 // With no subscribers left the minimum is the newest frame:
                 // there is nothing to stay behind.
-                cursors.values().copied().min().unwrap_or(u64::MAX)
+                entries.values().map(|entry| entry.cursor).min().unwrap_or(u64::MAX)
             }
             Err(_) => u64::MAX,
         };
@@ -411,18 +448,33 @@ pub struct ScreenSubscription {
     id: u64,
     active: AtomicBool,
     cursor: AtomicU64,
+    wake: tokio::sync::mpsc::Sender<()>,
+    /// Handed to the connection loop, which is the only thing that waits on it.
+    /// `None` once taken.
+    receiver: Mutex<Option<tokio::sync::mpsc::Receiver<()>>>,
 }
 
 impl ScreenSubscription {
     #[must_use]
     pub fn new(bus: Arc<ScreenBus>) -> Arc<Self> {
         let id = bus.next_subscription_id.fetch_add(1, Ordering::AcqRel);
+        let (wake, receiver) = tokio::sync::mpsc::channel(1);
         Arc::new(Self {
             bus,
             id,
             active: AtomicBool::new(false),
             cursor: AtomicU64::new(0),
+            wake,
+            receiver: Mutex::new(Some(receiver)),
         })
+    }
+
+    /// Take the wake receiver, for the connection loop to wait on.
+    ///
+    /// Ownership moves rather than being shared because `recv` needs `&mut`, and
+    /// exactly one loop ever waits on one subscription.
+    pub fn take_wake(&self) -> Option<tokio::sync::mpsc::Receiver<()>> {
+        self.receiver.lock().ok().and_then(|mut slot| slot.take())
     }
 
     #[must_use]
@@ -435,11 +487,12 @@ impl ScreenSubscription {
         let version = self.bus.version.load(Ordering::Acquire);
         self.cursor.store(version, Ordering::Release);
         self.bus.refresh.store(true, Ordering::Release);
-        if !self.active.swap(true, Ordering::AcqRel) {
-            self.bus.subscribers.fetch_add(1, Ordering::AcqRel);
+        if self.active.swap(true, Ordering::AcqRel) {
+            self.bus.ack(self.id, version);
+            return;
         }
-        // Either way, this is where the subscription stands right now.
-        self.bus.ack(self.id, version);
+        self.bus.subscribers.fetch_add(1, Ordering::AcqRel);
+        self.bus.register(self.id, version, self.wake.clone());
     }
 
     pub fn deactivate(&self) {
@@ -540,7 +593,6 @@ impl Stats {
 }
 
 struct Pipeline {
-    app: Option<AppHandle>,
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     bus: Arc<ScreenBus>,
@@ -919,7 +971,6 @@ fn start_pipeline(
     match opened.recv_timeout(OPEN_TIMEOUT) {
         Ok(Ok(_codec)) => Ok((
             Pipeline {
-                app,
                 stop,
                 handle: Some(handle),
                 bus,
