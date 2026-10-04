@@ -180,19 +180,17 @@ struct Resolved {
     show_cursor: bool,
     codec: Codec,
     source: Source,
-    /// Derived frame size. Part of the identity because a change here requires
-    /// a new capture session *and* a new encoder.
-    frame_width: u32,
-    frame_height: u32,
 }
 
-impl Resolved {
-    fn with_frame_size(mut self, width: u32, height: u32) -> Self {
-        self.frame_width = width;
-        self.frame_height = height;
-        self
-    }
-}
+// The captured frame size is deliberately *not* part of this type.
+//
+// `ensure` decides whether a request needs the capture session rebuilt by
+// comparing the running pipeline's `Resolved` against a fresh `settings.resolve()`.
+// The frame size is derived from the target's geometry at start time, so keeping
+// it here made that comparison false forever — and every `screen.start` tore the
+// session down and built a new one. The symptom was a preview that went black
+// and stayed black whenever the client re-sent its settings, which the decoder
+// watchdog does by design.
 
 impl ScreenSettings {
     fn resolve(&self) -> Resolved {
@@ -215,8 +213,6 @@ impl ScreenSettings {
             // operated app stays one setting away.
             source: Source::parse(self.source.as_deref().unwrap_or("display"))
                 .unwrap_or(Source::Display),
-            frame_width: 0,
-            frame_height: 0,
         }
     }
 
@@ -635,6 +631,9 @@ impl Stats {
 }
 
 struct Pipeline {
+    /// The size being captured. Derived, so it lives here rather than on
+    /// `Resolved` — see the note on that type.
+    frame_size: (u32, u32),
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     bus: Arc<ScreenBus>,
@@ -801,6 +800,7 @@ impl ScreenHost {
             &pipeline.bus,
             &pipeline.stats,
             &pipeline.resolved,
+            pipeline.frame_size,
             &pipeline.display,
             &pipeline.displays,
         )
@@ -817,6 +817,7 @@ fn status_of(
     bus: &ScreenBus,
     stats: &Stats,
     resolved: &Resolved,
+    frame_size: (u32, u32),
     display: &DisplayInfo,
     displays: &[DisplayInfo],
 ) -> ScreenStatus {
@@ -826,8 +827,8 @@ fn status_of(
         subscribers: bus.subscribers(),
         codec: stats.codec().unwrap_or(resolved.codec).as_str().into(),
         source: resolved.source.as_str().into(),
-        width: resolved.frame_width,
-        height: resolved.frame_height,
+        width: frame_size.0,
+        height: frame_size.1,
         fps: resolved.max_fps as f32,
         effective_fps: stats.effective_fps.load(Ordering::Acquire) as f64 / 1000.0,
         quality: resolved.quality,
@@ -943,10 +944,16 @@ fn resolve_target(resolved: &Resolved) -> Result<DisplayInfo, String> {
 }
 
 /// Open a capture session for a resolved target.
-fn open_target(
-    resolved: &Resolved,
-    target: &DisplayInfo,
-) -> Result<(Box<dyn Capture>, Resolved), String> {
+/// A capture session plus the size it resolved to.
+///
+/// Not a tuple: the size is the reason this type exists, and the two are
+/// meaningless apart.
+struct Opened {
+    capture: Box<dyn Capture>,
+    frame_size: (u32, u32),
+}
+
+fn open_target(resolved: &Resolved, target: &DisplayInfo) -> Result<Opened, String> {
     let (width, height) = capture_box(target, resolved.max_width);
     let request = CaptureRequest {
         display_id: (target.kind == capture::TargetKind::Display).then_some(target.id),
@@ -961,7 +968,10 @@ fn open_target(
         fps: resolved.max_fps.clamp(1, 120),
         shows_cursor: resolved.show_cursor,
     };
-    Ok((capture::open(request)?, resolved.with_frame_size(width, height)))
+    Ok(Opened {
+        capture: capture::open(request)?,
+        frame_size: (width, height),
+    })
 }
 
 /// Resolve the target display and start the pipeline thread.
@@ -980,12 +990,10 @@ fn start_pipeline(
         return Err(capture::permission_hint().to_string());
     }
     let display = resolve_target(&resolved)?;
-    let (width, height) = capture_box(&display, resolved.max_width);
-    let resolved = resolved.with_frame_size(width, height);
 
     let stats = Arc::new(Stats::default());
     let stop = Arc::new(AtomicBool::new(false));
-    let (ready, opened) = std::sync::mpsc::sync_channel::<Result<Codec, String>>(1);
+    let (ready, opened) = std::sync::mpsc::sync_channel::<Result<(Codec, (u32, u32)), String>>(1);
     let displays = capture::displays().unwrap_or_default();
     let handle = {
         let bus = bus.clone();
@@ -996,8 +1004,8 @@ fn start_pipeline(
         thread::Builder::new()
             .name("orbit-screen-pipeline".into())
             .spawn(move || {
-                let capture = match open_target(&resolved, &display) {
-                    Ok((capture, _)) => capture,
+                let Opened { capture, frame_size } = match open_target(&resolved, &display) {
+                    Ok(opened) => opened,
                     Err(error) => {
                         let _ = ready.try_send(Err(error));
                         return;
@@ -1005,8 +1013,8 @@ fn start_pipeline(
                 };
                 match Encoder::new(
                     resolved.codec,
-                    resolved.frame_width,
-                    resolved.frame_height,
+                    frame_size.0,
+                    frame_size.1,
                     resolved.quality,
                     governor_bitrate(resolved.quality),
                     resolved.max_fps,
@@ -1014,8 +1022,10 @@ fn start_pipeline(
                     Ok(encoder) => {
                         let codec = encoder.codec();
                         stats.set_codec(codec);
-                        let _ = ready.try_send(Ok(codec));
-                        pipeline_loop(capture, encoder, bus, stats, stop, resolved, display, app);
+                        let _ = ready.try_send(Ok((codec, frame_size)));
+                        pipeline_loop(
+                            capture, encoder, bus, stats, stop, resolved, frame_size, display, app,
+                        );
                     }
                     Err(error) => {
                         let mut capture = capture;
@@ -1027,8 +1037,9 @@ fn start_pipeline(
             .map_err(|error| format!("无法启动屏幕管线：{error}"))?
     };
     match opened.recv_timeout(OPEN_TIMEOUT) {
-        Ok(Ok(_codec)) => Ok((
+        Ok(Ok((_codec, frame_size))) => Ok((
             Pipeline {
+                frame_size,
                 stop,
                 handle: Some(handle),
                 bus,
@@ -1215,7 +1226,8 @@ fn pipeline_loop(
     bus: Arc<ScreenBus>,
     stats: Arc<Stats>,
     stop: Arc<AtomicBool>,
-    mut resolved: Resolved,
+    resolved: Resolved,
+    mut frame_size: (u32, u32),
     mut display: DisplayInfo,
     app: Option<AppHandle>,
 ) {
@@ -1258,10 +1270,10 @@ fn pipeline_loop(
             match capture::frontmost_app_target() {
                 Ok(Some(target)) if target.id != display.id => {
                     match open_target(&resolved, &target) {
-                        Ok((next, next_resolved)) => {
+                        Ok(next) => {
                             capture.stop();
-                            capture = next;
-                            resolved = next_resolved;
+                            capture = next.capture;
+                            frame_size = next.frame_size;
                             display = target;
                             // A different window is a different picture, not a
                             // continuation of the previous one.
@@ -1434,7 +1446,7 @@ fn pipeline_loop(
                 // The display list is a mount-time fact, not a per-second one,
                 // and the thread does not carry it; the settings page keeps the
                 // list it fetched at startup.
-                let status = status_of(&bus, &stats, &resolved, &display, &[]);
+                let status = status_of(&bus, &stats, &resolved, frame_size, &display, &[]);
                 if let Err(error) = app.emit(STATUS_EVENT, status) {
                     log::debug!("推送屏幕状态失败：{error}");
                 }
@@ -1726,6 +1738,25 @@ mod tests {
             assert_eq!(bus.subscribers(), 1);
         }
         assert_eq!(bus.subscribers(), 0);
+    }
+
+    #[test]
+    fn the_compared_type_carries_only_request_fields() {
+        // `ensure` compares the running pipeline's `Resolved` against a fresh
+        // `settings.resolve()` to decide whether capture must be rebuilt. A
+        // *derived* field here makes that comparison false forever, so every
+        // `screen.start` restarts the session — which is what turned the
+        // decoder's keyframe request into a black screen.
+        let source = include_str!("mod.rs");
+        let body = &source[source.find("struct Resolved {").expect("Resolved")..];
+        let body = &body[..body.find('}').expect("end of Resolved")];
+        let derived: Vec<&str> = body
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("pub "))
+            .filter_map(|line| line.split(':').next())
+            .filter(|field| !field.starts_with("max_") && !["display_id", "show_cursor", "codec", "source", "quality"].contains(field))
+            .collect();
+        assert!(derived.is_empty(), "derived fields in Resolved: {derived:?}");
     }
 
     #[test]
