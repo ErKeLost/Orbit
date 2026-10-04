@@ -36,6 +36,9 @@ const DURABLE_KEYS = [
   "orbit.screen.prefs.v1",
   "orbit.screen.prefs.v2",
   "orbit.screen.pip.v1",
+  // Which project was open. Losing it drops the user back to the picker while
+  // the pairing — which is mirrored — survives, which is an odd half-state.
+  "pi-gui.cwd",
   "pi-gui.workspaceMode",
   "pi-gui.sidebarOpen",
   "pi-gui.sidebarOpen.narrow",

@@ -168,7 +168,12 @@ pub fn activate_application(app_name: &str) -> Result<Value, String> {
         // AXRaise is window-local. AppKit's NSRunningApplication activation is
         // the process-level primitive that can move a background app in front
         // of the Orbit host.
-        unsafe {
+        // `ActivateIgnoringOtherApps` is deprecated on macOS 14+ where it has no
+        // effect, but it is still required to bring a background app forward on
+        // older systems, and Orbit supports both. Removing it would change
+        // behaviour on those systems, so it is kept deliberately.
+        #[allow(deprecated, reason = "needed before macOS 14; harmless after")]
+        {
             use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
             if let Some(application) = NSRunningApplication::runningApplicationWithProcessIdentifier(pid) {
                 let options = NSApplicationActivationOptions::ActivateAllWindows
@@ -268,7 +273,7 @@ pub fn dispatch_observed(
         &target.path,
         &window_role,
         window_name.as_deref(),
-        &d.role.to_snake_case(),
+        d.role.to_snake_case(),
         d.name.as_deref(),
         d.stable_id.as_deref(),
         &live_actions,
@@ -417,10 +422,9 @@ fn scroll_into_viewport(root: &App, path: &[usize]) -> Result<Value, String> {
             .data()
             .actions
             .iter()
-            .any(|action| action.to_string() == "scroll_down_by_page")
+            .any(|action| action == "scroll_down_by_page")
     };
-    let mut pages = 0;
-    for _ in 0..40 {
+    for pages in 0..40 {
         let chain = resolve_path(root, path)?;
         let target = chain.last().unwrap().data();
         let container = chain[..chain.len() - 1]
@@ -454,7 +458,8 @@ fn scroll_into_viewport(root: &App, path: &[usize]) -> Result<Value, String> {
             let ticks = if action == "scroll_down_by_page" { -5 } else { 5 };
             input.mouse().scroll(point, xa11y::ScrollDelta::new(0, ticks)).map_err(|e| e.to_string())?;
         }
-        pages += 1;
+        // The loop index already counts completed scrolls: the success branch
+        // returns before this point, so the value it reports is right.
         thread::sleep(Duration::from_millis(150));
     }
     Err("target did not enter the scroll viewport".into())

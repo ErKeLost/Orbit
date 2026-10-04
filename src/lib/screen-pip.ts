@@ -136,6 +136,10 @@ let safeAreaProbe: HTMLDivElement | null = null
  * draft. Measuring it beats the reserved-constant this used to be.
  */
 export function dockClearance(viewport: PipViewport): number {
+  // Guarded because this runs during render: a caller without a document (server
+  // rendering, a test) would otherwise crash on the way to a zero it can live
+  // with.
+  if (typeof document === "undefined") return 0
   const dock = document.querySelector(".composer-container")
   if (!dock) return 0
   const rect = dock.getBoundingClientRect()

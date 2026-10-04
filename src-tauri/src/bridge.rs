@@ -471,7 +471,7 @@ impl RuntimePaths {
 fn orbit_process_node(node: PathBuf, app: &AppHandle, version: &str) -> Result<PathBuf, String> {
     #[cfg(target_os = "macos")]
     {
-        return macos_orbit_agent(&node, app, version);
+        macos_orbit_agent(&node, app, version)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -2569,7 +2569,7 @@ fn set_default_model_in(
         .map_err(|e| format!("写入 Pi 自定义模型失败：{e}"))?;
     }
 
-    let path = settings_path(&dir);
+    let path = settings_path(dir);
     let mut settings = if path.exists() {
         read_json_file(path.clone(), "Pi settings.json")?
     } else {
@@ -3019,10 +3019,7 @@ pub async fn pi_connect(
                                 }
                                 continue;
                             }
-                            match batch.take() {
-                                Some(events) => if !send_batch(events) { break },
-                                None => {}
-                            }
+                            if let Some(events) = batch.take() { if !send_batch(events) { break } }
                             if output_channel
                                 .send(json!({"kind":"rpc","payload":value}))
                                 .is_err()
@@ -3265,11 +3262,11 @@ pub async fn open_pi_terminal(
             {
                 let literal = command.replace('\\', "\\\\").replace('"', "\\\"");
                 let status = Command::new("/usr/bin/osascript").args(["-e",&format!("tell application \"Terminal\"\nactivate\ndo script \"{literal}\"\nend tell")]).status().map_err(|e|e.to_string())?;
-                return if status.success() {
+                if status.success() {
                     Ok(())
                 } else {
                     Err("无法打开系统终端".into())
-                };
+                }
             }
 
             #[cfg(target_os = "linux")]

@@ -250,7 +250,9 @@ mod desktop {
             if let Ok(mut slot) = self.running.lock() {
                 if let Some(host) = slot.take() {
                     host.stop.store(true, Ordering::Release);
-                    host.clients.map.lock().ok().map(|mut clients| clients.clear());
+                    if let Ok(mut clients) = host.clients.map.lock() {
+                        clients.clear();
+                    }
                 }
             }
         }
@@ -616,10 +618,7 @@ mod desktop {
                 .entry(first.project)
                 .or_default()
                 .push(first.payload);
-            loop {
-                let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
-                    break;
-                };
+            while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
                 match receiver.recv_timeout(remaining) {
                     Ok(event) => projects
                         .entry(event.project)
@@ -872,6 +871,9 @@ mod desktop {
         let expected = token;
         let encrypted_request = Arc::new(AtomicBool::new(false));
         let encrypted_request_for_handshake = encrypted_request.clone();
+        // The large `Err` is the handshake rejection response, whose type the
+        // library fixes; there is nothing to box.
+        #[allow(clippy::result_large_err, reason = "signature fixed by tokio-tungstenite")]
         let Ok(socket) = accept_hdr_async(
             stream,
             move |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
@@ -1141,6 +1143,7 @@ mod desktop {
     ///
     /// Async for the same reason as the LAN loop: reading and writing the same
     /// socket at once means neither has to wait for a timer to notice the other.
+    #[allow(clippy::too_many_arguments, reason = "one loop, one set of host state")]
     async fn relay_loop(
         app: AppHandle,
         relay_url: String,

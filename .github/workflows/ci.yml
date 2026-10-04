@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+# Release Orbit builds and publishes artifacts. It runs no tests at all, so
+# until this workflow existed a failing test, a type error, or a mobile-only
+# compile break could reach a published release — which is exactly how several
+# defects were found, by hand, on a phone. Everything here is a gate that a
+# release does not replace.
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Web
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.16.0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Cache Bun packages
+        uses: actions/cache@v5
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      # Types first: a protocol mismatch between Rust and TypeScript is exactly
+      # the class of defect that has no runtime symptom until a phone hits it.
+      - name: Type check and lint
+        run: bun run check
+
+      # Includes the drift guards in `tests/` that compare the Rust protocol
+      # against the TypeScript one, and the bundled icon set against every icon
+      # name used in the app.
+      - name: Tests
+        run: bun test
+
+      - name: Build the frontend
+        run: bun run build
+
+  rust:
+    name: Rust
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # The desktop target is the only one that can exercise the screen channel,
+      # so this job runs where that code compiles.
+      - name: Tests
+        run: cargo test --lib
+        working-directory: src-tauri
+
+      # Denied rather than warned: the baseline is clean, and a warning that is
+      # allowed to accumulate is a warning nobody reads.
+      - name: Clippy
+        run: cargo clippy --lib -- -D warnings
+        working-directory: src-tauri
+
+  android:
+    name: Android target
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Prepare Android SDK
+        run: |
+          android_home="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          export ANDROID_HOME="$android_home"
+          export ANDROID_SDK_ROOT="$android_home"
+          export PATH="$android_home/cmdline-tools/latest/bin:$android_home/cmdline-tools/16.0/bin:$android_home/platform-tools:$PATH"
+          echo "ANDROID_HOME=$android_home" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$android_home" >> "$GITHUB_ENV"
+          echo "PATH=$PATH" >> "$GITHUB_ENV"
+          sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;35.0.0" "ndk;29.0.13846066"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: android
+
+      # The mobile build compiles a different subset of the crate: several
+      # dependencies are desktop-only, so code can compile here and not there.
+      # A macOS-only module reaching a cross-platform one shipped once for
+      # exactly that reason, and the Android APK failed to build.
+      - name: Type check for aarch64-linux-android
+        run: cargo check --lib --target aarch64-linux-android
+        working-directory: src-tauri

@@ -631,7 +631,9 @@ pub fn find_pid(app_name: &str) -> Option<i32> {
 /// before this activation incorrectly reports WINDOW_NOT_FOUND.
 pub fn activate_pid(pid: i32) -> bool {
     use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
-    unsafe {
+    // Kept for pre-macOS-14 systems; see the note in `ax.rs`.
+    #[allow(deprecated, reason = "needed before macOS 14; harmless after")]
+    {
         NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
             .map(|application| {
                 application.activateWithOptions(
