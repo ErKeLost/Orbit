@@ -106,17 +106,6 @@ export function ScreenOverlay() {
     // presence is what makes "was connected" true, so it belongs in the deps.
   }, [open, snapshot.state, snapshot.error, snapshot.frame, snapshot.codecNote, snapshot.fpsNote])
 
-  // Keep the window inside the viewport after a rotation.
-  useEffect(() => {
-    const onResize = () => setPlacement(current => {
-      const next = { ...current, x: -1, y: -1 }
-      savePlacement(next)
-      return next
-    })
-    window.addEventListener("orientationchange", onResize)
-    return () => window.removeEventListener("orientationchange", onResize)
-  }, [])
-
   if (!mobile || !open) return null
   // Success shows the screen; failure is a toast, not an empty box. A floating
   // window whose entire content is "connecting…" says less than one sentence

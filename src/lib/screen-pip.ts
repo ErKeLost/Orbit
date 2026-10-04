@@ -56,18 +56,53 @@ export function savePlacement(placement: PipPlacement): void {
 
 export type PipBox = { width: number; height: number; left: number; top: number }
 
-/** Width in CSS pixels, which is also what the pixel budget is derived from. */
-export function pipWidth(size: PipSize): number {
-  return Math.round(window.innerWidth * PIP_SIZES[size])
+/**
+ * The viewport the window is placed in.
+ *
+ * Passed in rather than read from `window` so the geometry is a pure function —
+ * which is what lets a resize recompute it as a real dependency instead of
+ * something the caller has to remember to invalidate.
+ */
+export type PipViewport = { width: number; height: number }
+
+export function currentViewport(): PipViewport {
+  return { width: window.innerWidth, height: window.innerHeight }
 }
 
-export function pipBox(size: PipSize, x: number, y: number): PipBox {
-  const width = pipWidth(size)
+/**
+ * Where the window may be dragged to, in the same coordinates the window is
+ * positioned in.
+ *
+ * Motion's `dragConstraints` takes the allowed offset range, so with the
+ * element laid out at the viewport origin these are plain viewport bounds —
+ * which is what keeps the window from being dragged off-screen.
+ */
+export type PipConstraints = { left: number; top: number; right: number; bottom: number }
+
+export function pipConstraints(size: PipSize, viewport: PipViewport): PipConstraints {
+  const box = pipBox(size, -1, -1, viewport)
+  return {
+    left: MARGIN,
+    top: MARGIN,
+    // The window's own size is what makes `right`/`bottom` the far edge of its
+    // position rather than of the viewport.
+    right: Math.max(MARGIN, viewport.width - box.width - MARGIN),
+    bottom: Math.max(MARGIN, viewport.height - box.height - MARGIN - BOTTOM_RESERVE),
+  }
+}
+
+/** Width in CSS pixels, which is also what the pixel budget is derived from. */
+export function pipWidth(size: PipSize, viewport: PipViewport = currentViewport()): number {
+  return Math.round(viewport.width * PIP_SIZES[size])
+}
+
+export function pipBox(size: PipSize, x: number, y: number, viewport: PipViewport): PipBox {
+  const width = pipWidth(size, viewport)
   // The picture keeps the display's aspect ratio and the window lets it decide
   // its own height, so an estimate is enough for clamping to the viewport.
   const height = Math.round(width * 0.62) + 34
-  const maxX = Math.max(MARGIN, window.innerWidth - width - MARGIN)
-  const maxY = Math.max(MARGIN, window.innerHeight - height - MARGIN - BOTTOM_RESERVE)
+  const maxX = Math.max(MARGIN, viewport.width - width - MARGIN)
+  const maxY = Math.max(MARGIN, viewport.height - height - MARGIN - BOTTOM_RESERVE)
   return {
     width,
     height,
