@@ -14,6 +14,12 @@ import { create } from "zustand"
 export type ScreenSource = "app" | "display"
 export type ScreenCodecChoice = "auto" | "h264" | "jpeg"
 export type ScreenQuality = "max" | "balanced" | "saver"
+/**
+ * Target frame rate. `panel` asks for the phone's own refresh rate, because
+ * anything beyond it is invisible: a 60 Hz panel cannot show frame 61, and
+ * asking for 120 on one only spends bandwidth on frames the compositor drops.
+ */
+export type ScreenFps = "panel" | 30 | 60 | 90 | 120
 
 export type ScreenPreferences = {
   /** `app` follows the frontmost application's window: the one being operated. */
@@ -23,24 +29,63 @@ export type ScreenPreferences = {
   /** `auto` probes WebCodecs and prefers H.264, falling back to JPEG. */
   codec: ScreenCodecChoice
   quality: ScreenQuality
+  fps: ScreenFps
   showCursor: boolean
 }
 
 /** Ceilings the host enforces; asking for more is silently clamped there. */
-const MAX_FPS = 30
+const MAX_FPS = 120
 const MAX_WIDTH = 2560
 
 const QUALITY_PROFILES: Record<ScreenQuality, { maxFps: number; quality: number; widthScale: number }> = {
   // The default: as fast, as sharp, and as fine as the host will go.
   max: { maxFps: MAX_FPS, quality: 90, widthScale: 1 },
-  balanced: { maxFps: 15, quality: 72, widthScale: 0.75 },
-  saver: { maxFps: 8, quality: 55, widthScale: 0.5 },
+  balanced: { maxFps: 30, quality: 72, widthScale: 0.75 },
+  saver: { maxFps: 15, quality: 55, widthScale: 0.5 },
 }
 
-const STORAGE_KEY = "orbit.screen.prefs.v1"
+/**
+ * The phone's refresh rate, measured rather than assumed.
+ *
+ * `requestAnimationFrame` fires at the panel's rate, so counting frames for half
+ * a second answers the only question that matters here: how many frames per
+ * second can this screen actually show. Cached for the session — it does not
+ * change, and measuring on every settings change would be silly.
+ */
+let measuredPanelFps: number | null = null
+let measuring: Promise<number> | null = null
+
+export function measurePanelFps(): Promise<number> {
+  measuring ??= new Promise<number>(resolve => {
+    let frames = 0
+    const started = performance.now()
+    const tick = () => {
+      frames += 1
+      const elapsed = performance.now() - started
+      if (elapsed < 400) {
+        requestAnimationFrame(tick)
+        return
+      }
+      const rate = Math.round((frames * 1000) / elapsed)
+      // Snap to a real panel rate: timer jitter should not produce "117".
+      const snapped = [60, 90, 120, 144].find(candidate => Math.abs(candidate - rate) <= 8) ?? rate
+      measuredPanelFps = Math.min(Math.max(snapped, 30), MAX_FPS)
+      resolve(measuredPanelFps)
+    }
+    requestAnimationFrame(tick)
+  })
+  return measuring
+}
+
+/** The measured panel rate, or 60 until the first measurement lands. */
+export function panelFps(): number {
+  return measuredPanelFps ?? 60
+}
+
+const STORAGE_KEY = "orbit.screen.prefs.v2"
 
 function defaults(): ScreenPreferences {
-  return { source: "app", displayId: null, codec: "auto", quality: "max", showCursor: true }
+  return { source: "app", displayId: null, codec: "auto", quality: "max", fps: "panel", showCursor: true }
 }
 
 function load(): ScreenPreferences {
@@ -54,6 +99,9 @@ function load(): ScreenPreferences {
         displayId: typeof parsed.displayId === "number" ? parsed.displayId : base.displayId,
         codec: parsed.codec === "h264" || parsed.codec === "jpeg" ? parsed.codec : base.codec,
         quality: parsed.quality && parsed.quality in QUALITY_PROFILES ? parsed.quality : base.quality,
+        fps: parsed.fps === "panel" || [30, 60, 90, 120].includes(parsed.fps as number)
+          ? (parsed.fps as ScreenFps)
+          : base.fps,
         showCursor: typeof parsed.showCursor === "boolean" ? parsed.showCursor : base.showCursor,
       }
     }
@@ -79,15 +127,15 @@ export const useScreenPreferences = create<ScreenSettingsStore>((set, get) => ({
   ...load(),
   set: patch => {
     set(patch)
-    const { source, displayId, codec, quality, showCursor } = get()
-    persist({ source, displayId, codec, quality, showCursor })
+    const { source, displayId, codec, quality, fps, showCursor } = get()
+    persist({ source, displayId, codec, quality, fps, showCursor })
   },
 }))
 
 /** Current preferences outside React, for callers that are not components. */
 export function screenPreferences(): ScreenPreferences {
-  const { source, displayId, codec, quality, showCursor } = useScreenPreferences.getState()
-  return { source, displayId, codec, quality, showCursor }
+  const { source, displayId, codec, quality, fps, showCursor } = useScreenPreferences.getState()
+  return { source, displayId, codec, quality, fps, showCursor }
 }
 
 /**
@@ -103,9 +151,14 @@ export function streamSettings(preferences: ScreenPreferences = screenPreference
   const profile = QUALITY_PROFILES[preferences.quality]
   // Three is where phone panels stop; beyond that the extra pixels are wasted.
   const deviceWidth = Math.round(window.innerWidth * Math.min(window.devicePixelRatio || 1, 3))
+  // The explicit frame-rate choice wins over the quality profile's ceiling:
+  // "maximum" means the panel's maximum, not 30.
+  const fps = preferences.fps === "panel"
+    ? Math.min(panelFps(), profile.maxFps)
+    : Math.min(preferences.fps, profile.maxFps)
   return {
     maxWidth: clamp(Math.round(deviceWidth * profile.widthScale), 360, MAX_WIDTH),
-    maxFps: profile.maxFps,
+    maxFps: fps,
     quality: profile.quality,
     showCursor: preferences.showCursor,
     source: preferences.source,

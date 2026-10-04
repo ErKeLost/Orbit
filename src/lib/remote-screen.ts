@@ -65,6 +65,14 @@ export type ScreenChannelSnapshot = {
   latencyMs: number | null
   /** Frames the decoder had to drop because its reference chain broke. */
   decodeRecoveries: number
+  /** Decoder backlog. Anything sustained above a couple of frames is latency. */
+  decodeQueue: number
+  /**
+   * Set when the frame rate had to be lowered because this device could not
+   * decode what it asked for. Reported rather than hidden: an unexplained
+   * "why is it only 45 fps" is worse than the reason.
+   */
+  fpsNote: string | null
 }
 
 const EMPTY: ScreenChannelSnapshot = {
@@ -81,6 +89,8 @@ const EMPTY: ScreenChannelSnapshot = {
   receivedFps: 0,
   latencyMs: null,
   decodeRecoveries: 0,
+  decodeQueue: 0,
+  fpsNote: null,
 }
 
 type Listener = (snapshot: ScreenChannelSnapshot) => void
@@ -286,12 +296,18 @@ class ScreenChannel {
       // merged shape would report a difference on every call (the reply adds a
       // concrete `codec`) and restart capture each time.
       this.applied = { ...settings, codec: settings.codec }
+      if (settings.maxFps !== undefined && settings.maxFps >= (this.previousFps ?? 0)) {
+        // An explicit raise clears the "this device is too slow" note.
+        this.fpsNote = null
+      }
+      this.previousFps = settings.maxFps
       this.wasLive = true
       this.emit({
         state: "live",
         error: null,
         codec: result.codec,
         codecNote: result.codec === "h264" ? null : (this.codecNoteOverride ?? codecNote),
+        fpsNote: this.fpsNote,
         webCodecs: decoder,
         display: result.display,
         displays: result.displays ?? [],
@@ -531,6 +547,16 @@ class ScreenChannel {
   }
 
   private fallbacking = false
+  /**
+   * How many consecutive stats ticks the decoder has been behind.
+   *
+   * A decoder that cannot keep up does not drop frames for you — with no
+   * B-frames there is nothing it is allowed to drop — so the backlog becomes
+   * latency, and latency is the one thing this whole design exists to avoid.
+   * When that happens the honest response is to ask for fewer frames.
+   */
+  private backlogTicks = 0
+  private fpsCooldownUntil = 0
 
   private configureDecoder(width: number, height: number): boolean {
     const decoder = this.decoder
@@ -614,6 +640,7 @@ class ScreenChannel {
           const status = result as unknown as RemoteScreenStatus
           this.emit({ status })
           if (status.failure) this.emit({ error: status.failure })
+          this.watchDecodeBacklog()
         })
         .catch(() => undefined)
         .finally(() => {
@@ -621,6 +648,33 @@ class ScreenChannel {
         })
     }, 2000)
   }
+
+  /** Lower the frame rate when this device cannot decode what it asked for. */
+  private watchDecodeBacklog(): void {
+    const queue = this.decoder?.decodeQueueSize ?? 0
+    this.emit({ decodeQueue: queue })
+    if (queue <= 3) {
+      this.backlogTicks = 0
+      return
+    }
+    this.backlogTicks += 1
+    if (this.backlogTicks < 2) return
+    this.backlogTicks = 0
+    const now = Date.now()
+    if (now < this.fpsCooldownUntil) return
+    const current = this.settings.maxFps ?? 60
+    // 30 is the floor: below that the preview stops being a preview, and a link
+    // that cannot carry 30 fps of H.264 has a different problem.
+    if (current <= 30) return
+    const next = Math.max(30, Math.round(current * 0.75))
+    this.fpsCooldownUntil = now + 15_000
+    this.fpsNote = `本机解码跟不上 ${current} fps，已降到 ${next} fps`
+    this.emit({ fpsNote: this.fpsNote })
+    void this.start({ ...this.settings, maxFps: next }).catch(() => undefined)
+  }
+
+  private fpsNote: string | null = null
+  private previousFps: number | undefined
 
   private stopStatsPolling(): void {
     if (this.statsTimer) clearInterval(this.statsTimer)

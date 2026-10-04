@@ -6,6 +6,9 @@ import { SettingsGroup, SettingRow } from "./GeneralSettingsPanel"
 import {
   useScreenPreferences,
   type ScreenCodecChoice,
+  measurePanelFps,
+  panelFps,
+  type ScreenFps,
   type ScreenQuality,
   type ScreenSource,
 } from "../../lib/screen-settings"
@@ -55,12 +58,30 @@ export function ScreenSettingsPanel() {
       </SettingRow>
     </SettingsGroup>
 
-    <SettingsGroup title="画质" icon="sliders-horizontal" description="默认按上限请求 —— 手机面板能显示的像素、30 fps、最高画质；实际能达到多少由带宽调节器实时测定，超预算时自动降档再逐级升回">
-      <SettingRow title="档位" description={preferences.quality === "max" ? "拉满：跟手机屏幕同等像素、30 fps、画质 90" : preferences.quality === "balanced" ? "均衡：约 3/4 像素、15 fps" : "省流：约一半像素、8 fps"}>
+    <SettingsGroup title="画质与帧率" icon="sliders-horizontal" description="默认全部按上限请求：手机面板能显示的像素、屏幕刷新率、画质 90。实际能达到多少由带宽调节器实时测定，超预算时按超出倍数成比例降档，低于预算时逐级升回请求上限">
+      <PanelFpsProbe />
+      <SettingRow title="档位" description={preferences.quality === "max" ? "拉满：手机面板同等像素、画质 90、帧率跟随屏幕" : preferences.quality === "balanced" ? "均衡：约 3/4 像素、画质 72、≤30 fps" : "省流：约一半像素、画质 55、≤15 fps"}>
         <Select value={preferences.quality} onChange={event => preferences.set({ quality: event.target.value as ScreenQuality })} aria-label="画质档位">
           <option value="max">拉满（默认）</option>
           <option value="balanced">均衡</option>
           <option value="saver">省流</option>
+        </Select>
+      </SettingRow>
+      <SettingRow
+        title="帧率"
+        description={preferences.fps === "panel"
+          ? `跟随屏幕刷新率 —— 本机实测 ${panelFps()} Hz，超出刷新率的帧只会被显示管线丢掉`
+          : `固定 ${preferences.fps} fps${preferences.fps > panelFps() ? `；本机屏幕只有 ${panelFps()} Hz，高于它的帧看不到` : ""}`}
+      >
+        <Select value={String(preferences.fps)} onChange={event => {
+          const value = event.target.value
+          preferences.set({ fps: value === "panel" ? "panel" : (Number(value) as ScreenFps) })
+        }} aria-label="帧率">
+          <option value="panel">跟随屏幕（默认）</option>
+          <option value="120">120 fps</option>
+          <option value="90">90 fps</option>
+          <option value="60">60 fps</option>
+          <option value="30">30 fps</option>
         </Select>
       </SettingRow>
       <SettingRow title="编码格式" description="H.264 由电脑硬件编码，同画质下带宽低一个数量级，是能同时做到高帧率和高清晰的前提；JPEG 是无解码器时的兜底。">
@@ -84,6 +105,21 @@ export function ScreenSettingsPanel() {
         : <DesktopStatus />}
     </SettingsGroup>
   </div>
+}
+
+/** Measures the refresh rate once, so the numbers above are real. */
+function PanelFpsProbe() {
+  const [, setRevision] = useState(0)
+  useEffect(() => {
+    let cancelled = false
+    void measurePanelFps().then(() => {
+      if (!cancelled) setRevision(value => value + 1)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  return null
 }
 
 /** What this device can actually decode, reported before it is needed. */

@@ -58,8 +58,15 @@ const GOVERNOR_WINDOW: Duration = Duration::from_millis(1000);
 const JPEG_BUDGET_BYTES_PER_SECOND: u64 = 2_500_000;
 
 /// Bitrate range the governor maps its quality scale onto for H.264.
+///
+/// The top of the range is a *ceiling*, not a target: rate control only spends
+/// what the picture needs, so a static screen stays at a few hundred kilobits
+/// even here. It is set high because the ceiling is also what decides whether
+/// maximum clarity and a high frame rate can co-exist on a good link — at
+/// 1080p-class resolution, 120 fps and quality 90, a low ceiling would silently
+/// become the thing that limits sharpness.
 const H264_MIN_BITRATE: u32 = 1_500_000;
-const H264_BITRATE_STEP: u32 = 100_000;
+const H264_BITRATE_STEP: u32 = 260_000;
 
 /// Hard ceiling on one encoded frame.
 ///
@@ -178,7 +185,11 @@ impl ScreenSettings {
             // 1600 px keeps UI text legible without paying for a Retina-sized
             // frame; the client can ask for less on a phone screen.
             max_width: self.max_width.unwrap_or(2560).clamp(320, 2560),
-            max_fps: self.max_fps.unwrap_or(30).clamp(1, 30),
+            // 120 is the ceiling, not 60: a 120 Hz panel is common on phones
+            // now, and the frame rate is the largest single latency term (half
+            // a frame interval of pacing). The client asks for its own panel's
+            // rate; anything above that is invisible.
+            max_fps: self.max_fps.unwrap_or(60).clamp(1, 120),
             quality: self.quality.unwrap_or(90).clamp(30, 90),
             display_id: self.display_id,
             show_cursor: self.show_cursor.unwrap_or(true),
@@ -200,8 +211,8 @@ impl ScreenSettings {
             }
         }
         if let Some(fps) = self.max_fps {
-            if !(1..=60).contains(&fps) {
-                return Err("maxFps 必须在 1 到 60 之间".into());
+            if !(1..=120).contains(&fps) {
+                return Err("maxFps 必须在 1 到 120 之间".into());
             }
         }
         if let Some(quality) = self.quality {
@@ -784,16 +795,12 @@ fn open_target(
         window_id: (target.kind == capture::TargetKind::Window).then_some(target.id),
         width,
         height,
-        // Capture faster than the publish target on purpose. ScreenCaptureKit
-        // gates frames at `minimumFrameInterval` and the bandwidth governor
-        // gates publishes at the same interval; running both at exactly the
-        // target rate makes them beat against each other, and any jitter pushes
-        // a frame past the governor's strict comparison and throws it away. On
-        // real hardware that cost roughly half the frame rate (7.6 fps reported
-        // against a 15 fps target). Capturing at double removes the beating and
-        // has the side benefit that the frame we publish is the freshest of the
-        // two, not a stale one.
-        fps: resolved.max_fps.saturating_mul(2).min(60),
+        // Capture at exactly the target rate. There is no second rate limiter
+        // any more — publishing is gated on demand and on the byte budget, not
+        // on a timer — so ScreenCaptureKit's own gate is the only one, and
+        // doubling it would just allocate twice the frames at 120 Hz for
+        // nothing.
+        fps: resolved.max_fps.clamp(1, 120),
         shows_cursor: resolved.show_cursor,
     };
     Ok((capture::open(request)?, resolved.with_frame_size(width, height)))
@@ -930,10 +937,6 @@ impl Governor {
         }
     }
 
-    fn frame_interval(&self) -> Duration {
-        Duration::from_secs_f64(1.0 / self.fps.max(1.0))
-    }
-
     /// Push the current shape into the encoder. Quality *is* the bitrate knob
     /// for H.264, so one scale drives both codecs.
     fn apply(&mut self, encoder: &mut Encoder) {
@@ -1012,6 +1015,7 @@ fn pipeline_loop(
     let mut last_window = Instant::now();
     let mut window_bytes = 0_u64;
     let mut window_frames = 0_u64;
+    let mut last_frame_bytes = 0_u64;
     let mut empty_since: Option<Instant> = None;
     let mut seq = bus.version.load(Ordering::Acquire);
     // The first frame of a session is always a fresh start for the decoder.
@@ -1073,12 +1077,20 @@ fn pipeline_loop(
         };
         stats.captured.fetch_add(1, Ordering::AcqRel);
 
-        // The two gates that keep an inter-frame codec legal, in order:
-        // somebody must be waiting, and the pace must be due.
+        // Somebody must be waiting: this is what keeps an inter-frame codec
+        // legal, because publishing ahead of the viewers would force the
+        // transport to drop a frame and corrupt everything after it.
         if !bus.needs_frame() {
             continue;
         }
-        if last_published.elapsed() < governor.frame_interval() {
+        // Pace on bytes, not on a timer. A timer at the target rate throws away
+        // the frame that happens to land just inside the interval — on real
+        // hardware that alone cost half the frame rate (7.6 fps against a 15 fps
+        // target) — and it caps a static screen, which costs almost nothing per
+        // frame, at the same rate as a scrolling one. A byte budget lets an
+        // idle desktop run at the full frame rate and throttles exactly when the
+        // link cannot keep up.
+        if window_bytes.saturating_add(last_frame_bytes) > governor.budget {
             stats.dropped.fetch_add(1, Ordering::AcqRel);
             continue;
         }
@@ -1184,6 +1196,7 @@ fn pipeline_loop(
                 stats.bytes_total.fetch_add(bytes as u64, Ordering::AcqRel);
                 window_bytes = window_bytes.saturating_add(bytes as u64);
                 window_frames += 1;
+                last_frame_bytes = bytes as u64;
                 }
             }
             Err(error) => {
@@ -1490,6 +1503,23 @@ mod tests {
     }
 
     #[test]
+    fn the_frame_rate_ceiling_allows_a_high_refresh_panel() {
+        // 60 used to be the clamp, which silently halved what a 120 Hz phone
+        // could ask for.
+        let resolved = ScreenSettings {
+            max_fps: Some(120),
+            ..ScreenSettings::default()
+        }
+        .resolve();
+        assert_eq!(resolved.max_fps, 120);
+        let too_much = ScreenSettings {
+            max_fps: Some(240),
+            ..ScreenSettings::default()
+        };
+        assert!(too_much.resolve_checked().is_err());
+    }
+
+    #[test]
     fn a_maxed_out_start_converges_quickly_instead_of_crawling() {
         // Requesting maximum quality on a link that cannot carry it must reach a
         // workable shape in a couple of windows, not a couple of dozen.
@@ -1532,7 +1562,7 @@ mod tests {
         // ceiling, it does not start in the middle.
         let resolved = ScreenSettings::default().resolve();
         assert_eq!(resolved.max_width, 2560);
-        assert_eq!(resolved.max_fps, 30);
+        assert_eq!(resolved.max_fps, 60);
         assert_eq!(resolved.quality, 90);
         // H.264 is the default because it is strictly cheaper on the wire.
         assert_eq!(resolved.codec, Codec::H264);
@@ -1547,7 +1577,7 @@ mod tests {
         }
         .resolve();
         assert_eq!(extreme.max_width, 2560);
-        assert_eq!(extreme.max_fps, 30);
+        assert_eq!(extreme.max_fps, 120);
         assert_eq!(extreme.quality, 30);
     }
 

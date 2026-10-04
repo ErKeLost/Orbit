@@ -3,7 +3,7 @@ import { gooeyToast } from "goey-toast"
 import { useWorkspace } from "../../lib/store"
 import { screenChannel, type ScreenChannelSnapshot } from "../../lib/remote-screen"
 import { loadPlacement, savePlacement, type PipPlacement } from "../../lib/screen-pip"
-import { streamSettings, useScreenPreferences } from "../../lib/screen-settings"
+import { measurePanelFps, streamSettings, useScreenPreferences } from "../../lib/screen-settings"
 import { ScreenPip } from "./ScreenPip"
 import { ScreenExpanded } from "./ScreenExpanded"
 
@@ -29,6 +29,11 @@ export function ScreenOverlay() {
   const [placement, setPlacement] = useState<PipPlacement>(loadPlacement)
 
   useEffect(() => screenChannel().subscribe(setSnapshot), [])
+  // The frame rate is only meaningful once the panel's real refresh rate is
+  // known, so measure it as soon as the app shell mounts.
+  useEffect(() => {
+    void measurePanelFps()
+  }, [])
 
   const commit = useCallback((next: PipPlacement) => {
     setPlacement(next)

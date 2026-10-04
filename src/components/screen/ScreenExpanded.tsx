@@ -56,6 +56,7 @@ export function ScreenExpanded({ snapshot }: { snapshot: ScreenChannelSnapshot }
 
       {snapshot.error && <p className="screen-error">{snapshot.error}</p>}
       {snapshot.codecNote && <p className="screen-note">{snapshot.codecNote}</p>}
+      {snapshot.fpsNote && <p className="screen-note">{snapshot.fpsNote}</p>}
 
       <ScreenFrame snapshot={snapshot} interactive />
 
@@ -89,6 +90,7 @@ function ScreenMetrics({ snapshot }: { snapshot: ScreenChannelSnapshot }) {
       ["分辨率", frame ? `${frame.width} × ${frame.height}` : "—"],
       ["编码", snapshot.status ? `${snapshot.status.encodeMsAvg.toFixed(1)} ms` : "—"],
       ["重同步", String(snapshot.decodeRecoveries)],
+      ["解码排队", String(snapshot.decodeQueue)],
     ] as const
   }, [snapshot])
   return <dl className="screen-metrics-row">
