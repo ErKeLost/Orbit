@@ -10,8 +10,14 @@ export type ToolImage = { data: string; mimeType: string }
 export type ToolImageInfo = { model?: string; size?: string; paths?: string[] }
 export type Tool = { name: string; args?: Record<string, Json>; result?: unknown; details?: { patch: string }; images?: ToolImage[]; image?: ToolImageInfo; running: boolean; isError?: boolean; usage?: ToolUsage }
 export type Event = { type: string; message?: PiMessage; toolCallId?: string; toolName?: string; args?: Record<string, Json>; result?: unknown; partialResult?: unknown; isError?: boolean; details?: unknown; errorMessage?: string; assistantMessageEvent?: { type: string; contentIndex: number; delta?: string; content?: string; id?: string; toolName?: string; toolCall?: Part }; steering?: string[]; followUp?: string[]; [key: string]: unknown }
-export type Transcript = { messages: DisplayMessage[]; active: number; running: boolean; compacting: boolean; phase: string; tools: Record<string, Tool>; error: string | null; queue: { steering: string[]; followUp: string[] }; bash: { id?: string; command?: string; output: string; running: boolean } | null; turnStartedAt: number | null }
-export const emptyTranscript = (): Transcript => ({ messages: [], active: -1, running: false, compacting: false, phase: '就绪', tools: {}, error: null, queue: { steering: [], followUp: [] }, bash: null, turnStartedAt: null })
+/**
+ * ``submitted`` 是「已经提交、但 Pi 还没宣告这一轮开始」的等待位。回车到
+ * ``agent_start`` 之间要做模式同步、图片 base64、prompt 往返和进程/模型启动，
+ * 这段时间 ``running`` 还是 false，屏幕上此前没有任何指示。它只在空闲提交时置位，
+ * ``agent_start`` / ``agent_settled`` / ``prompt_settled`` 时撤下。
+ */
+export type Transcript = { messages: DisplayMessage[]; active: number; running: boolean; submitted: boolean; compacting: boolean; phase: string; tools: Record<string, Tool>; error: string | null; queue: { steering: string[]; followUp: string[] }; bash: { id?: string; command?: string; output: string; running: boolean } | null; turnStartedAt: number | null }
+export const emptyTranscript = (): Transcript => ({ messages: [], active: -1, running: false, submitted: false, compacting: false, phase: '就绪', tools: {}, error: null, queue: { steering: [], followUp: [] }, bash: null, turnStartedAt: null })
 const MAX_TOOL_RESULT_CHARS = 20_000
 const MAX_TOOL_PATCH_CHARS = 100_000
 const boundedToolText = (text:string) => text.length <= MAX_TOOL_RESULT_CHARS ? text : `${text.slice(0,MAX_TOOL_RESULT_CHARS)}\n\n[输出过长，已省略]`
@@ -189,15 +195,28 @@ export function hydrate(messages: PiMessage[]): Transcript {
 export function reduceEvent(previous: Transcript, event: Event): Transcript {
   const state = { ...previous }
   switch (event.type) {
-    case 'prompt_submitted': return { ...state, error: null, messages: state.messages.map(item => item.message.errorMessage ? {...item,message:{...item.message,errorMessage:undefined}} : item) }
+    case 'prompt_submitted': return {
+      ...state,
+      // 空闲提交才占等待位：流式中提交（steer）本来就有「正在处理」的面板，
+      // 再补一个指示就是一轮两个（0.3.43 的回归）。
+      ...(state.running ? {} : { submitted: true, phase: '正在思考', turnStartedAt: state.turnStartedAt ?? Date.now() }),
+      error: null,
+      messages: state.messages.map(item => item.message.errorMessage ? {...item,message:{...item.message,errorMessage:undefined}} : item),
+    }
+    // Pi 没有真的开一轮：被扩展命令接管（disposition "handled"）、排队（"queued"）
+    // 或直接发送失败。撤掉等待位，否则会留下一个永远转圈的「正在思考」。
+    case 'prompt_settled': return state.submitted
+      ? { ...state, submitted: false, ...(state.running ? {} : { phase: '就绪', turnStartedAt: null }) }
+      : state
     case 'bash_execution_update': return { ...state, bash: { id: typeof event.id === 'string' ? event.id : undefined, command: typeof event.command === 'string' ? event.command : state.bash?.command, output: `${state.bash?.output ?? ''}${String(event.delta ?? '')}`, running: true } }
-    case 'agent_start': return { ...state, active: -1, running: true, phase: '正在思考', error: null, turnStartedAt: state.turnStartedAt ?? Date.now() }
+    case 'agent_start': return { ...state, active: -1, running: true, submitted: false, phase: '正在思考', error: null, turnStartedAt: state.turnStartedAt ?? Date.now() }
     case 'agent_settled': {
       const elapsedMs = state.turnStartedAt == null ? undefined : Math.max(0, Date.now() - state.turnStartedAt)
       let durationOwner = false
       return {
         ...state,
         running: false,
+        submitted: false,
         phase: '就绪',
         bash: state.bash ? { ...state.bash, running: false } : null,
         turnStartedAt: null,

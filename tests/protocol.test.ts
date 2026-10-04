@@ -73,6 +73,52 @@ test('乐观预览在发送失败时被撤回',()=>{
   expect(state.messages).toHaveLength(0)
 })
 
+test('回车到 agent_start 之间先占上等待位，否则那段时间屏幕上什么都没有',()=>{
+  const state=reduceEvent(emptyTranscript(),{type:'prompt_submitted'})
+  expect(state.submitted).toBe(true)
+  expect(state.running).toBe(false)
+  expect(state.phase).toBe('正在思考')
+  expect(state.turnStartedAt).toBeTypeOf('number')
+})
+
+test('agent_start 与 agent_settled 都会撤下等待位',()=>{
+  let state=reduceEvent(emptyTranscript(),{type:'prompt_submitted'})
+  state=reduceEvent(state,{type:'agent_start'})
+  expect(state.submitted).toBe(false)
+  expect(state.running).toBe(true)
+  state=reduceEvent(emptyTranscript(),{type:'prompt_submitted'})
+  state=reduceEvent(state,{type:'agent_settled'})
+  expect(state.submitted).toBe(false)
+  expect(state.phase).toBe('就绪')
+  expect(state.turnStartedAt).toBeNull()
+})
+
+test('被扩展接管/排队/发送失败的 prompt 不会留下永久的等待占位',()=>{
+  const waiting=reduceEvent(emptyTranscript(),{type:'prompt_submitted'})
+  const settled=reduceEvent(waiting,{type:'prompt_settled'})
+  expect(settled.submitted).toBe(false)
+  expect(settled.phase).toBe('就绪')
+  expect(settled.turnStartedAt).toBeNull()
+  // 没有等待位时是空操作（值不变）
+  const again=reduceEvent(settled,{type:'prompt_settled'})
+  expect(again.submitted).toBe(false)
+  expect(again.phase).toBe('就绪')
+  expect(again.turnStartedAt).toBeNull()
+})
+
+test('流式中的 steer 不再额外点一盏灯，一轮只留一个「正在处理」',()=>{
+  let state=reduceEvent(emptyTranscript(),{type:'agent_start'})
+  const startedAt=state.turnStartedAt
+  state=reduceEvent(state,{type:'prompt_submitted'})
+  expect(state.submitted).toBe(false)
+  expect(state.running).toBe(true)
+  expect(state.turnStartedAt).toBe(startedAt)
+  // 跟下来的 prompt_settled 不能把还在跑的一轮按停
+  state=reduceEvent(state,{type:'prompt_settled'})
+  expect(state.running).toBe(true)
+  expect(state.submitted).toBe(false)
+})
+
 test('steered assistant continuation keeps the turn duration on the first segment only',()=>{
   let state=reduceEvent(emptyTranscript(),{type:'agent_start'})
   state=reduceEvent(state,{type:'message_start',message:{role:'assistant',content:[{type:'thinking',thinking:'原始任务'}]}})

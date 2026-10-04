@@ -4,7 +4,7 @@ import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { AnimatePresence, m } from "motion/react";
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useWorkspace } from "../../lib/store";
-import { report, request, stop, syncComputerUseMode, syncMultiAgentMode } from "../../lib/rpc";
+import { report, sendPrompt, stop, syncComputerUseMode, syncMultiAgentMode } from "../../lib/rpc";
 import { Icon } from "../Icon";
 import { base64ToBlob } from "../../lib/image-bytes";
 import { encodeBlobToBase64, encodeClipboardImage } from "../../lib/image-encode";
@@ -28,7 +28,7 @@ function lruCache<T>(cache: Map<string, T>, key: string, value: T) {
   while (cache.size > 4) cache.delete(cache.keys().next().value!);
 }
 
-type DraftHandle = { clear: () => void };
+type DraftHandle = { clear: () => void; restore: (text: string) => void };
 
 /** 乐观预览用完就释放本地 object URL（本地图片发给 Pi 的同时先原地显示）。 */
 function releasePreviewUrls(urls: readonly string[]) {
@@ -43,7 +43,11 @@ const ComposerTextarea = memo(forwardRef<DraftHandle, {
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
 }>(function ComposerTextarea({ composerKey, onKeyDown }, ref) {
   const [draft, setDraft] = useState(() => useWorkspace.getState().draft || draftCache.get(composerKey) || "");
-  useImperativeHandle(ref, () => ({ clear: () => setDraft("") }), []);
+  useImperativeHandle(ref, () => ({
+    clear: () => setDraft(""),
+    // 发送失败时把草稿还回去；等待期间用户新打的字排在被还回来的内容后面。
+    restore: text => setDraft(current => current ? `${text}${current}` : text),
+  }), []);
   useEffect(() => { lruCache(draftCache, composerKey, draft); }, [composerKey, draft]);
   return <PromptInputTextarea placeholder="输入消息，发送给助手…" value={draft} onChange={event => setDraft(event.currentTarget.value)} onKeyDown={onKeyDown} />;
 }));
@@ -198,6 +202,12 @@ export const ChatComposer = memo(function ChatComposer({ onSubmitted }: { onSubm
     const images = attachments.filter((attachment): attachment is ImageAttachment => attachment.kind === "image");
     const prefix = fileChips.map(attachment => `[文件] ${attachment.path}`).join("\n");
     const text = prefix ? `${prefix}\n\n${message.text}`.trim() : message.text;
+    // 清空不能等 prompt 的 RPC 回包（那要等模式同步、图片编码和一次往返），
+    // 否则用户看到的是「消息已经发出去了、输入框还满着」。先清，失败再回填。
+    const draftBefore = message.text;
+    const attachmentsBefore = attachments;
+    setAttachments([]);
+    draftRef.current?.clear();
     // 立刻把这条消息（连同本地图片预览）放进会话：base64 编码、模式同步和
     // 「发给 Pi 再等它回显」都不该让用户等着才看到自己发出去的内容。
     // Pi 的 message_start 到达时会把这条预览原位替换成真实消息。
@@ -227,15 +237,18 @@ export const ChatComposer = memo(function ChatComposer({ onSubmitted }: { onSubm
       })));
       if (!transcriptRunning) await Promise.all([syncMultiAgentMode(project), syncComputerUseMode(project)]);
       const imagePayload = await payload;
-      await request({ type: "prompt", message: text, images: imagePayload, ...(transcriptRunning ? { streamingBehavior } : {}) }, 45000, project);
-      setAttachments([]);
-      draftRef.current?.clear();
+      await sendPrompt({ type: "prompt", message: text, images: imagePayload, ...(transcriptRunning ? { streamingBehavior } : {}) }, project, transcriptRunning);
       onSubmitted();
       // 回显消息拿到后预览就被替换了，这里等一下再释放本地 object URL。
       window.setTimeout(() => releasePreviewUrls(previewUrls), 15000);
     } catch (error) {
       releasePreviewUrls(previewUrls);
       useWorkspace.getState().event({ type: "queued_preview_revert", id: previewId });
+      // 模式同步失败也会走到这里，等待位同样要撤下（未置位时是空操作）。
+      useWorkspace.getState().event({ type: "prompt_settled" });
+      // 没发出去就一条都不能丢：草稿和附件原样回到 composer（新加的附件留在后面）。
+      setAttachments(current => [...attachmentsBefore, ...current]);
+      draftRef.current?.restore(draftBefore);
       report(error);
     }
   }

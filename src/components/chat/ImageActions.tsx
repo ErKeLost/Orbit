@@ -5,7 +5,7 @@ import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { base64ToBlob } from "../../lib/image-bytes";
-import { desktopRuntime, report, request, syncComputerUseMode, syncMultiAgentMode } from "../../lib/rpc";
+import { desktopRuntime, report, sendPrompt, syncComputerUseMode, syncMultiAgentMode } from "../../lib/rpc";
 import { useWorkspace } from "../../lib/store";
 import { Icon } from "../Icon";
 import { Button } from "../UI";
@@ -53,12 +53,18 @@ async function sendEditPrompt(path: string, description: string) {
   const project = store.cwd;
   const running = store.transcript.running;
   store.event({ type: "prompt_submitted" });
-  if (!running) await Promise.all([syncMultiAgentMode(project), syncComputerUseMode(project)]);
-  await request(
-    { type: "prompt", message: `以 ${path} 为参考图重新生成：${description}`, images: [], ...(running ? { streamingBehavior: "steer" as const } : {}) },
-    45000,
-    project,
-  );
+  try {
+    if (!running) await Promise.all([syncMultiAgentMode(project), syncComputerUseMode(project)]);
+    await sendPrompt(
+      { type: "prompt", message: `以 ${path} 为参考图重新生成：${description}`, images: [], ...(running ? { streamingBehavior: "steer" as const } : {}) },
+      project,
+      running,
+    );
+  } catch (error) {
+    // 模式同步这一步失败也会走到这里，等待位同样要撤下（未置位时是空操作）。
+    store.event({ type: "prompt_settled" });
+    throw error;
+  }
 }
 
 type ImageActionsMenuProps = {

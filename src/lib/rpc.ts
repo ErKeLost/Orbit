@@ -170,6 +170,22 @@ const computerUseModeCommand=(enabled=useWorkspace.getState().computerUseEnabled
 export const syncMultiAgentMode=(target:string,enabled=useWorkspace.getState().multiAgentEnabled)=>request(multiAgentModeCommand(enabled),30000,target)
 export const syncComputerUseMode=(target:string,enabled=useWorkspace.getState().computerUseEnabled)=>request(computerUseModeCommand(enabled),30000,target)
 const syncSessionModes=(target:string)=>Promise.all([syncMultiAgentMode(target),syncComputerUseMode(target)])
+/**
+ * 发送 prompt，并给 composer 的「等待开始」占位收尾。Pi 的 response 只表示
+ * 接受/排队/被扩展处理：``disposition`` 不是 "started" 时这一轮不会自己开，
+ * 失败时更是连 response 都没有，两种情况都要撤掉占位，否则会留下一个永远
+ * 转圈的「正在思考」。
+ */
+export async function sendPrompt(command:RpcCommand,target=useWorkspace.getState().cwd,wasRunning=useWorkspace.getState().transcript.running){
+ try{
+  const result=await request<{disposition?:string}>(command,45000,target)
+  if(!wasRunning&&result?.disposition!=='started')useWorkspace.getState().event({type:'prompt_settled'})
+  return result
+ }catch(error){
+  if(!wasRunning)useWorkspace.getState().event({type:'prompt_settled'})
+  throw error
+ }
+}
 export const setSessionRoots=(roots:string[],target=useWorkspace.getState().cwd)=>request({type:'prompt',message:`/gui-workspace-set ${JSON.stringify({roots})}`},30000,target)
 async function syncConfiguredProjectRoots(cwd:string,target=cwd){const project=useProjects.getState().projects.find(item=>item.path===cwd);if(project)await setSessionRoots(projectExtraRoots(project),target)}
 export async function refresh(target=useWorkspace.getState().cwd){const id=route(target),state=await request<RpcSessionState>({type:'get_state'},30000,id);patch(id,{state});const cwd=connections.get(id)?.cwd??useWorkspace.getState().cwd;if(state.sessionFile&&projectActive.get(cwd)===id)persistSession(cwd,state.sessionFile);await queryClient.invalidateQueries({queryKey:['pi','live-stats',id]});return state}
@@ -285,7 +301,7 @@ async function startConnection(cwd:string,id:string,options?:{restoreLast?:boole
   // PI_EVENT_BATCH_*）。逐条 dispatch，顺序与逐条 IPC 完全一致，dispatch 内部
   // 仍然按 32ms 窗口合并 store 提交。
   if(event.kind==='rpc-batch'&&event.payloads){for(const payload of event.payloads)dispatch(payload,id)}
-  if(event.kind==='exit'){const cwd=connections.get(id)?.cwd,s=current(id),detail=event.message?`：${event.message}`:'';flushEvents(id);clearEvents(id);connections.delete(id);if(cwd&&projectActive.get(cwd)===id)projectActive.delete(cwd);for(const [file,owner] of [...sessionOwners]) if(owner===id) sessionOwners.delete(file);patch(id,{connection:'offline',error:`Pi 进程已退出（${event.code??'signal'}）${detail}`,transcript:{...s.transcript,running:false,compacting:false}});failPending(id,'Pi 进程已退出')}
+  if(event.kind==='exit'){const cwd=connections.get(id)?.cwd,s=current(id),detail=event.message?`：${event.message}`:'';flushEvents(id);clearEvents(id);connections.delete(id);if(cwd&&projectActive.get(cwd)===id)projectActive.delete(cwd);for(const [file,owner] of [...sessionOwners]) if(owner===id) sessionOwners.delete(file);patch(id,{connection:'offline',error:`Pi 进程已退出（${event.code??'signal'}）${detail}`,transcript:{...s.transcript,running:false,submitted:false,compacting:false,phase:'就绪',turnStartedAt:null}});failPending(id,'Pi 进程已退出')}
   if(event.kind==='protocol_error')patch(id,{error:event.message})
  }
  try{
