@@ -39,7 +39,17 @@ function connectionsFor(cwd:string){return [...connections.entries()].flatMap(([
 function readSessionFiles():Record<string,string>{try{return JSON.parse(localStorage.getItem(SESSION_FILES_KEY)??localStorage.getItem(LEGACY_SESSION_FILES_KEY)??'{}')}catch{return {}}}
 function persistSession(cwd:string,sessionFile?:string){if(!sessionFile)return;const files=readSessionFiles();files[cwd]=sessionFile;localStorage.setItem(SESSION_FILES_KEY,JSON.stringify(files))}
 function current(id:string):Snapshot{return useWorkspace.getState().connectionId===id?snapshot():snapshots.get(id)??fresh()}
+// 按 messages 数组引用缓存：流式里每个 patch 都会比较前后标题，原来每次都从头扫消息；
+// messages 引用没变（多数 patch 只改 phase/tools/telemetry）时直接复用上次结果。
+const titleCache=new WeakMap<object,string>()
 function firstUserTitle(transcript:Workspace['transcript']){
+ const cached=titleCache.get(transcript.messages)
+ if(cached!==undefined)return cached
+ const title=scanFirstUserTitle(transcript)
+ titleCache.set(transcript.messages,title)
+ return title
+}
+function scanFirstUserTitle(transcript:Workspace['transcript']){
  for(const item of transcript.messages){
   if(item.message.role!=='user')continue
   const content=item.message.content
@@ -169,7 +179,22 @@ const multiAgentModeCommand=(enabled=useWorkspace.getState().multiAgentEnabled)=
 const computerUseModeCommand=(enabled=useWorkspace.getState().computerUseEnabled)=>({type:'prompt' as const,message:`/gui-computer-use-mode ${JSON.stringify({enabled})}`})
 export const syncMultiAgentMode=(target:string,enabled=useWorkspace.getState().multiAgentEnabled)=>request(multiAgentModeCommand(enabled),30000,target)
 export const syncComputerUseMode=(target:string,enabled=useWorkspace.getState().computerUseEnabled)=>request(computerUseModeCommand(enabled),30000,target)
-const syncSessionModes=(target:string)=>Promise.all([syncMultiAgentMode(target),syncComputerUseMode(target)])
+// 模式开关记在 Pi 进程内，会话文件和开关值不变时没必要在每次发送前再往返两次。
+// key = 会话文件 + 两个开关值；切会话/开关变化/连接关闭时自然失效。
+const syncedModes=new Map<string,string>()
+const modesKey=(id:string)=>{const s=useWorkspace.getState();return `${current(id).state?.sessionFile??''}|${s.multiAgentEnabled}|${s.computerUseEnabled}`}
+const syncSessionModes=async(target:string)=>{
+ const id=route(target),key=modesKey(id)
+ syncedModes.delete(id)
+ await Promise.all([syncMultiAgentMode(target),syncComputerUseMode(target)])
+ syncedModes.set(id,key)
+}
+/** 发送前调用：模式已同步过就直接返回，不再产生 RPC 往返。 */
+export async function ensureSessionModes(target=useWorkspace.getState().cwd){
+ const id=route(target)
+ if(syncedModes.get(id)===modesKey(id))return
+ await syncSessionModes(target)
+}
 /**
  * 发送 prompt，并给 composer 的「等待开始」占位收尾。Pi 的 response 只表示
  * 接受/排队/被扩展处理：``disposition`` 不是 "started" 时这一轮不会自己开，
@@ -266,7 +291,7 @@ export async function loadMessages(target=useWorkspace.getState().cwd){
 async function closeConnection(id:string,message='连接已关闭'){
  const cwd=connections.get(id)?.cwd,s=current(id)
  if(s.transcript.running){try{await request({type:'clear_queue'},30000,id);await request({type:'abort'},60000,id)}catch{/* process may already be gone */}}
- clearEvents(id);connections.delete(id);failPending(id,message);snapshots.delete(id)
+ clearEvents(id);syncedModes.delete(id);connections.delete(id);failPending(id,message);snapshots.delete(id)
  if(cwd&&projectActive.get(cwd)===id)projectActive.delete(cwd)
  for(const [file,owner] of [...sessionOwners]) if(owner===id) sessionOwners.delete(file)
  if(mobileRuntime()){if(useWorkspace.getState().connectionId===id){useWorkspace.getState().set({connection:'offline',connectionId:''})};syncLiveSessions();return}
@@ -301,7 +326,7 @@ async function startConnection(cwd:string,id:string,options?:{restoreLast?:boole
   // PI_EVENT_BATCH_*）。逐条 dispatch，顺序与逐条 IPC 完全一致，dispatch 内部
   // 仍然按 32ms 窗口合并 store 提交。
   if(event.kind==='rpc-batch'&&event.payloads){for(const payload of event.payloads)dispatch(payload,id)}
-  if(event.kind==='exit'){const cwd=connections.get(id)?.cwd,s=current(id),detail=event.message?`：${event.message}`:'';flushEvents(id);clearEvents(id);connections.delete(id);if(cwd&&projectActive.get(cwd)===id)projectActive.delete(cwd);for(const [file,owner] of [...sessionOwners]) if(owner===id) sessionOwners.delete(file);patch(id,{connection:'offline',error:`Pi 进程已退出（${event.code??'signal'}）${detail}`,transcript:{...s.transcript,running:false,submitted:false,compacting:false,phase:'就绪',turnStartedAt:null}});failPending(id,'Pi 进程已退出')}
+  if(event.kind==='exit'){const cwd=connections.get(id)?.cwd,s=current(id),detail=event.message?`：${event.message}`:'';flushEvents(id);clearEvents(id);syncedModes.delete(id);connections.delete(id);if(cwd&&projectActive.get(cwd)===id)projectActive.delete(cwd);for(const [file,owner] of [...sessionOwners]) if(owner===id) sessionOwners.delete(file);patch(id,{connection:'offline',error:`Pi 进程已退出（${event.code??'signal'}）${detail}`,transcript:{...s.transcript,running:false,submitted:false,compacting:false,phase:'就绪',turnStartedAt:null}});failPending(id,'Pi 进程已退出')}
   if(event.kind==='protocol_error')patch(id,{error:event.message})
  }
  try{

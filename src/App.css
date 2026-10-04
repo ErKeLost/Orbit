@@ -5729,8 +5729,10 @@ html[data-theme="light"] .composer-mode-toggle.selected::after {
 }
 
 /* Shimmer driven by CSS instead of per-frame JS style writes. */
+/* background-clip:text 的 background-position 动画无法走合成器，每帧都是主线程重绘。
+   用 steps() 把重绘压到约 20~24fps：肉眼仍是流动的光，但流式期间的绘制量减半。 */
 .shimmer-animated {
-  animation: shimmer-slide var(--shimmer-duration, 2s) linear infinite;
+  animation: shimmer-slide var(--shimmer-duration, 2s) steps(40, end) infinite;
 }
 
 /* Container-first responsive layout. A resizable desktop pane can become
@@ -5828,3 +5830,18 @@ html[data-theme="light"] .composer-mode-toggle.selected::after {
   }
 }
 
+
+/* 低配设备：关掉流式期间的无限循环重绘源与毛玻璃，保留静态样式。 */
+:root[data-perf="low"] .shimmer-animated,
+:root[data-perf="low"] .thinking-shimmer,
+:root[data-perf="low"] .agent-feed-shimmer,
+:root[data-perf="low"] .pixel-loader-cell {
+  animation: none;
+}
+:root[data-perf="low"] .shimmer-animated {
+  background-position: 50% center, 0 0;
+}
+:root[data-perf="low"] * {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}

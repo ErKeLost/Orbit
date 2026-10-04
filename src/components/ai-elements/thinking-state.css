@@ -52,7 +52,7 @@
   background-size: 200% 100%;
   background-clip: text;
   -webkit-background-clip: text;
-  animation: thinking-shimmer-text 1.4s linear infinite;
+  animation: thinking-shimmer-text 1.4s steps(30, end) infinite;
   font-size: 13px;
   font-weight: 500;
   line-height: 1.5;

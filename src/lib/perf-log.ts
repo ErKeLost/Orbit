@@ -4,6 +4,16 @@
 // 每 10s 汇总一次。用于对照「AI 响应时打字卡」的复现与验证修复效果。
 import { useWorkspace } from "./store";
 
+/** 点击发送 → 下一次绘制的耗时（开启 perfLog 时才记录）。
+ * 两层 rAF：第一层在本帧绘制前，第二层在绘制之后，差值即用户感知到的响应延迟。 */
+export function perfMarkSend(label = "send") {
+  if (typeof localStorage === "undefined" || localStorage.getItem("pi-gui.perfLog") !== "1") return;
+  const start = performance.now();
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    console.info(`[perf] ${label} → 绘制 ${Math.round(performance.now() - start)}ms`);
+  }));
+}
+
 export function installPerfLog() {
   if (typeof localStorage === "undefined" || localStorage.getItem("pi-gui.perfLog") !== "1") return;
   let last = performance.now();

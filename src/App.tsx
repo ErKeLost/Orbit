@@ -27,7 +27,8 @@ export default function App(){
  const panel=useWorkspace(s=>s.panel)
  const cwd=useWorkspace(s=>s.cwd)
  const connection=useWorkspace(s=>s.connection)
- const state=useWorkspace(s=>s.state)
+ // 只订阅 sessionFile：整个 state 对象每次 refresh 都换引用，会让 App 及整个布局白白重渲染。
+ const sessionFile=useWorkspace(s=>s.state?.sessionFile)
  const dialogs=useWorkspace(s=>s.dialogs)
  const liveSessions=useWorkspace(s=>s.liveSessions)
  const online=connection==='online'
@@ -48,7 +49,7 @@ export default function App(){
   localStorage.setItem('pi-gui.sidebarOpen.narrow',String(sidebarVisibility.narrow))
  },[sidebarVisibility])
  const merged=useMemo(()=>mergeProjectSessions(cwd,sessions.data??[],liveSessions),[cwd,sessions.data,liveSessions])
- const currentSession=merged.sessions.find(session=>session.path===state?.sessionFile)
+ const currentSession=merged.sessions.find(session=>session.path===sessionFile)
  const rawHeaderTitle=panel==='chat'?(currentSession?.name||currentSession?.firstMessage||''):panel==='settings'?'设置':panel==='commands'?'技能与命令':panel==='mobile-access'?'移动端':'Orbit'
  const headerTitle=panel==='chat'?compactTitle(rawHeaderTitle):rawHeaderTitle
  const toggleSidebar=()=>setSidebarOpen(value=>!value)
@@ -57,8 +58,8 @@ export default function App(){
    {panel==='settings'?<>
     <WorkspaceTitlebar variant="full" sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} title={headerTitle} rawTitle={rawHeaderTitle}/>
     <section className="settings-root"><MetricsSync/><Panel/></section>
-   </>:<WorkspaceLayout narrow={narrow} sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} online={online} panel={panel} title={headerTitle} rawTitle={rawHeaderTitle} liveSessions={liveSessions} currentSessionFile={state?.sessionFile}/>}
-   {narrow&&<WorkspaceNavigationDrawer open={sidebarOpen} onClose={()=>setSidebarOpen(false)} online={online} panel={panel} liveSessions={liveSessions} currentSessionFile={state?.sessionFile}/>}
+   </>:<WorkspaceLayout narrow={narrow} sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} online={online} panel={panel} title={headerTitle} rawTitle={rawHeaderTitle} liveSessions={liveSessions} currentSessionFile={sessionFile}/>}
+   {narrow&&<WorkspaceNavigationDrawer open={sidebarOpen} onClose={()=>setSidebarOpen(false)} online={online} panel={panel} liveSessions={liveSessions} currentSessionFile={sessionFile}/>}
    <ScreenOverlay/>
    {dialogs[0]&&<ExtensionDialog key={dialogs[0].id} dialog={dialogs[0]}/>}
   </main>

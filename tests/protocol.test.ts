@@ -1,5 +1,5 @@
 import {describe,test,expect} from 'bun:test'
-import {assignTurnClocks,emptyTranscript,groupDisplayMessages,reduceEvent,hydrate,toolResultImages,toolResultText} from '../src/lib/protocol'
+import {assignTurnClocks,emptyTranscript,groupDisplayMessages,reuseGroups,reduceEvent,hydrate,toolResultImages,toolResultText} from '../src/lib/protocol'
 import { summarizeToolCalls } from '../src/lib/tool-activity'
 import { turnDurationId } from '../src/lib/turn-duration'
 describe('Pi 0.87.1 JSONL event projection',()=>{
@@ -281,5 +281,25 @@ describe('streaming delta delivery',()=>{
   expect(toolResultImages({content:[{type:'text',text:'x'}]})).toEqual([])
   expect(toolResultImages([{type:'image',data:'CC'}])).toEqual([])
   expect(toolResultImages([{type:'image',data:'BB',mimeType:'image/webp'}])).toEqual([{data:'BB',mimeType:'image/webp'}])
+ })
+})
+
+describe('reuseGroups',()=>{
+ const msg=(id:string,role:'user'|'assistant')=>({id,message:{role,content:id}})
+ test('未变化的历史组复用旧对象，变化的组用新对象，结果与直接分组一致',()=>{
+  const a=msg('a','user'),b=msg('b','assistant'),c=msg('c','user'),d=msg('d','assistant')
+  const first=groupDisplayMessages([a,b,c,d])
+  const d2={...d,message:{...d.message,content:'d2'}}
+  const next=groupDisplayMessages([a,b,c,d2])
+  const reused=reuseGroups(first,next)
+  expect(reused).toEqual(next)
+  expect(reused[0]).toBe(first[0]);expect(reused[1]).toBe(first[1]);expect(reused[2]).toBe(first[2])
+  expect(reused[3]).toBe(next[3]);expect(reused[3]).not.toBe(first[3])
+ })
+ test('新增消息并入末组时该组不复用',()=>{
+  const a=msg('a','user'),b=msg('b','assistant'),b2=msg('b2','assistant')
+  const first=groupDisplayMessages([a,b])
+  const reused=reuseGroups(first,groupDisplayMessages([a,b,b2]))
+  expect(reused[0]).toBe(first[0]);expect(reused[1].items).toHaveLength(2)
  })
 })

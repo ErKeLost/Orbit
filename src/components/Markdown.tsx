@@ -7,6 +7,7 @@ import "katex/dist/katex.min.css";
 import "katex/contrib/mhchem";
 import { remarkMentions } from "../lib/remark-mentions";
 import { MarkdownLink, Pre } from "./CodeBlock";
+import { isLowPerf } from "../lib/perf-tier";
 
 const remarkPlugins = [remarkGfm, remarkMath, remarkMentions];
 const rehypePlugins = [rehypeKatex];
@@ -60,8 +61,9 @@ export function Markdown({
         rehypePlugins={rehypePlugins}
         latexGuard
         preprocess={preprocessLaTeX}
+        // 低配机器：按"词"出字已经是最省的粒度；换成 silky 档，提交间隔更长、重解析次数更少。
         granularity="word"
-        smoothing="balanced"
+        smoothing={isLowPerf ? "silky" : "balanced"}
         components={components}
       />
     </div>

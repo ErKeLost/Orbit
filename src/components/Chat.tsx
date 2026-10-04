@@ -1,11 +1,11 @@
 import { Wifi } from "lucide-react";
-import { useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type RefObject } from "react";
+import { startTransition, useCallback, useEffect, useId, useMemo, useRef, useState, type ClipboardEvent as ReactClipboardEvent, type RefObject } from "react";
 import { m } from "motion/react";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "../lib/store";
 import { changeSession, getSessionTurnDurations, persistedSessionFile, report } from "../lib/rpc";
 import type { AgentNode } from "../lib/agents";
-import { assignTurnClocks, formatTranscriptError, groupDisplayMessages, type Transcript } from "../lib/protocol";
+import { assignTurnClocks, formatTranscriptError, groupDisplayMessages, reuseGroups, type Transcript } from "../lib/protocol";
 import type { Telemetry } from "../lib/telemetry";
 import { readTurnDurations, saveTurnDurations, turnDurationId } from "../lib/turn-duration";
 import {
@@ -22,6 +22,12 @@ import { ErrorOutput, TranscriptMessage } from "./chat/TranscriptMessage";
 import { hasSectionMedia, messageKind, sectionPreview, sectionPreviewAfterHeading, sectionText } from "../lib/conversation-sections";
 import { AgentActivityFeed } from "./agents/AgentActivityFeed";
 import { normalizeSelectionText } from "../lib/clipboard";
+import { isLowPerf } from "../lib/perf-tier";
+
+const groupCache = new WeakMap<object, ReturnType<typeof groupDisplayMessages>>();
+
+// 流式期间提交到 React 的间隔：低配机器拉长，换取主线程余量。
+const STREAM_COMMIT_MS = isLowPerf ? 200 : 100;
 
 function copyConversationSelection(event: ReactClipboardEvent<HTMLDivElement>) {
   const text = normalizeSelectionText(window.getSelection()?.toString() ?? "");
@@ -30,18 +36,44 @@ function copyConversationSelection(event: ReactClipboardEvent<HTMLDivElement>) {
   event.clipboardData.setData("text/plain", text);
 }
 
-/** 流式期间把高频值节流到约 intervalMs 一次；active=false 时原值直通、零开销。 */
-function useThrottledValue<T>(value: T, active: boolean, intervalMs: number): T {
-  const [trailing, setTrailing] = useState(value);
-  const lastCommitAt = useRef(0);
+/**
+ * 流式期间把 transcript / telemetry 的提交节流到 ~intervalMs 一次。
+ *
+ * 旧实现是 `useWorkspace(整个对象)` + effect + setState：每次 store 更新 Chat 都先用旧值
+ * 渲染一轮（拿到的还是节流前的值），effect 再 setState 触发第二轮。这里改成在 React 之外
+ * 订阅 store：中间的更新直接丢弃，不产生任何渲染；到点才 setState 一次，并用 transition
+ * 标成低优先级，让输入和点击始终排在前面。非流式时同步直通，落定/工具结果立即生效。
+ */
+function useThrottledStream(intervalMs: number) {
+  const read = () => {
+    const { transcript, telemetry } = useWorkspace.getState();
+    return { transcript, telemetry };
+  };
+  const [view, setView] = useState(read);
   useEffect(() => {
-    // 统一走定时器提交：inactive 时也立即补一次，保证下次流式开始时无陈旧窗口。
-    const commit = () => { lastCommitAt.current = Date.now(); setTrailing(value); };
-    const wait = active ? Math.max(0, intervalMs - (Date.now() - lastCommitAt.current)) : 0;
-    const timer = window.setTimeout(commit, wait);
-    return () => window.clearTimeout(timer);
-  }, [active, intervalMs, value]);
-  return active ? trailing : value;
+    let timer = 0;
+    let lastCommit = 0;
+    const commit = () => {
+      timer = 0;
+      lastCommit = performance.now();
+      const next = read();
+      setView(current => current.transcript === next.transcript && current.telemetry === next.telemetry ? current : next);
+    };
+    const unsubscribe = useWorkspace.subscribe((state, previous) => {
+      if (state.transcript === previous.transcript && state.telemetry === previous.telemetry) return;
+      if (!state.transcript.running) {
+        // 空闲：立即同步提交（含刚结束的那一次），并撤销待提交的定时器。
+        if (timer) { window.clearTimeout(timer); timer = 0; }
+        commit();
+        return;
+      }
+      if (timer) return;
+      timer = window.setTimeout(() => startTransition(commit), Math.max(0, intervalMs - (performance.now() - lastCommit)));
+    });
+    commit();
+    return () => { unsubscribe(); if (timer) window.clearTimeout(timer); };
+  }, [intervalMs]);
+  return view;
 }
 
 function useConversationSections(
@@ -127,14 +159,8 @@ function deriveRunStatus(transcript: Transcript, telemetry: Telemetry) {
 export function Chat() {
   const project = useWorkspace(state => state.cwd);
   const runtimeTarget = useWorkspace(state => state.runtimeTarget);
-  const liveTranscript = useWorkspace(state => state.transcript);
-  const liveTelemetry = useWorkspace(state => state.telemetry);
-  // Keep typing and other high-priority UI interactions ahead of expensive
-  // streaming transcript/Markdown reconciliation. 流式期间再把提交节流到 ~10Hz：
-  // 活跃消息每次更新都要全量重建（markdown 重解析 + 子树 reconcile），这是打字
-  // 掉帧的主力；非流式更新不节流，落定/工具结果立即生效。
-  const transcript = useDeferredValue(useThrottledValue(liveTranscript, liveTranscript.running, 100));
-  const telemetry = useDeferredValue(useThrottledValue(liveTelemetry, liveTranscript.running, 100));
+  // 流式期间的高频更新在 React 之外节流（~10Hz，低配 5Hz），并以 transition 提交。
+  const { transcript, telemetry } = useThrottledStream(STREAM_COMMIT_MS);
   const agents = useWorkspace(state => state.agents);
   const { ref, atBottom, scrollToBottom } = useConversationScroll();
   const proximityId = useId().replace(/[^a-zA-Z0-9_-]/g, "") || "conversation";
@@ -153,13 +179,17 @@ export function Chat() {
   // Steer/follow-up splits one turn into several assistant groups sharing the
   // same turnStartedAt; resolve each group's duration (runtime or saved) and
   // keep one claim per identical value so the turn duration shows once.
+  // 上一次的分组放在组件实例私有的 WeakMap 里（key 是每个实例一个的空对象），渲染中不碰 ref。
+  const [groupOwner] = useState(() => ({}));
   const messageGroups = useMemo(() => {
-    const groups = groupDisplayMessages(transcript.messages).map(group => ({
+    // 历史组复用上一次的对象（含 items 数组引用），TranscriptMessage 的 memo 一步命中。
+    const groups = reuseGroups(groupCache.get(groupOwner) ?? [], groupDisplayMessages(transcript.messages)).map(group => ({
       ...group,
       startedAt: group.items.find(item => item.startedAt !== undefined)?.startedAt,
       elapsedMs: ([...group.items].reverse().find(item => item.elapsedMs !== undefined)?.elapsedMs
         ?? savedDurations[turnDurationId(group.items) ?? ""]) as number | undefined,
     }));
+    groupCache.set(groupOwner, groups.map(({ id, items, indexes }) => ({ id, items, indexes })));
     const claimed = new Set<number>();
     for (const group of groups) {
       if (group.elapsedMs === undefined || claimed.has(group.elapsedMs)) group.elapsedMs = undefined;
@@ -169,7 +199,7 @@ export function Chat() {
     // 后续段一律 hidden，只显示「处理过程」，不再在下面重复一个正在处理。
     const clocks = assignTurnClocks(groups, { running: transcript.running, turnStartedAt: transcript.turnStartedAt });
     return groups.map((group, index) => ({ ...group, clock: clocks[index] }));
-  }, [transcript.messages, transcript.running, transcript.turnStartedAt, savedDurations]);
+  }, [groupOwner, transcript.messages, transcript.running, transcript.turnStartedAt, savedDurations]);
   const { retrying, retryDetail, compacting, compactionDetail, activeHasOutput } = deriveRunStatus(transcript, telemetry);
   const openAgent = useCallback((agent: AgentNode) => {
     if (!agent.sessionPath) return;

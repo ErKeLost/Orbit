@@ -4,7 +4,8 @@ import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { AnimatePresence, m } from "motion/react";
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useWorkspace } from "../../lib/store";
-import { report, sendPrompt, stop, syncComputerUseMode, syncMultiAgentMode } from "../../lib/rpc";
+import { perfMarkSend } from "../../lib/perf-log";
+import { ensureSessionModes, report, sendPrompt, stop } from "../../lib/rpc";
 import { Icon } from "../Icon";
 import { base64ToBlob } from "../../lib/image-bytes";
 import { encodeBlobToBase64, encodeClipboardImage } from "../../lib/image-encode";
@@ -194,6 +195,7 @@ export const ChatComposer = memo(function ChatComposer({ onSubmitted }: { onSubm
   useEffect(() => { lruCache(attachmentCache, composerKey, attachments); }, [attachments, composerKey]);
 
   async function submit(message: PromptInputMessage) {
+    perfMarkSend();
     const streamingBehavior = deliveryOverride.current ?? "steer";
     deliveryOverride.current = null;
     useWorkspace.getState().event({ type: "prompt_submitted" });
@@ -235,7 +237,7 @@ export const ChatComposer = memo(function ChatComposer({ onSubmitted }: { onSubm
         data: await encodeBlobToBase64(attachment.blob),
         mimeType: attachment.mimeType,
       })));
-      if (!transcriptRunning) await Promise.all([syncMultiAgentMode(project), syncComputerUseMode(project)]);
+      if (!transcriptRunning) await ensureSessionModes(project);
       const imagePayload = await payload;
       await sendPrompt({ type: "prompt", message: text, images: imagePayload, ...(transcriptRunning ? { streamingBehavior } : {}) }, project, transcriptRunning);
       onSubmitted();

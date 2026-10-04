@@ -343,6 +343,14 @@ function TranscriptMessageComponent({ items, tools, streaming, thinking, elapsed
 
 export const TranscriptMessage = memo(TranscriptMessageComponent, (previous, next) => {
   if (previous.streaming !== next.streaming || previous.thinking !== next.thinking || previous.elapsedMs !== next.elapsedMs || previous.clock !== next.clock || previous.activity !== next.activity || previous.items.length !== next.items.length || previous.items.some((item, index) => item !== next.items[index])) return false;
-  const content = previous.items.flatMap(item => Array.isArray(item.message.content) ? item.message.content : []);
-  return content.every(part => part.type !== "toolCall" || previous.tools[part.id ?? ""] === next.tools[part.id ?? ""]);
+  // tools 引用没变就不可能有工具行变化：直接跳过，历史消息每个 tick 都走这里。
+  if (previous.tools === next.tools) return true;
+  for (const item of previous.items) {
+    const content = item.message.content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (part.type === "toolCall" && previous.tools[part.id ?? ""] !== next.tools[part.id ?? ""]) return false;
+    }
+  }
+  return true;
 });

@@ -65,6 +65,7 @@ describe("durable state", () => {
     // Keys that are cheap to lose, with the reason.
     const excluded: Record<string, string> = {
       "pi-gui.perfLog": "diagnostics buffer, regenerated every run",
+      "pi-gui.perfTier": "manual override read by perf-tier.ts, never written by the app",
       "orbit.remote.connection.v1": "recovered from the host snapshot on connect",
       "pi-gui.multiAgentEnabled": "a switch whose default is fine",
       "pi-gui.computerUseEnabled": "a switch whose default is fine",

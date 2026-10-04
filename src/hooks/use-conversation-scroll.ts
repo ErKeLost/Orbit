@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isLowPerf } from "../lib/perf-tier";
 
 /** 距底部多少像素以内算“在底部”。 */
 const BOTTOM_THRESHOLD = 32;
@@ -117,14 +118,29 @@ export function useConversationScroll() {
     };
   }, [setAtBottom]);
 
+  const settleFrameRef = useRef(0);
+  useEffect(() => () => cancelAnimationFrame(settleFrameRef.current), []);
   // 稳定引用：作为 onSubmitted 传给 memo 过的 ChatComposer，
   // 避免 Chat 每次流式重渲染都把回调换新、击穿 memo。
+  // 发送时调用：新消息要等 React（含 deferred 渲染）提交后才有高度，所以不能只滚一次，
+  // 也不能用 smooth（动画期间内容还在长，会停在半路）。进入跟随状态后在约 1s 内
+  // 每帧贴底；用户向上滚动（followingRef 被关）就立即放手。
   const scrollToBottom = useCallback(() => {
     const element = ref.current;
     if (!element) return;
     followingRef.current = true;
     setAtBottom(true);
-    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+    cancelAnimationFrame(settleFrameRef.current);
+    // 低配机器缩短到 400ms：足够覆盖乐观预览的首次渲染，又不让每帧强制布局持续太久；
+    // 之后的增长由 ResizeObserver 驱动的 stickToBottom 接管。
+    const until = performance.now() + (isLowPerf ? 400 : 1000);
+    const settle = () => {
+      if (!followingRef.current) return;
+      const target = element.scrollHeight - element.clientHeight;
+      if (element.scrollTop < target) element.scrollTop = target;
+      if (performance.now() < until) settleFrameRef.current = requestAnimationFrame(settle);
+    };
+    settle();
   }, [setAtBottom]);
 
   return { ref, atBottom, scrollToBottom } as const;

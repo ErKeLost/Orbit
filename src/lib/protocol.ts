@@ -93,6 +93,21 @@ function toolImageInfo(toolName:string,source:unknown):ToolImageInfo|undefined {
   if(!model&&!paths.length)return undefined
   return {...(model?{model}:{}),...(size?{size}:{}),...(paths.length?{paths}:{})}
 }
+/**
+ * 与上一次分组结果对齐：内容（id + 每条消息引用）完全一致的 group 直接复用旧对象。
+ * 流式时每个 tick 只有最后一组真的变了，其余历史组复用后，下游 memo 的
+ * `items` 引用比较一步命中，不必再逐条比对。纯引用复用，不改变分组结果。
+ */
+export function reuseGroups<G extends DisplayMessageGroup>(previous: readonly G[], next: G[]): G[] {
+  if (previous.length === 0) return next
+  const byId = new Map(previous.map(group => [group.id, group] as const))
+  return next.map(group => {
+    const old = byId.get(group.id)
+    if (!old || old.items.length !== group.items.length) return group
+    for (let i = 0; i < group.items.length; i++) if (old.items[i] !== group.items[i]) return group
+    return old
+  })
+}
 export function groupDisplayMessages(messages: DisplayMessage[]): DisplayMessageGroup[] {
   return messages.reduce<DisplayMessageGroup[]>((groups, item, index) => {
     const previous = groups.at(-1)

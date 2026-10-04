@@ -1,4 +1,4 @@
-import { useId, useMemo, useState, type ReactNode } from "react";
+import { memo, useId, useMemo, useState, type ReactNode } from "react";
 import { FileIcon, Icon } from "../Icon";
 import { Button } from "@/components/ui/button";
 import { CodeChange } from "../CodeChange";
@@ -82,7 +82,7 @@ export function ToolActivityGroup({ toolNames, running, hasError = false, defaul
   </section>;
 }
 
-export function ToolCall({ toolName, request, result, details, usage, running, open: controlledOpen, onOpenChange, className = '' }: { toolName: string; request: string; result: string; details?: unknown; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost?: { total?: number } }; running: boolean; open?: boolean; onOpenChange?: (open: boolean) => void; className?: string }) {
+function ToolCallImpl({ toolName, request, result, details, usage, running, open: controlledOpen, onOpenChange, className = '' }: { toolName: string; request: string; result: string; details?: unknown; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost?: { total?: number } }; running: boolean; open?: boolean; onOpenChange?: (open: boolean) => void; className?: string }) {
   const [localOpen, setLocalOpen] = useState(false);
   const open = controlledOpen ?? localOpen;
   const detailsId = useId();
@@ -109,3 +109,6 @@ export function ToolCall({ toolName, request, result, details, usage, running, o
     </div></div>
   </div>;
 }
+
+// 活跃消息里每个 tick 所有工具行都会随父级重渲染；props 都是字符串/稳定引用，浅比较即可命中。
+export const ToolCall = memo(ToolCallImpl);

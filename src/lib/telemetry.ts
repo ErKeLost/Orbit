@@ -4,6 +4,9 @@ export type Compaction={status:'running'|'complete'|'cancelled'|'error';reason:s
 export type Telemetry={usage:Usage|null;compaction:Compaction|null;retry:{status:string;attempt?:number;maxAttempts?:number;delayMs?:number;error?:string}|null;events:{type:string;at:number;detail:string}[]}
 export const emptyTelemetry=():Telemetry=>({usage:null,compaction:null,retry:null,events:[]})
 export function observe(previous:Telemetry,event:Event,now=Date.now()):Telemetry{
+ // 流式里 99% 的 message_update 不带 usage：什么都没变就原样返回，避免下游白白重渲染。
+ if(event.type==='message_update'&&!event.usage)return previous
+ if(event.type==='tool_execution_update'||event.type==='response')return previous
  let next={...previous}
  if(event.type==='agent_start')next.usage=null
  if(event.type==='message_update'&&event.usage)next.usage=event.usage as Usage
