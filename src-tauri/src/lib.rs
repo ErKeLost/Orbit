@@ -24,7 +24,7 @@ use tauri::Manager;
 /// Pi spawns would miss Homebrew tools like rg and ffmpeg. Normalize once at
 /// startup; all child processes inherit the corrected environment. Existing
 /// entries keep their order, so user overrides always win.
-#[cfg(desktop)]
+#[cfg(unix)]
 fn normalize_path() {
     let current = std::env::var("PATH").unwrap_or_default();
     let mut entries: Vec<&str> = current.split(':').collect();
@@ -39,7 +39,7 @@ fn normalize_path() {
 /// Run the user's login shell once and capture the PATH it produces, so
 /// entries from ~/.zshrc & co (nvm, bun, cargo, npm globals…) reach agent
 /// spawns. User dirs come first; the app-inherited PATH fills the gaps.
-#[cfg(desktop)]
+#[cfg(unix)]
 fn probe_login_shell_path() -> Option<String> {
     use std::io::Read;
     use std::process::{Command, Stdio};
@@ -80,7 +80,7 @@ fn probe_login_shell_path() -> Option<String> {
     (!path.is_empty()).then(|| path.to_string())
 }
 
-#[cfg(desktop)]
+#[cfg(unix)]
 fn adopt_login_shell_path() {
     let Some(login) = probe_login_shell_path() else {
         return;
@@ -101,11 +101,12 @@ pub fn run() {
     // tungstenite, aws-lc-rs via reqwest). Without an explicit default,
     // rustls panics on first use — silently killing the relay thread.
     let _ = rustls::crypto::ring::default_provider().install_default();
-    #[cfg(desktop)]
+    #[cfg(unix)]
     {
+        // Finder/Dock launch inherits launchd's minimal PATH and stores dirs in
+        // a login shell, so both fixes are POSIX-only: Windows keeps its own
+        // PATH semantics (';' separators, no login shell) and is left alone.
         normalize_path();
-        // Resolve the user's tool PATH before any Pi process can start. Node
-        // itself is bundled, but tools invoked by Pi still need the login PATH.
         adopt_login_shell_path();
     }
     let builder = tauri::Builder::default();
