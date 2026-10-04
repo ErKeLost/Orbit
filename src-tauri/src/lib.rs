@@ -148,6 +148,7 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // The screen channel pushes status changes to the UI instead of

@@ -5,6 +5,7 @@ import { detectRuntimeEnvironment } from "../lib/runtime-environment";
 import { useRuntimeDiscovery } from "../lib/runtime-diagnostics";
 import { notifyRemoteForeground, openRemoteRuntime, remoteHostSnapshot, storedPairingUri } from "../lib/remote-runtime";
 import { restoreRemoteHost } from "../lib/remote-host";
+import { restorePersistentState } from "../lib/persistent";
 import { gooeyToast } from "goey-toast";
 import type { RemoteConnection, RemoteHostSnapshot } from "../lib/remote-protocol";
 import { useWorkspace } from "../lib/store";
@@ -108,6 +109,12 @@ export function useWorkspaceBootstrap() {
   // re-read at launch), which used to leave the phone retrying forever against
   // a process that was no longer listening. Restoring the intent the user
   // already expressed is what closes that loop.
+  // Restore the durable copy *before* the remote host is restored, because the
+  // host's own intent ("should mobile access come back") lives in it.
+  useEffect(() => {
+    void restorePersistentState();
+  }, []);
+
   const restoredHost = useRef(false);
   useEffect(() => {
     if (runtimeTarget !== "desktop" || restoredHost.current) return;

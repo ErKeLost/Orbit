@@ -1,4 +1,5 @@
 import { create } from "zustand"
+import { persistState } from "./persistent"
 
 /**
  * Screen preferences, and the one place they are turned into a stream shape.
@@ -114,6 +115,7 @@ function load(): ScreenPreferences {
 function persist(preferences: ScreenPreferences): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences))
+    persistState(STORAGE_KEY, JSON.stringify(preferences))
   } catch {
     // Private mode, quota, or a locked profile; the preview still works.
   }

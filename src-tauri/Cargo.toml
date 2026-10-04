@@ -44,6 +44,11 @@ tauri = { version = "=2.11.5", features = ["macos-private-api"] }
 tauri-plugin-log = "=2.9.1"
 tauri-plugin-dialog = "=2.7.3"
 tauri-plugin-opener = "2"
+# Durable key/value state. The WebView's localStorage lives in the renderer's
+# own storage, which the system can clear (and does under storage pressure);
+# pairing credentials and the mobile-access intent must survive that.
+# 2.5.0 requires tauri ^2.12; this is the newest that accepts the pinned 2.11.5.
+tauri-plugin-store = "=2.4.5"
 tauri-plugin-clipboard-manager = "=2.3.3"
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls"] }
 # Preview encoder for the screen channel (docs/SCREEN.md). JPEG keeps the P0

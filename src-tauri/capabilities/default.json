@@ -9,6 +9,7 @@
     "core:default",
     "core:window:allow-start-dragging",
     "dialog:default",
-    "opener:default"
+    "opener:default",
+    "store:default"
   ]
 }

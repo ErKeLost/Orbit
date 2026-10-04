@@ -1,3 +1,4 @@
+import { persistState } from "./persistent"
 import {
   OrbitRemoteClient,
   type RemoteClientHandlers,
@@ -23,6 +24,7 @@ export function storedPairingUri(): string {
 
 export function forgetPairing(): void {
   localStorage.removeItem(PAIRING_KEY)
+  persistState(PAIRING_KEY, null)
   client?.close()
   client = null
 }
@@ -164,6 +166,9 @@ export async function openRemoteRuntime(pairingUri: string, handlers: RemoteClie
     await next.connect()
     const snapshot = await next.getSnapshot()
     localStorage.setItem(PAIRING_KEY, pairingUri.trim())
+    // The pairing URI is the one value whose loss sends the user back to the
+    // computer, so it is mirrored durably.
+    persistState(PAIRING_KEY, pairingUri.trim())
     return snapshot
   } catch (error) {
     if (client === next) client = null

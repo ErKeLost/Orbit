@@ -12,6 +12,7 @@ import { useWorkspace } from "../../lib/store";
 import { useRuntimeDiscovery, type RuntimeDiscovery } from "../../lib/runtime-diagnostics";
 import { clearSessionHistory, connect, deleteMcpServer, desktopRuntime, disconnect, getGuiSettings, getProjectTrustMode, imageConfig, listMcpServers, loadMessages, mcpConfigLocation, native, refresh, refreshCapabilities, report, request, saveImageConfig, saveMcpServer, setGuiSetting, setProjectTrustMode, type ImageConfig, type McpServerView, type ProjectTrustMode } from "../../lib/rpc";
 import { CACHE_WARMING_LABELS, CODEMODE_TOOL, MCP_EXPOSURE_LABELS, TOOL_SEARCH_TOOL, inactiveCapabilityTools, parseCapabilities, availableMediaModels } from "../../lib/capabilities";
+import { persistState } from "../../lib/persistent";
 import { getRemoteHost, relaySettingsStatus, rememberRemoteHostEnabled, saveRelaySettings, startRemoteHost, stopRemoteHost, type RelaySettingsStatus, type RemoteHostInfo } from "../../lib/remote-host";
 import { GLOBAL_SHORTCUT, NOTIFY_ON_COMPLETE_KEY, readAutostart, readGlobalShortcut, writeAutostart, writeGlobalShortcut } from "../../lib/desktop-integration";
 import { checkMobileUpdate, mobileUpdateErrorMessage } from "../../lib/mobile-update";
@@ -390,6 +391,7 @@ export function DesktopHostSettings({ pageMode = false }: { pageMode?: boolean }
     try {
       if ((transport === "relay" || transport === "auto") && relay && !relay.hasHostKey) throw new Error("请先保存 Relay 地址和 Host Key");
       localStorage.setItem("orbit.remote.transport", transport);
+      persistState("orbit.remote.transport", transport);
       const info = await startRemoteHost({ mode: transport });
       rememberRemoteHostEnabled(true);
       previousClients.current = info.connectedClients;

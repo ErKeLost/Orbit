@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core"
+import { persistState } from "./persistent"
 import { REMOTE_PROTOCOL, type RemoteTheme } from "./remote-protocol"
 
 export type RelaySettingsStatus = {
@@ -52,6 +53,7 @@ export function rememberRemoteHostEnabled(enabled: boolean): void {
   try {
     if (enabled) localStorage.setItem(ENABLED_KEY, "true")
     else localStorage.removeItem(ENABLED_KEY)
+    persistState(ENABLED_KEY, enabled ? "true" : null)
   } catch {
     // Private mode or a locked profile; the Host still works, it just will not
     // come back by itself.

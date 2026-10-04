@@ -7,6 +7,8 @@
  * window exists to avoid.
  */
 
+import { persistState } from "./persistent"
+
 const STORAGE_KEY = "orbit.screen.pip.v1"
 const MARGIN = 10
 
@@ -40,6 +42,7 @@ export function loadPlacement(): PipPlacement {
 export function savePlacement(placement: PipPlacement): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(placement))
+    persistState(STORAGE_KEY, JSON.stringify(placement))
   } catch {
     // Private mode, quota, or a locked profile; the window still works.
   }

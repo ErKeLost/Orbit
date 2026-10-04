@@ -47,6 +47,7 @@
     "@tauri-apps/plugin-notification": "2.4.0",
     "@tauri-apps/plugin-opener": "2.5.5",
     "@tauri-apps/plugin-process": "2.3.1",
+    "@tauri-apps/plugin-store": "2.4.5",
     "@tauri-apps/plugin-updater": "2.11.0",
     "@typesafe-ai/sdk": "0.6.0",
     "@zxing/browser": "^0.1.5",
