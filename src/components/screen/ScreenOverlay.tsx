@@ -6,6 +6,11 @@ import { loadPlacement, savePlacement, type PipPlacement } from "../../lib/scree
 import { measurePanelFps, streamSettings, useScreenPreferences } from "../../lib/screen-settings"
 import { ScreenPip } from "./ScreenPip"
 import { ScreenExpanded } from "./ScreenExpanded"
+// Imported here rather than only from the settings panel: that panel is
+// lazily loaded, so a phone that had never opened Settings → 屏幕 rendered the
+// floating window with no stylesheet at all — unstyled, in normal flow, pushing
+// the page open with its contents laid out as plain text.
+import "../../styles/screen-channel.css"
 
 /**
  * Owns the screen channel for the mobile app.
@@ -31,6 +36,8 @@ export function ScreenOverlay() {
   // transition. The window itself stays a picture.
   const announced = useRef(new Set<string>())
   const lastState = useRef<ScreenChannelSnapshot["state"]>("idle")
+  /** Whether a picture has ever arrived, which is what "was connected" means. */
+  const hadFrame = useRef(false)
 
   useEffect(() => screenChannel().subscribe(setSnapshot), [])
   // The frame rate is only meaningful once the panel's real refresh rate is
@@ -63,6 +70,7 @@ export function ScreenOverlay() {
     void screenChannel().stop()
     announced.current.clear()
     lastState.current = "idle"
+    hadFrame.current = false
   }, [mobile, open])
 
   // Drawing is skipped while hidden; decoding continues, because pausing an
@@ -81,18 +89,22 @@ export function ScreenOverlay() {
     if (snapshot.state === "failed" && snapshot.error) {
       announce(`failed:${snapshot.error}`, "error", "屏幕预览未启动", snapshot.error)
     }
-    if (snapshot.state === "connecting") {
+    // Only a *lost* connection is worth a warning. The first connect is what the
+    // user just asked for, and announcing it as a disconnection would be wrong.
+    if (snapshot.state === "connecting" && hadFrame.current) {
       announce("connecting", "info", "与电脑的连接已断开，正在重连…", "电脑端的「移动端」Host 需要处于启用状态")
     }
-    if (snapshot.state === "live" && lastState.current !== "live" && lastState.current !== "idle") {
-      // Recovery is worth one sentence; the failure is already on screen.
+    if (snapshot.state === "live" && lastState.current !== "live" && hadFrame.current) {
       announced.current.delete("connecting")
       gooeyToast.success("已重新连接电脑", { showTimestamp: false })
     }
     lastState.current = snapshot.state
+    hadFrame.current = hadFrame.current || snapshot.frame !== null
     if (snapshot.codecNote) announce(`codec:${snapshot.codecNote}`, "info", snapshot.codecNote)
     if (snapshot.fpsNote) announce(`fps:${snapshot.fpsNote}`, "info", snapshot.fpsNote)
-  }, [open, snapshot.state, snapshot.error, snapshot.codecNote, snapshot.fpsNote])
+    // `snapshot.frame` is read through a ref-like accumulator above, but its
+    // presence is what makes "was connected" true, so it belongs in the deps.
+  }, [open, snapshot.state, snapshot.error, snapshot.frame, snapshot.codecNote, snapshot.fpsNote])
 
   // Keep the window inside the viewport after a rotation.
   useEffect(() => {
@@ -106,6 +118,13 @@ export function ScreenOverlay() {
   }, [])
 
   if (!mobile || !open) return null
+  // Success shows the screen; failure is a toast, not an empty box. A floating
+  // window whose entire content is "connecting…" says less than one sentence
+  // that disappears on its own.
+  //
+  // Once a picture has arrived the window stays put through a blip, holding the
+  // last frame, so a momentary drop does not blank what the user was watching.
+  if (!snapshot.frame) return null
   return <>
     <ScreenPip snapshot={snapshot} placement={placement} onPlacement={commit} />
     {expanded && <ScreenExpanded snapshot={snapshot} />}
