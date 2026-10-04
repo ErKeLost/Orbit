@@ -10,6 +10,8 @@ import {
   type RemoteHostOperation,
   type RemoteHostSnapshot,
   type RemoteJson,
+  type RemoteRequest,
+  type RemoteScreenInput,
 } from "./remote-protocol"
 
 const PAIRING_KEY = "orbit.remote.pairing.v1"
@@ -136,6 +138,14 @@ class StableRemoteRuntime {
     return this.requireActive().getSnapshot(timeoutMs)
   }
 
+  request(request: RemoteRequest, timeoutMs?: number) {
+    return this.requireActive().request(request, timeoutMs)
+  }
+
+  notify(request: RemoteRequest) {
+    this.requireActive().notify(request)
+  }
+
   private requireActive(): OrbitRemoteClient {
     if (!this.active || this.active.connectionState !== "online") throw new Error("Orbit Host 未连接")
     return this.active
@@ -180,6 +190,67 @@ export function remoteHostSnapshot() {
   return connectedClient().getSnapshot()
 }
 
+/**
+ * Extra listeners that own their own socket (the screen channel) and want the
+ * same foreground/network-change signal the control connection gets.
+ */
+const foregroundListeners = new Set<(reason: RemoteForegroundReason) => void>()
+
+export function addRemoteForegroundListener(listener: (reason: RemoteForegroundReason) => void): () => void {
+  foregroundListeners.add(listener)
+  return () => {
+    foregroundListeners.delete(listener)
+  }
+}
+
 export function notifyRemoteForeground(reason: RemoteForegroundReason = "app-resume"): void {
   client?.notifyForeground(reason)
+  for (const listener of foregroundListeners) listener(reason)
+}
+
+/**
+ * Open a *second* authenticated connection for the screen channel.
+ *
+ * Same pairing credentials and the same application-layer key as the control
+ * connection, but its own WebSocket: preview frames are hundreds of kilobytes
+ * and must never queue ahead of a thinking token or an input reply. The host
+ * sees this as just another client that happens to have subscribed to
+ * `screen.start`.
+ */
+export async function screenRemoteChannel(handlers: RemoteClientHandlers): Promise<OrbitRemoteClient> {
+  const uri = storedPairingUri()
+  if (!uri) throw new Error("尚未配对 Orbit Host")
+  const endpoints = parsePairingEndpoints(uri.trim())
+  const attempts = endpoints.map(endpoint => {
+    const candidate = new OrbitRemoteClient(handlers)
+    return candidate.connect(endpoint).then(
+      () => candidate,
+      (error: unknown) => {
+        candidate.close()
+        throw error
+      },
+    )
+  })
+  let winner: OrbitRemoteClient | null = null
+  try {
+    winner = await Promise.any(attempts)
+    return winner
+  } catch {
+    throw new Error("无法为屏幕通道连接 Orbit Host")
+  } finally {
+    for (const attempt of attempts) {
+      void attempt.then(candidate => {
+        if (candidate !== winner) candidate.close()
+      }).catch(() => undefined)
+    }
+  }
+}
+
+/**
+ * Screen input rides the control connection so it never waits behind a frame,
+ * and is fire-and-forget: the host deliberately does not answer an input
+ * event, so a drag costs one small send per sample.
+ */
+export function sendRemoteScreenInput(event: RemoteScreenInput): void {
+  connectedClient().notify({ type: "screen.input", event })
 }

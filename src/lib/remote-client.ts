@@ -307,6 +307,16 @@ export class OrbitRemoteClient {
     return decodeRemoteMessage(value)
   }
 
+  /**
+   * Send a message that expects no reply.
+   *
+   * Used for high-frequency input: the host does not answer, so a finger on
+   * the screen costs one small frame per event instead of a round trip.
+   */
+  notify(request: RemoteRequest): void {
+    this.send(request)
+  }
+
   sendPiCommand(project: string, command: Record<string, RemoteJson>, timeoutMs = 30_000): Promise<void> {
     return this.request({ type: "pi.command", project, command }, timeoutMs).then(() => undefined)
   }
@@ -320,6 +330,19 @@ export class OrbitRemoteClient {
 
   attach(connectionId: string, timeoutMs = 10_000): Promise<RemoteConnection> {
     return this.request({ type: "connection.attach", connectionId }, timeoutMs).then(result => result as RemoteConnection)
+  }
+
+  /** Ask the desktop to start capturing. Resolution and rate are advisory. */
+  startScreen(settings: Record<string, RemoteJson> = {}, timeoutMs = 20_000): Promise<RemoteJson | undefined> {
+    return this.request({ type: "screen.start", settings }, timeoutMs)
+  }
+
+  stopScreen(timeoutMs = 5_000): Promise<void> {
+    return this.request({ type: "screen.stop" }, timeoutMs).then(() => undefined)
+  }
+
+  screenStats(timeoutMs = 8_000): Promise<RemoteJson | undefined> {
+    return this.request({ type: "screen.stats" }, timeoutMs)
   }
 
   runHostOperation<T = RemoteJson>(operation: RemoteHostOperation, timeoutMs = 30_000): Promise<T> {

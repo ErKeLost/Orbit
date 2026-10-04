@@ -1,9 +1,26 @@
 # Orbit mobile architecture
 
 Orbit uses one React application for desktop and mobile. The Android package is
-not a second chat client and does not stream the desktop screen. It renders the
-same transcript, thinking, tool, and sub-agent components from structured Pi RPC
-events.
+not a second chat client. It renders the same transcript, thinking, tool, and
+sub-agent components from structured Pi RPC events.
+
+The phone can also *watch and drive* the desktop screen. On a narrow screen a
+tab strip sits under the title bar — 对话 / 屏幕 / 会话 / 变更 / 命令 — so the
+conversation and the screen flip in one tap, and **the preview keeps running
+while another tab is open**: switching back is instant instead of a capture
+restart. Both hosts stay mounted; only drawing is skipped while hidden, because
+pausing the H.264 decoder would corrupt the stream rather than save work.
+
+That is a separate, opt-in channel with its own connection: the transcript stays
+structured JSON on the control socket, and only the screen carries pixels. See
+[SCREEN.md](SCREEN.md). Nothing about the control protocol changes when screen
+preview is off, which is the default.
+
+Touching the preview injects real input on the computer — pointer, scroll, a
+key or chord from the key bar, and literal text through "在 Mac 上输入" — using
+the same injection path and the same accessibility grant as `gui_task`. The
+computer is the executor for every action; the phone sends normalized
+coordinates and never learns about Retina scaling or display arrangement.
 
 ## Runtime boundary
 
@@ -21,8 +38,9 @@ typed commands to the Host and consumes the same Pi JSONL events that the deskto
 uses. This preserves event ordering and avoids a second transcript model.
 
 The transport batches burst events, uses bounded queues, and disconnects slow
-clients instead of allowing unbounded memory growth. It sends structured JSON,
-not screenshots or video frames.
+clients instead of allowing unbounded memory growth. The control transport
+sends structured JSON only: screenshots and preview frames never share this
+socket, so a preview can never delay a thinking token or an input reply.
 
 ## Connection scope
 

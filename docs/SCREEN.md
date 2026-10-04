@@ -1,0 +1,189 @@
+# Orbit screen channel
+
+Orbit 的移动端有两种"看桌面"的方式，它们是两条独立的通道，不要混在一起：
+
+```text
+通道 A（已有）  Pi JSONL 事件 -> 结构化 UI        Files / Changes / Browser / Terminal
+通道 B（本文）  捕获的屏幕像素 -> 视频/帧          Screen
+```
+
+通道 A 由 `remote.rs` 承载：结构化、低频、必须低延迟、绝不能排队。
+通道 B 由 `screen/` 承载：高带宽、可丢帧、必须永远发"最新一帧"。
+
+## 为什么不复用同一个 WebSocket
+
+一帧 1080p 预览图 60–300KB，若和 Pi 事件共用一个 TCP 流，一次发送就会让
+"输入回显 / thinking 流式输出"卡住几十到几百毫秒。所以：
+
+- 手机端为 Screen 再开一条 WebSocket（`OrbitRemoteClient` 的第二个实例，
+  复用同一套 token / E2EE / 重连 / 竞速逻辑）。
+- 桌面端不需要任何特殊概念：它就是另一个 client 连接，只是订阅了 screen。
+- Relay 路径天然支持：一个 socket 对应一个 `clientId`。
+
+## 丢帧语义
+
+任何媒体管线都不能背压。总线只保留**最新一帧**：
+
+```text
+SCStream 回调 ──► 只留最新 ──► 变速器(fps 门限/去重) ──► 编码 ──► ScreenBus
+                                                                     │
+                    每个 client 记住已送出的 version ◄───────────────┘
+                    落后就取最新的那一帧，中间的全丢
+```
+
+队列长度恒为 1，编码线程永远读"最新"，发送端永远取"最新"。
+没有排队，就没有延迟累积。
+
+## 阶段
+
+| 阶段 | 编解码 | 传输 | 用途 | 状态 |
+|---|---|---|---|---|
+| P0 | JPEG（GPU 侧缩放） | 独立 WebSocket + E2EE | 兜底、无 WebCodecs 的环境 | 已实现 |
+| P1 | **H.264 硬编 (VideoToolbox) → WebCodecs** | 独立 WebSocket + E2EE | 默认路径 | 已实现 |
+| P2 | 帧率/质量/码率自适应 | 实测字节数反馈 | 弱网 | 已实现 |
+| P3 | 输入回传 | 控制 socket，免响应 | 接管桌面 | 已实现 |
+| P4 | WebRTC (str0m) + TURN | UDP，无队头阻塞 | <100ms、跨公网免中转 | 待做 |
+
+P4 是唯一剩下的部分，而且它**不是**前面工作的替代：`encode::Encoder` 已经是
+可替换的实现，WebRTC 只需要换底层传输，把 RTP 包化接上去，协议、总线、
+WebCodecs 解码、UI、输入全部复用。在没有自己的 coturn 之前，走现有 relay
+的这条路径反而是唯一能用的公网方案。
+
+## H.264 路径
+
+```
+SCStream ──CVPixelBuffer（IOSurface，零拷贝）──► VTCompressionSession
+                                                      │  AVCC + avcC
+                                                      ▼
+                                                 单帧总线
+                                                      │
+                              WebSocket/relay（E2EE）─┘
+                                                      │
+                                    WebCodecs VideoDecoder ──► canvas
+```
+
+要点：
+
+- **零拷贝**。`RawFrame` 携带的是捕获层的 `CVPixelBuffer` 引用，不是 RGB/Vec
+  副本；VideoToolbox 直接读 IOSurface。只有选择 JPEG 时才会去锁内存读字节。
+- **`AllowFrameReordering = false`**（无 B 帧，解码序即显示序）、
+  **`RealTime = true`**、**Main profile**（可开 CABAC，同码率画质更好）。
+  可选的时延/整型提示属性按"尽力而为"设置：不同硬件和系统版本会拒绝不同
+  的可选键，丢一个提示只是多一点延迟，失败整个会话则是丢掉整个功能。
+- **输出是 AVCC + `AVCDecoderConfigurationRecord`**，正是 WebCodecs
+  `VideoDecoder` 需要的格式，手机端不需要做任何格式转换。avcC 只在变化时下发
+  （静止桌面就是首帧一次），`codec` 字符串由 avcC 的 profile/compat/level
+  三个字节推出来，而不是硬编码——解码器与实际 SPS 不一致会直接报错。
+- **编码器可能异步出帧**，所以 `encode()` 返回"这一轮就绪的全部帧"而不是
+  假定一进一出，管线按序发布，不产生空洞。
+
+## 为什么两种编码都要留
+
+H.264 在静止画面上只要几百字节，JPEG 要几十 KB；但 H.264 需要一个解码器。
+手机端在 `screen.start` 之前用 `VideoDecoder.isConfigSupported` 探测一次
+WebCodecs，拿不到就明确向主机要 JPEG。所以不存在"发出去才发现解不了"的路径，
+而且 WebView 缺少 WebCodecs 的环境（以及任何需要逐帧独立可丢的场合）仍然可用。
+
+## 已实现的取舍
+
+这几条都是"看起来能省事、实际会变坑"的地方，所以写下来：
+
+- **不编码没人能收到的帧，这是硬约束。** H.264 帧依赖前面的帧，丢一帧之后
+  全部作废；而单帧总线本来就是靠丢帧维持低延迟的。所以总线记录**最慢订阅者**
+  已送达的序号，只有所有订阅者都消费完上一帧才允许编码下一帧。这不是限速，
+  是正确性前提。万一还是出现空洞（多观看端速度不一），订阅端发现自己跳号就
+  置 `resync`，管线立刻补一个关键帧并标记 `resync: true`，手机端重置解码器；
+  手机端自己也会检测跳号并丢弃关键帧之前的帧，避免把花屏画上去。
+- **变化检测是逐字节精确的**，不采样、不设容差。比较发生在原始捕获像素上，
+  未变化的两帧是位完全相同的，没有压缩噪声需要过滤，所以任何一个像素的变化
+  都必须触发发送。用采样或阈值会漏掉打字光标、单字符流式输出——而这些正是
+  用户盯着看的东西。带宽由调节器管，不靠容差管。
+- **输入事件不产生回复。** 手指在屏幕上时事件是连续的；每个事件都回一条
+  ack 会占用同一条 socket。`screen.input` 带 requestId 才回，否则静默。
+- **没有观看者就不编码。** 空闲宽限期内采集流保持打开（避免菜单栏录制指示灯
+  反复闪），但不再编码，否则就是给一台已经离开的手机白烧 CPU。
+- **单帧有硬上限。** relay 的 WebSocket 帧上限是 1 MiB，而中转帧是双重 base64
+  （JPEG → 信封 → AES-GCM），约 1.78 倍。超限的帧直接丢弃并强制降档，
+  因为"静默断开 relay"远比"少一帧"严重。
+- **输入走控制 socket，帧走屏幕 socket。** 两条连接，各自最优。
+- **调节器只降不升过请求值。** 对受码率控制的编码器来说"低于预算"是常态，
+  不能当成本钱更多的证据。质量从客户端请求值往下走，压力解除后回升到请求值
+  为止；帧率在质量恢复之后才回升。
+- **调节分辨率这件事故意没做。** 对 H.264 来说码率才是正确的杠杆：改分辨率
+  要重启采集会话和编码器、强制一个关键帧（约 300ms 断流），而改码率是即时的。
+  这也正是 WebRTC 在拥塞时调码率而不是调分辨率的原因。协议里的 `maxWidth`
+  是会话级选择，不是运行时可调项。
+- **显示器几何只存在主机上。** 订阅端不缓存它，这样某个观看端切换显示器导致
+  管线重启时，其他观看端的坐标映射不会指向旧屏幕。
+
+## 协议
+
+所有消息走既有的帧信封，新增两类：
+
+客户端 -> 主机（请求/响应）
+
+```json
+{"type":"screen.start","requestId":"..","maxWidth":1600,"maxFps":15,"quality":70,"displayId":0}
+{"type":"screen.stop","requestId":".."}
+{"type":"screen.stats","requestId":".."}
+{"type":"screen.displays","requestId":".."}
+{"type":"screen.input","requestId":"..","event":{"kind":"pointer","phase":"down","x":0.42,"y":0.73}}
+```
+
+主机 -> 客户端（推送，只在 `screen.start` 之后）
+
+```json
+{"type":"screen.frame","seq":812,"capturedAt":1730000000000,"encodedAt":1730000000100,
+ "width":1280,"height":720,"displayId":0,"displayWidth":1920,"displayHeight":1080,
+ "scale":2.0,"codec":"jpeg","keyframe":true,"bytes":41230,"data":"<base64>"}
+{"type":"screen.stop","reason":"capture-unavailable"}   // 主机侧主动终止
+```
+
+`x`/`y` 是相对**捕获区域**的归一化坐标（0..1，左上原点）。主机负责换算成
+逻辑屏幕坐标再注入，客户端永远不需要知道 Retina 缩放。
+
+### 输入事件
+
+```json
+{"kind":"pointer","phase":"down"|"move"|"up","x":0.4,"y":0.7,"button":"left"|"right"}
+{"kind":"scroll","x":0.4,"y":0.7,"dx":0,"dy":-3}
+{"kind":"key","key":"escape"|"tab"|"arrowup"|"meta+space"|"enter"|"backspace"|"f5"}
+{"kind":"text","value":"要注入的字符串"}
+```
+
+`kind:"text"` 走 `Keyboard::type_text`（支持中文与 emoji），
+`kind:"key"` 走 `Key` 枚举映射，两者都复用 `xa11y` 的输入合成，
+和 `gui_task` 用的是同一条注入路径，因此共享同一次辅助功能授权。
+
+## 权限
+
+macOS 屏幕录制（TCC）与辅助功能是**两个独立授权**：
+
+- 辅助功能：已有，`Orbit Agent` 运行时的稳定签名。输入注入复用它。
+- 屏幕录制：本模块需要。`CGPreflightScreenCaptureAccess` 报告状态；
+  未授权时主机**不启动**采集线程，`screen.start` 直接返回可操作的中文提示，
+  手机端和桌面端「屏幕通道」页都会显示。授权后必须重启 Orbit。
+
+## 指标
+
+`screen.stats` 返回 `running` / `permission` / `subscribers` / `codec` /
+`fps` / `effectiveFps` / `quality` / `captured` / `published` / `dropped` /
+`unchanged` / `encodeMsAvg` / `encodeMsMax` / `bitsPerSecond` / `failure` /
+显示器列表。
+
+手机端每 2 秒轮询一次，并把"捕获时间 → 显示时间"的差当作延迟估计。
+桌面端「屏幕通道」页读同一份快照（Tauri 命令 `screen_status`）。
+
+## 手动验证采集
+
+单测覆盖总线、调节器、编码、坐标映射与协议，但 ScreenCaptureKit 需要真实
+显示器和 TCC 授权，因此单独放一个默认忽略的测试：
+
+```sh
+cd src-tauri
+cargo test --lib screen::tests::captures_and_encodes -- --ignored --nocapture
+```
+
+未授权时它会打印 `PERMISSION_HINT` 并成功返回，这本身就是权限探测路径的验证；
+授权后它会**同时**用 H.264 和 JPEG 各编一帧，并断言 H.264 首帧是关键帧且带
+解码器配置——这三条是手机端能正常播放的前提。

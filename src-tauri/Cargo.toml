@@ -1,6 +1,6 @@
 [package]
 name = "orbit"
-version = "0.4.0"
+version = "0.5.0"
 default-run = "orbit"
 description = "A local desktop workspace for Orbit"
 authors = ["you"]
@@ -46,6 +46,11 @@ tauri-plugin-dialog = "=2.7.3"
 tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "=2.3.3"
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls"] }
+# Preview encoder for the screen channel (docs/SCREEN.md). JPEG keeps the P0
+# path free of native dependencies and fast enough at preview resolution; the
+# encoder sits behind screen::encode::Encoder so the VideoToolbox H.264
+# implementation can replace it without touching the protocol.
+image = { version = "=0.25.10", default-features = false, features = ["jpeg"] }
 
 # The desktop Host uses a small blocking WebSocket server so mobile clients
 # can connect over a trusted LAN. These are desktop-only; mobile builds use
@@ -75,6 +80,19 @@ xa11y = "=0.15.0"
 objc2-app-kit = { version = "=0.3.2", features = ["NSRunningApplication", "NSWorkspace"] }
 objc2-foundation = { version = "=0.3.2", features = ["NSURL", "NSString", "NSArray"] }
 block2 = "=0.6.2"
+# Screen channel (docs/SCREEN.md): ScreenCaptureKit capture, CoreMedia/CoreVideo
+# pixel buffers, and macOS screen-recording permission probes. VideoToolbox
+# encoding for the H.264 phase is added together with the WebRTC transport.
+objc2 = "=0.6.4"
+objc2-core-foundation = { version = "=0.3.2", features = ["CFArray", "CFDictionary", "CFNumber", "CFString", "CFCGTypes"] }
+objc2-core-graphics = { version = "=0.3.2", features = ["CGDirectDisplay", "CGWindow", "CGEvent"] }
+objc2-core-media = { version = "=0.3.2", features = ["CMTime", "CMSampleBuffer", "objc2-core-video"] }
+objc2-core-video = { version = "=0.3.2", features = ["CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn"] }
+objc2-screen-capture-kit = { version = "=0.3.2", features = ["SCShareableContent", "SCStream", "SCError", "block2", "dispatch2"] }
+# Hardware H.264 for the screen channel. VideoToolbox reads the IOSurface the
+# capturer already produced, so the encoder path never touches the CPU.
+objc2-video-toolbox = { version = "=0.3.2", features = ["VTCompressionSession", "VTDecompressionSession"] }
+dispatch2 = "=0.3.1"
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-barcode-scanner = "2.4.6"

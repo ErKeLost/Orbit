@@ -1,0 +1,329 @@
+/* Screen channel (`docs/SCREEN.md`).
+ *
+ * Two layouts share one file: the phone shows a live preview with a touch
+ * surface, the desktop shows channel counters. Both are driven by the same
+ * frame envelope, so the preview stage is deliberately the only element that
+ * does anything pixel-specific.
+ */
+
+.screen-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  height: 100%;
+  padding: 12px;
+  overflow: auto;
+}
+
+.screen-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.screen-spacer {
+  flex: 1 1 auto;
+}
+
+.screen-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--muted-foreground);
+}
+
+.screen-state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--muted-foreground) 18%, transparent);
+}
+
+.screen-state[data-state="live"] {
+  color: var(--foreground);
+}
+
+.screen-state[data-state="live"] .screen-state-dot {
+  background: var(--chart-2, #34d399);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--chart-2, #34d399) 22%, transparent);
+  animation: screen-pulse 2.4s ease-in-out infinite;
+}
+
+.screen-state[data-state="failed"] .screen-state-dot {
+  background: var(--destructive, #ef4444);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--destructive, #ef4444) 22%, transparent);
+}
+
+@keyframes screen-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen-state[data-state="live"] .screen-state-dot { animation: none; }
+}
+
+.screen-meta {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+/* The stage owns the aspect ratio; `object-fit: contain` inside it means the
+ * letterbox is part of the layout, and `ScreenSurface` normalizes against the
+ * rendered image box so clicks land where the user aimed. */
+.screen-stage {
+  position: relative;
+  width: 100%;
+  /* On a phone the preview is the main content, so it gets most of the height;
+     on the desktop status page there is no stage at all. */
+  max-height: min(62vh, calc(100dvh - 260px));
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--border);
+  margin-inline: auto;
+  /* A preview must never be draggable, selectable, or zoomable by accident. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.screen-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+/* H.264 frames are drawn into this canvas rather than swapped as images, so it
+ * holds the aspect ratio itself and `contain` has no effect on it. The channel
+ * sets the backing size to the decoded geometry; CSS decides the display size,
+ * which keeps the picture crisp on a Retina phone panel. */
+canvas.screen-frame {
+  display: block;
+  object-fit: contain;
+}
+
+.screen-codec {
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  letter-spacing: 0.04em;
+}
+
+.screen-codec[data-codec="h264"] {
+  color: var(--chart-2, #34d399);
+  border-color: color-mix(in oklab, var(--chart-2, #34d399) 40%, transparent);
+}
+
+.screen-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: crosshair;
+}
+
+.screen-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: color-mix(in oklab, var(--muted-foreground) 90%, white 10%);
+  font-size: 13px;
+  text-align: center;
+  padding: 24px;
+}
+
+.screen-placeholder svg {
+  width: 30px;
+  height: 30px;
+}
+
+.screen-placeholder-block {
+  position: static;
+  min-height: 220px;
+}
+
+.screen-metrics {
+  position: absolute;
+  z-index: 3;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 14px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: color-mix(in oklab, #000 62%, transparent);
+  backdrop-filter: blur(8px);
+  color: #f4f4f5;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.screen-metrics > div {
+  display: contents;
+}
+
+.screen-metrics dt {
+  opacity: 0.62;
+}
+
+.screen-metrics dd {
+  margin: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.screen-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--destructive-foreground, #fff);
+  background: color-mix(in oklab, var(--destructive, #ef4444) 22%, transparent);
+  border: 1px solid color-mix(in oklab, var(--destructive, #ef4444) 38%, transparent);
+}
+
+.screen-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.screen-key-row {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+/* The key bar stays reachable one-handed: real buttons with a 34px target,
+ * sized for a thumb rather than a pointer. */
+.screen-key {
+  min-width: 40px;
+  height: 34px !important;
+  padding-inline: 9px !important;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+}
+
+.screen-key svg {
+  width: 15px;
+  height: 15px;
+}
+
+.screen-type-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.screen-type-row input {
+  height: 34px;
+}
+
+.screen-stat {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+  white-space: nowrap;
+}
+
+.screen-hint {
+  margin: 4px 2px 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+
+.screen-status-panel .settings-group + .settings-group {
+  margin-top: 14px;
+}
+
+.icon-button.selected {
+  color: var(--primary-foreground, var(--foreground));
+  background: color-mix(in oklab, var(--primary, currentColor) 20%, transparent);
+}
+
+/* ── narrow-screen hosts ─────────────────────────────────────────────
+ *
+ * On a phone the workspace holds two long-lived hosts: the chat and the screen.
+ * Both stay mounted so switching between them is a visibility flip rather than
+ * a teardown — for the screen that is the difference between an instant view
+ * and a capture restart with a black gap.
+ */
+
+.screen-host {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.screen-host[hidden] {
+  display: none;
+}
+
+/* The tab strip is the phone's primary navigation: the drawer is two taps away,
+ * and flipping between the conversation and the screen has to be one. */
+.mobile-panel-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-panel-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.mobile-panel-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  height: 30px;
+  padding-inline: 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+.mobile-panel-tab svg {
+  width: 15px;
+  height: 15px;
+}
+
+.mobile-panel-tab.selected {
+  color: var(--foreground);
+  background: color-mix(in oklab, var(--primary, currentColor) 16%, transparent);
+  border-color: color-mix(in oklab, var(--primary, currentColor) 32%, transparent);
+}
+
+/* A panel opened from the drawer (settings, mobile access, the console) is not
+ * in the strip, so no tab is highlighted rather than the wrong one. */
+.mobile-panel-tabs[data-detached="true"] .mobile-panel-tab {
+  opacity: 0.72;
+}

@@ -62,7 +62,7 @@ export function ProjectEditorDialog({ project, homeDir, onClose, onSave }: Proje
               </div>
             })}
           </div>
-          <Button variant="outline" className="project-editor-add" disabled={!desktopRuntime()} onClick={() => void addRoots().catch(report)}><Icon name="folder-plus" />添加目录</Button>
+          <Button variant="outline" className="project-editor-add" disabled={!desktopRuntime()} onClick={() => void addRoots().catch(report)}><Icon name="folder-open" />添加目录</Button>
         </section>
       </div>
       <DialogFooter><Button variant="outline" disabled={saving} onClick={onClose}>取消</Button><Button disabled={saving || !name.trim()} onClick={() => void save()}>{saving ? "保存中" : "保存"}</Button></DialogFooter>

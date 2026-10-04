@@ -13,6 +13,11 @@ pub mod ax_settle;
 pub mod ax_worker;
 #[cfg(target_os = "macos")]
 pub mod disclaim;
+/// Screen channel (`docs/SCREEN.md`). The bus, protocol, encoder, and
+/// subscription logic are platform independent; only the capture backend and
+/// input injection have per-platform implementations, and non-macOS targets
+/// report that they are unavailable instead of failing to build.
+mod screen;
 mod bridge;
 mod mobile_update;
 mod remote;
@@ -175,6 +180,7 @@ pub fn run() {
         .manage(splash::SplashState::default())
         .manage(bridge::Bridge::default())
         .manage(remote::RemoteHost::default())
+        .manage(screen::ScreenHost::default())
         .invoke_handler(tauri::generate_handler![
             #[cfg(target_os = "macos")]
             ax::ax_observe,
@@ -223,7 +229,11 @@ pub fn run() {
             remote::save_relay_settings,
             remote::remote_host_status,
             remote::remote_host_stop,
-            remote::remote_host_set_theme
+            remote::remote_host_set_theme,
+            screen::screen_status,
+            screen::screen_displays,
+            screen::screen_request_permission,
+            screen::screen_stop
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {

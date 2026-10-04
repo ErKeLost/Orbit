@@ -33,6 +33,7 @@ bun run tauri build --bundles app
 - 空闲时 Enter 发送，Shift Enter 换行；运行中可选择引导或跟进，再点击排队箭头。
 - 模型和 effort 下拉框只展示 Pi 实际报告的可用项。
 - 会话树支持导航、分叉、标签；设置可控制工具和压缩；控制台包含全部 33 个 RPC 命令。
+- `⌘` 侧栏 →「屏幕」：手机端实时看桌面并直接触控、打字、发快捷键；桌面端显示屏幕通道状态、编码格式与授权。桌面用 VideoToolbox 硬编 H.264（静止画面只花几百字节），手机端用 WebCodecs 解码，无 WebCodecs 时自动退回 JPEG。帧走独立连接，不与对话争带宽。见 [docs/SCREEN.md](docs/SCREEN.md)。
 - OAuth、包管理及终端专有扩展从设置里的原始 Pi 终端入口使用。
 
 完整功能边界与 33/33 RPC 覆盖：[CAPABILITIES.md](docs/CAPABILITIES.md)。文档与代码依据：[SOURCES.md](docs/SOURCES.md)。精确版本：[versions.json](docs/versions.json)。实际集成结果：[pi-smoke-result.json](docs/pi-smoke-result.json)。

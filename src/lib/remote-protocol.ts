@@ -15,17 +15,120 @@ export type RemoteHostOperation =
   | { name: "session.turnDurations"; sessionPath: string }
   | { name: "session.delete"; sessionPath: string }
 
+/** Shape a phone asks the desktop preview for. The host clamps and may adapt. */
+export type RemoteScreenSettings = {
+  maxWidth?: number
+  maxFps?: number
+  quality?: number
+  displayId?: number
+  showCursor?: boolean
+  /**
+   * `"h264"` or `"jpeg"`. The host answers with the codec it actually used in
+   * `RemoteScreenStartResult.codec`, so a phone that cannot decode H.264 asks
+   * for JPEG instead of discovering the problem frame by frame.
+   */
+  codec?: RemoteScreenCodec
+}
+
+export type RemoteScreenCodec = "h264" | "jpeg"
+
+/** A capturable display, in both logical points and device pixels. */
+export type RemoteDisplay = {
+  id: number
+  name: string
+  logicalX: number
+  logicalY: number
+  logicalWidth: number
+  logicalHeight: number
+  pixelWidth: number
+  pixelHeight: number
+  scale: number
+  primary: boolean
+}
+
+/** Input events. Coordinates are normalized to the captured display. */
+export type RemoteScreenInput =
+  | { kind: "pointer"; phase: "down" | "move" | "up"; x: number; y: number; button?: "left" | "right" | "middle"; clicks?: number }
+  | { kind: "scroll"; x: number; y: number; dx: number; dy: number }
+  | { kind: "key"; key: string }
+  | { kind: "text"; value: string }
+
+export type RemoteScreenStartResult = {
+  display: RemoteDisplay
+  displays: RemoteDisplay[]
+  codec: RemoteScreenCodec
+  width: number
+  height: number
+}
+
+export type RemoteScreenStatus = {
+  running: boolean
+  permission: boolean
+  subscribers: number
+  codec: RemoteScreenCodec
+  width: number
+  height: number
+  fps: number
+  effectiveFps: number
+  quality: number
+  displays: RemoteDisplay[]
+  display?: RemoteDisplay
+  captured: number
+  published: number
+  dropped: number
+  unchanged: number
+  encodeMsAvg: number
+  encodeMsMax: number
+  bitsPerSecond: number
+  failure?: string
+}
+
 export type RemoteRequest =
   | { type: "host.ping"; requestId?: string }
   | { type: "host.snapshot"; requestId?: string }
   | { type: "host.operation"; requestId?: string; operation: RemoteHostOperation }
   | { type: "connection.attach"; requestId?: string; connectionId: string }
   | { type: "pi.command"; requestId?: string; project: string; command: Record<string, RemoteJson> }
+  | { type: "screen.start"; requestId?: string; settings?: RemoteScreenSettings }
+  | { type: "screen.stop"; requestId?: string }
+  | { type: "screen.stats"; requestId?: string }
+  | { type: "screen.displays"; requestId?: string }
+  | { type: "screen.input"; requestId?: string; event: RemoteScreenInput }
 
 export type RemoteConnection = { id: string; cwd: string }
 export type RemoteHostSnapshot = { protocol: typeof REMOTE_PROTOCOL; serverTime: number; theme?: RemoteTheme; machineName?: string; connections: RemoteConnection[] }
 
+/**
+ * One encoded preview frame. `data` is base64 of the codec payload; the
+ * envelope is built once on the host and shared by every subscriber.
+ *
+ * For H.264 the payload is AVCC (length-prefixed NAL units) and `description`
+ * — an `AVCDecoderConfigurationRecord` — is present only on the frames where it
+ * changed, which for a static desktop means the first frame and nothing after.
+ */
+export type RemoteScreenFrame = {
+  type: "screen.frame"
+  seq: number
+  capturedAt: number
+  encodedAt: number
+  width: number
+  height: number
+  displayId: number
+  displayWidth: number
+  displayHeight: number
+  scale: number
+  codec: RemoteScreenCodec
+  keyframe: boolean
+  /** The encoder restarted its reference chain; the decoder must reset. */
+  resync?: boolean
+  /** Base64 `AVCDecoderConfigurationRecord`, present only when it changed. */
+  description?: string | null
+  bytes: number
+  data: string
+}
+
 export type RemoteEvent =
+  | RemoteScreenFrame
   | { type: "host.hello"; protocol: typeof REMOTE_PROTOCOL; hostId: string; serverTime: number; theme?: RemoteTheme; machineName?: string }
   | { type: "host.theme"; theme: RemoteTheme; serverTime: number }
   | { type: "host.pong"; requestId?: string; serverTime: number }
@@ -62,12 +165,40 @@ export function isRemoteHostOperation(value: unknown): value is RemoteHostOperat
   return false
 }
 
+function isRemoteScreenInput(value: unknown): value is RemoteScreenInput {
+  if (!record(value) || typeof value.kind !== "string") return false
+  if (value.kind === "text") return typeof value.value === "string"
+  if (value.kind === "key") return stringValue(value.key)
+  if (value.kind === "scroll") return finite(value.x) && finite(value.y) && finite(value.dx) && finite(value.dy)
+  if (value.kind === "pointer") {
+    return (value.phase === "down" || value.phase === "move" || value.phase === "up") && finite(value.x) && finite(value.y)
+  }
+  return false
+}
+
+function finite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value)
+}
+
+function isRemoteScreenFrame(value: Record<string, unknown>): value is RemoteScreenFrame & Record<string, unknown> {
+  return typeof value.seq === "number"
+    && typeof value.width === "number"
+    && typeof value.height === "number"
+    && typeof value.keyframe === "boolean"
+    && stringValue(value.data)
+    && (value.codec === "jpeg" || value.codec === "h264")
+    && (value.description === undefined || value.description === null || typeof value.description === "string")
+}
+
 /** Runtime guard used at the WebSocket boundary. */
 export function isRemoteRequest(value: unknown): value is RemoteRequest {
   if (!record(value) || typeof value.type !== "string") return false
   if (value.type === "host.ping" || value.type === "host.snapshot") return value.requestId === undefined || typeof value.requestId === "string"
   if (value.type === "host.operation") return (value.requestId === undefined || typeof value.requestId === "string") && isRemoteHostOperation(value.operation)
   if (value.type === "connection.attach") return (value.requestId === undefined || typeof value.requestId === "string") && stringValue(value.connectionId)
+  if (value.type === "screen.start") return value.requestId === undefined || typeof value.requestId === "string"
+  if (value.type === "screen.stop" || value.type === "screen.stats" || value.type === "screen.displays") return value.requestId === undefined || typeof value.requestId === "string"
+  if (value.type === "screen.input") return (value.requestId === undefined || typeof value.requestId === "string") && isRemoteScreenInput(value.event)
   return value.type === "pi.command"
     && (value.requestId === undefined || typeof value.requestId === "string")
     && stringValue(value.project)
@@ -78,6 +209,8 @@ export function isRemoteEvent(value: unknown): value is RemoteEvent {
   if (!record(value) || typeof value.type !== "string") return false
   const requestId = value.requestId === undefined || typeof value.requestId === "string"
   switch (value.type) {
+    case "screen.frame":
+      return isRemoteScreenFrame(value)
     case "host.hello":
       return value.protocol === REMOTE_PROTOCOL && stringValue(value.hostId) && typeof value.serverTime === "number" && (value.theme === undefined || isRemoteTheme(value.theme)) && (value.machineName === undefined || stringValue(value.machineName))
     case "host.theme":

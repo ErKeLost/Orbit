@@ -4,11 +4,12 @@ import { useWorkspace } from "../../lib/store";
 import { MetricsSync } from "../../lib/metrics";
 import { Chat } from "../Chat";
 import { Inspector } from "../Inspector";
-import { Panel } from "../Panels";
+import { Panel, ScreenHost } from "../Panels";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "../ui/resizable";
 import { WorkspaceSidebar } from "./WorkspaceSidebar";
 import { WorkspaceInspectorDrawer } from "./WorkspaceDrawer";
 import { WorkspaceTitlebar } from "./WorkspaceTitlebar";
+import { MobilePanelTabs } from "./MobilePanelTabs";
 
 type WorkspaceLayoutProps = {
   sidebarOpen: boolean;
@@ -40,7 +41,17 @@ export function WorkspaceLayout(props: WorkspaceLayoutProps) {
       <section className="workspace">
         <WorkspaceTitlebar variant="workspace" sidebarOpen={narrow ? false : sidebarOpen} onToggleSidebar={onToggleSidebar} title={title} rawTitle={rawTitle} showMenu={panel === "chat"} />
         <MetricsSync />
-        <div className="work-content"><div className="main-content"><div className="chat-host" hidden={panel !== "chat"}><Chat key={connectionId || cwd} /></div><AnimatePresence mode="wait">{panel !== "chat" && <Panel key={panel} />}</AnimatePresence></div></div>
+        {narrow && <MobilePanelTabs panel={panel} onNavigate={id => useWorkspace.getState().set({ panel: id })} />}
+        <div className="work-content"><div className="main-content">
+          <div className="chat-host" hidden={panel !== "chat"}><Chat key={connectionId || cwd} /></div>
+          {/* The screen stays mounted and running while other tabs are open, the
+              same way the chat does: unmounting it would tear the subscription
+              down, and the desktop would restart capture (and flash the
+              recording indicator) on every tab flip. `visible` only gates
+              drawing, so a hidden preview costs decoding but no compositing. */}
+          <ScreenHost visible={panel === "screen"} />
+          <AnimatePresence mode="wait">{panel !== "chat" && panel !== "screen" && <Panel key={panel} />}</AnimatePresence>
+        </div></div>
         {Object.entries(statuses).flatMap(([key, value]) => !key.startsWith("gui-") && value ? [<div key={key} className="extension-status">{key}: {value}</div>] : [])}
       </section>
     </ResizablePanel>

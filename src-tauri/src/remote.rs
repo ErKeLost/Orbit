@@ -66,6 +66,7 @@ pub struct RemoteHostInfo {
 mod desktop {
     use super::{RelaySettings, RelaySettingsStatus, RemoteHostInfo, RemoteTheme, PROTOCOL};
     use crate::bridge::Bridge;
+    use crate::screen::{ScreenHost, ScreenSubscription};
     use aes_gcm::{
         aead::{rand_core::RngCore, Aead, OsRng},
         Aes256Gcm, KeyInit, Nonce,
@@ -108,6 +109,21 @@ mod desktop {
     struct Client {
         sender: SyncSender<String>,
         projects: Arc<Mutex<HashSet<String>>>,
+        /// The screen channel this connection is watching. Never read here:
+        /// the send loops reach the subscription directly, and holding it on
+        /// the client is what ties its lifetime to the connection. Dropping
+        /// the client drops the subscription, which releases the capture
+        /// stream once the idle grace period expires.
+        #[allow(dead_code, reason = "owns the subscription for the connection's lifetime")]
+        screen: Arc<ScreenSubscription>,
+    }
+
+    /// What a single connection is allowed to do. Passed by reference into
+    /// request handling so the screen messages can reach their own handler
+    /// without every other message having to know about them.
+    struct Session {
+        attached: Arc<Mutex<HashSet<String>>>,
+        screen: Arc<ScreenSubscription>,
     }
 
     type Clients = Arc<Mutex<HashMap<Uuid, Client>>>;
@@ -129,6 +145,7 @@ mod desktop {
         local_id: Uuid,
         attached: Arc<Mutex<HashSet<String>>>,
         incoming: Receiver<String>,
+        screen: Arc<ScreenSubscription>,
     }
 
     pub struct RemoteHost {
@@ -473,6 +490,29 @@ mod desktop {
             .unwrap_or_else(|| "Orbit Desktop".into())
     }
 
+    /// Deliver at most one pending screen frame on this connection.
+    ///
+    /// Returns `false` when the socket is gone and the caller should stop. The
+    /// envelope is built once per frame and shared by every subscriber, so
+    /// only the (optional) encryption runs per connection.
+    fn send_screen_frame<S: Read + Write>(
+        socket: &mut WebSocket<S>,
+        subscription: &ScreenSubscription,
+        key: Option<&[u8; 32]>,
+    ) -> bool {
+        let Some(frame) = subscription.poll() else {
+            return true;
+        };
+        let payload = match key {
+            Some(key) => match encrypt_relay_frame(&frame.envelope, key) {
+                Ok(payload) => payload,
+                Err(_) => return false,
+            },
+            None => frame.envelope.to_string(),
+        };
+        socket.send(Message::text(payload)).is_ok()
+    }
+
     fn broadcast(clients: &Clients, project: &str, frame: String) {
         let Ok(mut clients) = clients.lock() else {
             return;
@@ -615,15 +655,45 @@ mod desktop {
         })
     }
 
-    fn handle_request(
-        app: &AppHandle,
-        raw: &str,
-        attached: &Arc<Mutex<HashSet<String>>>,
-    ) -> String {
-        let Ok(request) = serde_json::from_str::<Value>(raw) else {
-            return json!({"type":"remote.error","error":"消息不是有效 JSON"}).to_string();
+    /// Handle one client message.
+    ///
+    /// Returns `None` when the message expects no reply at all. That is not a
+    /// micro-optimisation: input events arrive continuously while a finger is
+    /// on the screen, and a reply for each one would consume the same socket
+    /// that the acknowledge would travel on.
+    fn handle_request(app: &AppHandle, raw: &str, session: &Session) -> Option<String> {
+        let request = match serde_json::from_str::<Value>(raw) {
+            Ok(request) => request,
+            Err(_) => {
+                return Some(
+                    json!({"type":"remote.error","error":"消息不是有效 JSON"}).to_string(),
+                );
+            }
         };
-        let request_id = request.get("requestId").and_then(Value::as_str);
+        // Owned so `request` can move into the host handler below.
+        let request_id = request
+            .get("requestId")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        // The screen channel owns its own message namespace and a capture
+        // pipeline, so it answers before the general request match.
+        if let Some(result) =
+            crate::screen::handle_request(&app.state::<ScreenHost>(), &session.screen, &request)
+        {
+            if request_id.is_none() && result.is_ok() {
+                return None;
+            }
+            return Some(response(request_id.as_deref(), result));
+        }
+        Some(handle_host_request(app, request, session, request_id.as_deref()))
+    }
+
+    fn handle_host_request(
+        app: &AppHandle,
+        request: Value,
+        session: &Session,
+        request_id: Option<&str>,
+    ) -> String {
         match request.get("type").and_then(Value::as_str) {
             Some("host.ping") => {
                 json!({"type":"host.pong","requestId":request_id,"serverTime":unix_millis()})
@@ -667,7 +737,7 @@ mod desktop {
                     .into_iter()
                     .find(|connection| connection["id"].as_str() == Some(connection_id));
                 if connection.is_some() {
-                    if let Ok(mut projects) = attached.lock() {
+                    if let Ok(mut projects) = session.attached.lock() {
                         projects.clear();
                         projects.insert(connection_id.to_owned());
                     }
@@ -690,7 +760,8 @@ mod desktop {
                 }) else {
                     return json!({"type":"remote.error","requestId":request_id,"error":"pi.command 缺少有效 command"}).to_string();
                 };
-                if !attached
+                if !session
+                    .attached
                     .lock()
                     .is_ok_and(|projects| projects.contains(project))
                 {
@@ -746,22 +817,30 @@ mod desktop {
         let _ = socket.send(Message::text(hello));
         let client_id = Uuid::new_v4();
         let (outbound, incoming) = mpsc::sync_channel::<String>(CLIENT_QUEUE_CAPACITY);
-        let attached = Arc::new(Mutex::new(HashSet::new()));
+        let session = Session {
+            attached: Arc::new(Mutex::new(HashSet::new())),
+            screen: ScreenSubscription::new(app.state::<ScreenHost>().bus()),
+        };
         if let Ok(mut connected) = clients.lock() {
             connected.insert(
                 client_id,
                 Client {
                     sender: outbound,
-                    projects: attached.clone(),
+                    projects: session.attached.clone(),
+                    screen: session.screen.clone(),
                 },
             );
         }
+        let screen_key = encrypted.then_some(&*encryption_key);
         while !stop.load(Ordering::Acquire) {
             while let Ok(frame) = incoming.try_recv() {
                 let frame = if encrypted { encrypt_relay_frame(&frame, &encryption_key).unwrap_or(frame) } else { frame };
                 if socket.send(Message::text(frame)).is_err() {
                     break;
                 }
+            }
+            if !send_screen_frame(&mut socket, &session.screen, screen_key) {
+                break;
             }
             match socket.read() {
                 Ok(Message::Text(text)) => {
@@ -773,7 +852,9 @@ mod desktop {
                     } else {
                         text.to_string()
                     };
-                    let response = handle_request(&app, &text, &attached);
+                    let Some(response) = handle_request(&app, &text, &session) else {
+                        continue;
+                    };
                     let response = if encrypted { encrypt_relay_frame(&response, &encryption_key).unwrap_or(response) } else { response };
                     if socket
                         .send(Message::text(response))
@@ -929,11 +1010,13 @@ mod desktop {
         let (outbound, incoming) = mpsc::sync_channel::<String>(CLIENT_QUEUE_CAPACITY);
         let attached = Arc::new(Mutex::new(HashSet::new()));
         let local_id = Uuid::new_v4();
+        let screen = ScreenSubscription::new(app.state::<ScreenHost>().bus());
         clients.lock().ok()?.insert(
             local_id,
             Client {
                 sender: outbound,
                 projects: attached.clone(),
+                screen: screen.clone(),
             },
         );
         relay_clients.insert(
@@ -942,6 +1025,7 @@ mod desktop {
                 local_id,
                 attached,
                 incoming,
+                screen,
             },
         );
         let hello = json!({
@@ -1015,7 +1099,7 @@ mod desktop {
                     }
                     last_ping = Instant::now();
                 }
-                let outbound = relay_clients
+                let mut outbound = relay_clients
                     .iter()
                     .flat_map(|(client_id, client)| {
                         client
@@ -1024,6 +1108,16 @@ mod desktop {
                             .map(move |data| (client_id.clone(), data))
                     })
                     .collect::<Vec<_>>();
+                // Screen frames join the same encrypted relay envelope as
+                // every other payload, but they are pulled from the
+                // single-slot bus so a slow relay link skips frames rather
+                // than building a backlog.
+                outbound.extend(relay_clients.iter().filter_map(|(client_id, client)| {
+                    client
+                        .screen
+                        .poll()
+                        .map(|frame| (client_id.clone(), frame.envelope.to_string()))
+                }));
                 let mut failed = false;
                 for (client_id, data) in outbound {
                     let frame = match encrypt_relay_frame(&data, &encryption_key) {
@@ -1097,7 +1191,13 @@ mod desktop {
                                     Ok(plain) => plain,
                                     Err(_) => continue,
                                 };
-                                let response = handle_request(&app, &plain, &client.attached);
+                                let session = Session {
+                                    attached: client.attached.clone(),
+                                    screen: client.screen.clone(),
+                                };
+                                let Some(response) = handle_request(&app, &plain, &session) else {
+                                    continue;
+                                };
                                 let encrypted =
                                     match encrypt_relay_frame(&response, &encryption_key) {
                                         Ok(encrypted) => encrypted,
@@ -1527,6 +1627,9 @@ mod desktop {
                 Client {
                     sender,
                     projects: Arc::new(Mutex::new(HashSet::new())),
+                    screen: ScreenSubscription::new(Arc::new(
+                        crate::screen::ScreenBus::default(),
+                    )),
                 },
             )])));
             broadcast_all(
