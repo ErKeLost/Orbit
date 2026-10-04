@@ -361,9 +361,16 @@ fn scale_for(displays: &[DisplayInfo], info: &DisplayInfo) -> f64 {
                 && center_y >= display.logical_y
                 && center_y <= display.logical_y + display.logical_height
         })
-        .or_else(|| displays.first())
+        // Falling back to the *first* display could pick a 1x one and halve the
+        // resolution of a window on a Retina screen; the sharpest available scale
+        // is the safe assumption when the window's centre is between displays.
+        .or_else(|| {
+            displays
+                .iter()
+                .max_by(|left, right| left.scale.total_cmp(&right.scale))
+        })
         .map(|display| display.scale.max(1.0))
-        .unwrap_or(1.0)
+        .unwrap_or(2.0)
 }
 
 pub(super) fn frontmost_app_target() -> Result<Option<DisplayInfo>, String> {

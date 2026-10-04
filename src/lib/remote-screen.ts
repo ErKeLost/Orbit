@@ -115,6 +115,33 @@ export function hasWebCodecs(): boolean {
   return typeof (globalThis as { VideoDecoder?: unknown }).VideoDecoder === "function"
 }
 
+/**
+ * The configurations the capability probe tries, in order of preference.
+ *
+ * AVCC with a configuration record is what the host actually sends, so that is
+ * what has to be supported; the later entries exist so a rejection can be
+ * attributed rather than guessed at.
+ */
+function probeConfigurations(): { label: string; config: VideoDecoderConfig }[] {
+  const baseline = new Uint8Array([
+    0x01, 0x42, 0xe0, 0x1f, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x42, 0xe0, 0x1f,
+    0x01, 0x00, 0x04, 0x68, 0xce, 0x3c, 0x80,
+  ])
+  return [
+    { label: "avc1.42E01F+avcC", config: { codec: "avc1.42E01F", description: baseline, optimizeForLatency: true } },
+    { label: "avc1.4D401F+avcC", config: { codec: "avc1.4D401F", description: baseline, optimizeForLatency: true } },
+    { label: "avc1.42E01E+avcC", config: { codec: "avc1.42E01E", description: baseline, optimizeForLatency: true } },
+    { label: "avc1.42E01F", config: { codec: "avc1.42E01F", optimizeForLatency: true } },
+  ]
+}
+
+/** Which configurations came back unsupported, for the note the user sees. */
+let probeReport: string[] | null = null
+
+export function probeDiagnostics(): string | null {
+  return probeReport?.length ? probeReport.join(", ") : null
+}
+
 export function supportsHardwareH264(): Promise<boolean> {
   support ??= (async () => {
     const decoder = (globalThis as { VideoDecoder?: typeof VideoDecoder }).VideoDecoder
@@ -135,18 +162,25 @@ export function supportsHardwareH264(): Promise<boolean> {
       //
       // The record is structurally valid: one SPS, one PPS, 4-byte lengths.
       // `isConfigSupported` validates the config, it does not decode.
-      const result = await decoder.isConfigSupported({
-        codec: "avc1.42E01F",
-        description: new Uint8Array([
-          0x01, 0x42, 0xe0, 0x1f, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x42, 0xe0, 0x1f,
-          0x01, 0x00, 0x04, 0x68, 0xce, 0x3c, 0x80,
-        ]),
-        optimizeForLatency: true,
-      })
-      return result.supported === true
-    } catch {
+      const rejected: string[] = []
+      for (const candidate of probeConfigurations()) {
+        try {
+          const result = await decoder.isConfigSupported(candidate.config)
+          if (result.supported === true) {
+            probeReport = rejected.length ? rejected : null
+            return true
+          }
+          rejected.push(`${candidate.label}=否`)
+        } catch (error) {
+          rejected.push(`${candidate.label}=抛错(${message(error)})`)
+        }
+      }
+      probeReport = rejected
+      return false
+    } catch (error) {
       // Conservative by design: an unanswerable probe means JPEG, which always
       // works, rather than an H.264 stream this device might not render.
+      probeReport = [`探测本身抛错(${message(error)})`]
       return false
     }
   })()
@@ -284,12 +318,20 @@ class ScreenChannel {
       // it back; otherwise every resize would re-attempt a known-bad codec.
       const wants = settings.codec ?? (this.h264Failed ? "jpeg" : undefined)
       const supported = wants === "jpeg" ? false : await supportsHardwareH264()
+      this.probeDetail = supported ? null : probeDiagnostics()
       const codec: RemoteScreenCodec = supported ? "h264" : "jpeg"
+      // Name the actual cause. "无法解码" was printed for two different
+      // situations — the capability probe rejecting every configuration, and a
+      // real decoder error after the stream started — so neither a user nor I
+      // could tell which one was happening. `probeDetail` carries what the probe
+      // tried.
       const codecNote = codec === "h264"
         ? null
-        : decoder
-          ? "此设备无法解码 H.264，已改用 JPEG（带宽明显更高）"
-          : "此设备的 WebView 没有 WebCodecs，已改用 JPEG"
+        : !decoder
+          ? "此设备的 WebView 没有 WebCodecs，已改用 JPEG"
+          : wants === "jpeg"
+            ? "上一次 H.264 解码失败，已改用 JPEG"
+            : `本机不支持 H.264（探测 ${this.probeDetail ?? "无结果"}），已改用 JPEG`
       const result = await client.request(
         { type: "screen.start", settings: { ...settings, codec } },
         20_000,
@@ -691,6 +733,8 @@ class ScreenChannel {
    * reason the host wants a number from here at all.
    */
   private rttMs: number | null = null
+  /** What the H.264 capability probe actually tried, for the note above. */
+  private probeDetail: string | null = null
 
   private startStatsPolling(): void {
     if (this.statsTimer) return

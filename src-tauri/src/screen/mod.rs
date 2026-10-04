@@ -92,6 +92,9 @@ const DELAY_REPORT_TTL_MS: u128 = 5_000;
 /// visible only in the delay.
 const QUEUE_DELAY_CEILING_MS: u64 = 150;
 
+/// Beyond this, a delay report describes the clock, not the link.
+const QUEUE_DELAY_IMPLAUSIBLE_MS: u64 = 3_000;
+
 /// Lowest quality the governor will fall back to before it starts trading
 /// frame rate. Below this the picture stops being readable, which is worse
 /// than a slower refresh.
@@ -581,6 +584,15 @@ struct Stats {
     /// react late.
     queue_delay_ms: AtomicU64,
     queue_delay_at_ms: AtomicU64,
+    /// The best (lowest) delay seen this session.
+    ///
+    /// Congestion is the *increase* over the best this link has managed, not the
+    /// absolute number: the measurement carries a constant bias from the
+    /// handshake clock offset, and a link with a biased-high baseline would
+    /// otherwise look permanently congested and be throttled to the floor for
+    /// the whole session. RustDesk keeps the same minimum out of its delay
+    /// history for the same reason.
+    queue_delay_floor_ms: AtomicU64,
     failure: Mutex<Option<String>>,
     /// Codec the running pipeline actually settled on, which can differ from
     /// the request when the platform has no hardware encoder.
@@ -598,10 +610,37 @@ impl Stats {
         self.queue_delay_ms.load(Ordering::Acquire)
     }
 
+    /// How far the current delay is above the best this session has seen.
+    ///
+    /// This is the number the governor acts on. It is zero for a link that is
+    /// merely slow but not filling up, which is what makes it safe to use on a
+    /// measurement that carries an unknown constant bias.
+    fn queue_delay_excess(&self) -> u64 {
+        let current = self.queue_delay();
+        if current == 0 {
+            return 0;
+        }
+        current.saturating_sub(self.queue_delay_floor_ms.load(Ordering::Acquire))
+    }
+
     fn set_queue_delay(&self, delay_ms: u64) {
+        // A delay report is derived from two clocks and a handshake offset, so it
+        // can be wrong by seconds. Queueing of that magnitude is not a thing on a
+        // link that is delivering frames at all, so treating it as congestion
+        // would crush the picture to the floor on the strength of a clock error.
+        if delay_ms > QUEUE_DELAY_IMPLAUSIBLE_MS {
+            return;
+        }
         self.queue_delay_ms.store(delay_ms, Ordering::Release);
         self.queue_delay_at_ms
             .store(now_ms() as u64, Ordering::Release);
+        // The best value only ever improves: a link that has managed 20 ms once
+        // has 20 ms of headroom in it, whatever it is doing now.
+        let _ = self.queue_delay_floor_ms.fetch_update(
+            Ordering::AcqRel,
+            Ordering::Acquire,
+            |floor| (floor == 0 || delay_ms < floor).then_some(delay_ms),
+        );
     }
 
     fn observe_encode(&self, micros: u64) {
@@ -844,6 +883,7 @@ fn status_of(
         ),
         encode_ms_max: stats.encode_micros_max.load(Ordering::Acquire) as f64 / 1000.0,
         bits_per_second: stats.bits_per_second.load(Ordering::Acquire) as f64,
+        queue_delay_ms: stats.queue_delay_excess(),
         failure: stats.failure(),
     }
 }
@@ -886,6 +926,10 @@ pub struct ScreenStatus {
     pub encode_ms_avg: f64,
     pub encode_ms_max: f64,
     pub bits_per_second: f64,
+    /// The viewer-reported queueing delay the governor is currently acting on.
+    /// Exposed because it is now an input to the shaping decision: without it on
+    /// screen, a bad report is invisible and looks like "it just went slow".
+    pub queue_delay_ms: u64,
     pub failure: Option<String>,
 }
 
@@ -1104,6 +1148,12 @@ struct Governor {
     /// window arrives without that signal, so a single spike does not pin the
     /// quality down for the rest of the session.
     congested: bool,
+    /// Consecutive windows the viewer reported queueing.
+    ///
+    /// One window is not evidence: a single slow frame, a scheduler hiccup, or
+    /// one noisy timestamp all look like congestion for one sample. Two in a row
+    /// is a trend.
+    delay_windows: u8,
 }
 
 impl Governor {
@@ -1124,6 +1174,7 @@ impl Governor {
             codec,
             startup_windows: 0,
             congested: false,
+            delay_windows: 0,
         }
     }
 
@@ -1154,10 +1205,24 @@ impl Governor {
     fn observe(&mut self, bytes: u64, queue_delay_ms: u64) {
         // Delay first: it is the earliest evidence of a problem, and the only
         // signal that arrives *before* the byte budget is exceeded.
+        // Past the plausible ceiling this describes the clock, not the link.
+        let queue_delay_ms = if queue_delay_ms > QUEUE_DELAY_IMPLAUSIBLE_MS {
+            0
+        } else {
+            queue_delay_ms
+        };
         if queue_delay_ms >= QUEUE_DELAY_CEILING_MS {
-            self.slow_down();
+            self.delay_windows = self.delay_windows.saturating_add(1);
+            // A window that shows queueing is not evidence of headroom, whatever
+            // the byte count says — so it must not fall through to `speed_up`.
+            self.relaxed_windows = 0;
+            if self.delay_windows >= 2 {
+                self.delay_windows = 0;
+                self.slow_down();
+            }
             return;
         }
+        self.delay_windows = 0;
         if bytes > self.budget {
             self.slow_down();
             return;
@@ -1435,7 +1500,9 @@ fn pipeline_loop(
                 ((window_frames as f64 / seconds) * 1000.0) as u64,
                 Ordering::Release,
             );
-            governor.observe(window_bytes, stats.queue_delay());
+            // The excess over the best delay this session has seen, not the
+            // absolute value: see `queue_delay_excess`.
+            governor.observe(window_bytes, stats.queue_delay_excess());
             governor.apply(&mut encoder);
             window_bytes = 0;
             window_frames = 0;
@@ -1789,10 +1856,56 @@ mod tests {
         // perfectly fine to a byte budget until it is already too late.
         let mut governor = Governor::new(90, 30, Codec::Jpeg);
         let before = governor.quality;
-        // One hundredth of the budget, and 200 ms of queueing.
+        // One hundredth of the budget, and 200 ms of queueing — but only one
+        // window, which is not yet a trend.
+        governor.observe(governor.budget / 100, 200);
+        assert_eq!(governor.quality, before, "one sample is not evidence");
         governor.observe(governor.budget / 100, 200);
         assert!(governor.quality < before, "delay ignored");
         assert!(governor.congested);
+    }
+
+    #[test]
+    fn a_constant_delay_bias_does_not_throttle_the_session() {
+        // The regression this exists for: the reported delay carries a constant
+        // bias from the handshake clock offset. Acting on the absolute value
+        // made the governor reduce every single window, all the way to the
+        // floor, on a link that was not congested at all — the picture went dark
+        // and the frame rate collapsed.
+        let stats = Stats::default();
+        for _ in 0..10 {
+            stats.set_queue_delay(400);
+        }
+        assert_eq!(
+            stats.queue_delay_excess(),
+            0,
+            "a flat, biased delay is not congestion"
+        );
+
+        // A genuine rise above the best seen is.
+        stats.set_queue_delay(700);
+        assert_eq!(stats.queue_delay_excess(), 300);
+        // ...and the floor only improves, never worsens.
+        stats.set_queue_delay(100);
+        stats.set_queue_delay(500);
+        assert_eq!(stats.queue_delay_excess(), 400);
+    }
+
+    #[test]
+    fn an_implausible_delay_report_is_ignored_rather_than_trusted() {
+        // The report is derived from two clocks and a handshake offset, so it
+        // can be wrong by seconds. Congestion of that size is not a thing on a
+        // link that is delivering frames, and acting on it would crush the
+        // picture to the floor on the strength of a clock error.
+        let mut governor = Governor::new(90, 30, Codec::Jpeg);
+        let before = governor.quality;
+        for _ in 0..10 {
+            governor.observe(governor.budget / 100, 30_000);
+        }
+        assert!(
+            governor.quality >= before,
+            "a clock error was read as congestion and reduced the picture"
+        );
     }
 
     #[test]
