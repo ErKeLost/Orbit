@@ -66,8 +66,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to what `rust-toolchain.toml` declares, not `stable`: a newer
+      # clippy introduces new lints, and a gate that fails because the runner
+      # updated overnight is a gate people start ignoring.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.98.1
           components: clippy
 
       - uses: Swatinem/rust-cache@v2
@@ -110,8 +114,9 @@ jobs:
           sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;35.0.0" "ndk;29.0.13846066"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.98.1
           targets: aarch64-linux-android
 
       - uses: Swatinem/rust-cache@v2
