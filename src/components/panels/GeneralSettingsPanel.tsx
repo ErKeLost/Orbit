@@ -172,7 +172,7 @@ function PiCapabilitiesSettings({ desktop, online, running, tools }: { desktop: 
 
 export function SettingsGroup({ title, icon, description, children }: { title: string; icon: string; description?: string; children: ReactNode }) {
   return <section className="settings-group">
-    <header className="settings-group-heading"><h2><Icon name={icon} />{title}</h2>{description && <p>{description}</p>}</header>
+    <header className="settings-group-heading"><h2><Icon name={icon} /><span>{title}</span></h2>{description && <p>{description}</p>}</header>
     <Card className="settings-group-card"><CardContent>{children}</CardContent></Card>
   </section>;
 }

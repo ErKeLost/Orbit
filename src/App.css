@@ -3881,11 +3881,29 @@ html[data-theme="light"] .composer-mode-toggle.selected::after {
   font-size: 14px;
   font-weight: 600;
   line-height: 1.4;
+  /* May shrink, so the description beside it is what gives way first; the text
+     itself never wraps. */
+  flex: 0 1 auto;
+  min-width: 0;
+}
+/* `text-overflow` has no effect on a flex container, and this `h2` is one (icon
+   plus label). The label therefore lives in its own element: sharing the row
+   with the description used to squeeze it into `画质与帧` / `率` and `电脑` /
+   `端`, and clipping without an ellipsis just looks like a truncation bug. */
+.settings-group-heading h2 > span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .settings-group-heading p {
   margin: 0;
   color: var(--muted-foreground);
   font-size: 11px;
+  /* The description is the sentence, so it takes the remaining width, wraps,
+     and is allowed to shrink below its content. */
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .settings-group-card[data-slot="card"] {
   overflow: hidden;
