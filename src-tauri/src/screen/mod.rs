@@ -195,9 +195,12 @@ impl ScreenSettings {
             display_id: self.display_id,
             show_cursor: self.show_cursor.unwrap_or(true),
             codec: Codec::parse(self.codec.as_deref().unwrap_or("h264")).unwrap_or(Codec::H264),
-            // Following the operated app is the default because that is what
-            // the preview is for; a whole display stays one setting away.
-            source: Source::parse(self.source.as_deref().unwrap_or("app")).unwrap_or(Source::App),
+            // The whole screen by default: the preview is a window onto the
+            // machine, and following one application hides everything else —
+            // including whatever the user just opened themselves. Following the
+            // operated app stays one setting away.
+            source: Source::parse(self.source.as_deref().unwrap_or("display"))
+                .unwrap_or(Source::Display),
             frame_width: 0,
             frame_height: 0,
         }
@@ -837,15 +840,22 @@ pub struct ScreenStatus {
     pub failure: Option<String>,
 }
 
-/// Pick the capture box so the frame is *exactly* the display content.
+/// Pick the capture box so the frame is *exactly* the target content.
 ///
-/// ScreenCaptureKit letterboxes when the requested box has a different aspect
-/// ratio than the display, and a letterboxed frame would break the normalized
-/// input mapping. Deriving the height from the display's own aspect ratio
-/// keeps the mapping linear.
-fn capture_box(display: &DisplayInfo, max_width: u32) -> (u32, u32) {
-    let logical_width = display.logical_width.max(1.0);
-    let logical_height = display.logical_height.max(1.0);
+/// Two things here, and the second was wrong for a long time:
+///
+/// * ScreenCaptureKit letterboxes when the requested box has a different aspect
+///   ratio than the content, and a letterboxed frame would break the normalized
+///   input mapping, so the height comes from the target's own aspect ratio.
+/// * The box is in **pixels**, because `SCStreamConfiguration.width` is a pixel
+///   count. Deriving it from the *logical* size meant a Retina display was asked
+///   for its point width and the frame came back at half resolution — 1728
+///   instead of 2560 on a 2x 1728-point display, which is *below* what a phone
+///   panel can show. That, and not the client's dpr cap, is why the preview was
+///   soft on a good link.
+fn capture_box(target: &DisplayInfo, max_width: u32) -> (u32, u32) {
+    let logical_width = f64::from(target.pixel_width.max(2));
+    let logical_height = f64::from(target.pixel_height.max(2));
     let scale = (f64::from(max_width) / logical_width).min(1.0);
     let even = |value: f64| {
         let rounded = value.round().max(2.0) as u32;
@@ -1475,9 +1485,16 @@ mod tests {
     }
 
     #[test]
-    fn capture_box_never_upscales_past_the_display() {
+    fn capture_box_uses_the_pixel_size_not_the_logical_one() {
+        // The regression this exists for: asking a 2x display for its point
+        // width returns half-resolution pixels, and the preview then cannot be
+        // any sharper than that no matter what the phone asks for.
         let (width, height) = capture_box(&display(), 4000);
-        assert_eq!((width, height), (1728, 1116));
+        assert_eq!((width, height), (3456, 2234));
+        // ...and a request below the native size still scales down, keeping the
+        // aspect ratio and even dimensions.
+        let (width, height) = capture_box(&display(), 1600);
+        assert_eq!((width, height), (1600, 1034));
     }
 
     #[test]
@@ -1717,16 +1734,17 @@ mod tests {
     }
 
     #[test]
-    fn the_preview_follows_the_operated_app_by_default() {
-        // With computer use the app being driven is the frontmost one, so this
-        // is the default the product wants; a whole display is one setting away.
-        assert_eq!(ScreenSettings::default().resolve().source, Source::App);
-        let display = ScreenSettings {
-            source: Some("display".into()),
+    fn the_preview_shows_the_whole_screen_by_default() {
+        // Following one application hides everything else, including windows the
+        // user opened themselves, so the default is the whole screen and the
+        // per-application view is opt-in.
+        assert_eq!(ScreenSettings::default().resolve().source, Source::Display);
+        let app = ScreenSettings {
+            source: Some("app".into()),
             ..ScreenSettings::default()
         }
         .resolve();
-        assert_eq!(display.source, Source::Display);
+        assert_eq!(app.source, Source::App);
     }
 
     #[test]

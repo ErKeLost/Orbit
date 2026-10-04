@@ -8,11 +8,18 @@ import { screenChannel, sendScreenInput, type ScreenChannelSnapshot } from "../.
  * mapping is the one piece of this feature that silently goes wrong — a
  * letterboxed preview offsets every click — so it exists exactly once.
  */
-export function ScreenFrame({ snapshot, interactive, active = true }: {
+export function ScreenFrame({ snapshot, interactive, active = true, fill = false }: {
   snapshot: ScreenChannelSnapshot
   interactive: boolean
   /** Whether this surface is the one currently on screen. */
   active?: boolean
+  /**
+   * Fill the parent box instead of deriving a height from the picture's aspect
+   * ratio. A freely resizable window is not picture-shaped, so the picture
+   * letterboxes inside it — which the touch mapping already accounts for, since
+   * it computes the `contain` box rather than assuming it fills the container.
+   */
+  fill?: boolean
 }) {
   const canvas = useRef<HTMLCanvasElement | null>(null)
   // A stable identity per mounted surface, so releasing the canvas cannot
@@ -33,7 +40,7 @@ export function ScreenFrame({ snapshot, interactive, active = true }: {
 
   const aspect = snapshot.frame ? snapshot.frame.width / snapshot.frame.height : 16 / 9
 
-  return <div className="screen-stage" style={{ aspectRatio: aspect }}>
+  return <div className="screen-stage" data-fill={fill || undefined} style={fill ? undefined : { aspectRatio: aspect }}>
     {interactive
       ? <ScreenSurface aspect={aspect} enabled={snapshot.state === "live"} />
       : null}

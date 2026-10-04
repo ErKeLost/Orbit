@@ -198,6 +198,11 @@ canvas.screen-frame {
 
 .screen-pip-body {
   display: block;
+  /* The window is resizable, so the picture takes whatever height is left after
+     the title bar and the numbers row. */
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
   width: 100%;
   padding: 0;
   border: 0;
@@ -207,6 +212,40 @@ canvas.screen-frame {
 
 .screen-pip-body .screen-stage {
   border-radius: 0;
+}
+
+/* A free-form box: fill it and let the picture letterbox inside. */
+.screen-stage[data-fill] {
+  height: 100%;
+}
+
+/* `react-rnd` owns the gesture; the class is only for the visible grip, so the
+   corner reads as resizable rather than as a seam. */
+.screen-pip-grip::after {
+  content: "";
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid color-mix(in oklab, white 55%, transparent);
+  border-bottom: 2px solid color-mix(in oklab, white 55%, transparent);
+  border-bottom-right-radius: 3px;
+  pointer-events: none;
+}
+
+.screen-pip-grip[class*="left"]::after {
+  right: auto;
+  left: 5px;
+  border-right: 0;
+  border-left: 2px solid color-mix(in oklab, white 55%, transparent);
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 3px;
+}
+
+/* While dragging or resizing, do not let the picture swallow the gesture. */
+.screen-pip .screen-surface {
+  pointer-events: none;
 }
 
 .screen-pip-foot {

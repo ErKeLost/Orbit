@@ -9,34 +9,59 @@
 
 import { persistState } from "./persistent"
 
-const STORAGE_KEY = "orbit.screen.pip.v1"
+const STORAGE_KEY = "orbit.screen.pip.v2"
 const MARGIN = 10
 
-export const PIP_SIZES = { small: 0.38, medium: 0.52, large: 0.72 } as const
-export type PipSize = keyof typeof PIP_SIZES
+/// Default width as a fraction of the viewport, used when there is nothing
+/// stored and by the "reset size" action.
+const DEFAULT_WIDTH_RATIO = 0.52
+
+/// Fractions of the viewport the window may be sized to. The floor keeps the
+/// picture recognisable; the ceiling keeps the conversation usable.
+const MIN_WIDTH_RATIO = 0.22
+const MAX_WIDTH_RATIO = 0.94
 
 export type PipPlacement = {
   /** Left edge in CSS pixels; `-1` means "pin to the right edge" until moved. */
   x: number
   y: number
-  size: PipSize
+  /** Width in CSS pixels. Free-form: the window is resizable, not preset-sized. */
+  width: number
+  /** Height in CSS pixels; `-1` means "derive from the picture's aspect ratio". */
+  height: number
 }
 
-export const PIP_SIZE_CYCLE: PipSize[] = ["small", "medium", "large"]
+export function defaultWidth(viewport: PipViewport): number {
+  return Math.round(viewport.width * DEFAULT_WIDTH_RATIO)
+}
+
+export function minWidth(viewport: PipViewport): number {
+  return Math.round(viewport.width * MIN_WIDTH_RATIO)
+}
+
+export function maxWidth(viewport: PipViewport): number {
+  return Math.round(viewport.width * MAX_WIDTH_RATIO)
+}
 
 export function loadPlacement(): PipPlacement {
+  const fallback = (viewport: PipViewport): PipPlacement => ({
+    x: -1,
+    y: -1,
+    width: defaultWidth(viewport),
+    height: -1,
+  })
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
-      const parsed = JSON.parse(raw) as PipPlacement
-      if (parsed && typeof parsed.x === "number" && typeof parsed.y === "number" && parsed.size in PIP_SIZES) {
-        return parsed
+      const parsed = JSON.parse(raw) as Partial<PipPlacement>
+      if (parsed && typeof parsed.x === "number" && typeof parsed.y === "number" && typeof parsed.width === "number" && parsed.width > 0) {
+        return { x: parsed.x, y: parsed.y, width: parsed.width, height: typeof parsed.height === "number" ? parsed.height : -1 }
       }
     }
   } catch {
     // A corrupt preference is not worth failing over.
   }
-  return { x: -1, y: -1, size: "medium" }
+  return fallback(currentViewport())
 }
 
 export function savePlacement(placement: PipPlacement): void {
@@ -129,23 +154,14 @@ export function dockClearance(viewport: PipViewport): number {
  */
 export type PipConstraints = { left: number; top: number; right: number; bottom: number }
 
-export function pipConstraints(size: PipSize, viewport: PipViewport): PipConstraints {
-  const height = Math.round(pipWidth(size, viewport) * 0.62) + 34
-  const { left, right, bottom } = pipBounds(size, viewport, height)
+export function pipConstraints(viewport: PipViewport, width: number, height: number): PipConstraints {
+  const { left, right, bottom } = pipBounds(viewport, width, height)
   return { left, top: viewport.top + MARGIN, right, bottom }
 }
 
 /** Width in CSS pixels, which is also what the pixel budget is derived from. */
-export function pipWidth(size: PipSize, viewport: PipViewport = currentViewport()): number {
-  return Math.round(viewport.width * PIP_SIZES[size])
-}
-
-export function pipBox(size: PipSize, x: number, y: number, viewport: PipViewport): PipBox {
-  const width = pipWidth(size, viewport)
-  // The picture keeps the display's aspect ratio and the window lets it decide
-  // its own height, so an estimate is enough for clamping to the visible area.
-  const height = Math.round(width * 0.62) + 34
-  const { left, right, bottom } = pipBounds(size, viewport, height)
+export function pipBox(x: number, y: number, width: number, height: number, viewport: PipViewport): PipBox {
+  const { left, right, bottom } = pipBounds(viewport, width, height)
   return {
     width,
     height,
@@ -155,8 +171,7 @@ export function pipBox(size: PipSize, x: number, y: number, viewport: PipViewpor
 }
 
 /** The allowed position range, shared by placement and drag constraints. */
-function pipBounds(size: PipSize, viewport: PipViewport, height: number) {
-  const width = pipWidth(size, viewport)
+function pipBounds(viewport: PipViewport, width: number, height: number) {
   const left = viewport.left + MARGIN
   const right = Math.max(left, viewport.left + viewport.width - width - MARGIN)
   // Clearance for the home indicator and the composer dock, both measured.

@@ -86,7 +86,9 @@ export function panelFps(): number {
 const STORAGE_KEY = "orbit.screen.prefs.v2"
 
 function defaults(): ScreenPreferences {
-  return { source: "app", displayId: null, codec: "auto", quality: "max", fps: "panel", showCursor: true }
+  // Whole screen by default: following one application hides every other
+  // window, including the ones the user opened themselves.
+  return { source: "display", displayId: null, codec: "auto", quality: "max", fps: "panel", showCursor: true }
 }
 
 function load(): ScreenPreferences {

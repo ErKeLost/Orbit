@@ -47,6 +47,7 @@
         "react": "19.2.8",
         "react-dom": "19.2.8",
         "react-resizable-panels": "^4.12.4",
+        "react-rnd": "10.5.3",
         "rehype-katex": "^7.0.1",
         "remark-gfm": "^4.0.1",
         "remark-math": "^6.0.0",
