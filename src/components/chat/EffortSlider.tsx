@@ -29,6 +29,9 @@ type EffortStyle = CSSProperties & {
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
+/** 每个思考档位之间再插 3 个小点，让刻度看起来更密。 */
+const TICKS_PER_LEVEL = 3;
+
 function moveLight(event: PointerEvent<HTMLElement>) {
   const track = event.currentTarget.querySelector<HTMLElement>(".effort-slider-track");
   if (!track) return;
@@ -81,6 +84,17 @@ export function EffortSlider({ levels, value, disabled, onChange }: EffortSlider
   const fieldMode = effortFieldMode(activeLevel);
   const initialColors = effortColorsForLevels(levels, selectedIndex);
   const magnetTargets = levels.map((_, index) => index);
+  const tickCount = maxIndex ? maxIndex * TICKS_PER_LEVEL + 1 : 1;
+  const litProgress = maxIndex ? activeIndex / maxIndex : 0;
+  const ticks = Array.from({ length: tickCount }, (_, index) => {
+    const levelIndex = index / TICKS_PER_LEVEL;
+    const aligned = Number.isInteger(levelIndex);
+    return {
+      progress: tickCount > 1 ? index / (tickCount - 1) : 0.5,
+      aligned,
+      level: aligned ? levels[Math.min(levelIndex, maxIndex)] : undefined,
+    };
+  });
 
   const applyVisual = useCallback((nextValue: number) => {
     const safeValue = clamp(Number.isFinite(nextValue) ? nextValue : 0, 0, maxIndex);
@@ -175,12 +189,13 @@ export function EffortSlider({ levels, value, disabled, onChange }: EffortSlider
           <div className="effort-slider-max-fallback" />
           <canvas ref={canvasRef} className="effort-slider-pixels" />
           <div className="effort-slider-ticks">
-            {levels.map((level, index) => (
+            {ticks.map((tick, index) => (
               <i
-                className={index <= activeIndex ? "on" : ""}
-                data-max-tick={effortFieldMode(level) === "max" || undefined}
-                style={{ "--tick-progress": maxIndex ? index / maxIndex : 0.5 } as CSSProperties}
-                key={level}
+                className={tick.progress <= litProgress + 0.0001 ? "on" : ""}
+                data-level-tick={tick.aligned || undefined}
+                data-max-tick={tick.level && effortFieldMode(tick.level) === "max" ? "" : undefined}
+                style={{ "--tick-progress": tick.progress } as CSSProperties}
+                key={index}
               />
             ))}
           </div>

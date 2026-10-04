@@ -3,10 +3,11 @@ import { branchFromMessage, report } from "../../lib/rpc";
 import { Fragment, memo, useEffect, useState, type ReactNode } from "react";
 import { m } from "motion/react";
 import type { DisplayMessage, Part, PiMessage, Tool } from "../../lib/protocol";
-import { formatTranscriptError, IMAGE_TOOL_NAME, toolResultText } from "../../lib/protocol";
+import { formatTranscriptError, IMAGE_TOOL_NAME, toolImageDataUrl, toolResultText } from "../../lib/protocol";
 import { ProcessingPanel, Thinking } from "../RichMessage";
 import { ToolActivityGroup, ToolCall } from "../ai-elements/tool-call";
 import { GridReveal } from "../ui/grid-reveal";
+import { ImageActionsMenu } from "./ImageActions";
 import { Message, MessageContent, MessageResponse } from "../ai-elements/message";
 import { MessageActions } from "../assistant-ui/elements/message-actions";
 import { Icon } from "../Icon";
@@ -45,9 +46,13 @@ function requestedAspect(value: unknown): number | undefined {
   return Number(match[1]) / Number(match[2]);
 }
 
-/** A tool call that is generating an image, or already returned one. */
+/** 真正产出图片的工具（generate_image），或名字无法解析但结果里确实带图片的调用。
+ * 不能只看“结果里有图片”：read 读一张 PNG、截图回传都会命中，那样一轮说完话
+ * 之后处理过程永远不收起（图片本身也只在 generate_image 那条路径里才被渲染）。 */
 function isImageTool(part: Part, tools: Record<string, Tool>): boolean {
-  return (part.name ?? tools[part.id ?? ""]?.name) === IMAGE_TOOL_NAME || (tools[part.id ?? ""]?.images?.length ?? 0) > 0;
+  const name = part.name ?? tools[part.id ?? ""]?.name;
+  if (name) return name === IMAGE_TOOL_NAME;
+  return (tools[part.id ?? ""]?.images?.length ?? 0) > 0;
 }
 
 /** Renders the reveal only once the frame ratio is known: the ratio the tool
@@ -80,11 +85,16 @@ function ToolPart({ part, tools }: PartViewProps) {
   // run falls through to the ordinary card so the error stays readable.
   if (name === IMAGE_TOOL_NAME && !tool?.isError) {
     const knownAspect = requestedAspect(part.arguments?.aspect);
-    const sources = images.length ? images.map(image => `data:${image.mimeType};base64,${image.data}`) : [null];
-    const info = tool?.image;
+    const sources = images.length ? images.map(toolImageDataUrl) : [null];
     return <div className="tool-image-generation">
-      {sources.map((src, index) => <GeneratedImage key={`${part.id ?? "image"}-${index}`} src={src} knownAspect={knownAspect} prompt={index === 0 ? prompt : undefined} />)}
-      {info && <p className="tool-image-meta">{info.model}{info.size ? ` · ${info.size}` : ""}</p>}
+      {sources.map((src, index) => <ImageActionsMenu
+        key={`${part.id ?? "image"}-${index}`}
+        dataUrl={src}
+        path={tool?.image?.paths?.[index]}
+        prompt={index === 0 ? prompt : undefined}
+      >
+        <GeneratedImage src={src} knownAspect={knownAspect} prompt={index === 0 ? prompt : undefined} />
+      </ImageActionsMenu>)}
     </div>;
   }
   const result = tool?.result;
@@ -101,7 +111,11 @@ function ToolPart({ part, tools }: PartViewProps) {
 function PartView(props: PartViewProps) {
   if (props.part.type === "text") return <TextPart {...props} />;
   if (props.part.type === "thinking") return <ThinkingPart {...props} />;
-  if (props.part.type === "image") return <img className="message-image" src={`data:${props.part.mimeType};base64,${props.part.data}`} alt="会话附件" decoding="async" />;
+  if (props.part.type === "image") {
+    // 乐观预览阶段图片还没有 base64，先用本地 object URL 显示。
+    const src = props.part.data ? `data:${props.part.mimeType};base64,${props.part.data}` : props.part.url;
+    return src ? <img className="message-image" src={src} alt="会话附件" decoding="async" /> : null;
+  }
   if (props.part.type === "toolCall") return <ToolPart {...props} />;
   return null;
 }

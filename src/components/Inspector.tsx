@@ -1,7 +1,5 @@
 import { useWorkspace } from "../lib/store";
 import { useMetrics } from "../hooks/use-metrics";
-import { Button } from "./UI";
-import { Icon } from "./Icon";
 import {
   CompactionSection,
   ContextWindowSection,
@@ -12,19 +10,7 @@ import {
   RetrySection,
   UsageSection,
 } from "./inspector/InspectorSections";
-import { formatNumber as number } from "../lib/format";
 
-function toggleInspector() { useWorkspace.getState().set({ inspector: !useWorkspace.getState().inspector }); }
-
-export function ContextBar() {
-  const { stats, online } = useMetrics();
-  const compaction = useWorkspace(state => state.telemetry.compaction);
-  const state = useWorkspace(workspace => workspace.state);
-  const usage = stats?.contextUsage;
-  const context = online ? `${number(usage?.tokens)} / ${number(usage?.contextWindow ?? state?.model?.contextWindow)}` : "—";
-  const autoCompaction = state ? state.autoCompactionEnabled ? "自动压缩开启" : "自动压缩关闭" : "自动压缩 —";
-  return <div className="context-bar"><Button title="上下文与运行详情" onClick={toggleInspector}><Icon name="brain" />Context {context}{usage?.percent != null && ` · ${usage.percent.toFixed(1)}%`}</Button><span>{compaction?.status === "running" ? "正在压缩…" : autoCompaction}</span></div>;
-}
 
 export function Inspector() {
   const { stats, runtime, error, updatedAt, online } = useMetrics();

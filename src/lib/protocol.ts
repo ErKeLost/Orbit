@@ -1,13 +1,13 @@
 import type { RpcSessionState, RpcExtensionUIRequest } from '@earendil-works/pi-coding-agent'
 export type { RpcSessionState, RpcCommand, RpcExtensionUIRequest } from '@earendil-works/pi-coding-agent'
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
-export type Part = { type: string; text?: string; thinking?: string; thinkingComplete?: boolean; data?: string; mimeType?: string; id?: string; name?: string; arguments?: Record<string, Json>; argsText?: string }
+export type Part = { type: string; text?: string; thinking?: string; thinkingComplete?: boolean; data?: string; mimeType?: string; url?: string; id?: string; name?: string; arguments?: Record<string, Json>; argsText?: string }
 export type PiMessage = { role: string; content?: string | Part[]; command?: string; output?: string; summary?: string; display?: boolean; timestamp?: number; toolCallId?: string; toolName?: string; isError?: boolean; details?: unknown; usage?: ToolUsage; errorMessage?: string; stopReason?: string; exitCode?: number; cancelled?: boolean; truncated?: boolean; fullOutputPath?: string }
 export type DisplayMessage = { id: string; message: PiMessage; startedAt?: number; elapsedMs?: number }
 export type DisplayMessageGroup = { id: string; items: DisplayMessage[]; indexes: number[] }
 export type ToolUsage = { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost?: { total?: number } }
 export type ToolImage = { data: string; mimeType: string }
-export type ToolImageInfo = { model: string; size?: string }
+export type ToolImageInfo = { model?: string; size?: string; paths?: string[] }
 export type Tool = { name: string; args?: Record<string, Json>; result?: unknown; details?: { patch: string }; images?: ToolImage[]; image?: ToolImageInfo; running: boolean; isError?: boolean; usage?: ToolUsage }
 export type Event = { type: string; message?: PiMessage; toolCallId?: string; toolName?: string; args?: Record<string, Json>; result?: unknown; partialResult?: unknown; isError?: boolean; details?: unknown; errorMessage?: string; assistantMessageEvent?: { type: string; contentIndex: number; delta?: string; content?: string; id?: string; toolName?: string; toolCall?: Part }; steering?: string[]; followUp?: string[]; [key: string]: unknown }
 export type Transcript = { messages: DisplayMessage[]; active: number; running: boolean; compacting: boolean; phase: string; tools: Record<string, Tool>; error: string | null; queue: { steering: string[]; followUp: string[] }; bash: { id?: string; command?: string; output: string; running: boolean } | null; turnStartedAt: number | null }
@@ -44,6 +44,21 @@ export function toolResultText(value:unknown):string {
 }
 /** Tool that generates images; its results carry media plus the model that ran. */
 export const IMAGE_TOOL_NAME = 'generate_image'
+/**
+ * 生成的图片以 base64 常驻在会话里，一张 2K 图就是几 MB。每次渲染都重新拼
+ * `data:` URL 会给每帧加几 MB 的一次性字符串（GC 压力），而同一张图的 base64
+ * 字符串引用是稳定的，所以按图片对象缓存。WeakMap 随图片对象一起回收。
+ */
+const dataUrlCache = new WeakMap<ToolImage, string>()
+
+export function toolImageDataUrl(image: ToolImage): string {
+  const cached = dataUrlCache.get(image)
+  if (cached !== undefined) return cached
+  const url = `data:${image.mimeType};base64,${image.data}`
+  dataUrlCache.set(image, url)
+  return url
+}
+
 export function toolResultImages(value:unknown):ToolImage[] {
   const images:ToolImage[] = []
   const visit=(input:unknown)=>{
@@ -59,15 +74,18 @@ export function toolResultImages(value:unknown):ToolImage[] {
   visit(value)
   return images
 }
-/** The model (and pixel size) a tool result reports, so the card can name it. */
+/** The model, pixel size, and local files a tool result reports, so the image
+ * card can name it, reveal it in the file manager, and reuse it as a reference. */
 function toolImageInfo(toolName:string,source:unknown):ToolImageInfo|undefined {
   if(toolName!==IMAGE_TOOL_NAME)return undefined
   const details=(source as {details?:unknown}|null)?.details
   if(!details||typeof details!=='object')return undefined
   const record=details as Record<string,unknown>
   const model=typeof record.model==='string'?record.model:undefined
-  if(!model)return undefined
-  return {model,...(typeof record.size==='string'?{size:record.size}:{})}
+  const size=typeof record.size==='string'?record.size:undefined
+  const paths=Array.isArray(record.paths)?record.paths.filter((path):path is string=>typeof path==='string'&&path.length>0):[]
+  if(!model&&!paths.length)return undefined
+  return {...(model?{model}:{}),...(size?{size}:{}),...(paths.length?{paths}:{})}
 }
 export function groupDisplayMessages(messages: DisplayMessage[]): DisplayMessageGroup[] {
   return messages.reduce<DisplayMessageGroup[]>((groups, item, index) => {

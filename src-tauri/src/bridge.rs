@@ -781,6 +781,32 @@ pub fn read_file_attachment(path: String) -> Result<Value, String> {
     let data = base64::engine::general_purpose::STANDARD.encode(bytes);
     Ok(json!({ "name": name, "data": data, "mimeType": mime }))
 }
+
+/// Write an image payload (base64, or a full `data:` URL) to a user-chosen
+/// path, so a generated image can be saved outside the media cache. Missing
+/// parent directories are created; the returned path is what was written.
+#[tauri::command]
+pub fn save_media_file(data: String, destination: String) -> Result<String, String> {
+    let path = std::path::PathBuf::from(destination.trim());
+    if path.file_name().is_none() {
+        return Err(format!("无效的保存路径：{destination}"));
+    }
+    // Tolerate `data:image/jpeg;base64,...` as well as a bare base64 payload.
+    let payload = data.rsplit(',').next().unwrap_or(&data);
+    let compact: String = payload.chars().filter(|value| !value.is_whitespace()).collect();
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(compact.as_bytes())
+        .map_err(|e| format!("图片数据无法解码：{e}"))?;
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("创建目录 {} 失败：{e}", parent.display()))?;
+        }
+    }
+    std::fs::write(&path, bytes).map_err(|e| format!("写入 {} 失败：{e}", path.display()))?;
+    Ok(path.to_string_lossy().into_owned())
+}
 #[tauri::command]
 pub fn save_computer_use_key(api_key: Option<String>) -> Result<Value, String> {
     let path = typesafe_key_path()?;

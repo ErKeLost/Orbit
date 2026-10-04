@@ -184,6 +184,24 @@ describe("whole-turn process history", () => {
     expect(readableMarkup(html)).toContain("直接回复");
   });
 
+  // 回归：read 读一张 PNG、截图回传的结果里也带 image。只按“结果里有图片”判断
+  // 会把这类工具当成生成图片，导致一轮说完话之后处理过程永远不收起。
+  test("collapses after a finished turn whose tool results merely contain images", () => {
+    const items: DisplayMessage[] = [
+      { id: "shot", message: { role: "assistant", stopReason: "toolUse", content: [
+        { type: "toolCall", id: "read-shot", name: "read", arguments: { path: "/tmp/shot.png" } },
+      ] } },
+      { id: "answer", message: { role: "assistant", stopReason: "stop", content: [
+        { type: "text", text: "看完了，结果是这样" },
+      ] } },
+    ];
+    const html = readableMarkup(renderToStaticMarkup(<TranscriptMessage items={items} tools={{
+      "read-shot": { name: "read", running: false, result: "[图片]", images: [{ data: "AAAA", mimeType: "image/png" }] },
+    }} streaming={false} thinking={false} />));
+    expect(html).toContain('class="turn-activity" data-open="false"');
+    expect(html).toContain("看完了，结果是这样");
+  });
+
   test("places child-agent activity after the spawn tool and before later parent work", () => {
     const items: DisplayMessage[] = [
       { id: "spawn", message: { role: "assistant", stopReason: "toolUse", content: [

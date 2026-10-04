@@ -10,6 +10,7 @@
     "process:default",
     "updater:default",
     "clipboard-manager:allow-read-image",
+    "clipboard-manager:allow-write-image",
     "notification:default",
     "autostart:default",
     "global-shortcut:allow-register",

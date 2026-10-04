@@ -220,6 +220,17 @@
   opacity: 0.95;
 }
 
+/* 档位之间补的小点更小更淡，保持档位本身还能一眼看出来。 */
+.effort-slider-ticks i:not([data-level-tick]) {
+  width: 0.15625rem;
+  height: 0.15625rem;
+}
+
+.effort-slider-ticks i.on:not([data-level-tick]) {
+  opacity: 0.5;
+  box-shadow: none;
+}
+
 .effort-slider-shell > input {
   position: absolute;
   z-index: 5;
