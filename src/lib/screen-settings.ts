@@ -131,7 +131,13 @@ export const useScreenPreferences = create<ScreenSettingsStore>((set, get) => ({
   ...load(),
   set: patch => {
     set(patch)
-    const { source, displayId, codec, quality, fps, showCursor } = get()
+    const { source, codec, quality, fps, showCursor } = get()
+    // Switching where the picture comes from drops any explicit monitor choice.
+    // Keeping it pinned meant "整个屏幕" quietly meant "that one monitor I picked
+    // once" — and the window's title bar was the only place that said so.
+    const changedSource = patch.source !== undefined && patch.source !== source
+    const displayId = changedSource ? null : get().displayId
+    if (changedSource) set({ displayId })
     persist({ source, displayId, codec, quality, fps, showCursor })
   },
 }))

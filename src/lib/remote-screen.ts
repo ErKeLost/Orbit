@@ -330,9 +330,7 @@ class ScreenChannel {
    */
   async configure(settings: RemoteScreenSettings): Promise<void> {
     if (this.closed) return
-    const same = (["maxWidth", "maxFps", "quality", "displayId", "codec"] as const)
-      .every(key => this.applied[key] === settings[key])
-    if (same && this.snapshot.state === "live") return
+    if (sameSettings(this.applied, settings) && this.snapshot.state === "live") return
     await this.start(settings)
   }
 
@@ -438,6 +436,7 @@ class ScreenChannel {
       this.windowStart = receivedAt
       this.windowFrames = 0
     }
+    this.startFpsDecay()
     // Compare on the host's clock. The handshake offset is the only thing that
     // makes a cross-device latency figure mean anything.
     const encodedAt = frame.encodedAt > 0 ? frame.encodedAt : receivedAt
@@ -627,6 +626,26 @@ class ScreenChannel {
     this.description = null
   }
 
+  /**
+   * Decay the frame-rate reading when frames stop.
+   *
+   * Without this the last measured value stays on screen for as long as the
+   * stream is quiet, which reads as "it is still running" — and a static desktop
+   * legitimately produces no frames at all, so the two cases are otherwise
+   * indistinguishable. A number that falls to zero when nothing arrives is the
+   * honest one.
+   */
+  private startFpsDecay(): void {
+    this.fpsDecay ??= setInterval(() => {
+      const frame = this.snapshot.frame
+      if (!frame || this.snapshot.receivedFps <= 0) return
+      if (Date.now() - frame.receivedAt < 1200) return
+      this.emit({ receivedFps: 0 })
+    }, 500)
+  }
+
+  private fpsDecay: ReturnType<typeof setInterval> | null = null
+
   private startStatsPolling(): void {
     if (this.statsTimer) return
     this.statsTimer = setInterval(() => {
@@ -680,6 +699,8 @@ class ScreenChannel {
     if (this.statsTimer) clearInterval(this.statsTimer)
     this.statsTimer = null
     this.statsPending = false
+    if (this.fpsDecay) clearInterval(this.fpsDecay)
+    this.fpsDecay = null
   }
 
   private releaseFrameUrl(): void {
@@ -700,6 +721,24 @@ function avcCodecString(description: Uint8Array): string {
   if (description.length < 4) return "avc1.42E01E"
   const hex = (value: number) => value.toString(16).padStart(2, "0").toUpperCase()
   return `avc1.${hex(description[1]!)}${hex(description[2]!)}${hex(description[3]!)}`
+}
+
+/**
+ * Whether two requests describe the same stream.
+ *
+ * Every key is compared, taken from the objects themselves rather than from a
+ * hand-written list: the list used to name five fields and silently omit
+ * `source`, so changing the preview from one application to the whole screen
+ * produced a request the client then decided was identical to the last one and
+ * never sent. A key that is added to the protocol cannot be forgotten here if
+ * there is no list to forget it from.
+ */
+function sameSettings(left: RemoteScreenSettings, right: RemoteScreenSettings): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]) as Set<keyof RemoteScreenSettings>
+  for (const key of keys) {
+    if (left[key] !== right[key]) return false
+  }
+  return true
 }
 
 function base64ToBytes(value: string): Uint8Array<ArrayBuffer> {
