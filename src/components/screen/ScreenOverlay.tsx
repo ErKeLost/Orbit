@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { gooeyToast } from "goey-toast"
 import { useWorkspace } from "../../lib/store"
 import { screenChannel, type ScreenChannelSnapshot } from "../../lib/remote-screen"
@@ -27,6 +27,10 @@ export function ScreenOverlay() {
   const preferences = useScreenPreferences()
   const [snapshot, setSnapshot] = useState<ScreenChannelSnapshot>(() => screenChannel().current)
   const [placement, setPlacement] = useState<PipPlacement>(loadPlacement)
+  // Everything that needs explaining becomes a toast exactly once, on the
+  // transition. The window itself stays a picture.
+  const announced = useRef(new Set<string>())
+  const lastState = useRef<ScreenChannelSnapshot["state"]>("idle")
 
   useEffect(() => screenChannel().subscribe(setSnapshot), [])
   // The frame rate is only meaningful once the panel's real refresh rate is
@@ -57,11 +61,38 @@ export function ScreenOverlay() {
   useEffect(() => {
     if (!mobile || open) return
     void screenChannel().stop()
+    announced.current.clear()
+    lastState.current = "idle"
   }, [mobile, open])
 
   // Drawing is skipped while hidden; decoding continues, because pausing an
   // inter-frame codec is corruption rather than a saving.
   useEffect(() => screenChannel().setRendering(open), [open])
+
+  useEffect(() => {
+    if (!open) return
+    const announce = (id: string, kind: "error" | "info" | "success", text: string, description?: string) => {
+      if (announced.current.has(id)) return
+      announced.current.add(id)
+      if (kind === "error") gooeyToast.error(text, { description, showTimestamp: false })
+      else if (kind === "success") gooeyToast.success(text, { description, showTimestamp: false })
+      else gooeyToast.warning(text, { description, showTimestamp: false })
+    }
+    if (snapshot.state === "failed" && snapshot.error) {
+      announce(`failed:${snapshot.error}`, "error", "屏幕预览未启动", snapshot.error)
+    }
+    if (snapshot.state === "connecting") {
+      announce("connecting", "info", "与电脑的连接已断开，正在重连…", "电脑端的「移动端」Host 需要处于启用状态")
+    }
+    if (snapshot.state === "live" && lastState.current !== "live" && lastState.current !== "idle") {
+      // Recovery is worth one sentence; the failure is already on screen.
+      announced.current.delete("connecting")
+      gooeyToast.success("已重新连接电脑", { showTimestamp: false })
+    }
+    lastState.current = snapshot.state
+    if (snapshot.codecNote) announce(`codec:${snapshot.codecNote}`, "info", snapshot.codecNote)
+    if (snapshot.fpsNote) announce(`fps:${snapshot.fpsNote}`, "info", snapshot.fpsNote)
+  }, [open, snapshot.state, snapshot.error, snapshot.codecNote, snapshot.fpsNote])
 
   // Keep the window inside the viewport after a rotation.
   useEffect(() => {

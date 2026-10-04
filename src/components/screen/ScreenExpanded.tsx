@@ -54,9 +54,6 @@ export function ScreenExpanded({ snapshot }: { snapshot: ScreenChannelSnapshot }
         ><Icon name="gear-six" /></Button>
       </header>
 
-      {snapshot.error && <p className="screen-error">{snapshot.error}</p>}
-      {snapshot.codecNote && <p className="screen-note">{snapshot.codecNote}</p>}
-      {snapshot.fpsNote && <p className="screen-note">{snapshot.fpsNote}</p>}
 
       <ScreenFrame snapshot={snapshot} interactive />
 

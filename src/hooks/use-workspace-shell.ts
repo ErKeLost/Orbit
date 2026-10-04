@@ -4,6 +4,8 @@ import { changeSession, connect, connectRemoteConnection, dispatchRemoteEvent, l
 import { detectRuntimeEnvironment } from "../lib/runtime-environment";
 import { useRuntimeDiscovery } from "../lib/runtime-diagnostics";
 import { notifyRemoteForeground, openRemoteRuntime, remoteHostSnapshot, storedPairingUri } from "../lib/remote-runtime";
+import { restoreRemoteHost } from "../lib/remote-host";
+import { gooeyToast } from "goey-toast";
 import type { RemoteConnection, RemoteHostSnapshot } from "../lib/remote-protocol";
 import { useWorkspace } from "../lib/store";
 
@@ -100,6 +102,20 @@ export function useWorkspaceBootstrap() {
       }
     }).catch(report);
   }, [attachRemote]);
+
+  // Mobile access does not survive a quit on its own — the Host lives in this
+  // process. Granting screen recording requires exactly one restart (TCC is
+  // re-read at launch), which used to leave the phone retrying forever against
+  // a process that was no longer listening. Restoring the intent the user
+  // already expressed is what closes that loop.
+  const restoredHost = useRef(false);
+  useEffect(() => {
+    if (runtimeTarget !== "desktop" || restoredHost.current) return;
+    restoredHost.current = true;
+    void restoreRemoteHost()
+      .then(info => { if (info) gooeyToast.success("移动访问已恢复", { description: `${info.advertisedAddress}:${info.port}`, showTimestamp: false }); })
+      .catch(() => gooeyToast.warning("移动访问未能自动恢复", { description: "请在「移动端」里重新启用", showTimestamp: false }));
+  }, [runtimeTarget]);
 
   useEffect(() => {
     if (runtimeTarget !== "mobile") return;

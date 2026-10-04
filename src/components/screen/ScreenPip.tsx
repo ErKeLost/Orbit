@@ -85,9 +85,13 @@ export function ScreenPip({ snapshot, placement, onPlacement }: {
     >
       <ScreenFrame snapshot={snapshot} interactive={false} active={!expanded} />
     </div>
-    <footer className="screen-pip-foot">
-      <span>{snapshot.frame ? `${snapshot.frame.width}×${snapshot.frame.height}` : "—"}</span>
-      <span>{snapshot.state === "live" ? `${snapshot.receivedFps.toFixed(1)} fps` : snapshot.state === "connecting" ? "重连中…" : "未运行"}</span>
-    </footer>
+    {/* Numbers only. Anything that needs explaining is a toast: a line of status
+        text parked at the bottom of a small floating window is both noise and
+        invisible at a glance, which is the opposite of what a status line is
+        for. The header dot carries the state. */}
+    {snapshot.frame && <footer className="screen-pip-foot">
+      <span>{`${snapshot.frame.width}×${snapshot.frame.height}`}</span>
+      <span>{`${snapshot.receivedFps.toFixed(1)} fps`}</span>
+    </footer>}
   </section>
 }

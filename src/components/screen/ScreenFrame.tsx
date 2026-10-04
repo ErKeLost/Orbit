@@ -41,15 +41,8 @@ export function ScreenFrame({ snapshot, interactive, active = true }: {
       ? <canvas className="screen-frame" ref={canvas} role="img" aria-label="电脑屏幕" />
       : snapshot.frameUrl
         ? <img className="screen-frame" src={snapshot.frameUrl} alt="电脑屏幕" draggable={false} />
-        : <div className="screen-placeholder"><p>{placeholder(snapshot)}</p></div>}
+        : null}
   </div>
-}
-
-function placeholder(snapshot: ScreenChannelSnapshot): string {
-  if (snapshot.error) return snapshot.error
-  if (snapshot.state === "connecting") return "正在连接电脑…"
-  if (snapshot.state === "failed") return "预览已停止"
-  return "正在等待画面…"
 }
 
 /**
