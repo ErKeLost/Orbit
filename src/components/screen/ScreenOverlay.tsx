@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from "react"
 import { gooeyToast } from "goey-toast"
 import { useWorkspace } from "../../lib/store"
 import { screenChannel, type ScreenChannelSnapshot } from "../../lib/remote-screen"
-import { expandedSettings, loadPlacement, pipSettings, pipWidth, savePlacement, type PipPlacement } from "../../lib/screen-pip"
+import { loadPlacement, savePlacement, type PipPlacement } from "../../lib/screen-pip"
+import { streamSettings, useScreenPreferences } from "../../lib/screen-settings"
 import { ScreenPip } from "./ScreenPip"
 import { ScreenExpanded } from "./ScreenExpanded"
 
@@ -23,6 +24,7 @@ export function ScreenOverlay() {
   const online = useWorkspace(state => state.connection === "online")
   const open = useWorkspace(state => state.screenPip)
   const expanded = useWorkspace(state => state.screenExpanded)
+  const preferences = useScreenPreferences()
   const [snapshot, setSnapshot] = useState<ScreenChannelSnapshot>(() => screenChannel().current)
   const [placement, setPlacement] = useState<PipPlacement>(loadPlacement)
 
@@ -33,16 +35,17 @@ export function ScreenOverlay() {
     savePlacement(next)
   }, [])
 
-  // Ask for the pixels the visible surface needs, and only when they change.
-  // `configure` is a no-op when the host already accepted the same shape, so
-  // this can run on every size change without restarting capture each time.
+  // One shape for both surfaces. Matching the pixel budget to the window size
+  // would save bytes, but it is also a resolution change — a new capture
+  // session, a new encoder and a keyframe — and enlarging should be instant.
+  // The small window simply downscales a sharp picture, which is free.
+  // `configure` is a no-op when the host already accepted the same shape.
   useEffect(() => {
     if (!mobile || !open || !online) return
-    const settings = expanded ? expandedSettings() : pipSettings(pipWidth(placement.size))
-    void screenChannel().configure(settings).catch(error => {
+    void screenChannel().configure(streamSettings(preferences)).catch(error => {
       gooeyToast.error("屏幕预览未启动", { description: message(error), showTimestamp: false })
     })
-  }, [mobile, open, online, expanded, placement.size])
+  }, [mobile, open, online, preferences])
 
   // Closing the window releases the subscription; the desktop keeps the capture
   // session for its own idle grace so reopening is instant.

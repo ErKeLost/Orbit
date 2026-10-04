@@ -22,6 +22,8 @@ export type RemoteScreenSettings = {
   quality?: number
   displayId?: number
   showCursor?: boolean
+  /** `"app"` follows the frontmost application's window. */
+  source?: "app" | "display"
   /**
    * `"h264"` or `"jpeg"`. The host answers with the codec it actually used in
    * `RemoteScreenStartResult.codec`, so a phone that cannot decode H.264 asks
@@ -66,6 +68,8 @@ export type RemoteScreenStatus = {
   permission: boolean
   subscribers: number
   codec: RemoteScreenCodec
+  /** What the host actually followed; may differ from the request. */
+  source: "app" | "display"
   width: number
   height: number
   fps: number

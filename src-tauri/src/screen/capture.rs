@@ -17,7 +17,21 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-/// A capturable display, described in both logical points and device pixels.
+/// Where capture is pointed.
+///
+/// A display and an application window are the same thing to everything
+/// downstream: a rectangle in global logical coordinates plus the pixel size it
+/// is captured at. That is why watching the app the agent is driving needed no
+/// new type, no protocol change to the frame envelope, and no change to the
+/// input mapping — only a different rectangle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TargetKind {
+    Display,
+    Window,
+}
+
+/// A capturable region, described in both logical points and device pixels.
 ///
 /// Logical geometry is what `CGEvent` / accessibility coordinates use; pixel
 /// geometry is what the encoder receives. Keeping both on one struct is what
@@ -27,6 +41,9 @@ use std::time::Duration;
 pub struct DisplayInfo {
     pub id: u32,
     pub name: String,
+    pub kind: TargetKind,
+    /// Owning process for a window target; `None` for a display.
+    pub owner_pid: Option<i32>,
     /// Global logical origin (`SCDisplay.frame().origin`). Secondary displays
     /// can and do have negative origins.
     pub logical_x: f64,
@@ -283,6 +300,8 @@ pub trait Capture {
 #[derive(Clone, Copy, Debug)]
 pub struct CaptureRequest {
     pub display_id: Option<u32>,
+    /// When set, capture this window instead of a display.
+    pub window_id: Option<u32>,
     pub width: u32,
     pub height: u32,
     pub fps: u32,
@@ -330,6 +349,27 @@ pub fn permission_hint() -> &'static str {
     #[cfg(not(target_os = "macos"))]
     {
         "此平台尚未实现屏幕捕获"
+    }
+}
+
+/// Resolve the application window worth watching.
+///
+/// With computer use, the app the agent is driving is by construction the
+/// frontmost one — `ax.rs` refuses to act on a non-foreground app
+/// (`FOREGROUND_REQUIRED`) — so "the window being operated" and "the frontmost
+/// app's window" are the same question, and the second one needs no plumbing
+/// through the accessibility worker.
+///
+/// Returns `None` when there is nothing sensible to show, which the caller
+/// treats as "fall back to the display".
+pub fn frontmost_app_target() -> Result<Option<DisplayInfo>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::frontmost_app_target()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(None)
     }
 }
 

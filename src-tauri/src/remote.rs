@@ -95,7 +95,15 @@ mod desktop {
     const EVENT_BATCH_WINDOW: Duration = Duration::from_millis(16);
     const EVENT_QUEUE_CAPACITY: usize = 4096;
     const CLIENT_QUEUE_CAPACITY: usize = 256;
-    const SOCKET_POLL_INTERVAL: Duration = Duration::from_millis(25);
+    /// How long a connection thread will block in `read` before it gets a
+    /// chance to flush what is waiting to be sent.
+    ///
+    /// This is a pure latency tax on everything the phone receives: a frame, a
+    /// thinking token, and an input reply all wait up to one interval for the
+    /// thread to come back around. It was 25 ms, which put a floor of about
+    /// that under every round trip; 6 ms costs a few more idle wakeups per
+    /// connection and removes most of it.
+    const SOCKET_POLL_INTERVAL: Duration = Duration::from_millis(6);
 
     #[derive(Clone, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]

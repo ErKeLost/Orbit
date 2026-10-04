@@ -25,15 +25,6 @@ const navigation: { id: Panel; label: string; icon: string }[] = [
   { id: "mobile-access", label: "移动端", icon: "device-mobile" },
 ];
 
-/**
- * Desktop-only: the host status page for the screen channel. On a phone the
- * screen is the floating window (`ScreenOverlay`), not a destination, so it is
- * deliberately absent from the navigation there.
- */
-const desktopOnly: { id: Panel; label: string; icon: string }[] = [
-  { id: "screen", label: "屏幕", icon: "desktop" },
-];
-
 export type WorkspaceSidebarProps = {
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
@@ -49,7 +40,6 @@ type SessionTarget = { session: Session; projectPath: string };
 
 export function WorkspaceSidebar({ sidebarOpen, onToggleSidebar, online, panel, liveSessions, currentSessionFile, hideTitlebar = false, onNavigate }: WorkspaceSidebarProps) {
   const cwd = useWorkspace(state => state.cwd);
-  const runtimeTarget = useWorkspace(state => state.runtimeTarget);
   const workspaceMode = useWorkspace(state => state.workspaceMode);
   const homeDir = useWorkspace(state => state.homeDir);
   const { projects, add, update, remove } = useProjects();
@@ -171,7 +161,7 @@ export function WorkspaceSidebar({ sidebarOpen, onToggleSidebar, online, panel, 
   return <div className="sidebar-pane">
     {!hideTitlebar && <WorkspaceTitlebar variant="sidebar" sidebarOpen={sidebarOpen} onToggleSidebar={onToggleSidebar} />}
     <aside className="sidebar">
-      <nav aria-label="主导航">{[...navigation, ...(runtimeTarget === "mobile" ? [] : desktopOnly)].map(item => <Button key={item.id} className={`nav-item ${panel === item.id ? "selected" : ""}`} onClick={() => { useWorkspace.getState().set({ panel: item.id }); onNavigate?.(); }}><Icon name={item.icon} /><span>{item.label}</span>{item.id === "commands" && <Icon name="arrow-up-right" />}</Button>)}</nav>
+      <nav aria-label="主导航">{navigation.map(item => <Button key={item.id} className={`nav-item ${panel === item.id ? "selected" : ""}`} onClick={() => { useWorkspace.getState().set({ panel: item.id }); onNavigate?.(); }}><Icon name={item.icon} /><span>{item.label}</span>{item.id === "commands" && <Icon name="arrow-up-right" />}</Button>)}</nav>
 
       <div className="sidebar-library">
         <div className="sidebar-section-title sidebar-projects-title"><span><Icon name="folder-simple" />项目</span><Button title="添加项目" disabled={!desktopRuntime()} onClick={() => void addProjects().catch(report)}><Icon name="plus" /></Button></div>

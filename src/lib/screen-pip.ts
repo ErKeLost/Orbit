@@ -1,5 +1,3 @@
-import type { RemoteScreenSettings } from "./remote-protocol"
-
 /**
  * Geometry for the floating screen window.
  *
@@ -76,40 +74,4 @@ export function pipBox(size: PipSize, x: number, y: number): PipBox {
     left: Math.min(Math.max(x < 0 ? maxX : x, MARGIN), maxX),
     top: Math.min(Math.max(y < 0 ? maxY : y, MARGIN), maxY),
   }
-}
-
-/**
- * Pixel budget per surface.
- *
- * The point of the floating window is that it is affordable: a thumbnail asks
- * for a thumbnail's worth of pixels instead of paying for a full-screen stream
- * nobody is looking at. `maxWidth` is matched to the device pixels the surface
- * actually occupies, so the picture is 1:1 rather than upscaled and soft —
- * which is what "the screen is blurry" turned out to be.
- */
-export function pipSettings(width: number): RemoteScreenSettings {
-  return {
-    maxWidth: clamp(Math.round(width * devicePixelRatio()), 360, 900),
-    maxFps: 10,
-    quality: 60,
-  }
-}
-
-export function expandedSettings(): RemoteScreenSettings {
-  // Full panel width in device pixels: a phone at 412pt and dpr 3 wants ~1236,
-  // where the old `min(dpr, 2)` cap asked for 824 and then upscaled it.
-  return {
-    maxWidth: clamp(Math.round(window.innerWidth * devicePixelRatio()), 640, 1600),
-    maxFps: 15,
-    quality: 72,
-  }
-}
-
-/** Three is where phone panels stop; beyond that the extra pixels are wasted. */
-function devicePixelRatio(): number {
-  return Math.min(window.devicePixelRatio || 1, 3)
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max)
 }

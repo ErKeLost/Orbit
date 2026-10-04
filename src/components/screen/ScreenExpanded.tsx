@@ -2,49 +2,25 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { useWorkspace } from "../../lib/store"
 import { Button, Input, Select } from "../UI"
 import { Icon } from "../Icon"
-import {
-  screenChannel,
-  sendScreenInput,
-  supportsHardwareH264,
-  type ScreenChannelSnapshot,
-} from "../../lib/remote-screen"
+import { sendScreenInput, type ScreenChannelSnapshot } from "../../lib/remote-screen"
 import type { RemoteDisplay } from "../../lib/remote-protocol"
 import { formatBitrate, formatBytes } from "../../lib/screen-host"
-import { expandedSettings } from "../../lib/screen-pip"
+import { useScreenPreferences } from "../../lib/screen-settings"
 import { ScreenFrame } from "./ScreenFrame"
 
 /**
  * The enlarged view, where input is enabled.
  *
  * It is an overlay, not a panel: the conversation stays mounted underneath and
- * closing this returns to exactly the same state. Nothing here is a remote
- * desktop control surface — there is no key bar, because this product is a chat
- * session with a window onto the computer, not a VNC client.
+ * closing this returns to exactly the same state. Configuration is deliberately
+ * absent — everything lives in Settings → 屏幕 — because a control strip on top
+ * of the thing you are trying to look at is how you end up not knowing what the
+ * current settings are. The one exception is the display picker, which is a
+ * choice about *this* moment rather than a preference.
  */
 export function ScreenExpanded({ snapshot }: { snapshot: ScreenChannelSnapshot }) {
   const [draft, setDraft] = useState("")
-  const [profile, setProfile] = useState<"balanced" | "sharp">("sharp")
-  const [busy, setBusy] = useState(false)
-  const [h264, setH264] = useState(false)
-
-  useEffect(() => {
-    void supportsHardwareH264().then(setH264)
-  }, [])
-
   const close = useCallback(() => useWorkspace.getState().set({ screenExpanded: false }), [])
-
-  const apply = useCallback(async (next: "balanced" | "sharp") => {
-    setProfile(next)
-    setBusy(true)
-    try {
-      const base = expandedSettings()
-      // The "saver" choice halves the pixel budget; `maxWidth` is optional in
-      // the protocol, so fall back to the base value rather than to `NaN`.
-      await screenChannel().start(next === "sharp" ? base : { ...base, maxWidth: Math.min(base.maxWidth ?? 1000, 1000), quality: 62 })
-    } finally {
-      setBusy(false)
-    }
-  }, [])
 
   // Escape closes, matching every other overlay in this app.
   useEffect(() => {
@@ -65,21 +41,17 @@ export function ScreenExpanded({ snapshot }: { snapshot: ScreenChannelSnapshot }
           {snapshot.state === "live" ? "实时" : snapshot.state === "connecting" ? "连接中" : snapshot.state === "failed" ? "已停止" : "未开始"}
         </span>
         <span className="screen-pip-spacer" />
-        <Select value={profile} onChange={event => void apply(event.target.value as "balanced" | "sharp")} disabled={busy} aria-label="预览画质">
-          <option value="balanced">省流</option>
-          <option value="sharp">清晰</option>
-        </Select>
-        {h264 && <Button
-          className={`screen-pip-action ${snapshot.codec === "h264" ? "selected" : ""}`}
-          title={snapshot.codec === "h264" ? "已用 H.264（同画质下带宽低一个数量级）" : "强制用 H.264 试试"}
-          aria-label="切换编码格式"
-          onClick={() => void screenChannel().start({ ...expandedSettings(), codec: snapshot.codec === "h264" ? "jpeg" : "h264" })}
-        ><Icon name={snapshot.codec === "h264" ? "film-strip" : "image-square"} /></Button>}
         <DisplayPicker
           displays={snapshot.displays}
           current={snapshot.display}
-          onPick={id => void screenChannel().start({ ...expandedSettings(), displayId: id })}
+          onPick={id => useScreenPreferences.getState().set(id === null ? { source: "app" } : { source: "display", displayId: id })}
         />
+        <Button
+          className="screen-pip-action"
+          title="屏幕设置"
+          aria-label="屏幕设置"
+          onClick={() => useWorkspace.getState().set({ panel: "settings", settingsPage: "screen", screenExpanded: false })}
+        ><Icon name="gear-six" /></Button>
       </header>
 
       {snapshot.error && <p className="screen-error">{snapshot.error}</p>}

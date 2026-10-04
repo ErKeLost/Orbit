@@ -16,11 +16,18 @@ enlarging is the explicit "operate it now" gesture. There is no key bar — this
 is a chat session with a window onto the computer, not a VNC client — but text
 typed in the enlarged view goes to the computer's focused field.
 
-The pixel budget follows the visible surface, which is what makes the floating
-window nearly free: a thumbnail asks for a thumbnail's worth of pixels, and the
-enlarged view asks for the full panel. Drawing is skipped while the window is
-hidden; decoding continues, because pausing an inter-frame codec is corruption
-rather than a saving.
+By default the window follows **the application being operated** rather than
+mirroring the whole desktop, because that is what computer use acts on: the
+agent must bring its target to the front, so the frontmost application and the
+operated one are the same question. Settings → 屏幕 switches it to a whole
+display, and the picker above the picture switches back.
+
+**All screen settings live in Settings → 屏幕** — source, quality, codec, cursor,
+and the desktop's permission plus live numbers. The floating window holds no
+configuration of its own beyond size and position.
+
+Drawing is skipped while the window is hidden; decoding continues, because
+pausing an inter-frame codec is corruption rather than a saving.
 
 That is a separate, opt-in channel with its own connection: the transcript stays
 structured JSON on the control socket, and only the screen carries pixels. See

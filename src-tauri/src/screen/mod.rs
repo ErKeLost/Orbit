@@ -78,6 +78,13 @@ const QUALITY_FLOOR: u8 = 40;
 /// How long to wait for the capture session to report whether it opened.
 const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How often to check whether the operated application changed.
+///
+/// A second is the right order: faster would poll AppKit for no reason, slower
+/// would leave the preview showing the previous application while the agent has
+/// visibly moved on.
+const TARGET_RECHECK: Duration = Duration::from_secs(1);
+
 fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -87,6 +94,10 @@ fn now_ms() -> u128 {
 
 /// Clamped client-requested limits. The phone asks for a "shape", the host
 /// decides whether it is reasonable.
+///
+/// The defaults sit at the ceiling rather than in the middle: the caller that
+/// asks for nothing should get the most the machine can do, with the governor
+/// discovering the link's real capacity by walking down from there.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ScreenSettings {
@@ -104,6 +115,37 @@ pub struct ScreenSettings {
     /// it actually used in the `screen.start` reply.
     #[serde(default)]
     pub codec: Option<String>,
+    /// `"app"` to follow the frontmost application's window, `"display"` for a
+    /// whole screen. Defaults to `"app"`.
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+/// Which region the preview follows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Source {
+    /// The frontmost application's window: with computer use, the app the agent
+    /// is driving is by construction the frontmost one.
+    App,
+    /// A whole display.
+    Display,
+}
+
+impl Source {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "app" => Some(Source::App),
+            "display" => Some(Source::Display),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Source::App => "app",
+            Source::Display => "display",
+        }
+    }
 }
 
 /// Fully resolved capture parameters.
@@ -115,6 +157,7 @@ struct Resolved {
     display_id: Option<u32>,
     show_cursor: bool,
     codec: Codec,
+    source: Source,
     /// Derived frame size. Part of the identity because a change here requires
     /// a new capture session *and* a new encoder.
     frame_width: u32,
@@ -134,12 +177,15 @@ impl ScreenSettings {
         Resolved {
             // 1600 px keeps UI text legible without paying for a Retina-sized
             // frame; the client can ask for less on a phone screen.
-            max_width: self.max_width.unwrap_or(1280).clamp(320, 2560),
-            max_fps: self.max_fps.unwrap_or(10).clamp(1, 30),
-            quality: self.quality.unwrap_or(62).clamp(30, 90),
+            max_width: self.max_width.unwrap_or(2560).clamp(320, 2560),
+            max_fps: self.max_fps.unwrap_or(30).clamp(1, 30),
+            quality: self.quality.unwrap_or(90).clamp(30, 90),
             display_id: self.display_id,
             show_cursor: self.show_cursor.unwrap_or(true),
             codec: Codec::parse(self.codec.as_deref().unwrap_or("h264")).unwrap_or(Codec::H264),
+            // Following the operated app is the default because that is what
+            // the preview is for; a whole display stays one setting away.
+            source: Source::parse(self.source.as_deref().unwrap_or("app")).unwrap_or(Source::App),
             frame_width: 0,
             frame_height: 0,
         }
@@ -166,6 +212,11 @@ impl ScreenSettings {
         if let Some(codec) = self.codec.as_deref() {
             if Codec::parse(codec).is_none() {
                 return Err(format!("不支持的编码格式：{codec}"));
+            }
+        }
+        if let Some(source) = self.source.as_deref() {
+            if Source::parse(source).is_none() {
+                return Err(format!("不支持的画面来源：{source}"));
             }
         }
         Ok(())
@@ -275,6 +326,19 @@ impl ScreenBus {
         self.resync.swap(false, Ordering::AcqRel)
     }
 
+    /// Geometry of the frame currently on screen, if any.
+    ///
+    /// Input maps onto this rather than onto a value cached at start: in app
+    /// mode the target window changes while the stream runs, and a touch that
+    /// mapped onto the previous window's rectangle would land somewhere else on
+    /// the computer entirely.
+    fn target(&self) -> Option<DisplayInfo> {
+        self.latest
+            .lock()
+            .ok()
+            .and_then(|latest| latest.as_ref().map(|frame| frame.display.clone()))
+    }
+
     /// The slowest subscriber's delivered sequence.
     fn delivered(&self) -> u64 {
         self.delivered.load(Ordering::Acquire)
@@ -371,6 +435,12 @@ impl ScreenSubscription {
             self.bus.subscribers.fetch_sub(1, Ordering::AcqRel);
             self.bus.forget(self.id);
         }
+    }
+
+    /// Geometry of the frame currently on screen, for input mapping.
+    #[must_use]
+    pub fn target(&self) -> Option<DisplayInfo> {
+        self.bus.target()
     }
 
     /// The newest frame this connection has not yet been sent, if any.
@@ -592,6 +662,7 @@ impl ScreenHost {
             permission,
             subscribers: pipeline.bus.subscribers(),
             codec: stats.codec().unwrap_or(pipeline.resolved.codec).as_str().into(),
+            source: pipeline.resolved.source.as_str().into(),
             width: pipeline.resolved.frame_width,
             height: pipeline.resolved.frame_height,
             fps: pipeline.resolved.max_fps as f32,
@@ -635,6 +706,9 @@ pub struct ScreenStatus {
     pub permission: bool,
     pub subscribers: usize,
     pub codec: String,
+    /// What capture actually followed, which can differ from the request when
+    /// no application window was worth showing.
+    pub source: String,
     pub width: u32,
     pub height: u32,
     pub fps: f32,
@@ -669,6 +743,62 @@ fn capture_box(display: &DisplayInfo, max_width: u32) -> (u32, u32) {
     (even(logical_width * scale), even(logical_height * scale))
 }
 
+/// Pick the display to capture when the source is a whole screen.
+fn pick_display(display_id: Option<u32>) -> Result<DisplayInfo, String> {
+    let displays = capture::displays()?;
+    display_id
+        .and_then(|id| displays.iter().find(|display| display.id == id).cloned())
+        .or_else(|| displays.iter().find(|display| display.primary).cloned())
+        .or_else(|| displays.first().cloned())
+        .ok_or_else(|| "没有可捕获的显示器".to_string())
+}
+
+/// Resolve what to capture for the current settings.
+///
+/// Following the app can come up empty — nothing is frontmost that is worth
+/// showing, or the frontmost app is Orbit itself — and that is not an error:
+/// it means "show the screen", which is what a person expects when the agent is
+/// between applications.
+fn resolve_target(resolved: &Resolved) -> Result<DisplayInfo, String> {
+    match resolved.source {
+        Source::Display => pick_display(resolved.display_id),
+        Source::App => match capture::frontmost_app_target() {
+            Ok(Some(target)) => Ok(target),
+            Ok(None) => pick_display(resolved.display_id),
+            Err(error) => {
+                log::debug!("读取前台应用窗口失败，回退到显示器：{error}");
+                pick_display(resolved.display_id)
+            }
+        },
+    }
+}
+
+/// Open a capture session for a resolved target.
+fn open_target(
+    resolved: &Resolved,
+    target: &DisplayInfo,
+) -> Result<(Box<dyn Capture>, Resolved), String> {
+    let (width, height) = capture_box(target, resolved.max_width);
+    let request = CaptureRequest {
+        display_id: (target.kind == capture::TargetKind::Display).then_some(target.id),
+        window_id: (target.kind == capture::TargetKind::Window).then_some(target.id),
+        width,
+        height,
+        // Capture faster than the publish target on purpose. ScreenCaptureKit
+        // gates frames at `minimumFrameInterval` and the bandwidth governor
+        // gates publishes at the same interval; running both at exactly the
+        // target rate makes them beat against each other, and any jitter pushes
+        // a frame past the governor's strict comparison and throws it away. On
+        // real hardware that cost roughly half the frame rate (7.6 fps reported
+        // against a 15 fps target). Capturing at double removes the beating and
+        // has the side benefit that the frame we publish is the freshest of the
+        // two, not a stale one.
+        fps: resolved.max_fps.saturating_mul(2).min(60),
+        shows_cursor: resolved.show_cursor,
+    };
+    Ok((capture::open(request)?, resolved.with_frame_size(width, height)))
+}
+
 /// Resolve the target display and start the pipeline thread.
 ///
 /// The capture session itself is created *inside* the pipeline thread:
@@ -683,66 +813,46 @@ fn start_pipeline(
         // explicit button, and the phone gets an actionable message.
         return Err(capture::permission_hint().to_string());
     }
-    let displays = capture::displays()?;
-    let display = resolved
-        .display_id
-        .and_then(|id| displays.iter().find(|display| display.id == id).cloned())
-        .or_else(|| displays.iter().find(|display| display.primary).cloned())
-        .or_else(|| displays.first().cloned())
-        .ok_or_else(|| "没有可捕获的显示器".to_string())?;
+    let display = resolve_target(&resolved)?;
     let (width, height) = capture_box(&display, resolved.max_width);
     let resolved = resolved.with_frame_size(width, height);
 
     let stats = Arc::new(Stats::default());
     let stop = Arc::new(AtomicBool::new(false));
     let (ready, opened) = std::sync::mpsc::sync_channel::<Result<Codec, String>>(1);
+    let displays = capture::displays().unwrap_or_default();
     let handle = {
         let bus = bus.clone();
         let stats = stats.clone();
         let stop = stop.clone();
         let display = display.clone();
-        let request = CaptureRequest {
-            display_id: Some(display.id),
-            width,
-            height,
-            // Capture faster than the publish target on purpose. ScreenCaptureKit
-            // gates frames at `minimumFrameInterval` and the bandwidth governor
-            // gates publishes at the same interval; running both at exactly the
-            // target rate makes them beat against each other, and any jitter
-            // pushes a frame past the governor's strict comparison and throws it
-            // away. On real hardware that cost roughly half the frame rate
-            // (7.6 fps reported against a 15 fps target). Capturing at double
-            // removes the beating and has the side benefit that the frame we
-            // publish is the freshest of the two, not a stale one.
-            fps: resolved.max_fps.saturating_mul(2).min(60),
-            shows_cursor: resolved.show_cursor,
-        };
         thread::Builder::new()
             .name("orbit-screen-pipeline".into())
             .spawn(move || {
-                match capture::open(request) {
-                    Ok(mut capture) => {
-                        match Encoder::new(
-                            resolved.codec,
-                            resolved.frame_width,
-                            resolved.frame_height,
-                            resolved.quality,
-                            governor_bitrate(resolved.quality),
-                            resolved.max_fps,
-                        ) {
-                            Ok(encoder) => {
-                                let codec = encoder.codec();
-                                stats.set_codec(codec);
-                                let _ = ready.try_send(Ok(codec));
-                                pipeline_loop(capture, encoder, bus, stats, stop, resolved, display);
-                            }
-                            Err(error) => {
-                                capture.stop();
-                                let _ = ready.try_send(Err(error));
-                            }
-                        }
+                let capture = match open_target(&resolved, &display) {
+                    Ok((capture, _)) => capture,
+                    Err(error) => {
+                        let _ = ready.try_send(Err(error));
+                        return;
+                    }
+                };
+                match Encoder::new(
+                    resolved.codec,
+                    resolved.frame_width,
+                    resolved.frame_height,
+                    resolved.quality,
+                    governor_bitrate(resolved.quality),
+                    resolved.max_fps,
+                ) {
+                    Ok(encoder) => {
+                        let codec = encoder.codec();
+                        stats.set_codec(codec);
+                        let _ = ready.try_send(Ok(codec));
+                        pipeline_loop(capture, encoder, bus, stats, stop, resolved, display);
                     }
                     Err(error) => {
+                        let mut capture = capture;
+                        capture.stop();
                         let _ = ready.try_send(Err(error));
                     }
                 }
@@ -847,9 +957,16 @@ impl Governor {
         if bytes > self.budget {
             self.relaxed_windows = 0;
             if self.quality > QUALITY_FLOOR {
+                // Step proportionally to how far over the budget we are. With
+                // the quality ceiling set to maximum — which is the default,
+                // because a deliberately mediocre preview is a preview you have
+                // to squint at — a fixed small step needs many seconds to
+                // converge and the user watches it stutter the whole way.
+                let ratio = (bytes / self.budget.max(1)).clamp(1, 16);
+                let step = (6 * ratio).min(60) as u8;
                 // Clamp on the way down: undershooting the floor would skip
                 // straight past the frame-rate stage.
-                self.quality = self.quality.saturating_sub(6).max(QUALITY_FLOOR);
+                self.quality = self.quality.saturating_sub(step).max(QUALITY_FLOOR);
             } else if self.fps > f64::from(self.min_fps) {
                 self.fps = (self.fps - 1.0).max(f64::from(self.min_fps));
             }
@@ -879,14 +996,15 @@ fn budget_bytes(codec: Codec, quality: u8) -> u64 {
     }
 }
 
+#[allow(clippy::too_many_arguments, reason = "one pipeline, one thread, one loop")]
 fn pipeline_loop(
     mut capture: Box<dyn Capture>,
     mut encoder: Encoder,
     bus: Arc<ScreenBus>,
     stats: Arc<Stats>,
     stop: Arc<AtomicBool>,
-    resolved: Resolved,
-    display: DisplayInfo,
+    mut resolved: Resolved,
+    mut display: DisplayInfo,
 ) {
     let codec = encoder.codec();
     let mut governor = Governor::new(resolved.quality, resolved.max_fps, codec);
@@ -898,6 +1016,7 @@ fn pipeline_loop(
     let mut seq = bus.version.load(Ordering::Acquire);
     // The first frame of a session is always a fresh start for the decoder.
     let mut announce_resync = true;
+    let mut last_target_check = Instant::now();
 
     while !stop.load(Ordering::Acquire) {
         // Idle out once nobody is watching. `screen.start` from a new client
@@ -913,6 +1032,37 @@ fn pipeline_loop(
         if let Some(failure) = capture.failure() {
             stats.set_failure(failure);
             break;
+        }
+
+        // In app mode the target is not fixed: the agent moves between
+        // applications, and the preview is supposed to show the one being
+        // worked on. Re-resolving means a new capture session, which is a real
+        // interruption — so it only happens when the window actually changed,
+        // and the new session is opened before the old one is closed so a
+        // failure here leaves the current picture running.
+        if resolved.source == Source::App && last_target_check.elapsed() >= TARGET_RECHECK {
+            last_target_check = Instant::now();
+            match capture::frontmost_app_target() {
+                Ok(Some(target)) if target.id != display.id => {
+                    match open_target(&resolved, &target) {
+                        Ok((next, next_resolved)) => {
+                            capture.stop();
+                            capture = next;
+                            resolved = next_resolved;
+                            display = target;
+                            // A different window is a different picture, not a
+                            // continuation of the previous one.
+                            encoder.refresh();
+                            announce_resync = true;
+                        }
+                        Err(error) => {
+                            log::debug!("切换预览窗口失败，保持当前画面：{error}");
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => log::debug!("读取前台应用窗口失败：{error}"),
+            }
         }
 
         // Keep draining the capture stream even when nothing is encoded:
@@ -1108,7 +1258,9 @@ pub fn handle_request(
             let Some(event) = request.get("event").cloned() else {
                 return Some(Err("screen.input 缺少 event".into()));
             };
-            let Some(display) = host.display() else {
+            // Prefer the geometry of the frame the user is looking at; the
+            // host's own value is only a fallback before the first frame.
+            let Some(display) = subscription.target().or_else(|| host.display()) else {
                 return Some(Err("屏幕预览尚未开始".into()));
             };
             serde_json::from_value::<input::ScreenInput>(event)
@@ -1152,6 +1304,8 @@ mod tests {
         DisplayInfo {
             id: 1,
             name: "主显示器".into(),
+            kind: crate::screen::capture::TargetKind::Display,
+            owner_pid: None,
             logical_x: 0.0,
             logical_y: 0.0,
             logical_width: 1728.0,
@@ -1281,7 +1435,13 @@ mod tests {
         let over = governor.budget * 2;
         assert_eq!(governor.quality, 80);
         governor.observe(over);
-        assert_eq!(governor.quality, 74);
+        // Two times the budget steps twice as far as the base step: the further
+        // over, the faster it comes down.
+        assert_eq!(governor.quality, 68);
+        // Exactly at the budget is not over it: the comparison is strict, so
+        // hitting the target does not cost quality.
+        governor.observe(governor.budget);
+        assert_eq!(governor.quality, 68, "meeting the budget changes nothing");
 
         // Quality walks down to the floor and stops there, then frame rate
         // absorbs the rest of the pressure.
@@ -1330,6 +1490,19 @@ mod tests {
     }
 
     #[test]
+    fn a_maxed_out_start_converges_quickly_instead_of_crawling() {
+        // Requesting maximum quality on a link that cannot carry it must reach a
+        // workable shape in a couple of windows, not a couple of dozen.
+        let mut governor = Governor::new(90, 30, Codec::Jpeg);
+        let mut windows = 0;
+        while governor.quality > QUALITY_FLOOR && windows < 10 {
+            governor.observe(governor.budget * 8);
+            windows += 1;
+        }
+        assert!(windows <= 3, "收敛用了 {windows} 个窗口，太慢");
+    }
+
+    #[test]
     fn oversized_frames_force_a_downshift_rather_than_a_relay_disconnect() {
         let mut governor = Governor::new(90, 15, Codec::Jpeg);
         assert_eq!(governor.quality, 90);
@@ -1355,9 +1528,12 @@ mod tests {
 
     #[test]
     fn settings_are_clamped_to_a_sane_preview_shape() {
+        // Asking for nothing gets the maximum: the governor walks down from the
+        // ceiling, it does not start in the middle.
         let resolved = ScreenSettings::default().resolve();
-        assert_eq!(resolved.max_width, 1280);
-        assert_eq!(resolved.max_fps, 10);
+        assert_eq!(resolved.max_width, 2560);
+        assert_eq!(resolved.max_fps, 30);
+        assert_eq!(resolved.quality, 90);
         // H.264 is the default because it is strictly cheaper on the wire.
         assert_eq!(resolved.codec, Codec::H264);
         let extreme = ScreenSettings {
@@ -1367,11 +1543,60 @@ mod tests {
             display_id: None,
             show_cursor: None,
             codec: None,
+            source: None,
         }
         .resolve();
         assert_eq!(extreme.max_width, 2560);
         assert_eq!(extreme.max_fps, 30);
         assert_eq!(extreme.quality, 30);
+    }
+
+    #[test]
+    fn the_preview_follows_the_operated_app_by_default() {
+        // With computer use the app being driven is the frontmost one, so this
+        // is the default the product wants; a whole display is one setting away.
+        assert_eq!(ScreenSettings::default().resolve().source, Source::App);
+        let display = ScreenSettings {
+            source: Some("display".into()),
+            ..ScreenSettings::default()
+        }
+        .resolve();
+        assert_eq!(display.source, Source::Display);
+    }
+
+    #[test]
+    fn an_unknown_source_is_rejected_rather_than_guessed() {
+        let bad = ScreenSettings {
+            source: Some("window".into()),
+            ..ScreenSettings::default()
+        };
+        assert!(bad.resolve_checked().is_err());
+    }
+
+    #[test]
+    fn input_maps_onto_the_geometry_of_the_frame_on_screen() {
+        // In app mode the target changes while the stream runs. Input must
+        // follow the frame the viewer is looking at, or a touch lands on the
+        // previous window's coordinates.
+        let bus = Arc::new(ScreenBus::default());
+        let subscription = ScreenSubscription::new(bus.clone());
+        subscription.activate();
+        assert!(subscription.target().is_none(), "no frame yet");
+
+        let mut with_window = frame(1);
+        let mut window = display();
+        window.kind = crate::screen::capture::TargetKind::Window;
+        window.owner_pid = Some(4242);
+        window.logical_x = -400.0;
+        window.logical_y = 120.0;
+        window.logical_width = 900.0;
+        window.logical_height = 600.0;
+        with_window.display = window;
+        bus.publish(with_window);
+
+        let target = subscription.target().expect("geometry from the frame");
+        assert_eq!(target.kind, crate::screen::capture::TargetKind::Window);
+        assert_eq!(target.logical_x, -400.0);
     }
 
     #[test]
@@ -1424,6 +1649,7 @@ mod tests {
         let (width, height) = capture_box(display, 1280);
         let mut session = capture::open(CaptureRequest {
             display_id: Some(display.id),
+            window_id: None,
             width,
             height,
             fps: 10,

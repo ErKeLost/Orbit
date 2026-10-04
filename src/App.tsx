@@ -49,7 +49,7 @@ export default function App(){
  },[sidebarVisibility])
  const merged=useMemo(()=>mergeProjectSessions(cwd,sessions.data??[],liveSessions),[cwd,sessions.data,liveSessions])
  const currentSession=merged.sessions.find(session=>session.path===state?.sessionFile)
- const rawHeaderTitle=panel==='chat'?(currentSession?.name||currentSession?.firstMessage||''):panel==='settings'?'设置':panel==='commands'?'技能与命令':panel==='mobile-access'?'移动端':panel==='screen'?'屏幕':'Orbit'
+ const rawHeaderTitle=panel==='chat'?(currentSession?.name||currentSession?.firstMessage||''):panel==='settings'?'设置':panel==='commands'?'技能与命令':panel==='mobile-access'?'移动端':'Orbit'
  const headerTitle=panel==='chat'?compactTitle(rawHeaderTitle):rawHeaderTitle
  const toggleSidebar=()=>setSidebarOpen(value=>!value)
  if(bootstrap.runtimeTarget==='mobile'&&bootstrap.pairing.required) return <RemotePairingScreen pairingUri={bootstrap.pairing.uri} connecting={bootstrap.pairing.connecting} error={bootstrap.pairing.error} onPairingUriChange={bootstrap.setPairingUri} onConnect={value=>void bootstrap.connectPairing(value)} />

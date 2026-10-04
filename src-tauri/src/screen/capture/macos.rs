@@ -29,7 +29,9 @@ use objc2_screen_capture_kit::{
     SCStreamDelegate, SCStreamOutput, SCStreamOutputType, SCWindow,
 };
 
-use super::{Capture, CaptureRequest, DisplayInfo, PixelBufferHandle, Pixels, RawFrame};
+use super::{
+    Capture, CaptureRequest, DisplayInfo, PixelBufferHandle, Pixels, RawFrame, TargetKind,
+};
 
 /// `'BGRA'` as an `OSType`: packed 8-bit components, which both the JPEG
 /// encoder and a future `CVPixelBuffer`-native encoder accept directly.
@@ -192,6 +194,8 @@ fn describe_display(display: &SCDisplay, index: usize) -> DisplayInfo {
         DisplayInfo {
             id,
             name: display_name(index),
+            kind: TargetKind::Display,
+            owner_pid: None,
             logical_x: frame.origin.x,
             logical_y: frame.origin.y,
             logical_width,
@@ -250,6 +254,127 @@ fn shareable_content() -> Result<Snapshot, String> {
     Ok(Snapshot { content, displays })
 }
 
+/// Smallest window worth streaming: anything smaller is a panel, a tooltip, or
+/// a palette, and would make a useless preview.
+const MIN_WINDOW_WIDTH: f64 = 240.0;
+const MIN_WINDOW_HEIGHT: f64 = 160.0;
+
+/// The frontmost application's process, or `None` when it is Orbit itself.
+///
+/// Watching our own window would be a hall of mirrors, and it is also the
+/// state you are in the moment you launch Orbit.
+fn frontmost_pid() -> Option<i32> {
+    use objc2_app_kit::NSWorkspace;
+    let workspace = NSWorkspace::sharedWorkspace();
+    let application = workspace.frontmostApplication()?;
+    let pid = application.processIdentifier();
+    if pid <= 0 || pid == std::process::id() as i32 {
+        return None;
+    }
+    Some(pid)
+}
+
+/// The largest ordinary on-screen window owned by `pid`.
+///
+/// Layer 0 excludes the menu bar, the Dock, and floating palettes; the area
+/// ranking picks the document window over an inspector.
+fn largest_window(content: &SCShareableContent, pid: i32) -> Option<(u32, DisplayInfo)> {
+    // SAFETY: `content` is a live snapshot.
+    let windows = unsafe { content.windows() };
+    let mut best: Option<(f64, u32, DisplayInfo)> = None;
+    for index in 0..windows.len() {
+        let window = windows.objectAtIndex(index);
+        // SAFETY: every call below is a value-returning getter on a window that
+        // the snapshot owns.
+        let (frame, layer, on_screen, owner, id) = unsafe {
+            (
+                window.frame(),
+                window.windowLayer(),
+                window.isOnScreen(),
+                window.owningApplication().map(|owner| owner.processID()),
+                window.windowID(),
+            )
+        };
+        if owner != Some(pid) || !on_screen || layer != 0 {
+            continue;
+        }
+        let (width, height) = (frame.size.width, frame.size.height);
+        if width < MIN_WINDOW_WIDTH || height < MIN_WINDOW_HEIGHT {
+            continue;
+        }
+        let area = width * height;
+        if best.as_ref().is_some_and(|(best_area, _, _)| area <= *best_area) {
+            continue;
+        }
+        // SAFETY: reading the title of a window from the live snapshot.
+        let title = unsafe { window.title() }.map(|title| title.to_string());
+        let name = match title.filter(|title| !title.is_empty()) {
+            Some(title) => format!("{} · {}", application_name(pid), title),
+            None => application_name(pid),
+        };
+        best = Some((
+            area,
+            id,
+            DisplayInfo {
+                id,
+                name,
+                kind: TargetKind::Window,
+                owner_pid: Some(pid),
+                logical_x: frame.origin.x,
+                logical_y: frame.origin.y,
+                logical_width: width,
+                logical_height: height,
+                // Filled in by the caller, which knows the displays.
+                pixel_width: 0,
+                pixel_height: 0,
+                scale: 1.0,
+                primary: false,
+            },
+        ));
+    }
+    best.map(|(_, id, info)| (id, info))
+}
+
+fn application_name(pid: i32) -> String {
+    use objc2_app_kit::NSRunningApplication;
+    NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
+        .and_then(|application| application.localizedName())
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| "应用窗口".into())
+}
+
+/// The display whose frame contains the middle of `info`, for its pixel scale.
+fn scale_for(displays: &[DisplayInfo], info: &DisplayInfo) -> f64 {
+    let center_x = info.logical_x + info.logical_width / 2.0;
+    let center_y = info.logical_y + info.logical_height / 2.0;
+    displays
+        .iter()
+        .find(|display| {
+            center_x >= display.logical_x
+                && center_x <= display.logical_x + display.logical_width
+                && center_y >= display.logical_y
+                && center_y <= display.logical_y + display.logical_height
+        })
+        .or_else(|| displays.first())
+        .map(|display| display.scale.max(1.0))
+        .unwrap_or(1.0)
+}
+
+pub(super) fn frontmost_app_target() -> Result<Option<DisplayInfo>, String> {
+    let Some(pid) = frontmost_pid() else {
+        return Ok(None);
+    };
+    let snapshot = shareable_content()?;
+    let Some((_, mut info)) = largest_window(&snapshot.content, pid) else {
+        return Ok(None);
+    };
+    let scale = scale_for(&snapshot.displays, &info);
+    info.scale = scale;
+    info.pixel_width = (info.logical_width * scale).round() as u32;
+    info.pixel_height = (info.logical_height * scale).round() as u32;
+    Ok(Some(info))
+}
+
 pub(super) fn permission_granted() -> bool {
     CGPreflightScreenCaptureAccess()
 }
@@ -287,13 +412,47 @@ impl MacCapture {
             return Err(PERMISSION_HINT.into());
         }
         let snapshot = shareable_content()?;
-        let target = request
-            .display_id
-            .and_then(|id| snapshot.displays.iter().position(|display| display.id == id))
-            .or_else(|| snapshot.displays.iter().position(|display| display.primary))
-            .ok_or_else(|| "没有可捕获的显示器".to_string())?;
-        // SAFETY: reading a display out of the snapshot we still hold.
-        let display = unsafe { snapshot.content.displays() }.objectAtIndex(target);
+        // SAFETY: reads below are on the live snapshot we hold.
+        let (filter, display) = match request.window_id {
+            Some(window_id) => {
+                let filter = unsafe {
+                    let windows = snapshot.content.windows();
+                    let mut found = None;
+                    for index in 0..windows.len() {
+                        if windows.objectAtIndex(index).windowID() == window_id {
+                            found = Some(windows.objectAtIndex(index));
+                            break;
+                        }
+                    }
+                    let window = found.ok_or_else(|| {
+                        format!("目标窗口已关闭（#{window_id}），请重新选择")
+                    })?;
+                    SCContentFilter::initWithDesktopIndependentWindow(
+                        SCContentFilter::alloc(),
+                        &window,
+                    )
+                };
+                (filter, None)
+            }
+            None => {
+                let target = request
+                    .display_id
+                    .and_then(|id| snapshot.displays.iter().position(|display| display.id == id))
+                    .or_else(|| snapshot.displays.iter().position(|display| display.primary))
+                    .ok_or_else(|| "没有可捕获的显示器".to_string())?;
+                let display = unsafe { snapshot.content.displays() }.objectAtIndex(target);
+                let empty = NSArray::<SCWindow>::from_slice(&[]);
+                let filter = unsafe {
+                    SCContentFilter::initWithDisplay_excludingWindows(
+                        SCContentFilter::alloc(),
+                        &display,
+                        &empty,
+                    )
+                };
+                (filter, Some(display))
+            }
+        };
+        let _ = display;
 
         let (sender, receiver) = mpsc::sync_channel(FRAME_SLOT_CAPACITY);
         let shared = Arc::new(Shared {
@@ -308,11 +467,6 @@ impl MacCapture {
         // stream is handed to the runtime, and `display`, `output` and `queue`
         // outlive the stream (they are stored on `Self`).
         let stream = unsafe {
-            let filter = SCContentFilter::initWithDisplay_excludingWindows(
-                SCContentFilter::alloc(),
-                &display,
-                &NSArray::<SCWindow>::from_slice(&[]),
-            );
             let configuration = SCStreamConfiguration::new();
             configuration.setWidth(request.width as usize);
             configuration.setHeight(request.height as usize);
@@ -323,6 +477,13 @@ impl MacCapture {
             configuration.setPreservesAspectRatio(true);
             configuration.setPixelFormat(PIXEL_FORMAT_BGRA);
             configuration.setShowsCursor(request.shows_cursor);
+            if request.window_id.is_some() {
+                // Window capture includes the drop shadow by default, which pads
+                // the frame beyond the window's own rect. The input mapping maps
+                // normalized coordinates onto that rect, so leaving the shadow in
+                // would offset every click by the shadow width.
+                configuration.setIgnoreShadowsSingleWindow(true);
+            }
             // A short queue plus one-slot coalescing keeps latency low; a deep
             // queue only adds throughput, which a preview does not need.
             configuration.setQueueDepth(3);

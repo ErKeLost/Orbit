@@ -225,6 +225,8 @@ mod tests {
         DisplayInfo {
             id: 1,
             name: "t".into(),
+            kind: crate::screen::capture::TargetKind::Display,
+            owner_pid: None,
             // A secondary display in the macOS arrangement: non-zero origin.
             logical_x: -1728.0,
             logical_y: 200.0,
