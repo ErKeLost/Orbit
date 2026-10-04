@@ -53,7 +53,27 @@ describe('Pi 0.87.1 JSONL event projection',()=>{
   state=reduceEvent(state,{type:'agent_settled'})
   expect(state.messages).toHaveLength(0)
  })
- test('steered assistant continuation keeps the turn duration on the first segment only',()=>{
+ test('图片附件的乐观预览在回显时被 base64 真实消息替换（不会重复）',()=>{
+  let state=reduceEvent(emptyTranscript(),{type:'prompt_submitted'})
+  // 发送瞬间就用本地 object URL 把消息放进会话
+  state=reduceEvent(state,{type:'queued_preview',id:'queued-image',message:{role:'user',content:[{type:'text',text:'看这张图'},{type:'image',mimeType:'image/png',url:'blob:local-preview'}],timestamp:1}})
+  expect(state.messages).toHaveLength(1)
+  expect(state.messages[0].message.content).toEqual([{type:'text',text:'看这张图'},{type:'image',mimeType:'image/png',url:'blob:local-preview'}])
+  // Pi 回显同一条消息（这时带 base64）
+  state=reduceEvent(state,{type:'message_start',message:{role:'user',content:[{type:'text',text:'看这张图'},{type:'image',mimeType:'image/png',data:'AAAA'}],timestamp:2}})
+  expect(state.messages.filter(item=>item.message.role==='user')).toHaveLength(1)
+  expect(state.messages[0].id.startsWith('queued-')).toBe(false)
+  expect(state.messages[0].message.content).toEqual([{type:'text',text:'看这张图'},{type:'image',mimeType:'image/png',data:'AAAA'}])
+})
+
+test('乐观预览在发送失败时被撤回',()=>{
+  let state=reduceEvent(emptyTranscript(),{type:'prompt_submitted'})
+  state=reduceEvent(state,{type:'queued_preview',id:'queued-fail',message:{role:'user',content:'发出去了吗',timestamp:1}})
+  state=reduceEvent(state,{type:'queued_preview_revert',id:'queued-fail'})
+  expect(state.messages).toHaveLength(0)
+})
+
+test('steered assistant continuation keeps the turn duration on the first segment only',()=>{
   let state=reduceEvent(emptyTranscript(),{type:'agent_start'})
   state=reduceEvent(state,{type:'message_start',message:{role:'assistant',content:[{type:'thinking',thinking:'原始任务'}]}})
   state=reduceEvent(state,{type:'message_start',message:{role:'assistant',content:[{type:'text',text:'steer 后继续'}]}})

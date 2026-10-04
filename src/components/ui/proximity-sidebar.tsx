@@ -40,6 +40,7 @@ type DashProps = {
   active: boolean
   mouseY: MotionValue<number>
   onSelect: (id: string) => void
+  previewsReady: boolean
   registerDash: (id: string, node: HTMLButtonElement | null) => void
   section: ProximitySection
   sectionKind: SectionKind
@@ -122,6 +123,24 @@ const getScrollParent = (element: HTMLElement) => {
   return window
 }
 
+/** Render the preview bodies only once the browser is idle: they are invisible
+ * until a dash is hovered, but mounting all of them up front copies every
+ * section's Markdown into the DOM (tens of thousands of nodes in a long
+ * session, on the critical path of opening it). */
+function useIdleFlag(timeout = 1200) {
+  const [ready, setReady] = useState(false)
+  useEffect(() => {
+    if (ready) return
+    if (typeof window.requestIdleCallback === "function") {
+      const handle = window.requestIdleCallback(() => setReady(true), { timeout })
+      return () => window.cancelIdleCallback(handle)
+    }
+    const handle = window.setTimeout(() => setReady(true), 200)
+    return () => window.clearTimeout(handle)
+  }, [ready, timeout])
+  return ready
+}
+
 function subscribeToScroll(
   parents: Set<EventTarget>,
   listener: EventListener,
@@ -138,6 +157,7 @@ const Dash = memo(function Dash({
   active,
   mouseY,
   onSelect,
+  previewsReady,
   registerDash,
   section,
   sectionKind,
@@ -198,7 +218,7 @@ const Dash = memo(function Dash({
       </button>
       <div className={`proximity-preview proximity-preview-${side}`} role="tooltip">
         <strong>{section.label}</strong>
-        {section.preview && <div className="proximity-preview-body">{section.preview}</div>}
+        {previewsReady && section.preview && <div className="proximity-preview-body">{section.preview}</div>}
       </div>
     </div>
   )
@@ -222,6 +242,11 @@ const ProximitySidebar = memo(function ProximitySidebar({
   const activeIdRef = useRef(activeId)
   const onSelectRef = useRef(onSelectSection)
   onSelectRef.current = onSelectSection
+  const previewsReady = useIdleFlag()
+  const sectionsRef = useRef(visibleSections)
+  useEffect(() => {
+    sectionsRef.current = visibleSections
+  }, [visibleSections])
 
   const sectionIds = useMemo(
     () => visibleSections.map((section) => section.id).join("|"),
@@ -320,27 +345,47 @@ const ProximitySidebar = memo(function ProximitySidebar({
   useEffect(() => {
     let frame = 0
     const scrollParents = new Set<EventTarget>([window])
+    const sections = sectionsRef.current
 
     const updateActiveSection = () => {
       frame = 0
 
       const anchorY = window.innerHeight * activeOffset
-      let nextActiveId = visibleSections[0]?.id
-      let shortestDistance = Number.POSITIVE_INFINITY
-
-      for (const section of visibleSections) {
+      const entries: { element: HTMLElement; id: string }[] = []
+      for (const section of sections) {
         const element = getSectionElement(section.id)
-        if (!element) continue
+        if (element) entries.push({ element, id: section.id })
+      }
+      if (!entries.length) return
 
-        const rect = element.getBoundingClientRect()
+      // 区块按文档顺序排列，所以“离锚点最近”只可能是两个候选：最后一个顶边在
+      // 锚点之上的区块，和它后面那个。以前每个区块都 getBoundingClientRect，
+      // 长会话里一次滚动要强制几百次布局；二分只需要 ~8 次。
+      let low = 0
+      let high = entries.length - 1
+      let above = -1
+      while (low <= high) {
+        const mid = (low + high) >> 1
+        if (entries[mid].element.getBoundingClientRect().top <= anchorY) {
+          above = mid
+          low = mid + 1
+        } else {
+          high = mid - 1
+        }
+      }
+
+      const candidates = above < 0 ? [0] : above + 1 < entries.length ? [above, above + 1] : [above]
+      let nextActiveId = entries[0]?.id
+      let shortestDistance = Number.POSITIVE_INFINITY
+      for (const index of candidates) {
+        const rect = entries[index].element.getBoundingClientRect()
         const containsAnchor = rect.top <= anchorY && rect.bottom >= anchorY
         const distance = containsAnchor
           ? 0
           : Math.min(Math.abs(rect.top - anchorY), Math.abs(rect.bottom - anchorY))
-
         if (distance < shortestDistance) {
           shortestDistance = distance
-          nextActiveId = section.id
+          nextActiveId = entries[index].id
         }
       }
 
@@ -360,22 +405,23 @@ const ProximitySidebar = memo(function ProximitySidebar({
       frame = window.requestAnimationFrame(updateActiveSection)
     }
 
-    for (const section of visibleSections) {
-      const element = getSectionElement(section.id)
-      if (element) scrollParents.add(getScrollParent(element))
-    }
+    // 所有 dash 都在同一个滚动容器里：只从第一个 section 往上找一次，
+    // 以前对每个 section 都走一遍祖先链并逐个 getComputedStyle，长会话里
+    // 每次目录更新要强制几千次样式计算。
+    const first = sections.length ? getSectionElement(sections[0].id) : null
+    if (first) scrollParents.add(getScrollParent(first))
 
-    if (visibleSections.length) {
+    if (sections.length) {
       updateActiveSection()
     }
-    const unsubscribe = visibleSections.length ? subscribeToScroll(scrollParents, scheduleUpdate) : () => undefined
+    const unsubscribe = sections.length ? subscribeToScroll(scrollParents, scheduleUpdate) : () => undefined
 
     return () => {
       if (frame) window.cancelAnimationFrame(frame)
       clearPendingReset()
       unsubscribe()
     }
-  }, [activeOffset, clearPendingReset, pulseDash, sectionIds, visibleSections])
+  }, [activeOffset, clearPendingReset, pulseDash, sectionIds])
 
   return (
     <nav
@@ -405,6 +451,7 @@ const ProximitySidebar = memo(function ProximitySidebar({
             active={section.id === activeId}
             mouseY={mouseY}
             onSelect={selectSection}
+            previewsReady={previewsReady}
             registerDash={registerDash}
             section={section}
             sectionKind={detectedKinds[section.id] ?? getSectionKind(section)}

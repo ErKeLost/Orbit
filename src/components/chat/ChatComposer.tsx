@@ -6,8 +6,8 @@ import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo,
 import { useWorkspace } from "../../lib/store";
 import { report, request, stop, syncComputerUseMode, syncMultiAgentMode } from "../../lib/rpc";
 import { Icon } from "../Icon";
-import { base64ToBlob, blobToBase64 } from "../../lib/image-bytes";
-import { encodeClipboardImage } from "../../lib/image-encode";
+import { base64ToBlob } from "../../lib/image-bytes";
+import { encodeBlobToBase64, encodeClipboardImage } from "../../lib/image-encode";
 import { PromptInput, PromptInputSubmit, PromptInputTextarea, type PromptInputMessage } from "../ai-elements/prompt-input";
 import { Button } from "../ui/button";
 import { ComposerModelSelector } from "./ComposerModelSelector";
@@ -29,6 +29,11 @@ function lruCache<T>(cache: Map<string, T>, key: string, value: T) {
 }
 
 type DraftHandle = { clear: () => void };
+
+/** 乐观预览用完就释放本地 object URL（本地图片发给 Pi 的同时先原地显示）。 */
+function releasePreviewUrls(urls: readonly string[]) {
+  for (const url of urls) URL.revokeObjectURL(url);
+}
 
 // 草稿叶子组件：击键只会重渲染这一个 textarea。此前每次击键都会重建
 // 整个 composer（模型选择器、模式切换、上下文面板），流式期间这些重渲染
@@ -189,35 +194,48 @@ export const ChatComposer = memo(function ChatComposer({ onSubmitted }: { onSubm
     deliveryOverride.current = null;
     useWorkspace.getState().event({ type: "prompt_submitted" });
     const previewId = `queued-${crypto.randomUUID()}`;
-    try {
-      if (!transcriptRunning) await Promise.all([syncMultiAgentMode(project), syncComputerUseMode(project)]);
     const fileChips = attachments.filter((attachment): attachment is FileAttachment => attachment.kind === "file");
     const images = attachments.filter((attachment): attachment is ImageAttachment => attachment.kind === "image");
     const prefix = fileChips.map(attachment => `[文件] ${attachment.path}`).join("\n");
     const text = prefix ? `${prefix}\n\n${message.text}`.trim() : message.text;
-      // base64 只在这一刻生成：state / 预览里都不留大字符串。
-      const imagePayload = await Promise.all(images.map(async attachment => ({
+    // 立刻把这条消息（连同本地图片预览）放进会话：base64 编码、模式同步和
+    // 「发给 Pi 再等它回显」都不该让用户等着才看到自己发出去的内容。
+    // Pi 的 message_start 到达时会把这条预览原位替换成真实消息。
+    const previewUrls: string[] = [];
+    const previewContent = [
+      ...(text ? [{ type: "text" as const, text }] : []),
+      ...images.map(attachment => {
+        const url = URL.createObjectURL(attachment.blob);
+        previewUrls.push(url);
+        return { type: "image" as const, mimeType: attachment.mimeType, url };
+      }),
+    ];
+    if (previewContent.length) {
+      useWorkspace.getState().event({
+        type: "queued_preview",
+        id: previewId,
+        message: { role: "user", content: previewContent.length === 1 && previewContent[0]?.type === "text" ? text : previewContent, timestamp: Date.now() },
+      });
+      onSubmitted();
+    }
+    try {
+      // 编码和模式同步并行：两者都没有顺序依赖。
+      const payload = Promise.all(images.map(async attachment => ({
         type: "image" as const,
-        data: await blobToBase64(attachment.blob),
+        data: await encodeBlobToBase64(attachment.blob),
         mimeType: attachment.mimeType,
       })));
-      if (transcriptRunning) {
-        const content = [
-          ...(text ? [{ type: "text" as const, text }] : []),
-          ...imagePayload,
-        ];
-        useWorkspace.getState().event({
-          type: "queued_preview",
-          id: previewId,
-          message: { role: "user", content: content.length === 1 && content[0]?.type === "text" ? text : content, timestamp: Date.now() },
-        });
-      }
+      if (!transcriptRunning) await Promise.all([syncMultiAgentMode(project), syncComputerUseMode(project)]);
+      const imagePayload = await payload;
       await request({ type: "prompt", message: text, images: imagePayload, ...(transcriptRunning ? { streamingBehavior } : {}) }, 45000, project);
       setAttachments([]);
       draftRef.current?.clear();
       onSubmitted();
+      // 回显消息拿到后预览就被替换了，这里等一下再释放本地 object URL。
+      window.setTimeout(() => releasePreviewUrls(previewUrls), 15000);
     } catch (error) {
-      if (transcriptRunning) useWorkspace.getState().event({ type: "queued_preview_revert", id: previewId });
+      releasePreviewUrls(previewUrls);
+      useWorkspace.getState().event({ type: "queued_preview_revert", id: previewId });
       report(error);
     }
   }

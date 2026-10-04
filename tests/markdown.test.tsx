@@ -48,13 +48,16 @@ describe("shared Markdown renderer", () => {
     expect(html).toContain("hello");
   });
 
-  test("renders settled mermaid fences as SVG", () => {
+  // 图表库（几 MB）现在是动态加载的，服务端渲染只能给出升级前的纯代码形态；
+  // 浏览器里图表块靠近视口后会在原处升级成 SVG。
+  test("keeps mermaid fences as plain code until the diagram bundle loads", () => {
     const html = renderToStaticMarkup(
       <Markdown content={"```mermaid\nflowchart LR\n  A --> B\n```"} />,
     );
 
-    expect(html).toContain("class=\"mermaid\"");
-    expect(html).toContain("<svg");
+    expect(html).toContain("<pre>");
+    expect(html).toContain("flowchart LR");
+    expect(html).not.toContain("class=\"mermaid\"");
   });
 
   test("keeps mermaid fences as plain code while streaming", () => {

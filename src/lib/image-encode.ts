@@ -10,6 +10,8 @@
  * 体积都随像素数走，降到长边 2048 之后文字依然清晰，但编码从 172ms 掉到 ~15ms。
  */
 
+import { bytesToBase64 } from "./image-bytes";
+
 export type RgbaImage = { width: number; height: number; rgba: Uint8Array };
 
 /** 长边上限；只缩小不放大。 */
@@ -17,12 +19,14 @@ export const MAX_IMAGE_EDGE = 2048;
 
 const ENCODE_TIMEOUT_MS = 20_000;
 
-type EncodeRequest = { id: number; width: number; height: number; rgba: ArrayBuffer; mimeType: string; maxEdge: number };
-type EncodeResponse = { id: number; blob?: Blob; error?: string };
+type EncodeRequest = { kind: "encode"; id: number; width: number; height: number; rgba: ArrayBuffer; mimeType: string; maxEdge: number };
+type Base64Request = { kind: "base64"; id: number; buffer: ArrayBuffer };
+type WorkerRequest = EncodeRequest | Base64Request;
+type EncodeResponse = { id: number; blob?: Blob; base64?: string; error?: string };
 
 let worker: Worker | null = null;
 let nextId = 1;
-const pending = new Map<number, { resolve: (blob: Blob) => void; reject: (error: Error) => void; timer: number }>();
+const pending = new Map<number, { resolve: (response: EncodeResponse) => void; reject: (error: Error) => void; timer: number }>();
 
 function workerSupported() {
   return typeof Worker !== "undefined"
@@ -49,39 +53,55 @@ function ensureWorker() {
     if (!entry) return;
     pending.delete(event.data.id);
     window.clearTimeout(entry.timer);
-    if (event.data.blob) entry.resolve(event.data.blob);
-    else entry.reject(new Error(event.data.error ?? "图片编码失败"));
+    if (event.data.error) entry.reject(new Error(event.data.error));
+    else entry.resolve(event.data);
   });
   worker = created;
   return created;
 }
 
-function encodeInWorker(image: RgbaImage, mimeType: string): Promise<Blob> {
+function postToWorker(request: WorkerRequest, transfer: Transferable[]): Promise<EncodeResponse> {
   const target = ensureWorker();
-  const id = nextId++;
-  return new Promise<Blob>((resolve, reject) => {
+  return new Promise<EncodeResponse>((resolve, reject) => {
     const timer = window.setTimeout(() => {
-      pending.delete(id);
+      pending.delete(request.id);
       reject(new Error("图片编码超时"));
     }, ENCODE_TIMEOUT_MS);
-    pending.set(id, { resolve, reject, timer });
-    // 只有整块 buffer 就是这块像素时才敢 transfer（否则切片，避免把别人的内存搬走）。
-    const exact = image.rgba.byteOffset === 0 && image.rgba.byteLength === image.rgba.buffer.byteLength;
-    const request: EncodeRequest = {
-      id,
-      width: image.width,
-      height: image.height,
-      rgba: exact ? image.rgba.buffer as ArrayBuffer : image.rgba.slice().buffer as ArrayBuffer,
-      mimeType,
-      maxEdge: MAX_IMAGE_EDGE,
-    };
+    pending.set(request.id, { resolve, reject, timer });
     try {
-      target.postMessage(request, [request.rgba]);
+      target.postMessage(request, transfer);
     } catch (error) {
       window.clearTimeout(timer);
-      pending.delete(id);
+      pending.delete(request.id);
       reject(error instanceof Error ? error : new Error(String(error)));
     }
+  });
+}
+
+function encodeInWorker(image: RgbaImage, mimeType: string): Promise<Blob> {
+  const id = nextId++;
+  // 只有整块 buffer 就是这块像素时才敢 transfer（否则切片，避免把别人的内存搬走）。
+  const exact = image.rgba.byteOffset === 0 && image.rgba.byteLength === image.rgba.buffer.byteLength;
+  const request: EncodeRequest = {
+    kind: "encode",
+    id,
+    width: image.width,
+    height: image.height,
+    rgba: exact ? image.rgba.buffer as ArrayBuffer : image.rgba.slice().buffer as ArrayBuffer,
+    mimeType,
+    maxEdge: MAX_IMAGE_EDGE,
+  };
+  return postToWorker(request, [request.rgba]).then(response => {
+    if (!response.blob) throw new Error("图片编码失败");
+    return response.blob;
+  });
+}
+
+function base64InWorker(buffer: ArrayBuffer): Promise<string> {
+  const request: Base64Request = { kind: "base64", id: nextId++, buffer };
+  return postToWorker(request, [buffer]).then(response => {
+    if (typeof response.base64 !== "string") throw new Error("图片编码失败");
+    return response.base64;
   });
 }
 
@@ -116,4 +136,23 @@ function encodeOnMainThread(image: RgbaImage, mimeType: string): Promise<Blob> {
 export async function encodeClipboardImage(image: RgbaImage, mimeType = "image/png"): Promise<Blob> {
   if (workerSupported()) return encodeInWorker(image, mimeType);
   return encodeOnMainThread(image, mimeType);
+}
+
+/**
+ * 附件 → base64（发给 Pi 的 RPC 只要 base64）。
+ *
+ * 8MB 截图在主线程上转 base64 要 ~180ms（弱 Windows 机器 1~2 秒），正好卡在
+ * "按回车之后、消息出现在会话里之前"。这里放到同一个 Worker 里做，主线程全程
+ * 不阻塞；Worker 不可用时才退回主线程。
+ */
+export async function encodeBlobToBase64(blob: Blob): Promise<string> {
+  const buffer = await blob.arrayBuffer();
+  if (workerSupported()) {
+    try {
+      return await base64InWorker(buffer);
+    } catch {
+      // Worker 挂了：退回主线程，保证发消息这条路永远能用。
+    }
+  }
+  return bytesToBase64(new Uint8Array(buffer));
 }

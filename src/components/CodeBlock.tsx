@@ -1,4 +1,3 @@
-import { renderMermaidSVG, type RenderOptions } from "beautiful-mermaid";
 import {
   Children,
   type ComponentPropsWithoutRef,
@@ -7,12 +6,13 @@ import {
   type ReactElement,
   type ReactNode,
   useEffect,
-  useMemo,
+  useRef,
   useState,
 } from "react";
 import { FileIcon, Icon } from "./Icon";
 import { deviconFromHref, externalLinkIcon } from "../lib/link-visual";
 import { Button } from "./ui/button";
+import type { RenderOptions } from "beautiful-mermaid";
 
 /**
  * Highlighting and diagram rendering are far more expensive than a reveal
@@ -32,6 +32,19 @@ const useSettled = (value: string, delay = 180) => {
   return delay === 0 ? value : settled;
 };
 
+/** 同一个代码块会被反复挂载（切会话、重渲染），高亮结果按内容缓存。 */
+const HIGHLIGHT_CACHE_LIMIT = 240;
+const highlightCache = new Map<string, string>();
+const highlightKey = (code: string, language: string) => `${language}\u0000${code}`;
+
+function rememberHighlight(key: string, html: string) {
+  highlightCache.set(key, html);
+  if (highlightCache.size > HIGHLIGHT_CACHE_LIMIT) {
+    const oldest = highlightCache.keys().next().value;
+    if (oldest !== undefined) highlightCache.delete(oldest);
+  }
+}
+
 const MERMAID_OPTIONS: RenderOptions = {
   accent: "var(--foreground)",
   bg: "var(--card)",
@@ -46,13 +59,23 @@ const MERMAID_OPTIONS: RenderOptions = {
 
 const Mermaid = memo<{ code: string; settleDelay: number }>(({ code, settleDelay }) => {
   const settled = useSettled(code, settleDelay);
-  const svg = useMemo(() => {
-    if (!settled) return "";
-    try {
-      return renderMermaidSVG(settled, MERMAID_OPTIONS);
-    } catch {
-      return "";
-    }
+  const [svg, setSvg] = useState("");
+
+  // 图表库是几 MB 的依赖，只有真的出现 mermaid 代码块时才加载。
+  useEffect(() => {
+    if (!settled) return;
+    let cancelled = false;
+    void import("beautiful-mermaid")
+      .then(({ renderMermaidSVG }) => {
+        if (cancelled) return;
+        setSvg(renderMermaidSVG(settled, MERMAID_OPTIONS));
+      })
+      .catch(() => {
+        if (!cancelled) setSvg("");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [settled]);
 
   if (!svg || settled !== code) {
@@ -69,40 +92,80 @@ const Mermaid = memo<{ code: string; settleDelay: number }>(({ code, settleDelay
 const Highlighted = memo<{ code: string; language: string; settleDelay: number }>(
   ({ code, language, settleDelay }) => {
     const settled = useSettled(code, settleDelay);
-    const [html, setHtml] = useState("");
+    const rootRef = useRef<HTMLDivElement>(null);
+    const [visible, setVisible] = useState(() => typeof IntersectionObserver !== "function");
+    const [highlighted, setHighlighted] = useState<{ key: string; html: string } | null>(null);
+    const key = settled ? highlightKey(settled, language) : "";
+    const cached = key ? highlightCache.get(key) : undefined;
 
+    // 长会话里大部分代码块都在屏幕外：等它们接近视口再高亮，打开会话时不必
+    // 为几百个不可见的块跑一遍 Shiki/WASM。提前 1200px 预热，滚到的都是成品。
     useEffect(() => {
-      if (!settled) return;
-      let cancelled = false;
+      const node = rootRef.current;
+      if (!node || visible) return;
+      const observer = new IntersectionObserver(entries => {
+        if (entries.some(entry => entry.isIntersecting)) setVisible(true);
+      }, { rootMargin: "1200px 0px" });
+      observer.observe(node);
+      return () => observer.disconnect();
+    }, [visible]);
 
-      void import("shiki")
-        .then(({ codeToHtml }) =>
-          codeToHtml(settled, {
-            lang: language,
-            themes: { dark: "vitesse-dark", light: "vitesse-light" },
-          }),
-        )
-        .then((result) => {
-          if (!cancelled) setHtml(result);
-        })
-        .catch(() => {
-          if (!cancelled) setHtml("");
-        });
+    const pending = Boolean(settled) && visible && cached === undefined && highlighted?.key !== key;
+    useEffect(() => {
+      if (!pending || !key) return;
+      let cancelled = false;
+      let idle: number | undefined;
+
+      // Shiki 跑在 WASM 里，一帧就是几十毫秒。只在主线程空闲窗口里调度，
+      // 不让高亮和流式输出/滚动抢帧；超时 600ms 保证不可见的情况下也会补完。
+      const schedule = (run: () => void) => {
+        if (typeof window.requestIdleCallback === "function") {
+          idle = window.requestIdleCallback(run, { timeout: 600 });
+          return;
+        }
+        idle = window.setTimeout(run, 0);
+      };
+
+      schedule(() => {
+        void import("shiki")
+          .then(({ codeToHtml }) =>
+            codeToHtml(settled, {
+              lang: language,
+              themes: { dark: "vitesse-dark", light: "vitesse-light" },
+            }),
+          )
+          .then((result) => {
+            if (cancelled) return;
+            rememberHighlight(key, result);
+            setHighlighted({ key, html: result });
+          })
+          .catch(() => {
+            if (cancelled) return;
+            setHighlighted({ key, html: "" });
+          });
+      });
 
       return () => {
         cancelled = true;
+        if (idle === undefined) return;
+        if (typeof window.cancelIdleCallback === "function") window.cancelIdleCallback(idle);
+        else window.clearTimeout(idle);
       };
-    }, [settled, language]);
+    }, [key, language, pending, settled]);
 
+    // 缓存命中的块直接渲染，不再走一次 state 回写（那是同步 setState 警告的来源）。
+    const html = cached ?? (highlighted?.key === key ? highlighted.html : "");
     if (!html || settled !== code) {
       return (
-        <pre>
-          <code>{code}</code>
-        </pre>
+        <div ref={rootRef}>
+          <pre>
+            <code>{code}</code>
+          </pre>
+        </div>
       );
     }
 
-    return <div className="highlighted" dangerouslySetInnerHTML={{ __html: html }} />;
+    return <div className="highlighted" ref={rootRef} dangerouslySetInnerHTML={{ __html: html }} />;
   },
 );
 

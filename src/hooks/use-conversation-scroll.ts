@@ -40,6 +40,8 @@ export function useConversationScroll() {
 
     const stickToBottom = () => {
       const target = element.scrollHeight - element.clientHeight;
+      // 已经贴底时不再写 scrollTop：写操作会派发 scroll 事件并让下一次
+      // 布局失效，长会话下每帧白跑一次。
       if (element.scrollTop < target) element.scrollTop = target;
       lastScrollTop = element.scrollTop;
     };
@@ -91,11 +93,15 @@ export function useConversationScroll() {
     resizeObserver.observe(element);
     const observeContent = () => { for (const child of Array.from(element.children)) resizeObserver.observe(child); };
     observeContent();
-    const mutationObserver = new MutationObserver(records => {
-      if (records.some(record => record.target === element && record.type === "childList")) observeContent();
+    // 只观察滚动容器的直接子节点。内容高度变化由上面的 ResizeObserver 负责
+    // （消息行就是直接子节点），因此不再需要 subtree + characterData：流式时
+    // 每个字符都会产生一条 mutation 记录，整棵会话 DOM 的记录数组（几万条）
+    // 会在每帧被遍历一次，是长会话下的主要停顿来源之一。
+    const mutationObserver = new MutationObserver(() => {
+      observeContent();
       onContentChange();
     });
-    mutationObserver.observe(element, { childList: true, subtree: true, characterData: true });
+    mutationObserver.observe(element, { childList: true });;
 
     stickToBottom();
     return () => {
