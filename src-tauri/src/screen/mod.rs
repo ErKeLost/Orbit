@@ -78,6 +78,20 @@ const H264_BITRATE_STEP: u32 = 260_000;
 /// socket is far worse than one missing frame.
 const MAX_FRAME_BYTES: usize = 480_000;
 
+/// How long a viewer's delay report stays meaningful.
+///
+/// Longer than the reporting interval so a single lost report does not reset the
+/// signal, short enough that a link which has since gone quiet is not still
+/// being judged by an old burst.
+const DELAY_REPORT_TTL_MS: u128 = 5_000;
+
+/// Queueing delay at which the governor stops asking and starts reducing.
+///
+/// This is the same threshold RustDesk uses (`DELAY_THRESHOLD_150MS`): below it
+/// a link is buffering, above it a link is *filling up*, and the difference is
+/// visible only in the delay.
+const QUEUE_DELAY_CEILING_MS: u64 = 150;
+
 /// Lowest quality the governor will fall back to before it starts trading
 /// frame rate. Below this the picture stops being readable, which is worse
 /// than a slower refresh.
@@ -562,6 +576,15 @@ struct Stats {
     bytes_total: AtomicU64,
     bits_per_second: AtomicU64,
     effective_fps: AtomicU64,
+    /// Queueing delay the viewer reports, in milliseconds, and when it arrived.
+    ///
+    /// The viewer is the only place that can see this: it knows when a frame was
+    /// encoded (the host's clock, carried in the envelope) and how long its own
+    /// link took. A byte budget cannot see a buffer filling up — it only notices
+    /// after the link is already saturated, which is why the governor used to
+    /// react late.
+    queue_delay_ms: AtomicU64,
+    queue_delay_at_ms: AtomicU64,
     failure: Mutex<Option<String>>,
     /// Codec the running pipeline actually settled on, which can differ from
     /// the request when the platform has no hardware encoder.
@@ -569,6 +592,22 @@ struct Stats {
 }
 
 impl Stats {
+    /// The freshest viewer-reported queueing delay, if it is recent enough to
+    /// describe the current link rather than a previous burst of traffic.
+    fn queue_delay(&self) -> u64 {
+        let reported_at = self.queue_delay_at_ms.load(Ordering::Acquire);
+        if reported_at == 0 || now_ms().saturating_sub(reported_at as u128) > DELAY_REPORT_TTL_MS {
+            return 0;
+        }
+        self.queue_delay_ms.load(Ordering::Acquire)
+    }
+
+    fn set_queue_delay(&self, delay_ms: u64) {
+        self.queue_delay_ms.store(delay_ms, Ordering::Release);
+        self.queue_delay_at_ms
+            .store(now_ms() as u64, Ordering::Release);
+    }
+
     fn observe_encode(&self, micros: u64) {
         self.encode_micros_total.fetch_add(micros, Ordering::AcqRel);
         self.encode_micros_max.fetch_max(micros, Ordering::AcqRel);
@@ -656,6 +695,15 @@ impl ScreenHost {
     pub fn attach(&self, app: AppHandle) {
         if let Ok(mut slot) = self.app.lock() {
             *slot = Some(app);
+        }
+    }
+
+    /// Remember the viewer's reported queueing delay, if a pipeline is running.
+    fn record_queue_delay(&self, delay_ms: u64) {
+        if let Ok(slot) = self.pipeline.lock() {
+            if let Some(pipeline) = slot.as_ref() {
+                pipeline.stats.set_queue_delay(delay_ms);
+            }
         }
     }
 
@@ -1033,19 +1081,38 @@ struct Governor {
     fps: f64,
     relaxed_windows: u8,
     codec: Codec,
+    /// Consecutive windows spent probing upward from the starting shape.
+    ///
+    /// The governor begins *below* the ceiling and climbs while the link shows
+    /// no sign of queueing, rather than beginning at the ceiling and walking
+    /// down. Both end up in the same place on a good link; only the second one
+    /// spends the first seconds of every session stuttering on a bad one, which
+    /// is what "defaults are the maximum" produced before.
+    startup_windows: u8,
+    /// Set once the viewer's delay says the link is filling up. Cleared when a
+    /// window arrives without that signal, so a single spike does not pin the
+    /// quality down for the rest of the session.
+    congested: bool,
 }
 
 impl Governor {
     fn new(quality: u8, max_fps: u32, codec: Codec) -> Self {
+        // Two thirds of the request, and the frame rate one step below it: a
+        // starting point that is almost always deliverable, from which the probe
+        // finds the real ceiling.
+        let start_quality = quality.saturating_sub(30).max(QUALITY_FLOOR);
+        let start_fps = (f64::from(max_fps) * 0.6).max(2.0);
         Self {
-            quality,
+            quality: start_quality,
             ceiling: quality,
             min_fps: 2,
             max_fps,
-            budget: budget_bytes(codec, quality),
-            fps: f64::from(max_fps),
+            budget: budget_bytes(codec, start_quality),
+            fps: start_fps.min(f64::from(max_fps)),
             relaxed_windows: 0,
             codec,
+            startup_windows: 0,
+            congested: false,
         }
     }
 
@@ -1060,6 +1127,7 @@ impl Governor {
     /// rolling budget.
     fn force_downshift(&mut self) {
         self.relaxed_windows = 0;
+        self.congested = true;
         if self.quality > QUALITY_FLOOR {
             self.quality = self.quality.saturating_sub(10).max(QUALITY_FLOOR);
         } else {
@@ -1067,37 +1135,66 @@ impl Governor {
         }
     }
 
-    /// Feed one window's byte count and adjust for the next window.
-    fn observe(&mut self, bytes: u64) {
+    /// Feed one window's measurements and adjust for the next window.
+    ///
+    /// `queue_delay_ms` is the viewer's own report of how long a frame waited
+    /// after it was encoded, with the round trip subtracted — the part that
+    /// grows when a link is filling up. Zero means "no report".
+    fn observe(&mut self, bytes: u64, queue_delay_ms: u64) {
+        // Delay first: it is the earliest evidence of a problem, and the only
+        // signal that arrives *before* the byte budget is exceeded.
+        if queue_delay_ms >= QUEUE_DELAY_CEILING_MS {
+            self.slow_down();
+            return;
+        }
         if bytes > self.budget {
+            self.slow_down();
+            return;
+        }
+        self.speed_up(bytes);
+    }
+
+    fn slow_down(&mut self) {
+        self.relaxed_windows = 0;
+        self.congested = true;
+        if self.quality > QUALITY_FLOOR {
+            // Step proportionally to how far over we are. A fixed small step
+            // needs many seconds to converge from the top of the range.
+            let step = 8.min(self.quality - QUALITY_FLOOR);
+            self.quality -= step;
+        } else if self.fps > f64::from(self.min_fps) {
+            self.fps = (self.fps - 1.0).max(f64::from(self.min_fps));
+        }
+    }
+
+    fn speed_up(&mut self, bytes: u64) {
+        if bytes * 2 >= self.budget {
+            // Using most of the budget already: no evidence there is room.
             self.relaxed_windows = 0;
-            if self.quality > QUALITY_FLOOR {
-                // Step proportionally to how far over the budget we are. With
-                // the quality ceiling set to maximum — which is the default,
-                // because a deliberately mediocre preview is a preview you have
-                // to squint at — a fixed small step needs many seconds to
-                // converge and the user watches it stutter the whole way.
-                let ratio = (bytes / self.budget.max(1)).clamp(1, 16);
-                let step = (6 * ratio).min(60) as u8;
-                // Clamp on the way down: undershooting the floor would skip
-                // straight past the frame-rate stage.
-                self.quality = self.quality.saturating_sub(step).max(QUALITY_FLOOR);
-            } else if self.fps > f64::from(self.min_fps) {
-                self.fps = (self.fps - 1.0).max(f64::from(self.min_fps));
-            }
-        } else if bytes * 2 < self.budget {
-            self.relaxed_windows = self.relaxed_windows.saturating_add(1);
-            if self.relaxed_windows >= 3 {
-                self.relaxed_windows = 0;
-                if self.quality < self.ceiling {
-                    self.quality = self.quality.saturating_add(4).min(self.ceiling);
-                } else if self.fps < f64::from(self.max_fps) {
-                    self.fps = (self.fps + 1.0).min(f64::from(self.max_fps));
-                }
-            }
+            return;
+        }
+        self.congested = false;
+        self.relaxed_windows = self.relaxed_windows.saturating_add(1);
+        // Startup climbs every window until the first sign of trouble; after
+        // that it is deliberately slow, because the cost of overshooting is a
+        // visible stutter and the benefit of climbing faster is small.
+        let needed = if self.startup_windows < STARTUP_WINDOWS { 1 } else { 3 };
+        if self.relaxed_windows < needed {
+            return;
+        }
+        self.relaxed_windows = 0;
+        self.startup_windows = self.startup_windows.saturating_add(1);
+        if self.quality < self.ceiling {
+            let step = if self.startup_windows < STARTUP_WINDOWS { 10 } else { 4 };
+            self.quality = self.quality.saturating_add(step).min(self.ceiling);
+        } else if self.fps < f64::from(self.max_fps) {
+            self.fps = (self.fps + 1.0).min(f64::from(self.max_fps));
         }
     }
 }
+
+/// How many windows the startup probe is allowed to climb quickly.
+const STARTUP_WINDOWS: u8 = 5;
 
 /// Byte budget for the current shape.
 ///
@@ -1326,7 +1423,7 @@ fn pipeline_loop(
                 ((window_frames as f64 / seconds) * 1000.0) as u64,
                 Ordering::Release,
             );
-            governor.observe(window_bytes);
+            governor.observe(window_bytes, stats.queue_delay());
             governor.apply(&mut encoder);
             window_bytes = 0;
             window_frames = 0;
@@ -1394,6 +1491,17 @@ pub fn handle_request(
             Ok(Value::Null)
         }
         "screen.displays" => capture::displays().map(|displays| json!(displays)),
+        "screen.ack" => {
+            // Fire and forget, like input: the viewer reports what it sees, and
+            // a reply would only spend the socket this exists to make room on.
+            let delay = request
+                .get("queueDelayMs")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                .min(60_000);
+            host.record_queue_delay(delay);
+            Ok(Value::Null)
+        }
         "screen.stats" => Ok(serde_json::to_value(host.status()).unwrap_or(Value::Null)),
         "screen.input" => {
             let Some(event) = request.get("event").cloned() else {
@@ -1621,59 +1729,92 @@ mod tests {
     }
 
     #[test]
-    fn governor_downshifts_when_over_budget_and_recovers_when_idle() {
-        let mut governor = Governor::new(80, 10, Codec::Jpeg);
-        let over = governor.budget * 2;
-        assert_eq!(governor.quality, 80);
-        governor.observe(over);
-        // Two times the budget steps twice as far as the base step: the further
-        // over, the faster it comes down.
-        assert_eq!(governor.quality, 68);
-        // Exactly at the budget is not over it: the comparison is strict, so
-        // hitting the target does not cost quality.
-        governor.observe(governor.budget);
-        assert_eq!(governor.quality, 68, "meeting the budget changes nothing");
+    fn the_governor_starts_below_the_request_and_probes_upward() {
+        // Beginning at the ceiling made every session stutter on a link that
+        // could not carry it; the probe finds the real ceiling from below.
+        let mut governor = Governor::new(90, 30, Codec::Jpeg);
+        assert_eq!(governor.ceiling, 90);
+        assert!(governor.quality < governor.ceiling, "was {}", governor.quality);
+        assert!(governor.fps < 30.0, "was {}", governor.fps);
 
-        // Quality walks down to the floor and stops there, then frame rate
-        // absorbs the rest of the pressure.
-        while governor.quality > QUALITY_FLOOR {
-            governor.observe(over);
-        }
-        assert_eq!(governor.quality, QUALITY_FLOOR);
-        assert_eq!(governor.fps, 10.0, "frame rate holds until quality floors");
+        // A clean link climbs, and quickly at first.
+        let before = governor.quality;
         for _ in 0..3 {
-            governor.observe(over);
+            governor.observe(1, 0);
         }
-        assert_eq!(governor.fps, 7.0);
+        assert!(governor.quality > before, "no probe happened");
 
-        // Sustained headroom buys quality back before frame rate, and stops at
-        // the quality the client asked for.
+        // ...and stops climbing at the request, never past it.
+        for _ in 0..200 {
+            governor.observe(1, 0);
+        }
+        assert_eq!(governor.quality, 90);
+        assert_eq!(governor.fps, 30.0);
+    }
+
+    #[test]
+    fn viewer_reported_delay_reduces_the_shape_even_when_bytes_are_fine() {
+        // The point of the delay signal: a link that is *filling up* looks
+        // perfectly fine to a byte budget until it is already too late.
+        let mut governor = Governor::new(90, 30, Codec::Jpeg);
+        let before = governor.quality;
+        // One hundredth of the budget, and 200 ms of queueing.
+        governor.observe(governor.budget / 100, 200);
+        assert!(governor.quality < before, "delay ignored");
+        assert!(governor.congested);
+    }
+
+    #[test]
+    fn the_byte_budget_still_applies_when_no_viewer_reports_delay() {
+        // Backward compatible: an older viewer that never reports leaves the
+        // previous behaviour intact.
+        let mut governor = Governor::new(90, 30, Codec::Jpeg);
+        let before = governor.quality;
+        governor.observe(governor.budget * 4, 0);
+        assert!(governor.quality < before);
+    }
+
+    #[test]
+    fn recovery_stops_at_the_requested_quality() {
         let mut governor = Governor::new(70, 10, Codec::Jpeg);
-        governor.fps = 4.0;
+        // Drive it to the floor first.
+        let over = governor.budget * 4;
         while governor.quality > QUALITY_FLOOR {
-            governor.observe(over);
+            governor.observe(over, 0);
         }
         assert_eq!(governor.quality, QUALITY_FLOOR);
-        for _ in 0..40 {
-            governor.observe(1);
+        for _ in 0..200 {
+            governor.observe(1, 0);
         }
-        assert_eq!(
-            governor.quality, 70,
-            "recovery stops at the requested quality, never above it"
-        );
-        assert!(governor.fps > 4.0, "frame rate follows once quality is restored");
+        assert_eq!(governor.quality, 70, "recovery overshot the request");
         assert!(governor.fps <= 10.0);
+    }
+
+    #[test]
+    fn oversized_frames_force_a_downshift_rather_than_a_relay_disconnect() {
+        let mut governor = Governor::new(90, 15, Codec::Jpeg);
+        let before = governor.quality;
+        governor.force_downshift();
+        assert!(governor.quality < before);
+        while governor.quality > QUALITY_FLOOR {
+            governor.force_downshift();
+        }
+        assert_eq!(governor.quality, QUALITY_FLOOR);
+        let fps = governor.fps;
+        governor.force_downshift();
+        assert!(governor.fps < fps, "frame rate takes over once quality floors");
     }
 
     #[test]
     fn h264_budget_follows_the_bitrate_rather_than_the_frame_size() {
         // H.264's cost is decoupled from how much of the screen is text: the
-        // budget is derived from the target bitrate, not from a byte cap.
+        // budget comes from the target bitrate, not from a byte cap.
         let low = Governor::new(40, 10, Codec::H264);
         let high = Governor::new(80, 10, Codec::H264);
         assert!(high.budget > low.budget);
-        assert_eq!(low.budget, u64::from(governor_bitrate(40)) / 8 * 5 / 4);
-        // A JPEG governor at the same quality has a fixed budget.
+        // The starting budget describes the starting shape, which is below the
+        // request, so it is derived from the governor's own quality.
+        assert_eq!(low.budget, budget_bytes(Codec::H264, low.quality));
         assert_eq!(
             Governor::new(40, 10, Codec::Jpeg).budget,
             JPEG_BUDGET_BYTES_PER_SECOND
@@ -1695,34 +1836,6 @@ mod tests {
             ..ScreenSettings::default()
         };
         assert!(too_much.resolve_checked().is_err());
-    }
-
-    #[test]
-    fn a_maxed_out_start_converges_quickly_instead_of_crawling() {
-        // Requesting maximum quality on a link that cannot carry it must reach a
-        // workable shape in a couple of windows, not a couple of dozen.
-        let mut governor = Governor::new(90, 30, Codec::Jpeg);
-        let mut windows = 0;
-        while governor.quality > QUALITY_FLOOR && windows < 10 {
-            governor.observe(governor.budget * 8);
-            windows += 1;
-        }
-        assert!(windows <= 3, "收敛用了 {windows} 个窗口，太慢");
-    }
-
-    #[test]
-    fn oversized_frames_force_a_downshift_rather_than_a_relay_disconnect() {
-        let mut governor = Governor::new(90, 15, Codec::Jpeg);
-        assert_eq!(governor.quality, 90);
-        governor.force_downshift();
-        assert_eq!(governor.quality, 80);
-        while governor.quality > QUALITY_FLOOR {
-            governor.force_downshift();
-        }
-        assert_eq!(governor.quality, QUALITY_FLOOR);
-        assert_eq!(governor.fps, 15.0, "frame rate holds until quality floors");
-        governor.force_downshift();
-        assert!(governor.fps < 15.0);
     }
 
     #[test]

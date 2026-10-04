@@ -98,6 +98,14 @@ export type RemoteRequest =
   | { type: "screen.stats"; requestId?: string }
   | { type: "screen.displays"; requestId?: string }
   | { type: "screen.input"; requestId?: string; event: RemoteScreenInput }
+  /**
+   * The viewer's own measurement of how long a frame queued.
+   *
+   * Sent without a request id, like input: the host answers nothing. It exists
+   * because only the viewer can see a link filling up — a byte budget on the
+   * host notices after the fact.
+   */
+  | { type: "screen.ack"; requestId?: string; seq?: number; queueDelayMs: number }
 
 export type RemoteConnection = { id: string; cwd: string }
 export type RemoteHostSnapshot = { protocol: typeof REMOTE_PROTOCOL; serverTime: number; theme?: RemoteTheme; machineName?: string; connections: RemoteConnection[] }
@@ -203,6 +211,11 @@ export function isRemoteRequest(value: unknown): value is RemoteRequest {
   if (value.type === "screen.start") return value.requestId === undefined || typeof value.requestId === "string"
   if (value.type === "screen.stop" || value.type === "screen.stats" || value.type === "screen.displays") return value.requestId === undefined || typeof value.requestId === "string"
   if (value.type === "screen.input") return (value.requestId === undefined || typeof value.requestId === "string") && isRemoteScreenInput(value.event)
+  if (value.type === "screen.ack") {
+    return (value.requestId === undefined || typeof value.requestId === "string")
+      && typeof value.queueDelayMs === "number"
+      && Number.isFinite(value.queueDelayMs)
+  }
   return value.type === "pi.command"
     && (value.requestId === undefined || typeof value.requestId === "string")
     && stringValue(value.project)

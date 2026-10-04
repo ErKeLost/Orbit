@@ -262,3 +262,12 @@ export async function screenRemoteChannel(handlers: RemoteClientHandlers): Promi
 export function sendRemoteScreenInput(event: RemoteScreenInput): void {
   connectedClient().notify({ type: "screen.input", event })
 }
+
+/** Report the queueing delay this device sees. Fire and forget, like input. */
+export function sendRemoteScreenAck(seq: number, queueDelayMs: number): void {
+  try {
+    connectedClient().notify({ type: "screen.ack", seq, queueDelayMs: Math.round(queueDelayMs) })
+  } catch {
+    // The control connection is down; the preview reports its own state.
+  }
+}

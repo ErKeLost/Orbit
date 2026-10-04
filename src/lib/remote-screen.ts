@@ -18,7 +18,7 @@
  *    codec the phone can actually render.
  */
 import type { OrbitRemoteClient } from "./remote-client"
-import { addRemoteForegroundListener, sendRemoteScreenInput, screenRemoteChannel } from "./remote-runtime"
+import { addRemoteForegroundListener, sendRemoteScreenAck, sendRemoteScreenInput, screenRemoteChannel } from "./remote-runtime"
 import type {
   RemoteDisplay,
   RemoteScreenCodec,
@@ -65,6 +65,10 @@ export type ScreenChannelSnapshot = {
   latencyMs: number | null
   /** Frames the decoder had to drop because its reference chain broke. */
   decodeRecoveries: number
+  /** Round trip to the host, measured from the stats request. */
+  rttMs: number | null
+  /** What we last told the host: delay above the round trip. */
+  reportedQueueDelayMs: number | null
   /** Decoder backlog. Anything sustained above a couple of frames is latency. */
   decodeQueue: number
   /**
@@ -89,6 +93,8 @@ const EMPTY: ScreenChannelSnapshot = {
   receivedFps: 0,
   latencyMs: null,
   decodeRecoveries: 0,
+  rttMs: null,
+  reportedQueueDelayMs: null,
   decodeQueue: 0,
   fpsNote: null,
 }
@@ -677,6 +683,14 @@ class ScreenChannel {
   }
 
   private watchdog: ReturnType<typeof setInterval> | null = null
+  /**
+   * Round trip to the host, timed from the stats request that already happens.
+   *
+   * The value exists to be subtracted: a link that is merely far away shows a
+   * large delay and is not congested, and telling those apart is the whole
+   * reason the host wants a number from here at all.
+   */
+  private rttMs: number | null = null
 
   private startStatsPolling(): void {
     if (this.statsTimer) return
@@ -685,8 +699,11 @@ class ScreenChannel {
       if (!client || this.statsPending || this.closed) return
       if (client.connectionState !== "online") return
       this.statsPending = true
+      const started = performance.now()
       client.request({ type: "screen.stats" }, 8_000)
         .then(result => {
+          this.rttMs = performance.now() - started
+          this.reportQueueDelay()
           if (this.closed || !result) return
           const status = result as unknown as RemoteScreenStatus
           this.emit({ status })
@@ -698,6 +715,31 @@ class ScreenChannel {
           this.statsPending = false
         })
     }, 2000)
+  }
+
+  /**
+   * Tell the host how long the picture is queuing, above the round trip.
+   *
+   * `latencyMs` is measured on the host's clock, so the transit time is already
+   * included in it; subtracting the round trip leaves the part that grows when a
+   * link starts buffering. Reported at the stats cadence rather than per frame:
+   * it is a trend, and a per-frame report would spend the socket it exists to
+   * keep clear.
+   */
+  private reportQueueDelay(): void {
+    const frame = this.snapshot.frame
+    const latency = this.snapshot.latencyMs
+    if (!frame || latency === null || this.rttMs === null) return
+    const queueDelay = Math.max(0, latency - this.rttMs)
+    // Below a millisecond of difference there is nothing to report, and sending
+    // it would only add noise to the host's signal.
+    if (queueDelay < 5) {
+      this.emit({ rttMs: this.rttMs, reportedQueueDelayMs: 0 })
+      sendRemoteScreenAck(frame.seq, 0)
+      return
+    }
+    this.emit({ rttMs: this.rttMs, reportedQueueDelayMs: queueDelay })
+    sendRemoteScreenAck(frame.seq, queueDelay)
   }
 
   /** Lower the frame rate when this device cannot decode what it asked for. */
