@@ -23,6 +23,25 @@ type WorkspaceTitlebarProps = {
   showMenu?: boolean;
 };
 
+/**
+ * Opens the floating screen window.
+ *
+ * A titlebar button rather than a navigation entry: the screen is something you
+ * switch on alongside the conversation, and putting it in the navigation would
+ * make it a place you "go to", which replaces the session.
+ */
+function ScreenToggle() {
+  const open = useWorkspace(state => state.screenPip)
+  const online = useWorkspace(state => state.connection === "online")
+  return <Button
+    className={`titlebar-button ${open ? "selected" : ""}`}
+    title={open ? "关闭电脑屏幕小窗" : "打开电脑屏幕小窗"}
+    aria-pressed={open}
+    disabled={!online}
+    onClick={() => useWorkspace.getState().set(open ? { screenPip: false, screenExpanded: false } : { screenPip: true })}
+  ><Icon name="desktop" /></Button>;
+}
+
 export function WorkspaceTitlebar({ variant, sidebarOpen, onToggleSidebar, title, rawTitle, showMenu }: WorkspaceTitlebarProps) {
   const dragRef = useWindowDrag();
   const runtimeTarget = useWorkspace(state => state.runtimeTarget);
@@ -39,6 +58,7 @@ export function WorkspaceTitlebar({ variant, sidebarOpen, onToggleSidebar, title
     {showContent && <>
       {showMenu && cwd ? <SessionRoots title={title} rawTitle={rawTitle} /> : <><FolderClosed className="app-header-folder" strokeWidth={1.7} aria-hidden="true" /><strong className="app-header-title" title={rawTitle || title}>{title}</strong></>}
       {runtimeTarget === "mobile" && connection !== "online" && <span className="titlebar-remote-status" aria-live="polite">{connection === "connecting" ? <LoaderCircle className="animate-spin" aria-hidden="true" /> : <WifiOff aria-hidden="true" />}{connection === "connecting" ? "正在重连电脑" : "电脑已断开"}</span>}
+      {runtimeTarget === "mobile" && showContent && <ScreenToggle />}
       {runtimeTarget === "mobile" && showContent && <div className="app-header-context"><ComposerContext placement="header" /></div>}
       {showMenu && <Button className="titlebar-button app-header-more" title="会话管理" onClick={() => useWorkspace.getState().set({ panel: "settings", settingsPage: "sessions" })}><Icon name="dots-three" /></Button>}
     </>}

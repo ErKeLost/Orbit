@@ -705,7 +705,16 @@ fn start_pipeline(
             display_id: Some(display.id),
             width,
             height,
-            fps: resolved.max_fps,
+            // Capture faster than the publish target on purpose. ScreenCaptureKit
+            // gates frames at `minimumFrameInterval` and the bandwidth governor
+            // gates publishes at the same interval; running both at exactly the
+            // target rate makes them beat against each other, and any jitter
+            // pushes a frame past the governor's strict comparison and throws it
+            // away. On real hardware that cost roughly half the frame rate
+            // (7.6 fps reported against a 15 fps target). Capturing at double
+            // removes the beating and has the side benefit that the frame we
+            // publish is the freshest of the two, not a stale one.
+            fps: resolved.max_fps.saturating_mul(2).min(60),
             shows_cursor: resolved.show_cursor,
         };
         thread::Builder::new()

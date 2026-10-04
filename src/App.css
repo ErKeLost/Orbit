@@ -3557,7 +3557,7 @@ html[data-theme="light"] .composer-mode-toggle.selected::after {
   align-items: center;
   gap: 2px;
 }
-.app-shell [data-slot="button"].titlebar-button {
+.app-shell .titlebar-button {
   display: inline-grid;
   width: 30px;
   min-width: 30px;
@@ -3572,14 +3572,14 @@ html[data-theme="light"] .composer-mode-toggle.selected::after {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
-.app-shell [data-slot="button"].titlebar-button:hover:not(:disabled) {
+.app-shell .titlebar-button:hover:not(:disabled) {
   background: var(--accent);
   color: var(--accent-foreground);
 }
-.app-shell [data-slot="button"].titlebar-button:active:not(:disabled) {
+.app-shell .titlebar-button:active:not(:disabled) {
   transform: translateY(1px);
 }
-.app-shell [data-slot="button"].titlebar-button:disabled {
+.app-shell .titlebar-button:disabled {
   opacity: 0.34;
 }
 .titlebar-button svg {
@@ -3615,8 +3615,9 @@ html[data-theme="light"] .composer-mode-toggle.selected::after {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.app-shell [data-slot="button"].session-roots-trigger {
+.app-shell .session-roots-trigger {
   display: flex;
+  flex: 0 1 auto;
   min-width: 0;
   max-width: min(32em, calc(100% - 180px));
   height: 30px;
@@ -3631,7 +3632,7 @@ html[data-theme="light"] .composer-mode-toggle.selected::after {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
-.app-shell [data-slot="button"].session-roots-trigger:hover:not(:disabled) {
+.app-shell .session-roots-trigger:hover:not(:disabled) {
   background: var(--accent);
 }
 .session-roots-trigger .app-header-folder {

@@ -35,6 +35,16 @@ export type ScreenChannelSnapshot = {
   state: ScreenChannelState
   error: string | null
   codec: RemoteScreenCodec
+  /**
+   * Why H.264 was not used, when it was not. `null` means it was.
+   *
+   * Surfaced rather than hidden: "the phone silently fell back to JPEG" is
+   * indistinguishable from "the host ignored the request", and the two need
+   * completely different fixes.
+   */
+  codecNote: string | null
+  /** Whether this WebView exposes WebCodecs at all. */
+  webCodecs: boolean
   displays: RemoteDisplay[]
   display: RemoteDisplay | null
   /** Object URL of the newest JPEG frame; unused on the H.264 path. */
@@ -61,6 +71,8 @@ const EMPTY: ScreenChannelSnapshot = {
   state: "idle",
   error: null,
   codec: "jpeg",
+  codecNote: null,
+  webCodecs: false,
   displays: [],
   display: null,
   frameUrl: null,
@@ -83,22 +95,35 @@ let support: Promise<boolean> | null = null
  * would otherwise run on every start. A `false` here is not a failure — it is
  * the answer that makes the phone ask the host for JPEG.
  */
+export function hasWebCodecs(): boolean {
+  return typeof (globalThis as { VideoDecoder?: unknown }).VideoDecoder === "function"
+}
+
 export function supportsHardwareH264(): Promise<boolean> {
   support ??= (async () => {
     const decoder = (globalThis as { VideoDecoder?: typeof VideoDecoder }).VideoDecoder
     if (!decoder || typeof decoder.isConfigSupported !== "function") return false
     try {
-      // Probed with the same shape the host actually sends — AVCC plus a
-      // configuration record — because that is the configuration that has to
-      // work later. A browser that only accepts Annex-B would answer `true`
-      // here and then fail on every real frame. The record below is
-      // structurally valid (Main profile, level 4.0, one SPS and one PPS);
+      // Probed with the same shape the host sends — AVCC plus a configuration
+      // record — because a browser that only accepts Annex-B would answer
+      // `true` here and then fail on every real frame.
+      //
+      // The profile/level asked about is the *floor*, not the stream: Baseline
+      // level 3.1 is the most universally supported H.264 configuration, and
+      // anything that can decode H.264 through WebCodecs can decode it. Asking
+      // about Main level 4.0 instead — which is what this used to do — reports
+      // "unsupported" on hardware that would have decoded the real stream
+      // happily (a 720×404 preview is level 3.1 content). That is a silent
+      // permanent downgrade to JPEG, which is exactly the expensive path the
+      // probe is supposed to avoid.
+      //
+      // The record is structurally valid: one SPS, one PPS, 4-byte lengths.
       // `isConfigSupported` validates the config, it does not decode.
       const result = await decoder.isConfigSupported({
-        codec: "avc1.4D4028",
+        codec: "avc1.42E01F",
         description: new Uint8Array([
-          0x01, 0x4d, 0x40, 0x28, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x4d, 0x40, 0x28,
-          0x01, 0x00, 0x04, 0x68, 0xee, 0x3c, 0x80,
+          0x01, 0x42, 0xe0, 0x1f, 0xff, 0xe1, 0x00, 0x04, 0x67, 0x42, 0xe0, 0x1f,
+          0x01, 0x00, 0x04, 0x68, 0xce, 0x3c, 0x80,
         ]),
         optimizeForLatency: true,
       })
@@ -124,16 +149,47 @@ class ScreenChannel {
   private closed = false
   private settings: RemoteScreenSettings = {}
   private detachForeground: (() => void) | null = null
+  /**
+   * Host clock minus phone clock, in milliseconds.
+   *
+   * `capturedAt`/`encodedAt` are the desktop's clock and `Date.now()` is the
+   * phone's. Subtracting them directly produced a latency figure of `0 ms`
+   * (clamped from a negative number) on a real device, which made the JPEG path
+   * look far better than it is. The offset from the handshake is accurate to
+   * about half the network round trip, which is the same order as the number
+   * being measured and vastly better than assuming the clocks agree.
+   */
+  private clockOffsetMs = 0
+  private hasClockOffset = false
+  /** True between a successful start and the next failure. */
+  private wasLive = false
+  /** Settings currently accepted by the host, to avoid pointless restarts. */
+  private applied: RemoteScreenSettings = {}
 
   // ── H.264 decode path ────────────────────────────────────────────
   private decoder: VideoDecoder | null = null
   private canvas: HTMLCanvasElement | null = null
+  /** Which surface owns the canvas, so a teardown cannot clear someone else's. */
+  private canvasOwner: object | null = null
   /** Sequence of the last frame actually produced a picture. */
   private decodedSeq = 0
   /** Set when the chain broke; frames are dropped until the next keyframe. */
   private desynced = false
   private description: Uint8Array | null = null
   private configured = false
+  /**
+   * Set once H.264 has actually failed to decode on this device.
+   *
+   * The capability probe can only ask a general question; whether *this*
+   * stream decodes is only knowable by trying. Once it has failed, JPEG becomes
+   * the default for every later start — including the ones triggered by
+   * resizing the window — so a failed codec is not retried in a loop. Only an
+   * explicit request for H.264 clears it, which is what makes the manual
+   * toggle in the enlarged view meaningful.
+   */
+  private h264Failed = false
+  /** A downgrade reason worth keeping across later starts. */
+  private codecNoteOverride: string | null = null
   /** Whether the panel is on screen; drawing is skipped when it is not. */
   private rendering = true
 
@@ -156,8 +212,24 @@ class ScreenChannel {
    * if they are not closed, and splitting that ownership across a component
    * boundary is exactly how they get forgotten.
    */
-  attachCanvas(canvas: HTMLCanvasElement | null): void {
+  /**
+   * Hand over (or release) the canvas H.264 frames are drawn into.
+   *
+   * Ownership matters because the floating window and the enlarged view can
+   * both be mounted at once, each with its own canvas. Releasing without
+   * checking the owner would let whichever component unmounts second blank the
+   * other one's picture, which looks exactly like the stream dying.
+   */
+  attachCanvas(canvas: HTMLCanvasElement | null, owner: object): void {
+    if (canvas === null) {
+      if (this.canvasOwner === owner) {
+        this.canvas = null
+        this.canvasOwner = null
+      }
+      return
+    }
     this.canvas = canvas
+    this.canvasOwner = owner
   }
 
   /**
@@ -179,17 +251,29 @@ class ScreenChannel {
   async start(settings: RemoteScreenSettings = {}): Promise<void> {
     this.closed = false
     this.settings = settings
+    // A new explicit start is a new decision: allow one more H.264 attempt.
+    this.fallbacking = false
+    if (settings.codec === "h264") {
+      this.h264Failed = false
+      this.codecNoteOverride = null
+    }
     if (!this.client) this.emit({ state: "connecting", error: null })
     try {
       const client = await this.ensureClient()
       // Only ask for H.264 if it can be decoded here. Doing this before the
       // request means the host never has to guess, and a WebView without
       // WebCodecs never sees a frame it cannot render.
-      const codec: RemoteScreenCodec = settings.codec === "jpeg"
-        ? "jpeg"
-        : (await supportsHardwareH264())
-          ? "h264"
-          : "jpeg"
+      const decoder = hasWebCodecs()
+      // Once H.264 has demonstrably failed here, only an explicit request brings
+      // it back; otherwise every resize would re-attempt a known-bad codec.
+      const wants = settings.codec ?? (this.h264Failed ? "jpeg" : undefined)
+      const supported = wants === "jpeg" ? false : await supportsHardwareH264()
+      const codec: RemoteScreenCodec = supported ? "h264" : "jpeg"
+      const codecNote = codec === "h264"
+        ? null
+        : decoder
+          ? "此设备无法解码 H.264，已改用 JPEG（带宽明显更高）"
+          : "此设备的 WebView 没有 WebCodecs，已改用 JPEG"
       const result = await client.request(
         { type: "screen.start", settings: { ...settings, codec } },
         20_000,
@@ -198,22 +282,47 @@ class ScreenChannel {
       if (!result?.display) throw new Error("桌面没有返回可捕获的显示器")
       if (result.codec === "h264") this.resetDecoder()
       else this.releaseFrameUrl()
+      // The caller's request, not the merged result: comparing against the
+      // merged shape would report a difference on every call (the reply adds a
+      // concrete `codec`) and restart capture each time.
+      this.applied = { ...settings, codec: settings.codec }
+      this.wasLive = true
       this.emit({
         state: "live",
         error: null,
         codec: result.codec,
+        codecNote: result.codec === "h264" ? null : (this.codecNoteOverride ?? codecNote),
+        webCodecs: decoder,
         display: result.display,
         displays: result.displays ?? [],
       })
       this.startStatsPolling()
     } catch (error) {
       if (this.closed) return
+      this.wasLive = false
       this.emit({ state: "failed", error: message(error) })
       throw error instanceof Error ? error : new Error(String(error))
     }
   }
 
+  /**
+   * Apply settings only when they differ from what the host already accepted.
+   *
+   * PiP and the expanded view ask for very different pixel budgets, and a
+   * `screen.start` with identical settings would still force a keyframe for no
+   * reason.
+   */
+  async configure(settings: RemoteScreenSettings): Promise<void> {
+    if (this.closed) return
+    const same = (["maxWidth", "maxFps", "quality", "displayId", "codec"] as const)
+      .every(key => this.applied[key] === settings[key])
+    if (same && this.snapshot.state === "live") return
+    await this.start(settings)
+  }
+
   async stop(): Promise<void> {
+    this.wasLive = false
+    this.applied = {}
     this.stopStatsPolling()
     this.releaseFrameUrl()
     this.releaseDecoder()
@@ -250,15 +359,30 @@ class ScreenChannel {
     // key as the control connection; it is a second socket, not a second
     // pairing.
     const client = await screenRemoteChannel({
+      onHandshake: serverTime => {
+        this.clockOffsetMs = serverTime - Date.now()
+        this.hasClockOffset = true
+      },
       onEvent: event => {
         if (event.type !== "screen.frame") return
         this.onFrame(event)
       },
       onState: state => {
         if (state === "offline") {
+          // Not `failed`: the client reconnects on its own, so the honest state
+          // is "reconnecting" and the last frame stays on screen. Reporting a
+          // failure here is what made a backgrounded phone look permanently
+          // broken when it was about to come back.
           this.stopStatsPolling()
-          this.emit({ state: "failed", error: "与桌面的屏幕连接已断开" })
+          this.emit({
+            state: this.wasLive ? "connecting" : "failed",
+            error: this.wasLive ? "已断开，正在重连电脑…" : "与桌面的屏幕连接已断开",
+          })
+          return
         }
+        // Back online on a fresh connection: the subscription died with the
+        // old socket, so it has to be re-established.
+        if (state === "online" && this.wasLive) void this.resubscribe()
       },
       // Subscription state lives on the connection, so a reconnect produces a
       // connection that is *not* subscribed. Re-issuing `screen.start` here is
@@ -298,7 +422,10 @@ class ScreenChannel {
       this.windowStart = receivedAt
       this.windowFrames = 0
     }
+    // Compare on the host's clock. The handshake offset is the only thing that
+    // makes a cross-device latency figure mean anything.
     const encodedAt = frame.encodedAt > 0 ? frame.encodedAt : receivedAt
+    const localNow = this.hasClockOffset ? receivedAt + this.clockOffsetMs : receivedAt
     const common = {
       state: "live" as const,
       frame: {
@@ -311,7 +438,7 @@ class ScreenChannel {
         keyframe: frame.keyframe,
       },
       receivedFps,
-      latencyMs: Math.max(0, receivedAt - encodedAt),
+      latencyMs: Math.max(0, localNow - encodedAt),
     }
 
     if (frame.codec === "jpeg") {
@@ -392,6 +519,19 @@ class ScreenChannel {
     }
   }
 
+  /** Give up on H.264 and ask the host for JPEG instead. Runs at most once. */
+  private fallbackToJpeg(reason: string): void {
+    if (this.h264Failed || this.fallbacking) return
+    this.fallbacking = true
+    this.h264Failed = true
+    this.codecNoteOverride = `H.264 解码失败，已改用 JPEG：${reason}`
+    this.emit({ codecNote: this.codecNoteOverride })
+    // `start` publishes the note from the override, so this is not lost.
+    void this.start({ ...this.settings, codec: "jpeg" }).catch(() => undefined)
+  }
+
+  private fallbacking = false
+
   private configureDecoder(width: number, height: number): boolean {
     const decoder = this.decoder
     const description = this.description
@@ -409,7 +549,7 @@ class ScreenChannel {
       this.configured = true
       return true
     } catch (error) {
-      this.emit({ error: `H.264 解码器配置失败：${message(error)}` })
+      this.fallbackToJpeg(message(error))
       return false
     }
   }
@@ -438,7 +578,9 @@ class ScreenChannel {
         }
       },
       error: error => {
-        this.emit({ error: `H.264 解码失败：${message(error)}` })
+        // A decoder that reports an error will keep reporting it; the useful
+        // response is to stop asking it to decode.
+        this.fallbackToJpeg(message(error))
         this.desynced = true
       },
     })

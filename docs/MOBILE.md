@@ -4,12 +4,23 @@ Orbit uses one React application for desktop and mobile. The Android package is
 not a second chat client. It renders the same transcript, thinking, tool, and
 sub-agent components from structured Pi RPC events.
 
-The phone can also *watch and drive* the desktop screen. On a narrow screen a
-tab strip sits under the title bar — 对话 / 屏幕 / 会话 / 变更 / 命令 — so the
-conversation and the screen flip in one tap, and **the preview keeps running
-while another tab is open**: switching back is instant instead of a capture
-restart. Both hosts stay mounted; only drawing is skipped while hidden, because
-pausing the H.264 decoder would corrupt the stream rather than save work.
+The phone can also *watch and drive* the desktop screen, as a **floating window
+over the conversation** rather than a destination. A button in the title bar
+opens it; the chat is never replaced, remounted, or reconnected by it. The
+window is draggable, has three sizes, remembers where you put it, and sits above
+the composer by default so the session stays usable.
+
+Tap the window to enlarge: that is where pointer input is enabled. A thumbnail
+is fine to watch and useless to aim at, so the small window is watch-only and
+enlarging is the explicit "operate it now" gesture. There is no key bar — this
+is a chat session with a window onto the computer, not a VNC client — but text
+typed in the enlarged view goes to the computer's focused field.
+
+The pixel budget follows the visible surface, which is what makes the floating
+window nearly free: a thumbnail asks for a thumbnail's worth of pixels, and the
+enlarged view asks for the full panel. Drawing is skipped while the window is
+hidden; decoding continues, because pausing an inter-frame codec is corruption
+rather than a saving.
 
 That is a separate, opt-in channel with its own connection: the transcript stays
 structured JSON on the control socket, and only the screen carries pixels. See

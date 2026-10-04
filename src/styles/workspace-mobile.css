@@ -200,7 +200,11 @@
     flex-basis: 48px;
   }
 
-  .narrow-workspace .app-header-title,
+  /* Only the standalone title is a direct flex child of the header. When the
+     title sits inside `.session-roots-trigger`, a percentage max-width would
+     resolve against the (shrink-to-fit) trigger instead of the header, which
+     collapses the text to a few pixels. Let it keep `max-width: none` there. */
+  .narrow-workspace .app-header > .app-header-title,
   .narrow-workspace .session-roots-trigger {
     max-width: calc(100% - 158px);
   }
@@ -221,7 +225,7 @@
     min-height: 40px !important;
   }
 
-  .narrow-workspace .titlebar-button[data-slot="button"] {
+  .narrow-workspace .titlebar-button {
     width: 40px;
     min-width: 40px;
     height: 40px;

@@ -11,6 +11,7 @@ import { useDesktopNotifications } from './hooks/use-desktop-integration'
 import { useNarrowWorkspace } from './hooks/use-narrow-workspace'
 import { WorkspaceNavigationDrawer } from './components/workspace/WorkspaceDrawer'
 import { RemotePairingScreen } from './components/remote/RemotePairingScreen'
+import { ScreenOverlay } from './components/screen/ScreenOverlay'
 import './styles/workspace-base.css'
 import './App.css'
 import './styles/workspace-mobile.css'
@@ -58,6 +59,7 @@ export default function App(){
     <section className="settings-root"><MetricsSync/><Panel/></section>
    </>:<WorkspaceLayout narrow={narrow} sidebarOpen={sidebarOpen} onToggleSidebar={toggleSidebar} online={online} panel={panel} title={headerTitle} rawTitle={rawHeaderTitle} liveSessions={liveSessions} currentSessionFile={state?.sessionFile}/>}
    {narrow&&<WorkspaceNavigationDrawer open={sidebarOpen} onClose={()=>setSidebarOpen(false)} online={online} panel={panel} liveSessions={liveSessions} currentSessionFile={state?.sessionFile}/>}
+   <ScreenOverlay/>
    {dialogs[0]&&<ExtensionDialog key={dialogs[0].id} dialog={dialogs[0]}/>}
   </main>
 }

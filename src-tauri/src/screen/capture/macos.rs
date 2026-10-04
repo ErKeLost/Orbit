@@ -59,11 +59,11 @@ fn now_ms() -> u128 {
         .as_millis()
 }
 
-fn display_name(id: u32, index: usize, primary: bool) -> String {
-    if primary {
-        return "主显示器".into();
-    }
-    format!("显示器 {} (#{id})", index + 1)
+/// Provisional label. Which display is the main one is decided later, by
+/// global origin rather than by array position (`mark_primary` in the parent
+/// module).
+fn display_name(index: usize) -> String {
+    format!("显示器 {}", index + 1)
 }
 
 /// State shared between the pipeline thread and the Objective-C stream output.
@@ -191,7 +191,7 @@ fn describe_display(display: &SCDisplay, index: usize) -> DisplayInfo {
         };
         DisplayInfo {
             id,
-            name: display_name(id, index, false),
+            name: display_name(index),
             logical_x: frame.origin.x,
             logical_y: frame.origin.y,
             logical_width,

@@ -46,6 +46,9 @@ class StableRemoteRuntime {
   private makeCandidate(): OrbitRemoteClient {
     let candidate: OrbitRemoteClient
     candidate = new OrbitRemoteClient({
+      onHandshake: (serverTime) => {
+        if (this.active === candidate) this.handlers.onHandshake?.(serverTime)
+      },
       onState: (state) => {
         if (this.active === candidate) this.handlers.onState?.(state)
       },

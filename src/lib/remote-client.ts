@@ -32,6 +32,8 @@ export type RemoteClientHandlers = {
   onState?: (state: RemoteClientState) => void
   /** A replacement physical channel became authoritative while logical state stayed alive. */
   onReconnected?: () => void
+  /** Fired once per authenticated connection, with the host's clock. */
+  onHandshake?: (serverTime: number) => void
   onEvent?: (event: RemoteEvent) => void
   onPiEvent?: (project: string, payload: RemoteJson) => void
   onError?: (error: Error) => void
@@ -78,6 +80,8 @@ export class OrbitRemoteClient {
   private reconnectEnabled = false
   private manuallyClosed = true
   private heartbeatPending = false
+  /** Whether this logical client has ever completed a handshake. */
+  private everAuthenticated = false
   private heartbeatMisses = 0
   private lastInboundAt = 0
   private outboundTail: Promise<void> = Promise.resolve()
@@ -113,6 +117,7 @@ export class OrbitRemoteClient {
     this.manuallyClosed = false
     this.reconnectEnabled = false
     this.reconnectAttempt = 0
+    this.everAuthenticated = false
     this.setState("connecting")
     return this.openSocket("initial").then(() => {
       this.reconnectEnabled = true
@@ -198,6 +203,7 @@ export class OrbitRemoteClient {
         throw new Error("Orbit LAN Host 身份不匹配")
       }
       connection.authenticated = true
+      this.handlers.onHandshake?.(message.serverTime)
       this.clearConnectionTimers(connection)
       if (connection.mode === "replacement") this.promote(connection)
       else this.activateInitial(connection)
@@ -207,10 +213,18 @@ export class OrbitRemoteClient {
 
   private activateInitial(connection: PhysicalConnection): void {
     if (this.active !== connection) return
+    const reconnected = this.everAuthenticated
+    this.everAuthenticated = true
     this.reconnectAttempt = 0
     this.setState("online")
     this.startHeartbeat()
     connection.resolve()
+    // A socket that died and came back is a *new* connection: whatever the
+    // caller registered on the previous one is gone. Reporting this only for
+    // the "replacement physical path" case meant a backgrounded phone
+    // reconnected successfully and then sat there with no frames, because
+    // nothing re-sent `screen.start` on the fresh connection.
+    if (reconnected) this.handlers.onReconnected?.()
   }
 
   private promote(connection: PhysicalConnection): void {
