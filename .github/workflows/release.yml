@@ -16,7 +16,9 @@ concurrency:
 jobs:
   prepare:
     name: Prepare draft release
-    runs-on: ubuntu-latest
+    # Pinned rather than `ubuntu-latest`: the floating label is scheduled to
+    # move to Ubuntu 26, and a release job should not discover that by failing.
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
@@ -46,6 +48,7 @@ jobs:
           - name: macOS Apple Silicon
             os: macos-15
             args: --target aarch64-apple-darwin
+            rust_targets: aarch64-apple-darwin
           # 暂时停发 Intel 包：需要时取消注释即可恢复。
           # - name: macOS Intel
           #   os: macos-15-intel
@@ -53,9 +56,11 @@ jobs:
           - name: Linux x86_64
             os: ubuntu-22.04
             args: ""
+            rust_targets: ""
           - name: Windows
             os: windows-latest
             args: ""
+            rust_targets: ""
 
     steps:
       - uses: actions/checkout@v7
@@ -77,8 +82,12 @@ jobs:
         if: runner.os != 'Windows'
         run: echo "ORBIT_BUN_PATH=$(command -v bun)" >> "$GITHUB_ENV"
 
+      # One step for every platform: Windows builds for the host (MSVC), macOS
+      # cross-builds to arm64, Linux for the host. `targets` is empty for the
+      # host-only jobs, which `rustup` accepts.
       - uses: dtolnay/rust-toolchain@stable
-        if: runner.os != 'Windows'
+        with:
+          targets: ${{ matrix.rust_targets }}
 
       # 暂时停发 Intel 包，随 matrix 一起注释。
       # - name: Install Intel macOS target
@@ -91,27 +100,32 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils rpm
 
-      - uses: dtolnay/rust-toolchain@stable
-        if: runner.os == 'Windows'
-
       - name: Cache Bun packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: |
             bun-${{ runner.os }}-
 
-      - name: Cache Rust build
-        uses: actions/cache@v4
+      # Rust dependency cache.
+      #
+      # This used to be `actions/cache` over the whole `src-tauri/target`, with
+      # one entry per platform *per Cargo.lock revision*. Four platforms times
+      # every dependency change pushed the repository past GitHub's 10 GB cache
+      # limit, so entries were evicted faster than they were written and each
+      # release paid for a cold build of the entire Tauri tree. Windows, the
+      # slowest platform, sat at ~24 minutes because of it.
+      #
+      # `rust-cache` keeps one entry per platform, stores dependency artifacts
+      # only (so editing our own sources does not invalidate it), and prunes the
+      # entries it replaces — which is what keeps the total inside the limit.
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: cargo-${{ runner.os }}-${{ matrix.name }}-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-${{ matrix.name }}-
+          workspaces: src-tauri
+          key: ${{ matrix.name }}
+          # A failed build still warms the dependency cache for the retry.
+          cache-on-failure: true
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
@@ -192,23 +206,27 @@ jobs:
           targets: aarch64-linux-android
 
       - name: Cache Bun packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.bun/install/cache
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: |
             bun-${{ runner.os }}-
 
-      - name: Cache Rust build
-        uses: actions/cache@v4
+      # The NDK is a ~1 GB download that `sdkmanager` repeats on every release
+      # for no reason: the version is pinned, so it either matches the cache or
+      # the cache is useless.
+      - name: Cache Android NDK
+        uses: actions/cache@v5
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            src-tauri/target
-          key: cargo-${{ runner.os }}-android-${{ hashFiles('src-tauri/Cargo.lock') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-android-
+          path: /usr/local/lib/android/sdk/ndk/29.0.13846066
+          key: android-ndk-29.0.13846066-${{ runner.os }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: android
+          cache-on-failure: true
 
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
@@ -248,9 +266,11 @@ jobs:
         run: |
           tag="${GITHUB_REF_NAME}"
           asset="orbit-android-arm64-${tag}.apk"
-          for attempt in $(seq 1 120); do
+          # `prepare` runs before this job, so the draft exists already; the
+          # retry is only for GitHub's eventual consistency on the API.
+          for attempt in $(seq 1 30); do
             if gh release view "$tag" >/dev/null 2>&1; then break; fi
-            sleep 10
+            sleep 5
           done
           gh release view "$tag" >/dev/null 2>&1 || { echo "Draft release $tag was not created" >&2; exit 1; }
           gh release upload "$tag" "$asset" --clobber
