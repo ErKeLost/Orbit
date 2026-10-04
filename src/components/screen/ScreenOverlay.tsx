@@ -4,6 +4,7 @@ import { useWorkspace } from "../../lib/store"
 import { screenChannel, type ScreenChannelSnapshot } from "../../lib/remote-screen"
 import { loadPlacement, savePlacement, type PipPlacement } from "../../lib/screen-pip"
 import { measurePanelFps, streamSettings, useScreenPreferences } from "../../lib/screen-settings"
+import { useScreenWakeLock } from "../../hooks/use-screen-wake-lock"
 import { ScreenPip } from "./ScreenPip"
 import { ScreenExpanded } from "./ScreenExpanded"
 // Imported here rather than only from the settings panel: that panel is
@@ -76,6 +77,9 @@ export function ScreenOverlay() {
   // Drawing is skipped while hidden; decoding continues, because pausing an
   // inter-frame codec is corruption rather than a saving.
   useEffect(() => screenChannel().setRendering(open), [open])
+
+  // Watching the computer is exactly when the phone must not sleep.
+  useScreenWakeLock(mobile && open)
 
   useEffect(() => {
     if (!open) return

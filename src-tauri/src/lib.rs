@@ -150,6 +150,11 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // The screen channel pushes status changes to the UI instead of
+            // being polled, and the pipeline thread — not the webview — is what
+            // knows them.
+            #[cfg(target_os = "macos")]
+            app.state::<screen::ScreenHost>().attach(app.handle().clone());
             #[cfg(desktop)]
             {
                 // Transparent, undecorated splash that floats the mascot on the desktop.

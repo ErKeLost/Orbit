@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core"
+import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 
 /** Mirror of `screen::capture::DisplayInfo` on the desktop side. */
 export type ScreenDisplay = {
@@ -37,6 +38,19 @@ export type ScreenHostStatus = {
   encodeMsMax: number
   bitsPerSecond: number
   failure?: string
+}
+
+/**
+ * Subscribe to pushed status changes.
+ *
+ * Pushed, not polled: the desktop's own pipeline is what knows capture started,
+ * settled, or failed, and it emits one event per aggregate window. The settings
+ * page used to ask every two seconds for a fact this process already had.
+ *
+ * `null` means the pipeline stopped.
+ */
+export function onScreenHostStatus(handler: (status: ScreenHostStatus | null) => void): Promise<UnlistenFn> {
+  return listen<ScreenHostStatus | null>("screen:status", event => handler(event.payload))
 }
 
 export function screenHostStatus(): Promise<ScreenHostStatus> {

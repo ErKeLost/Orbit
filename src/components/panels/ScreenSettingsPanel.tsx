@@ -15,6 +15,7 @@ import {
 import { hasWebCodecs, supportsHardwareH264 } from "../../lib/remote-screen"
 import {
   formatBitrate,
+  onScreenHostStatus,
   screenHostRequestPermission,
   screenHostStatus,
   screenHostStop,
@@ -151,24 +152,32 @@ function DesktopStatus() {
 
   useEffect(() => {
     let cancelled = false
-    const tick = () => {
-      screenHostStatus()
+    // One fetch for the facts that only change when the user changes them (the
+    // display list, the permission state), then events for everything that
+    // moves while capture runs.
+    const load = () => {
+      void screenHostStatus()
         .then(next => {
-          if (cancelled) return
-          setStatus(next)
-          setError(null)
+          if (!cancelled) {
+            setStatus(next)
+            setError(null)
+          }
         })
         .catch(cause => {
           if (!cancelled) setError(cause instanceof Error ? cause.message : String(cause))
         })
     }
-    tick()
-    // The phone starts capture, so nothing on the host can push "a phone began
-    // watching" without a protocol addition this page does not deserve.
-    const timer = setInterval(tick, 2000)
+    load()
+    const stopListening = onScreenHostStatus(next => {
+      if (cancelled) return
+      // A stopped pipeline reports nothing rather than a stale frame count, so
+      // re-read the summary instead of clearing the display list.
+      if (next === null) load()
+      else setStatus(current => ({ ...next, displays: next.displays.length ? next.displays : (current?.displays ?? []) }))
+    })
     return () => {
       cancelled = true
-      clearInterval(timer)
+      void stopListening.then(unlisten => unlisten())
     }
   }, [revision])
 

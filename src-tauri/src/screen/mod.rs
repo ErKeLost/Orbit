@@ -37,6 +37,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tauri::{AppHandle, Emitter};
 
 use capture::{Capture, CaptureRequest, DisplayInfo};
 use encode::{Codec, Encoder};
@@ -539,6 +540,7 @@ impl Stats {
 }
 
 struct Pipeline {
+    app: Option<AppHandle>,
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
     bus: Arc<ScreenBus>,
@@ -573,6 +575,9 @@ pub struct ScreenHost {
     /// Geometry of the display currently being captured, or the display that
     /// *would* be captured. Read by the input path on every event.
     display: Mutex<Option<DisplayInfo>>,
+    /// Set once from the app's setup hook, so every path that changes the
+    /// status — a request, a stop, the pipeline's own tick — can push it.
+    app: Mutex<Option<AppHandle>>,
 }
 
 impl Default for ScreenHost {
@@ -581,6 +586,7 @@ impl Default for ScreenHost {
             pipeline: Mutex::new(None),
             bus: Arc::new(ScreenBus::default()),
             display: Mutex::new(None),
+            app: Mutex::new(None),
         }
     }
 }
@@ -589,6 +595,24 @@ impl ScreenHost {
     #[must_use]
     pub fn bus(&self) -> Arc<ScreenBus> {
         self.bus.clone()
+    }
+
+    /// Remember the app handle so status changes can be pushed to the UI.
+    pub fn attach(&self, app: AppHandle) {
+        if let Ok(mut slot) = self.app.lock() {
+            *slot = Some(app);
+        }
+    }
+
+    fn app(&self) -> Option<AppHandle> {
+        self.app.lock().ok().and_then(|slot| slot.clone())
+    }
+
+    /// Push the current status to the desktop UI, if this process has one.
+    fn push(&self) {
+        if let Some(app) = self.app() {
+            publish_status(&app, self);
+        }
     }
 
     fn stop(&self) {
@@ -601,6 +625,7 @@ impl ScreenHost {
         if let Ok(mut display) = self.display.lock() {
             *display = None;
         }
+        self.push();
     }
 
     /// The display whose coordinates currently map to this session's input.
@@ -637,62 +662,85 @@ impl ScreenHost {
         if let Some(mut previous) = slot.take() {
             previous.stop();
         }
-        let (pipeline, display) = match start_pipeline(self.bus.clone(), requested) {
+        let app = self.app();
+        let (pipeline, display) = match start_pipeline(self.bus.clone(), requested, app.clone()) {
             Ok(started) => started,
             Err(error) if requested.codec == Codec::H264 && unavailable_encoder(&error) => {
                 // The platform has no hardware H.264 encoder. Downgrade once,
                 // explicitly, instead of failing the request: a JPEG preview is
                 // still a preview, and the reply tells the client what it got.
                 requested.codec = Codec::Jpeg;
-                start_pipeline(self.bus.clone(), requested).map_err(|_| error)?
+                start_pipeline(self.bus.clone(), requested, app).map_err(|_| error)?
             }
             Err(error) => return Err(error),
         };
         self.set_display(Some(display.clone()));
         let codec = pipeline.stats.codec().unwrap_or(requested.codec);
         *slot = Some(pipeline);
+        drop(slot);
+        self.push();
         Ok((display, codec))
     }
 
     fn status(&self) -> ScreenStatus {
-        let permission = capture::permission_granted();
         let slot = self.pipeline.lock().ok();
         let Some(pipeline) = slot.as_ref().and_then(|slot| slot.as_ref()) else {
             return ScreenStatus {
                 running: false,
-                permission,
+                permission: capture::permission_granted(),
                 subscribers: self.bus.subscribers(),
                 displays: capture::displays().unwrap_or_default(),
                 failure: None,
                 ..ScreenStatus::default()
             };
         };
-        let stats = &pipeline.stats;
-        ScreenStatus {
-            running: true,
-            permission,
-            subscribers: pipeline.bus.subscribers(),
-            codec: stats.codec().unwrap_or(pipeline.resolved.codec).as_str().into(),
-            source: pipeline.resolved.source.as_str().into(),
-            width: pipeline.resolved.frame_width,
-            height: pipeline.resolved.frame_height,
-            fps: pipeline.resolved.max_fps as f32,
-            effective_fps: stats.effective_fps.load(Ordering::Acquire) as f64 / 1000.0,
-            quality: pipeline.resolved.quality,
-            displays: pipeline.displays.clone(),
-            display: Some(pipeline.display.clone()),
-            captured: stats.captured.load(Ordering::Acquire),
-            published: pipeline.bus.published(),
-            dropped: stats.dropped.load(Ordering::Acquire),
-            unchanged: stats.unchanged.load(Ordering::Acquire),
-            encode_ms_avg: average(
-                stats.encode_micros_total.load(Ordering::Acquire),
-                pipeline.bus.published(),
-            ),
-            encode_ms_max: stats.encode_micros_max.load(Ordering::Acquire) as f64 / 1000.0,
-            bits_per_second: stats.bits_per_second.load(Ordering::Acquire) as f64,
-            failure: stats.failure(),
-        }
+        status_of(
+            &pipeline.bus,
+            &pipeline.stats,
+            &pipeline.resolved,
+            &pipeline.display,
+            &pipeline.displays,
+        )
+    }
+}
+
+/// Build a status snapshot from the parts.
+///
+/// A free function because two callers own different halves of it: the host
+/// reads the pipeline it holds, while the pipeline thread reports itself — and
+/// the thread is the only one that knows the target it is *currently* following,
+/// which changes while the stream runs.
+fn status_of(
+    bus: &ScreenBus,
+    stats: &Stats,
+    resolved: &Resolved,
+    display: &DisplayInfo,
+    displays: &[DisplayInfo],
+) -> ScreenStatus {
+    ScreenStatus {
+        running: true,
+        permission: capture::permission_granted(),
+        subscribers: bus.subscribers(),
+        codec: stats.codec().unwrap_or(resolved.codec).as_str().into(),
+        source: resolved.source.as_str().into(),
+        width: resolved.frame_width,
+        height: resolved.frame_height,
+        fps: resolved.max_fps as f32,
+        effective_fps: stats.effective_fps.load(Ordering::Acquire) as f64 / 1000.0,
+        quality: resolved.quality,
+        displays: displays.to_vec(),
+        display: Some(display.clone()),
+        captured: stats.captured.load(Ordering::Acquire),
+        published: bus.published(),
+        dropped: stats.dropped.load(Ordering::Acquire),
+        unchanged: stats.unchanged.load(Ordering::Acquire),
+        encode_ms_avg: average(
+            stats.encode_micros_total.load(Ordering::Acquire),
+            bus.published(),
+        ),
+        encode_ms_max: stats.encode_micros_max.load(Ordering::Acquire) as f64 / 1000.0,
+        bits_per_second: stats.bits_per_second.load(Ordering::Acquire) as f64,
+        failure: stats.failure(),
     }
 }
 
@@ -814,6 +862,7 @@ fn open_target(
 fn start_pipeline(
     bus: Arc<ScreenBus>,
     resolved: Resolved,
+    app: Option<AppHandle>,
 ) -> Result<(Pipeline, DisplayInfo), String> {
     if !capture::permission_granted() {
         // Do not prompt from a background thread: the desktop UI offers an
@@ -833,6 +882,7 @@ fn start_pipeline(
         let stats = stats.clone();
         let stop = stop.clone();
         let display = display.clone();
+        let app = app.clone();
         thread::Builder::new()
             .name("orbit-screen-pipeline".into())
             .spawn(move || {
@@ -855,7 +905,7 @@ fn start_pipeline(
                         let codec = encoder.codec();
                         stats.set_codec(codec);
                         let _ = ready.try_send(Ok(codec));
-                        pipeline_loop(capture, encoder, bus, stats, stop, resolved, display);
+                        pipeline_loop(capture, encoder, bus, stats, stop, resolved, display, app);
                     }
                     Err(error) => {
                         let mut capture = capture;
@@ -869,6 +919,7 @@ fn start_pipeline(
     match opened.recv_timeout(OPEN_TIMEOUT) {
         Ok(Ok(_codec)) => Ok((
             Pipeline {
+                app,
                 stop,
                 handle: Some(handle),
                 bus,
@@ -1008,6 +1059,7 @@ fn pipeline_loop(
     stop: Arc<AtomicBool>,
     mut resolved: Resolved,
     mut display: DisplayInfo,
+    app: Option<AppHandle>,
 ) {
     let codec = encoder.codec();
     let mut governor = Governor::new(resolved.quality, resolved.max_fps, codec);
@@ -1218,9 +1270,26 @@ fn pipeline_loop(
             window_bytes = 0;
             window_frames = 0;
             last_window = Instant::now();
+            // One push per window is the natural cadence: the numbers are
+            // window aggregates, so pushing faster would only repeat them.
+            if let Some(app) = &app {
+                // The display list is a mount-time fact, not a per-second one,
+                // and the thread does not carry it; the settings page keeps the
+                // list it fetched at startup.
+                let status = status_of(&bus, &stats, &resolved, &display, &[]);
+                if let Err(error) = app.emit(STATUS_EVENT, status) {
+                    log::debug!("推送屏幕状态失败：{error}");
+                }
+            }
         }
     }
     capture.stop();
+    // The pipeline owns the last word on the status: it knows it just stopped.
+    if let Some(app) = &app {
+        if let Err(error) = app.emit(STATUS_EVENT, Value::Null) {
+            log::debug!("推送屏幕停止事件失败：{error}");
+        }
+    }
 }
 
 /// Handle one screen-channel request from a connected client.
@@ -1283,6 +1352,23 @@ pub fn handle_request(
 }
 
 // ── Tauri commands (desktop UI) ──────────────────────────────────────
+
+/// Event name the desktop UI listens on.
+///
+/// The pipeline is the only thing that knows when capture starts, when it
+/// settles, and when it fails, so it pushes. The settings page used to poll
+/// `screen_status` every two seconds, which is a poll of a fact this process
+/// already has — and Tauri's event system exists precisely so it does not have
+/// to be asked.
+pub const STATUS_EVENT: &str = "screen:status";
+
+/// Push the current status to the desktop UI.
+fn publish_status(app: &AppHandle, host: &ScreenHost) {
+    let status = host.status();
+    if let Err(error) = app.emit(STATUS_EVENT, status) {
+        log::debug!("推送屏幕状态失败：{error}");
+    }
+}
 
 #[tauri::command]
 pub fn screen_status(state: tauri::State<'_, ScreenHost>) -> ScreenStatus {

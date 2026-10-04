@@ -4,7 +4,7 @@ import { useWorkspace } from "../../lib/store"
 import { Icon } from "../Icon"
 import { Button } from "../UI"
 import type { ScreenChannelSnapshot } from "../../lib/remote-screen"
-import { PIP_SIZE_CYCLE, currentViewport, pipBox, pipConstraints, type PipPlacement } from "../../lib/screen-pip"
+import { PIP_SIZE_CYCLE, currentViewport, pipBox, pipConstraints, watchViewport, type PipPlacement } from "../../lib/screen-pip"
 import { ScreenFrame } from "./ScreenFrame"
 
 /**
@@ -29,11 +29,10 @@ export function ScreenPip({ snapshot, placement, onPlacement }: {
   // Tracked as data, not as a counter: the geometry is a pure function of it,
   // so the bounds and the position both follow a rotation as real dependencies.
   const [viewport, setViewport] = useState(currentViewport)
-  useEffect(() => {
-    const onResize = () => setViewport(currentViewport())
-    window.addEventListener("resize", onResize)
-    return () => window.removeEventListener("resize", onResize)
-  }, [])
+  // The visual viewport, not `window.resize`: an Android keyboard shrinks the
+  // visual viewport without firing a window resize, so listening to the wrong
+  // event left the window behind the keyboard.
+  useEffect(() => watchViewport(() => setViewport(currentViewport())), [])
   const box = pipBox(placement.size, placement.x, placement.y, viewport)
   const constraints = useMemo(() => pipConstraints(placement.size, viewport), [placement.size, viewport])
   const nextSize = PIP_SIZE_CYCLE[(PIP_SIZE_CYCLE.indexOf(placement.size) + 1) % PIP_SIZE_CYCLE.length]!
