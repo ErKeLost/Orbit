@@ -428,14 +428,15 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
         // fallback only after the row has been drilled into.
         if (insideRoot) add({ operation: "CLICK", ref, headed: true, evidence: "geometric", speculative: true, description: `${descriptor}; physical pointer click at this leaf element's observed bounds (no declared action; verify the effect)` })
       } else if (semanticItem) {
-        // A focus-only list row is a container, not an action. Drill into its
-        // descendants to find the actual link/button before resorting to
-        // physical pointer delivery.
-        // A focus-only container declares no activation. Physical pointer
-        // delivery is offered only when repetition structurally proves it is
-        // a list row; any other container (toolbar, player bar, panel) must
-        // be drilled so the actual leaf control is targeted.
-        add({ operation: "DRILL", ref, headed: false, description: `${descriptor}; inspect this focus-only container for its actionable children` })
+        // A focus-only list row is a container, not an action. With a complete
+        // tree its actionable descendants are already offered as elements, so
+        // there is nothing left to discover by inspecting it; drilling is only
+        // meaningful when the observation was truncated and part of the tree is
+        // genuinely missing. Physical pointer delivery is offered when
+        // repetition structurally proves the node is a list row.
+        if (allowDrill) {
+          add({ operation: "DRILL", ref, headed: false, description: `${descriptor}; inspect this focus-only container for its actionable children` })
+        }
         const identified = Boolean(node.name || node.description || node.descendantSummary)
         if (node.listRow && identified) {
           add({ operation: "FOCUS", ref, headed: false, description: `${descriptor}; focus this list row before submitting the platform default action` })
@@ -520,9 +521,11 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
       }
     }
     const hasIdentity = Boolean(node.name || node.description || visibleValue(node) || node.native_id?.value)
-    const structuralRegion = ["split_group", "group", "web_area"].includes(node.role.toLowerCase()) && (node.children_count ?? 0) >= 5
+    // Drilling exists to re-observe a subtree that the walk truncated. On a
+    // complete observation every actionable descendant is already an element,
+    // so an inspection candidate would only narrow the model's view.
     const alreadyDrillable = candidates.some(candidate => candidate.operation === "DRILL" && candidate.ref === ref)
-    if (!alreadyDrillable && (allowDrill || structuralRegion) && node.children_count && node.children_count > 0 && (!hasIdentity || !actions.has("Click"))) {
+    if (!alreadyDrillable && allowDrill && node.children_count && node.children_count > 0 && (!hasIdentity || !actions.has("Click"))) {
       add({ operation: "DRILL", ref, description: descriptor })
     }
   }

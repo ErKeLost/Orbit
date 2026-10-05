@@ -282,7 +282,9 @@ describe("AX-first desktop observation", () => {
     expect(row.description).not.toContain("cover.jpg")
     expect(row.description).toContain("row 1/3 in list")
     expect(result.candidates.some(candidate => candidate.ref === "@s1:bar" && ["CLICK", "DOUBLE_CLICK"].includes(candidate.operation))).toBe(false)
-    expect(result.candidates.some(candidate => candidate.ref === "@s1:bar" && candidate.operation === "DRILL")).toBe(true)
+    // A complete observation offers no inspection candidates: the wrapper is
+    // inert and its actionable children are already elements.
+    expect(result.candidates.some(candidate => candidate.ref === "@s1:bar" && candidate.operation === "DRILL")).toBe(false)
   })
 
   test("keeps quoted goal evidence visible beyond the first 32 text nodes", async () => {
@@ -397,7 +399,7 @@ describe("AX-first desktop observation", () => {
     expect(result.candidates.find(candidate => candidate.operation === "WAIT")?.criteria).toBeUndefined()
   })
 
-  test("keeps large structural regions drillable in complete skeletons", async () => {
+  test("a complete observation offers no inspection candidates", async () => {
     const snapshot: SnapshotData = {
       app: "WeChat",
       complete: true,
@@ -423,9 +425,11 @@ describe("AX-first desktop observation", () => {
       allowPressEnter: false,
     }, { timeoutMs: 5_000 })
 
-    expect(result.candidates).toEqual(expect.arrayContaining([
-      expect.objectContaining({ operation: "DRILL", ref: "@s1:e1" }),
-    ]))
+    // The worker reports the walk as complete, so every actionable descendant
+    // is already an element in the table. An inspection candidate here would
+    // only narrow the model's view — the failure mode that stranded a whole
+    // turn inside a region with nothing to act on.
+    expect(result.candidates.some(candidate => candidate.operation === "DRILL")).toBe(false)
   })
 
   test("withholds inert wrapper clicks when a named control inside shares the label", async () => {
@@ -616,10 +620,13 @@ describe("desktop goal loop", () => {
       decide: async () => decisions.shift()!,
     })
     expect(result.status).toBe("done")
-    expect(result.decisions).toBe(3)
+    // A drilled leaf that offers nothing actionable is widened automatically:
+    // completion can only be judged on the whole window, and no decision is
+    // spent on a region that has nothing to act on.
+    expect(result.decisions).toBe(2)
     expect(result.actions).toBe(0)
     expect(roots).toEqual([undefined, "@s1:e1", undefined])
-    expect(result.trace.some(entry => entry.outcome === "completion_requires_full_window")).toBe(true)
+    expect(result.trace.some(entry => entry.note?.includes("drilled region had no actionable candidates"))).toBe(true)
   })
 
   test("read-only tasks never see or deliver mutating candidates", async () => {

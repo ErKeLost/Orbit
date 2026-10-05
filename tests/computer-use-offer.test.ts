@@ -226,18 +226,18 @@ describe("offer set on a real Electron player window", () => {
     const lines = tableLines(observation)
     expect(lines.slice(0, 10)).toEqual([
       '[2] link "推荐" · 1/6 · right_click',
-      '[3] group containing "推荐" · cluster 2/2 center size-rank 1 28x20 · drill',
       '[5] link "听歌模式" · 2/6 · right_click',
-      '[6] group containing "听歌模式" · cluster 2/2 center size-rank 1 56x20 · drill',
-      '[7] group containing "听歌模式" · drill',
       '[10] link "我喜欢的音乐" · 3/6 · right_click',
-      '[11] group containing "我喜欢的音乐" · cluster 2/2 center size-rank 1 84x20 · drill',
       '[13] link "抖音收藏的音乐" · 4/6 · right_click',
-      '[14] group containing "抖音收藏的音乐" · cluster 2/2 center size-rank 1 98x20 · drill',
       '[16] link "历史播放" · 5/6 · right_click',
+      '[20] group "创建歌单" · click,right_click',
+      '[21] link "小玉的歌单" · 6/6 · right_click',
+      '[26] image "/o4gCBWqFI3eMeNviAAAzet8HaLDXO4QNAQ8Q20~tplv-b829550vbb-crop" · focus',
+      '[30] group containing "VIP" · cluster 2/3 size-rank 3 27x17 · click',
+      '[32] link "王睿卓" · cluster 1/2 size-rank 2 43x17 · right_click',
     ])
     // The whole window is described; nothing was dropped to fit.
-    expect(lines).toHaveLength(140)
-    expect(observation.candidates.filter(candidate => candidate.ref)).toHaveLength(230)
+    expect(lines).toHaveLength(76)
+    expect(observation.candidates.filter(candidate => candidate.ref)).toHaveLength(165)
   })
 })

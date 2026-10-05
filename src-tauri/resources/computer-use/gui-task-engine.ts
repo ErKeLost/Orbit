@@ -57,6 +57,7 @@ export async function runGuiTaskEngine({
   const history: string[] = []
   const usedSlotIds = new Set<string>()
   let root: string | undefined
+  const collapsedRoots = new Set<string>()
   let repeatedDrillKey: string | undefined
   const drillCounts = new Map<string, number>()
   // Regions whose inspection stopped yielding anything new; their DRILL
@@ -274,13 +275,33 @@ export async function runGuiTaskEngine({
     let decision: DesktopDecision
     try {
       const current = observation
+      // A drilled region that offers nothing actionable is a dead end: widen
+      // deterministically and mark the region instead of spending a decision on
+      // a choice between "inspect deeper" and "give up". Regions marked here
+      // stay inspectable in the truncated-tree case, but not re-entered from
+      // the same parent twice.
+      if (root) {
+        const actionable = current.candidates.some(candidate => candidate.ref && candidate.operation !== "DRILL")
+        if (!actionable) {
+          collapsedRoots.add(root)
+          root = undefined
+          repeatedDrillKey = undefined
+          allowPressEnter = false
+          consecutiveWaits = 0
+          unchangedMutations = 0
+          history.push("The drilled region offers no action, only deeper containers; returned to the whole window and excluded that region")
+          trace.push({ step: decisions, stateId: observation.fingerprint, note: "drilled region had no actionable candidates; widened and excluded it" })
+          continue
+        }
+      }
       // Read-only tasks (inspect and report) never see mutation candidates:
       // the model cannot click, type, submit or send, so a mis-chosen row
       // cannot change application state.
       const eligible = current.candidates.filter(candidate =>
         !(candidate.speculative && (quarantined.has(targetKey(candidate)) || quarantined.has(targetKey(candidate, true))))
         && !verifiedFailures.has(targetKey(candidate))
-        && !(candidate.operation === "DRILL" && drillExhausted.has(targetKey(candidate))))
+        && !(candidate.operation === "DRILL" && drillExhausted.has(targetKey(candidate)))
+        && !(candidate.operation === "DRILL" && candidate.ref && collapsedRoots.has(candidate.ref)))
       const offered = input.readOnly
         ? eligible.filter(candidate => !isMutation(candidate.operation) && !isContextualMutation(candidate.operation) && candidate.operation !== "PRESS_ENTER")
         : eligible
