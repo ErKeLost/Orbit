@@ -1,18 +1,21 @@
 import { createHash } from "node:crypto"
 import type { DesktopDriver, DesktopBounds, DesktopNode, SnapshotData } from "./desktop-driver.ts"
-import type { DesktopCandidate, DesktopObservation, TextSlot } from "./gui-task-contract.ts"
+import { OBSERVATION_CHARS, type DesktopCandidate, type DesktopObservation, type TextSlot } from "./gui-task-contract.ts"
 
-// The offer set is pruned semantically, never truncated to a small fixed
-// number: a node cap silently evicts the very control the goal needs (a macOS
-// Electron player exposes ~264 nodes and ~79 real controls, so any cap below
-// 79 loses the transport bar outright). This is a safety net far above any
-// real window, not a budget.
-const MAX_OBSERVED_ELEMENTS = 512
-// The only budgeted resource is the interface text Jev reads. It is allocated
-// here and never re-cut downstream, so the observation cannot be sliced
-// mid-sentence by the state sanitizer.
-const MAX_CONTEXT_CHARS = 8_000
-const CONTEXT_TEXT_CHARS = 2_000
+// The offer set is pruned by property, never truncated to a count chosen by
+// feel. The only real ceiling is the protocol's option count for one question,
+// which this codebase already enforces in jev.ts; the operations that are
+// always offered reserve the rest. Anything beyond the ceiling is reported in
+// the observation, never silently dropped.
+const MAX_QUESTION_OPTIONS = 255
+const ALWAYS_OFFERED_OPERATIONS = 4
+const MAX_OFFERED_ELEMENTS = MAX_QUESTION_OPTIONS - ALWAYS_OFFERED_OPERATIONS
+// The only budgeted resource is the interface text the decision model reads. It
+// is allocated here and never re-cut downstream, so the observation cannot be
+// sliced mid-sentence by the state sanitizer.
+// The offer set dominates the budget; screen text is context for it. Expressed
+// as a share rather than an absolute so the two scale together.
+const CONTEXT_TEXT_SHARE = 0.25
 const MAX_VISIBLE_TEXT = 32
 const OVERLAY_ROLES = new Set(["sheet", "alert", "dialog", "menu", "popover"])
 
@@ -75,9 +78,9 @@ export async function observeDesktop(
   const anchorValues = [...input.textSlots.map((slot: TextSlot) => slot.value), ...quotedGoalAnchors(input.goal ?? "")].filter(value => value.length > 0)
   const orderedNodes = filteredNodes
     .map((node, index) => ({ node, index }))
-    .sort((a, b) => nodePriority(a.node, anchorValues, shells) - nodePriority(b.node, anchorValues, shells) || a.index - b.index)
+    .sort((a, b) => compareRelevance(a.node, b.node, anchorValues, shells, a.index, b.index))
     .map(item => item.node)
-  const offeredNodes = orderedNodes.slice(0, MAX_OBSERVED_ELEMENTS)
+  const offeredNodes = orderedNodes.slice(0, MAX_OFFERED_ELEMENTS)
   const windowBounds = snapshot.tree.children?.find(node => node.role === "window")?.bounds
   const menu = !input.root && findOverlay(snapshot.tree) === undefined
     ? await readMenuBar(client, snapshot.window.title, options)
@@ -596,9 +599,9 @@ function hasClickAction(actions: Set<string>): boolean {
   return actions.has("Click") || actions.has("Activate")
 }
 
-/** Capabilities that make an element a control rather than decoration. SetFocus
- * is excluded on purpose: macOS Electron apps expose it on every node, so it
- * cannot distinguish a transport button from the layout box around it. */
+/** Capabilities that make an element a control rather than decoration. Focus
+ * roaming is excluded on purpose: toolkits expose it on nearly every node, so
+ * it cannot distinguish a real control from the layout box around it. */
 const CONTROL_ACTIONS = ["Click", "Activate", "Toggle", "Expand", "Collapse", "SetValue", "TypeText"]
 
 function hasControlCapability(node: DesktopNode): boolean {
@@ -776,8 +779,9 @@ function buildContext(
   const evidence = matches.length ? `\nobserved_goal_matches:\n${matches.map((value, index) => `${index + 1}. ${value}`).join("\n")}` : ""
   const textLines: string[] = []
   let textUsed = evidence.length
+  const textBudget = Math.floor(OBSERVATION_CHARS * CONTEXT_TEXT_SHARE)
   for (const value of visibleText) {
-    if (textUsed + value.length + 1 > CONTEXT_TEXT_CHARS) break
+    if (textUsed + value.length + 1 > textBudget) break
     textLines.push(`${textLines.length + 1}. ${value}`)
     textUsed += value.length + 1
   }
@@ -789,7 +793,7 @@ function buildContext(
   // ` not_rendered=` suffix and the newline before the body, so the assembled
   // observation is inside the budget by construction rather than by luck.
   const MAX_SUFFIX_CHARS = 24
-  const candidateChars = Math.max(0, MAX_CONTEXT_CHARS - header.length - textBlock.length - 1 - MAX_SUFFIX_CHARS)
+  const candidateChars = Math.max(0, OBSERVATION_CHARS - header.length - textBlock.length - 1 - MAX_SUFFIX_CHARS)
   const lines: string[] = []
   let used = 0
   for (const candidate of targets) {
@@ -820,43 +824,57 @@ function collectVisibleText(root: DesktopNode): string[] {
   return values
 }
 
-function nodePriority(node: FlatNode, anchors: string[], shells: ReadonlySet<string>): number {
-  const haystack = `${node.name ?? ""} ${node.description ?? ""} ${node.value ?? ""}`
-  const anchorMatch = anchors.some(value => value.length > 0 && haystack.includes(value))
-  // Editable fields are the only nodes that can consume the next local text
-  // slot. Keep them ahead of repeated chat rows and other anchor matches so a
-  // dense conversation cannot evict the composer from the bounded surface.
+/** How likely a node is to be the target of a goal, as an ordinal rank rather
+ * than a weight. A scalar made the levels negotiable: independent conditions
+ * added up, so a container could accumulate a lower score than an editable
+ * field by accident and push the field out of the readable list. Levels are
+ * strict predicates here, and no combination of the tie-breakers below can
+ * overturn a higher level.
+ *
+ * Only properties the accessibility tree actually exposes are used, so the same
+ * order applies to any application: nothing here names an app, a role set that
+ * one toolkit happens to use, or a coordinate. */
+function relevanceRank(node: FlatNode, shells: ReadonlySet<string>): number {
+  const actions = new Set(node.available_actions ?? [])
+  // The only node that can consume the next prepared text is the field itself.
   const editable = isEditableTextRole(node.role, node) && (node.states ?? []).includes("editable")
-  // The innermost pressable element is a control whatever it is called, and on
-  // macOS that control is usually anonymous (a player's transport bar exposes
-  // three unnamed groups). A wrapper that merely contains controls is not a
-  // target: it would compete with the control and dilute the choice. Ordering
-  // only decides which targets the text budget reaches; nothing is dropped for
-  // ranking low.
-  const clickable = hasClickAction(new Set(node.available_actions ?? []))
+  // The innermost pressable element is the control, whether or not the app
+  // named it. A wrapper that merely contains controls is not a target: it would
+  // compete with the control inside it and dilute the choice.
+  const control = hasClickAction(actions) && !(node.ref_id && shells.has(node.ref_id))
   const primary = hasPrimaryCapability(node)
-  const shell = Boolean(node.ref_id && shells.has(node.ref_id))
-  const control = clickable && !shell
-  // Skeleton observations represent dense panes as anonymous structural
-  // containers. Preserve large regions so a later DRILL can expose controls
-  // that are intentionally absent from the shallow tree.
+  const named = Boolean(node.name || node.description || visibleValue(node))
+  // A large unlabelled region is where later inspection finds its controls.
   const structural = ["split_group", "group"].includes(node.role.toLowerCase()) && (node.children_count ?? 0) >= 5
-  // Scroll regions are navigation controls, not just wrappers. A dense list
-  // can otherwise evict the history scroller from the 64-node offer set.
-  const scrollable = (node.available_actions ?? []).some(action => ["Scroll", "ScrollUpByPage", "ScrollDownByPage"].includes(action))
-  const offscreen = (node.states ?? []).includes("offscreen")
-  const labeled = Boolean(node.name || node.description || visibleValue(node))
-  // One tier per node. The tiers are exclusive on purpose: overlapping
-  // conditions used to stack, so a named container could accumulate a lower
-  // score than an editable field and push the field out of the readable list.
-  const tier = editable ? -400
-    : control && labeled ? -300
-      : control ? -250
-        : primary && labeled ? -180
-          : labeled || structural ? -100
-            : 0
-  return tier + (anchorMatch ? -120 : 0) + (!control && scrollable ? -80 : 0)
-    + (offscreen ? 30 : 0) + (labeled || control ? 0 : 10) + (node.children_count ? 5 : 0)
+  if (editable) return 0
+  if (control && named) return 1
+  if (control) return 2
+  if (primary && named) return 3
+  if (named || structural) return 4
+  return 5
+}
+
+/** Lexicographic relevance order. Ties are broken by observed facts in
+ * priority order, each one a boolean rather than a delta: a node whose text
+ * matches the goal or the prepared value first, then what is on screen before
+ * what is not, then a scroll region before a plain container, then a named node
+ * before an anonymous one, and finally the tree's own order, which is stable
+ * and therefore reproducible across runs. */
+function compareRelevance(left: FlatNode, right: FlatNode, anchors: string[], shells: ReadonlySet<string>, leftIndex: number, rightIndex: number): number {
+  const rank = relevanceRank(left, shells) - relevanceRank(right, shells)
+  if (rank !== 0) return rank
+  const matches = (node: FlatNode) => {
+    const haystack = `${node.name ?? ""} ${node.description ?? ""} ${node.value ?? ""}`
+    return anchors.some(value => value.length > 0 && haystack.includes(value))
+  }
+  const offscreen = (node: FlatNode) => Number((node.states ?? []).includes("offscreen"))
+  const scrollable = (node: FlatNode) => Number(!(node.available_actions ?? []).some(action => SCROLL_ACTIONS.includes(action)))
+  const anonymous = (node: FlatNode) => Number(!(node.name || node.description || visibleValue(node)))
+  return Number(matches(right)) - Number(matches(left))
+    || offscreen(left) - offscreen(right)
+    || scrollable(left) - scrollable(right)
+    || anonymous(left) - anonymous(right)
+    || leftIndex - rightIndex
 }
 
 const MODAL_OVERLAY_ROLES = new Set(["sheet", "alert", "dialog"])

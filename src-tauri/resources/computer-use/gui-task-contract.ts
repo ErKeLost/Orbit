@@ -3,6 +3,10 @@ import type { DesktopNode } from "./desktop-driver.ts"
 export type { DesktopNode }
 
 export type TextSlot = { id: string; value: string; description: string }
+/** The observation text budget. The observer builds to exactly this size and the
+ * state sanitizer truncates at the same value, so a request is never cut
+ * mid-line by a budget the observer did not know about: one number, one place. */
+export const OBSERVATION_CHARS = 8_000
 export type ExecutionBudget = { maxActions: number; maxDecisions: number; maxDurationMs: number }
 export type GuiTaskInput = {
   goal: string

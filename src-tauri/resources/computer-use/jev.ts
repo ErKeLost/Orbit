@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { choice, noul, TypeSafeClient } from "@typesafe-ai/sdk"
-import type { DesktopCandidate, DesktopDecision, TextSlot } from "./gui-task-contract.ts"
+import { OBSERVATION_CHARS, type DesktopCandidate, type DesktopDecision, type TextSlot } from "./gui-task-contract.ts"
 import { createDecisionClient } from "./decision-provider.ts"
 
 const MAX_OPTIONS = 255
@@ -11,7 +11,7 @@ const MAX_OPTIONS = 255
 // goal needs, which is the same failure mode the observation node cap had. This
 // is a safety net under the protocol ceiling, not a budget.
 const MAX_TARGET_OPTIONS = 200
-const MAX_STATE_CHARS = 8_000
+const MAX_STATE_CHARS = OBSERVATION_CHARS
 const MAX_HISTORY_ITEMS = 6
 
 type ChoiceAnswer = { type?: string; choice?: string; confidence?: number; probabilities?: Readonly<Record<string, number>> }
