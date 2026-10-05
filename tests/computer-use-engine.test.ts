@@ -89,10 +89,10 @@ describe("event-driven settle", () => {
   })
 
   test("attachMedia completes a settle observation with the media fact", () => {
-    const base = obs("x", [done], { context: "app=Music\ncandidate_context_count=1\n1. Play", mediaSkipped: true, treeFingerprint: "tree" })
+    const base = obs("x", [done], { context: "app=Music\ncandidates=1\n1. Play", mediaSkipped: true, treeFingerprint: "tree" })
     const withMedia = attachMedia(base, "system_now_playing: title=\"a\" state=playing")
     const without = attachMedia(base, undefined)
-    expect(withMedia.context).toContain("candidate_context_count=1\nsystem_now_playing")
+    expect(withMedia.context).toContain("candidates=1\nsystem_now_playing")
     expect(withMedia.mediaSkipped).toBeUndefined()
     expect(withMedia.fingerprint).not.toBe(without.fingerprint)
   })

@@ -2,12 +2,18 @@ import { createHash } from "node:crypto"
 import type { DesktopDriver, DesktopBounds, DesktopNode, SnapshotData } from "./desktop-driver.ts"
 import type { DesktopCandidate, DesktopObservation, TextSlot } from "./gui-task-contract.ts"
 
-// TypeSafe Choice accepts 255 options, but that is a protocol ceiling rather
-// than a useful context budget. Keep the first observation small enough for
-// staged Jev decisions; local ranking keeps caller-provided anchors near the
-// front before this cap is applied.
-const MAX_OBSERVED_ELEMENTS = 64
-const MAX_CONTEXT_CANDIDATES = 48
+// The offer set is pruned semantically, never truncated to a small fixed
+// number: a node cap silently evicts the very control the goal needs (a macOS
+// Electron player exposes ~264 nodes and ~79 real controls, so any cap below
+// 79 loses the transport bar outright). This is a safety net far above any
+// real window, not a budget.
+const MAX_OBSERVED_ELEMENTS = 512
+// The only budgeted resource is the interface text Jev reads. It is allocated
+// here and never re-cut downstream, so the observation cannot be sliced
+// mid-sentence by the state sanitizer.
+const MAX_CONTEXT_CHARS = 8_000
+const CONTEXT_TEXT_CHARS = 2_000
+const MAX_VISIBLE_TEXT = 32
 const OVERLAY_ROLES = new Set(["sheet", "alert", "dialog", "menu", "popover"])
 
 type FlatNode = DesktopNode & {
@@ -55,21 +61,39 @@ export async function observeDesktop(
   const nodes = flatten(snapshot.tree)
     .filter(node => node.ref_id && !(node.states ?? []).some(state => state === "disabled" || state === "hidden"))
   const actionableNodes = nodes.filter(hasSupportedCapability)
-  // Keep the bounded candidate surface fast, but prioritize locally supplied
-  // semantic anchors when the observed element visibly contains one. This is
-  // generic relevance ordering, not an application-specific rule.
+  // Prune structurally instead of truncating by count. A layout shell is an
+  // anonymous wrapper whose controls live deeper: offering the wrapper as a
+  // target competes with the control itself and dilutes the choice (upstream
+  // withholds exactly these). Anonymous decoration with no action of its own
+  // is never a target either, and any text it shows is already carried as
+  // observed text. What survives is every real control, in relevance order.
+  const shells = shellRefs(snapshot.tree)
+  const filteredNodes = actionableNodes.filter(node => !isLayoutShell(node, shells) && !isDecoration(node))
+  // Prioritize locally supplied semantic anchors when the observed element
+  // visibly contains one. This is generic relevance ordering, not an
+  // application-specific rule, and it decides rendering order only.
   const anchorValues = [...input.textSlots.map((slot: TextSlot) => slot.value), ...quotedGoalAnchors(input.goal ?? "")].filter(value => value.length > 0)
-  const offeredNodes = actionableNodes
+  const orderedNodes = filteredNodes
     .map((node, index) => ({ node, index }))
-    .sort((a, b) => nodePriority(a.node, anchorValues) - nodePriority(b.node, anchorValues) || a.index - b.index)
-    .slice(0, MAX_OBSERVED_ELEMENTS)
+    .sort((a, b) => nodePriority(a.node, anchorValues, shells) - nodePriority(b.node, anchorValues, shells) || a.index - b.index)
     .map(item => item.node)
+  const offeredNodes = orderedNodes.slice(0, MAX_OBSERVED_ELEMENTS)
   const windowBounds = snapshot.tree.children?.find(node => node.role === "window")?.bounds
   const menu = !input.root && findOverlay(snapshot.tree) === undefined
     ? await readMenuBar(client, snapshot.window.title, options)
     : []
   let candidates = buildCandidates(offeredNodes, input.textSlots, input.usedSlotIds, Boolean(input.root), input.allowPressEnter, !snapshot.complete, windowBounds, findOverlay(snapshot.tree), input.goal ?? "")
   candidates = addMenuCandidates(candidates, menu, input.goal ?? "")
+  // Order is part of the interface, not just the array: the readable lines Jev
+  // gets are the first ones that fit the text budget, so the controls a goal
+  // can act on must lead. Primary operations come before the contextual menu
+  // route (an Electron window offers a context menu on nearly every node), and
+  // within each tier relevance order applies. Every candidate stays offered.
+  const rankByRef = new Map(offeredNodes.map((node, index) => [node.ref_id as string, index]))
+  const tierOf = (candidate: DesktopCandidate) => (candidate.operation === "RIGHT_CLICK" ? 1 : 0)
+  candidates = [...candidates].sort((left, right) =>
+    tierOf(left) - tierOf(right)
+    || (rankByRef.get(left.ref ?? "") ?? Number.MAX_SAFE_INTEGER) - (rankByRef.get(right.ref ?? "") ?? Number.MAX_SAFE_INTEGER))
   // Text slots add mutation candidates; they must never hide navigation or
   // activation candidates. The semantic layer decides whether a field is the
   // intended target after the user has identified the right surface.
@@ -77,7 +101,15 @@ export async function observeDesktop(
   // post-action settle polls (skipMedia); attachMedia completes those later.
   const mediaSkipped = Boolean(input.skipMedia)
   const media = input.skipMedia ? undefined : await readNowPlaying(client, options)
-  const context = buildContext(snapshot, candidates, input.root, actionableNodes.length > offeredNodes.length, media, nodes, anchorValues)
+  const context = buildContext(
+    snapshot,
+    candidates,
+    input.root,
+    { observed: actionableNodes.length, pruned: actionableNodes.length - filteredNodes.length, offered: filteredNodes.length, kept: offeredNodes.length },
+    media,
+    nodes,
+    anchorValues,
+  )
   const treeFingerprint = createHash("sha256").update(JSON.stringify(nodes.map(node => ({
     role: node.role,
     name: node.name,
@@ -166,7 +198,7 @@ function combineFingerprint(tree: string, media: string | undefined): string {
 export function attachMedia(observation: DesktopObservation, media: string | undefined): DesktopObservation {
   if (!observation.mediaSkipped || !observation.treeFingerprint) return observation
   const { mediaSkipped: _skipped, ...rest } = observation
-  const context = media ? observation.context.replace(/(candidate_context_count=\d+)/, `$1\n${media}`) : observation.context
+  const context = media ? observation.context.replace(/(candidates=\d+)/, `$1\n${media}`) : observation.context
   return { ...rest, context, ...(media ? { media } : {}), fingerprint: combineFingerprint(observation.treeFingerprint, media) }
 }
 
@@ -210,8 +242,22 @@ function flatten(root: DesktopNode): FlatNode[] {
       visit(child, next, siblings.indexOf(index) + 1, siblings.length, nextActionableAncestor, nextViewport, { listRow: rows.get(index), cluster: clusters.get(index) }, nextAncestorText)
     }
   }
-  visit(root, [])
+  visit(root, [], undefined, undefined, undefined, windowViewport(root))
   return result
+}
+
+/** The window frame is the initial viewport: an element whose center falls
+ * outside it is offscreen by geometry alone. Apps that expose no page-scroll
+ * action (Electron publishes AXScrollToVisible per element instead) otherwise
+ * never produce an offscreen state, which silently disables SCROLL_TO. */
+function windowViewport(root: DesktopNode): DesktopBounds | undefined {
+  const queue: DesktopNode[] = [root]
+  for (let index = 0; index < queue.length && index < 64; index++) {
+    const node = queue[index]
+    if (node.role === "window" && node.bounds) return node.bounds
+    queue.push(...(node.children ?? []))
+  }
+  return undefined
 }
 
 function isScrollable(node: DesktopNode): boolean {
@@ -409,15 +455,13 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
       add({ operation: "FOCUS", ref, headed: false, description: `${descriptor}; focus the observed accessibility element without activating it` })
     }
     if (hasClickAction(actions) && !isEditableTextRole(node.role, node) && !wrapperOfSpecific) {
-      if (webContent) {
-        // Web content exposes a semantic press that often works (and never
-        // misses the window), so offer it first; the physical pointer stays
-        // available for cases where the semantic press has no visible effect.
-        add({ operation: "CLICK", ref, headed: false, description: `${descriptor}; delivery=semantic accessibility press; try this before pointer delivery` })
-        add({ operation: "CLICK", ref, headed: true, description: `${descriptor}; delivery=exact-window physical pointer; use when the semantic press shows no visible effect` })
-      } else {
-        add({ operation: "CLICK", ref, headed: false, description: `${descriptor}; delivery=semantic accessibility` })
-      }
+      // One target, one candidate. Delivery is a code decision, not a rival
+      // option: two deliveries for the same element split the choice and read
+      // as doubt, which is what a decision model measures as low confidence
+      // (upstream keeps its action set mutually exclusive and falls back to a
+      // pointer click when the press is refused). The engine performs that
+      // fallback itself, so it does not have to be offered here.
+      add({ operation: "CLICK", ref, headed: false, description: `${descriptor}; delivery=semantic accessibility press, then exact-window pointer delivery when it produces no visible change` })
       if (webContent && node.role === "group" && !node.name && !node.description && node.listRow) {
         add({ operation: "DOUBLE_CLICK", ref, headed: true, evidence: "structural", speculative: true, expect: ["no_overlay"], description: `${descriptor}; activate this observed list item itself with two rapid verified pointer clicks` })
       }
@@ -552,13 +596,56 @@ function hasClickAction(actions: Set<string>): boolean {
   return actions.has("Click") || actions.has("Activate")
 }
 
+/** Capabilities that make an element a control rather than decoration. SetFocus
+ * is excluded on purpose: macOS Electron apps expose it on every node, so it
+ * cannot distinguish a transport button from the layout box around it. */
+const CONTROL_ACTIONS = ["Click", "Activate", "Toggle", "Expand", "Collapse", "SetValue", "TypeText"]
+
+function hasControlCapability(node: DesktopNode): boolean {
+  const actions = new Set(node.available_actions ?? [])
+  return CONTROL_ACTIONS.some(action => actions.has(action))
+}
+
+/** Refs of nodes that contain a pressable control somewhere below them. Such a
+ * node is a layout shell: the control, not the shell, is the target. */
+function shellRefs(root: DesktopNode): Set<string> {
+  const shells = new Set<string>()
+  const visit = (node: DesktopNode): boolean => {
+    let contains = false
+    for (const child of node.children ?? []) {
+      const control = hasControlCapability(child)
+      const deeper = visit(child)
+      if (control || deeper) contains = true
+    }
+    if (contains && node.ref_id) shells.add(node.ref_id)
+    return contains || hasControlCapability(node)
+  }
+  visit(root)
+  return shells
+}
+
+/** An anonymous wrapper whose controls live deeper. Offering it as a target
+ * lets it win the choice about half the time and hides the real control; its
+ * children are offered directly instead (upstream `offerable()` withholds
+ * exactly these). */
+function isLayoutShell(node: FlatNode, shells: ReadonlySet<string>): boolean {
+  if (node.name || node.description || visibleValue(node)) return false
+  return Boolean(node.ref_id && shells.has(node.ref_id))
+}
+
+/** Anonymous decoration with no action of its own: an image or text leaf that
+ * cannot be a target. Its text already travels as observed text. */
+function isDecoration(node: FlatNode): boolean {
+  return !node.name && !node.description && !visibleValue(node) && !hasControlCapability(node) && !node.children_count
+}
+
 /** Observed structure and geometry only; never an inferred purpose. */
 function structuralFacts(node: FlatNode): string | undefined {
   const facts: string[] = []
-  if (node.listRow) facts.push(`row ${node.listRow.ordinal} of ${node.listRow.count} repeated same-shaped rows${node.listRow.inListContainer ? " in a list/scroll container" : ""}`)
-  if (node.cluster) facts.push(`control ${node.cluster.ordinal} of ${node.cluster.count} in a horizontal control cluster; size rank ${node.cluster.sizeRank}${node.cluster.centered ? "; at the cluster center" : ""}`)
-  if (node.cluster && node.bounds && node.bounds.width > 0) facts.push(`size ${Math.round(node.bounds.width)}x${Math.round(node.bounds.height)}`)
-  return facts.length ? facts.join("; ") : undefined
+  if (node.listRow) facts.push(`row ${node.listRow.ordinal}/${node.listRow.count}${node.listRow.inListContainer ? " in list" : ""}`)
+  if (node.cluster) facts.push(`cluster ${node.cluster.ordinal}/${node.cluster.count}${node.cluster.centered ? " center" : ""} size-rank ${node.cluster.sizeRank}`)
+  if (node.cluster && node.bounds && node.bounds.width > 0) facts.push(`${Math.round(node.bounds.width)}x${Math.round(node.bounds.height)}`)
+  return facts.length ? facts.join(" ") : undefined
 }
 
 function describeNode(node: FlatNode): string {
@@ -639,35 +726,83 @@ function quotedGoalAnchors(goal: string): string[] {
   return [...goal.matchAll(/[“「『"]([^”」』"]{2,120})[”」』"]/g)].map(match => match[1])
 }
 
-function buildContext(snapshot: SnapshotData, candidates: DesktopCandidate[], root?: string, truncated = false, media?: string, nodes: FlatNode[] = [], anchors: string[] = []): string {
-  const descriptions = [...new Set(candidates.filter(candidate => candidate.ref).map(candidate => candidate.description))]
-    .slice(0, MAX_CONTEXT_CANDIDATES)
-  const lines = descriptions.map((description, index) => `${index + 1}. ${description}`)
+/** One line per offered candidate. The structured criteria travel separately
+ * as the choice payload, so this text is only the human-readable interface Jev
+ * reads; keeping it terse is what lets the whole offer set fit the text budget
+ * instead of the offer set being cut to fit the text. */
+function compactCandidate(candidate: DesktopCandidate): string {
+  const criteria = candidate.criteria ?? {}
+  const what = criteria.what ?? candidate.description.split(";")[0]
+  const parts = [candidate.operation.toLowerCase(), what]
+  if (criteria.holds) parts.push(`holds ${criteria.holds}`)
+  if (criteria.structure) parts.push(criteria.structure)
+  if (criteria.in_item) parts.push(`in ${criteria.in_item}`)
+  if (criteria.at) parts.push(`at ${criteria.at}`)
+  return parts.join(" · ").slice(0, 200)
+}
+
+function buildContext(
+  snapshot: SnapshotData,
+  candidates: DesktopCandidate[],
+  root: string | undefined,
+  stats: { observed: number; pruned: number; offered: number; kept: number },
+  media?: string,
+  nodes: FlatNode[] = [],
+  anchors: string[] = [],
+): string {
+  const targets = candidates.filter(candidate => candidate.ref)
+  // Candidates already arrive in interface order (controls first, contextual
+  // menu routes last); render them as given.
   const header = [
     `app=${snapshot.app}`,
     `window=${snapshot.window.title}`,
     `scope=${root ? "drilled region" : "full local accessibility tree"}`,
     `complete=${snapshot.complete}`,
-    `candidate_space_truncated=${truncated}`,
-    `candidate_context_count=${descriptions.length}`,
+    // Pruning and truncation are reported instead of silent, so a control that
+    // is missing from the list is diagnosable from the observation alone.
+    `elements_actionable=${stats.observed} pruned_structural=${stats.pruned} offered=${stats.offered}${stats.kept < stats.offered ? ` node_cap_applied=${stats.offered - stats.kept}` : ""}`,
+    `candidates=${targets.length}`,
     ...(media ? [media] : []),
   ].join("\n")
-  const visibleText = collectVisibleText(snapshot.tree).slice(0, 32)
-  // Relevant AX evidence may be beyond the first 32 static-text leaves or
-  // the 48 candidate descriptions. Preserve its container path (not just an
-  // isolated message leaf) so Jev can judge whether two facts share a view.
+  const visibleText = collectVisibleText(snapshot.tree).slice(0, MAX_VISIBLE_TEXT)
+  // Relevant AX evidence may sit beyond the first static-text leaves. Preserve
+  // its container path (not just an isolated message leaf) so Jev can judge
+  // whether two facts share a view. Evidence and visible text share one budget,
+  // evidence first.
   const matches = nodes.filter(node => {
     const text = `${node.name ?? ""} ${node.description ?? ""} ${visibleValue(node) ?? ""}`
     return anchors.some(anchor => text.includes(anchor))
   }).slice(0, 12).map(node => `${node.role} ${sanitize(node.name ?? node.description ?? visibleValue(node) ?? "", 120)} in ${sanitize(node.path.join(" > "), 180)}`)
   const evidence = matches.length ? `\nobserved_goal_matches:\n${matches.map((value, index) => `${index + 1}. ${value}`).join("\n")}` : ""
-  const textBlock = `${evidence}${visibleText.length ? `\nobserved_text:\n${visibleText.map((value, index) => `${index + 1}. ${value}`).join("\n")}` : ""}`
-  const body = lines.length <= 40 ? lines.join("\n") : `${lines.slice(0, 20).join("\n")}\n... ${lines.length - 40} candidates omitted ...\n${lines.slice(-20).join("\n")}`
-  const remaining = 16_000 - header.length - textBlock.length - 2
-  if (body.length + textBlock.length <= remaining) return `${header}${textBlock}\n${body}`
-  const marker = "\n... middle candidates omitted ...\n"
-  const side = Math.floor((remaining - marker.length) / 2)
-  return `${header}\n${body.slice(0, side)}${marker}${body.slice(-side)}`
+  const textLines: string[] = []
+  let textUsed = evidence.length
+  for (const value of visibleText) {
+    if (textUsed + value.length + 1 > CONTEXT_TEXT_CHARS) break
+    textLines.push(`${textLines.length + 1}. ${value}`)
+    textUsed += value.length + 1
+  }
+  const textBlock = `${evidence}${textLines.length ? `\nobserved_text:\n${textLines.join("\n")}` : ""}`
+  // The text block is capped, not reserved: whatever it does not use flows to
+  // the candidate lines, so a sparse screen shows more of its interface rather
+  // than leaving budget idle. Candidates are rendered in interface order until
+  // that is spent, then the remainder is reported. The reserve covers the
+  // ` not_rendered=` suffix and the newline before the body, so the assembled
+  // observation is inside the budget by construction rather than by luck.
+  const MAX_SUFFIX_CHARS = 24
+  const candidateChars = Math.max(0, MAX_CONTEXT_CHARS - header.length - textBlock.length - 1 - MAX_SUFFIX_CHARS)
+  const lines: string[] = []
+  let used = 0
+  for (const candidate of targets) {
+    const line = `${lines.length + 1}. ${compactCandidate(candidate)}`
+    if (used + line.length + 1 > candidateChars) break
+    lines.push(line)
+    used += line.length + 1
+  }
+  const omitted = targets.length - lines.length
+  const body = lines.join("\n")
+  // The interface block is labelled so the readable list of what can be done is
+  // never confused with the text that happens to be on screen.
+  return `${header}${omitted > 0 ? ` not_rendered=${omitted}` : ""}${textBlock}${body ? `\ninterface:\n${body}` : ""}`
 }
 
 function collectVisibleText(root: DesktopNode): string[] {
@@ -685,13 +820,23 @@ function collectVisibleText(root: DesktopNode): string[] {
   return values
 }
 
-function nodePriority(node: FlatNode, anchors: string[]): number {
+function nodePriority(node: FlatNode, anchors: string[], shells: ReadonlySet<string>): number {
   const haystack = `${node.name ?? ""} ${node.description ?? ""} ${node.value ?? ""}`
   const anchorMatch = anchors.some(value => value.length > 0 && haystack.includes(value))
   // Editable fields are the only nodes that can consume the next local text
   // slot. Keep them ahead of repeated chat rows and other anchor matches so a
   // dense conversation cannot evict the composer from the bounded surface.
   const editable = isEditableTextRole(node.role, node) && (node.states ?? []).includes("editable")
+  // The innermost pressable element is a control whatever it is called, and on
+  // macOS that control is usually anonymous (a player's transport bar exposes
+  // three unnamed groups). A wrapper that merely contains controls is not a
+  // target: it would compete with the control and dilute the choice. Ordering
+  // only decides which targets the text budget reaches; nothing is dropped for
+  // ranking low.
+  const clickable = hasClickAction(new Set(node.available_actions ?? []))
+  const primary = hasPrimaryCapability(node)
+  const shell = Boolean(node.ref_id && shells.has(node.ref_id))
+  const control = clickable && !shell
   // Skeleton observations represent dense panes as anonymous structural
   // containers. Preserve large regions so a later DRILL can expose controls
   // that are intentionally absent from the shallow tree.
@@ -701,8 +846,17 @@ function nodePriority(node: FlatNode, anchors: string[]): number {
   const scrollable = (node.available_actions ?? []).some(action => ["Scroll", "ScrollUpByPage", "ScrollDownByPage"].includes(action))
   const offscreen = (node.states ?? []).includes("offscreen")
   const labeled = Boolean(node.name || node.description || visibleValue(node))
-  const wrapper = node.role === "group" && Boolean(node.children_count)
-  return (editable ? -250 : 0) + (scrollable ? -210 : 0) + (structural ? -180 : 0) + (anchorMatch ? -100 : 0) + (offscreen ? 30 : 0) + (labeled ? 0 : 10) + (wrapper ? 5 : 0)
+  // One tier per node. The tiers are exclusive on purpose: overlapping
+  // conditions used to stack, so a named container could accumulate a lower
+  // score than an editable field and push the field out of the readable list.
+  const tier = editable ? -400
+    : control && labeled ? -300
+      : control ? -250
+        : primary && labeled ? -180
+          : labeled || structural ? -100
+            : 0
+  return tier + (anchorMatch ? -120 : 0) + (!control && scrollable ? -80 : 0)
+    + (offscreen ? 30 : 0) + (labeled || control ? 0 : 10) + (node.children_count ? 5 : 0)
 }
 
 const MODAL_OVERLAY_ROLES = new Set(["sheet", "alert", "dialog"])

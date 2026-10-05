@@ -579,6 +579,27 @@ export async function runGuiTaskEngine({
         metrics.settleMs += performance.now() - settleStarted
         previousIdentities = identitiesBefore
       }
+      // Delivery is a code decision, not a rival candidate. When the semantic
+      // accessibility press left the tree exactly as it was, give the same
+      // target one exact-window pointer delivery before spending a Jev turn on
+      // it: a separate near-identical candidate is the option-level duplicate
+      // that makes a choice look uncertain.
+      if (prefetched && candidate.operation === "CLICK" && !candidate.headed && !candidate.speculative
+        && actions < input.budget.maxActions && prefetched.fingerprint === observation.fingerprint) {
+        try {
+          const retry = await executeCandidateDetailed(client, launched.app || input.target.app, { ...candidate, headed: true }, input, remaining(), signal, Math.min(EVENT_SETTLE_TIMEOUT_MS, remaining()))
+          actions++
+          const note = retry.settle?.events ? `${retry.settle.events} AX events` : `no AX events within ${retry.settle?.ms ?? 0}ms`
+          entry.note = `${entry.note ? `${entry.note}; ` : ""}semantic press changed nothing; retried as pointer delivery (${note})`
+          try {
+            prefetched = await observe(client, { app: launched.app || input.target.app, goal: input.goal, textSlots: input.textSlots ?? [], usedSlotIds, allowPressEnter, skipMedia: true }, { timeoutMs: remaining(), signal })
+          } catch {
+            prefetched = undefined
+          }
+        } catch (error) {
+          entry.note = `${entry.note ? `${entry.note}; ` : ""}semantic press changed nothing; pointer delivery failed: ${safeError(error)}`
+        }
+      }
       // Verify inferred (speculative) actions against their expectations
       // right away, using the settled successor observation. A wrong guess is
       // undone and its target excluded so the next turn takes another route.

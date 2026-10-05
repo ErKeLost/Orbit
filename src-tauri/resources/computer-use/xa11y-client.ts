@@ -156,7 +156,7 @@ function normalizeStates(value: unknown): string[] {
 }
 
 function mapAction(action: string): string {
-  const map: Record<string, string> = { focus: "SetFocus", activate: "Activate", press: "Click", set_value: "SetValue", type_text: "TypeText", scroll_into_view: "ScrollTo", scroll_up_by_page: "ScrollUpByPage", scroll_down_by_page: "ScrollDownByPage", show_menu: "RightClick" }
+  const map: Record<string, string> = { focus: "SetFocus", activate: "Activate", press: "Click", set_value: "SetValue", type_text: "TypeText", scroll_into_view: "ScrollTo", scroll_to_visible: "ScrollTo", scroll_up_by_page: "ScrollUpByPage", scroll_down_by_page: "ScrollDownByPage", show_menu: "RightClick" }
   return map[action] ?? action
 }
 function nonEmpty(value: unknown): string | undefined {

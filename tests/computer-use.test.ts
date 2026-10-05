@@ -280,7 +280,7 @@ describe("AX-first desktop observation", () => {
     expect(result.candidates.some(candidate => candidate.operation === "SET_VALUE" && candidate.ref === "@s1:e1")).toBe(false)
     const row = result.candidates.find(candidate => candidate.ref === "@s1:e2")!
     expect(row.description).not.toContain("cover.jpg")
-    expect(row.description).toContain("row 1 of 3 repeated same-shaped rows")
+    expect(row.description).toContain("row 1/3 in list")
     expect(result.candidates.some(candidate => candidate.ref === "@s1:bar" && ["CLICK", "DOUBLE_CLICK"].includes(candidate.operation))).toBe(false)
     expect(result.candidates.some(candidate => candidate.ref === "@s1:bar" && candidate.operation === "DRILL")).toBe(true)
   })
@@ -304,7 +304,7 @@ describe("AX-first desktop observation", () => {
     expect(result.context).toContain("table_cell 我说:我是蜘蛛侠")
   })
 
-  test("keeps the observation bounded and marks locally matched targets", async () => {
+  test("keeps the observation within its text budget and marks locally matched targets", async () => {
     const snapshot: SnapshotData = {
       app: "WeChat",
       complete: true,
@@ -330,11 +330,21 @@ describe("AX-first desktop observation", () => {
       allowPressEnter: false,
     }, { timeoutMs: 5_000 })
 
-    expect(result.context).toContain("candidate_space_truncated=true")
-    expect(result.candidates.length).toBeLessThan(100)
+    // Nothing is silently evicted to fit: every real control is offered, and
+    // the text Jev reads is what is budgeted instead.
+    expect(result.context.length).toBeLessThanOrEqual(8_000)
+    expect(result.context).toContain("elements_actionable=100")
+    expect(result.context).toContain("offered=100")
+    expect(result.context).not.toContain("not_rendered")
+    const refs = new Set(result.candidates.map(candidate => candidate.ref))
+    expect([...Array(100).keys()].every(index => refs.has(`@s1:e${index}`))).toBe(true)
     expect(result.candidates.find(candidate => candidate.criteria?.local_match)).toEqual(expect.objectContaining({
       criteria: expect.objectContaining({ local_match: expect.stringContaining("单人聊天联系人") }),
     }))
+    // The caller-prepared anchor is rendered first, so a dense list cannot
+    // push the intended control out of the readable interface.
+    const first = result.context.split("\n").find(line => /^1\. /.test(line))
+    expect(first).toContain("赵东升")
   })
 
   test("attaches structured identity criteria to node candidates", async () => {
@@ -880,13 +890,16 @@ describe("desktop goal loop", () => {
       assessRisk: async () => ({ probability: 0.1, model: "jev-test", latencyMs: 1, usage: { inputTokens: 1, outputTokens: 1 } }),
     })
     expect(turn).toBe(3)
-    expect(commands.map(args => args[0])).toEqual(["launch", "scroll-to", "press"])
+    // The semantic press of the chosen target left the tree exactly as it was,
+    // so the engine retried that same target once as pointer delivery instead
+    // of asking Jev to choose between two near-identical options.
+    expect(commands.map(args => args[0])).toEqual(["launch", "scroll-to", "press", "activate-app", "click"])
     expect(result.status).toBe("done")
     expect(result.goalVerified).toBe(true)
     expect(result.lastAction?.operation).toBe("CLICK")
   })
 
-  test("offers semantic before pointer delivery for web content", async () => {
+  test("offers one click candidate per control and keeps delivery a code decision", async () => {
     const snapshot: SnapshotData = {
       app: "抖音",
       complete: true,
@@ -912,12 +925,14 @@ describe("desktop goal loop", () => {
     const result = await observeDesktop(client, {
       app: "抖音", textSlots: [], usedSlotIds: new Set(), allowPressEnter: false,
     }, { timeoutMs: 5_000 })
+    // One target, one candidate. Two deliveries for the same element split the
+    // choice and read as doubt to a decision model; the engine owns the
+    // semantic-then-pointer escalation instead.
     const clicks = result.candidates.filter(candidate => candidate.ref === "@s1:e2" && candidate.operation === "CLICK")
-    expect(clicks).toHaveLength(2)
+    expect(clicks).toHaveLength(1)
     expect(clicks[0].headed).toBe(false)
     expect(clicks[0].description).toContain("semantic accessibility press")
-    expect(clicks[1].headed).toBe(true)
-    expect(clicks[1].description).toContain("physical pointer")
+    expect(clicks[0].description).toContain("pointer delivery")
   })
 
   test("refreshes a stale window id instead of failing the task", async () => {

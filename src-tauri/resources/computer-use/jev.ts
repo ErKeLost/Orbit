@@ -6,7 +6,11 @@ import type { DesktopCandidate, DesktopDecision, TextSlot } from "./gui-task-con
 import { createDecisionClient } from "./decision-provider.ts"
 
 const MAX_OPTIONS = 255
-const MAX_TARGET_OPTIONS = 32
+// The reference implementation (jev-ultrafast) sends its whole element table to
+// Jev and caps nothing; a low per-operation cap silently drops the control the
+// goal needs, which is the same failure mode the observation node cap had. This
+// is a safety net under the protocol ceiling, not a budget.
+const MAX_TARGET_OPTIONS = 200
 const MAX_STATE_CHARS = 8_000
 const MAX_HISTORY_ITEMS = 6
 
@@ -77,7 +81,7 @@ export async function decideDesktop(
   }
   for (const [operation, group] of byOperation) {
     if (!group.some(candidate => candidate.ref)) continue
-    const targetGroup = compactTargetGroup(group, history)
+    const targetGroup = compactTargetGroup(group)
     targetGroups.set(operation, targetGroup)
     if (targetGroup.length > 1) {
       questions[targetQuestion(operation)] = choice({
@@ -195,15 +199,12 @@ function isMutationOperation(operation: DesktopCandidate["operation"]): boolean 
   return !["ACTIVATE", "FOCUS", "DRILL", "WIDEN", "WAIT", "DONE", "BLOCKED", "SCROLL_TO", "SCROLL_DOWN", "SCROLL_UP", "DISMISS", "RIGHT_CLICK"].includes(operation)
 }
 
-function compactTargetGroup(group: DesktopCandidate[], history: string[]): DesktopCandidate[] {
+function compactTargetGroup(group: DesktopCandidate[]): DesktopCandidate[] {
   // Never pre-filter to "matching" targets: that is a decision, and it belongs
-  // to Jev. Local relevance only orders the list when the protocol cap forces
-  // truncation.
+  // to Jev. Local relevance only orders the list if the protocol safety net is
+  // ever reached, which a semantically pruned offer set does not reach.
   if (group.length <= MAX_TARGET_OPTIONS) return group
-  const fallbackNeeded = history.some(item => item.includes("delivery=semantic") && (item.includes("changed=false") || item.includes("failed before delivery")))
-  const primary = fallbackNeeded ? group : group.filter(candidate => !candidate.headed)
-  const source = primary.length > 0 ? primary : group
-  return [...source]
+  return [...group]
     .map((candidate, index) => ({ candidate, index }))
     .sort((left, right) => candidatePriority(left.candidate) - candidatePriority(right.candidate) || left.index - right.index)
     .slice(0, MAX_TARGET_OPTIONS)
