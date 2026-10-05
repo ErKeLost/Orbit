@@ -87,12 +87,36 @@ function ScreenMetrics({ snapshot }: { snapshot: ScreenChannelSnapshot }) {
       ["分辨率", frame ? `${frame.width} × ${frame.height}` : "—"],
       ["编码", snapshot.status ? `${snapshot.status.encodeMsAvg.toFixed(1)} ms` : "—"],
       ["重同步", String(snapshot.decodeRecoveries)],
+      // Where frames went. "收到 0" means the host never sent one; "收到 N 解码 0"
+      // means they arrived and the phone could not use them — see 原因.
+      ["收到/解码", `${snapshot.diag.received}/${snapshot.diag.decoded}`],
+      // The host's side of the same story: captured → published. If these stay
+      // at 0 the desktop is not producing frames at all (permission, capture
+      // session, encoder); if they climb while 收到 stays 0, the link is the
+      // problem.
+      ["电脑 采集/发出", snapshot.status ? `${snapshot.status.captured}/${snapshot.status.published}` : "—"],
       ["解码排队", String(snapshot.decodeQueue)],
     ] as const
   }, [snapshot])
-  return <dl className="screen-metrics-row">
-    {rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
-  </dl>
+  const { diag } = snapshot
+  const problem = diag.lastProblem
+  return <>
+    <dl className="screen-metrics-row">
+      {rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+    </dl>
+    {snapshot.status?.failure && <p className="screen-hint" role="alert">{`电脑端错误：${snapshot.status.failure}`}</p>}
+    {(diag.received > 0 && diag.decoded === 0) || problem
+      ? <p className="screen-hint" role="status">
+        {`收到 ${diag.received} 帧，已显示 ${diag.decoded} 帧`}
+        {diag.waitingForKeyframe ? `，等关键帧丢弃 ${diag.waitingForKeyframe}` : ""}
+        {diag.noDecoderConfig ? `，缺解码配置 ${diag.noDecoderConfig}` : ""}
+        {diag.decodeErrors ? `，解码报错 ${diag.decodeErrors}` : ""}
+        {problem ? `。最近问题：${problem}` : ""}
+      </p>
+      : snapshot.state === "live" && diag.received === 0
+        ? <p className="screen-hint" role="status">已连接，但电脑端还没有发来任何画面（收到 0 帧）。</p>
+        : null}
+  </>
 }
 
 function DisplayPicker({ displays, current, onPick }: { displays: RemoteDisplay[]; current: RemoteDisplay | null; onPick: (id: number) => void }) {

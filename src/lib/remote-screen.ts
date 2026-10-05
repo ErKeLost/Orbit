@@ -31,6 +31,28 @@ import type {
 
 export type ScreenChannelState = "idle" | "connecting" | "live" | "failed"
 
+export type ScreenDiag = {
+  received: number
+  decoded: number
+  /** Dropped while waiting for a keyframe after a break. */
+  waitingForKeyframe: number
+  /** Could not configure the decoder (no description yet, or it threw). */
+  noDecoderConfig: number
+  /** The decoder reported an error. */
+  decodeErrors: number
+  /** Last thing that went wrong, in words. */
+  lastProblem: string | null
+}
+
+export const EMPTY_DIAG: ScreenDiag = {
+  received: 0,
+  decoded: 0,
+  waitingForKeyframe: 0,
+  noDecoderConfig: 0,
+  decodeErrors: 0,
+  lastProblem: null,
+}
+
 export type ScreenChannelSnapshot = {
   state: ScreenChannelState
   error: string | null
@@ -65,6 +87,13 @@ export type ScreenChannelSnapshot = {
   latencyMs: number | null
   /** Frames the decoder had to drop because its reference chain broke. */
   decodeRecoveries: number
+  /**
+   * Where frames went, so a black preview can be told apart from "nothing was
+   * sent". `received` is every `screen.frame` that reached the phone; the rest
+   * say what happened to it. Without these a dead preview and a preview that
+   * never got a frame look identical (0.0 fps).
+   */
+  diag: ScreenDiag
   /** Round trip to the host, measured from the stats request. */
   rttMs: number | null
   /** What we last told the host: delay above the round trip. */
@@ -93,6 +122,7 @@ const EMPTY: ScreenChannelSnapshot = {
   receivedFps: 0,
   latencyMs: null,
   decodeRecoveries: 0,
+  diag: EMPTY_DIAG,
   rttMs: null,
   reportedQueueDelayMs: null,
   decodeQueue: 0,
@@ -293,8 +323,23 @@ class ScreenChannel {
     this.rendering = rendering
   }
 
+  /**
+   * Bump one diagnostic counter.
+   *
+   * Counters live outside the snapshot and ride along on the `emit` the frame
+   * path already does, so counting costs no extra React render per frame. A
+   * counter that carries a *reason* is a problem, and problems are published
+   * straight away: that is the whole point of having them.
+   */
+  private diag: ScreenDiag = { ...EMPTY_DIAG }
+
+  private tally(key: Exclude<keyof ScreenDiag, "lastProblem">, problem?: string): void {
+    this.diag = { ...this.diag, [key]: this.diag[key] + 1, ...(problem ? { lastProblem: problem } : {}) }
+    if (problem) this.emit({ diag: this.diag })
+  }
+
   private emit(patch: Partial<ScreenChannelSnapshot>): void {
-    this.snapshot = { ...this.snapshot, ...patch }
+    this.snapshot = { ...this.snapshot, ...patch, diag: this.diag }
     for (const listener of this.listeners) listener(this.snapshot)
   }
 
@@ -338,6 +383,7 @@ class ScreenChannel {
       ) as RemoteScreenStartResult | undefined
       if (this.closed) return
       if (!result?.display) throw new Error("桌面没有返回可捕获的显示器")
+      this.diag = { ...EMPTY_DIAG }
       if (result.codec === "h264") this.resetDecoder()
       else this.releaseFrameUrl()
       // The caller's request, not the merged result: comparing against the
@@ -388,6 +434,7 @@ class ScreenChannel {
     this.stopStatsPolling()
     this.releaseFrameUrl()
     this.releaseDecoder()
+    this.diag = { ...EMPTY_DIAG }
     this.emit({ state: "idle", frame: null, latencyMs: null, receivedFps: 0 })
     const client = this.client
     if (!client) return
@@ -476,6 +523,7 @@ class ScreenChannel {
     if (this.closed) return
     const receivedAt = Date.now()
     this.windowFrames += 1
+    this.tally("received")
     if (!this.windowStart) this.windowStart = receivedAt
     const elapsed = receivedAt - this.windowStart
     let receivedFps = this.snapshot.receivedFps
@@ -551,6 +599,7 @@ class ScreenChannel {
       // Waiting. The watchdog below asks the host for a keyframe if one does not
       // arrive on its own.
       this.waitingForKeyframeSince ??= Date.now()
+      this.tally("waitingForKeyframe", "解码链中断，正在等关键帧")
       return
     }
 
@@ -565,7 +614,12 @@ class ScreenChannel {
       this.configured = false
       this.emit({ decodeRecoveries: this.snapshot.decodeRecoveries + 1 })
     }
-    if (!this.configured && !this.configureDecoder(frame.width, frame.height)) return
+    if (!this.configured && !this.configureDecoder(frame.width, frame.height)) {
+      // Not silent any more: without a configuration record the decoder cannot
+      // start, and this used to leave the picture blank with no explanation.
+      this.tally("noDecoderConfig", this.description ? "解码器配置失败" : "还没收到解码器配置（description）")
+      return
+    }
 
     let chunk: EncodedVideoChunk
     try {
@@ -580,10 +634,12 @@ class ScreenChannel {
     }
     try {
       decoder.decode(chunk)
+      this.tally("decoded")
       this.decodedSeq = frame.seq
       this.desynced = false
       this.waitingForKeyframeSince = null
     } catch (error) {
+      this.tally("decodeErrors", message(error))
       this.emit({ error: message(error) })
     }
   }
@@ -668,6 +724,7 @@ class ScreenChannel {
         }
       },
       error: error => {
+        this.tally("decodeErrors", message(error))
         // A decoder that reports an error will keep reporting it; the useful
         // response is to stop asking it to decode.
         this.fallbackToJpeg(message(error))

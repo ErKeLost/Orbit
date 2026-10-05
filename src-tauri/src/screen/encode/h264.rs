@@ -34,6 +34,7 @@
 
 use std::time::Instant;
 
+use apple_cf::cf::{CFDictionary, CFNumber, CFString};
 use apple_cf::cm::CMTime;
 use videotoolbox::compression::{CompressionSession, EncodedFrame, FrameProperties, ProfileLevel};
 use videotoolbox::error::VTError;
@@ -55,14 +56,14 @@ pub struct H264 {
     width: u32,
     height: u32,
     bitrate: u32,
-    fps: u32,
-    /// The crate configures a session through its builder, and a running
-    /// session's rate control is not reachable through a typed API. A bitrate
-    /// change therefore rebuilds the session on the next frame instead of
-    /// reaching for a raw `CFDictionary`. The governor settles within a few
-    /// seconds, and a rebuild already means "new reference chain" — which is
-    /// what a quality change wants anyway.
-    rebuild: bool,
+    /// A bitrate change not yet pushed to the running session.
+    ///
+    /// `AverageBitRate` is a property VideoToolbox accepts on a *live* session,
+    /// so a governor step does not rebuild the encoder. Rebuilding was the bug:
+    /// every step produced new parameter sets and a forced keyframe, which the
+    /// viewer reads as a broken reference chain (`resync`) — and the startup
+    /// probe steps several times in the first seconds of every session.
+    pending_bitrate: Option<u32>,
     /// The configuration record most recently handed to the caller. Re-sending
     /// it only when it changes is what makes `description` optional on the wire.
     description: Option<Vec<u8>>,
@@ -80,8 +81,7 @@ impl H264 {
             width,
             height,
             bitrate,
-            fps,
-            rebuild: false,
+            pending_bitrate: None,
             description: None,
             force_keyframe: true,
             started_at: Instant::now(),
@@ -111,7 +111,7 @@ impl H264 {
             return Ok(());
         }
         self.bitrate = bits_per_second;
-        self.rebuild = true;
+        self.pending_bitrate = Some(bits_per_second);
         Ok(())
     }
 
@@ -126,13 +126,13 @@ impl H264 {
     }
 
     pub fn encode(&mut self, frame: &RawFrame) -> Result<Encoded, String> {
-        if self.rebuild {
-            self.session = build_session(self.width, self.height, self.bitrate, self.fps)?;
-            self.rebuild = false;
-            // A new session starts a new stream: the next frame must be
-            // independently decodable and must carry the configuration record.
-            self.force_keyframe = true;
-            self.description = None;
+        if let Some(bitrate) = self.pending_bitrate.take() {
+            // In place: same session, same parameter sets, no keyframe, no
+            // `resync` for the viewer. A failure here is not fatal to the
+            // stream — the old rate keeps working — so it is logged, not raised.
+            if let Err(error) = apply_bitrate(&self.session, bitrate) {
+                log::debug!("调整 H.264 码率失败，保持当前码率：{error}");
+            }
         }
         let Pixels::PixelBuffer(buffer) = &frame.pixels else {
             return Err("H.264 编码需要捕获层直接提供像素缓冲".into());
@@ -203,7 +203,8 @@ impl H264 {
     }
 }
 
-/// Build the encoder, or rebuild it after a bitrate change.
+/// Build the encoder session. Called once per stream (and again only when the
+/// frame size changes, which the pipeline already treats as a new stream).
 fn build_session(
     width: u32,
     height: u32,
@@ -227,6 +228,18 @@ fn build_session(
         .with_max_keyframe_interval(KEYFRAME_INTERVAL_SECONDS * fps as i32)
         .build()
         .map_err(|error: VTError| format!("无法创建 H.264 编码会话：{error}"))
+}
+
+/// Change the average bitrate of a running session.
+///
+/// `kVTCompressionPropertyKey_AverageBitRate` is documented as changeable while
+/// the session is encoding; the encoder adapts its rate control from the next
+/// frame on and keeps the existing reference chain.
+fn apply_bitrate(session: &CompressionSession, bitrate: u32) -> Result<(), VTError> {
+    let key = CFString::new("AverageBitRate");
+    let value = CFNumber::from_i64(i64::from(bitrate));
+    let properties = CFDictionary::from_pairs(&[(&key, &value)]);
+    session.set_properties(&properties)
 }
 
 /// Assemble an `AVCDecoderConfigurationRecord` from the parameter sets.
@@ -304,6 +317,78 @@ mod tests {
         let truncated = [0, 0, 0, 200, 0x65];
         assert_eq!(nal_types(&truncated).count(), 0);
         assert!(!contains_idr(&truncated));
+    }
+
+    /// A synthetic BGRA frame backed by an IOSurface, so the real VideoToolbox
+    /// encoder can run in CI without screen-recording permission.
+    #[cfg(target_os = "macos")]
+    fn synthetic_frame(width: u32, height: u32, shade: u8) -> RawFrame {
+        use apple_cf::cv::CVPixelBuffer;
+        use apple_cf::iosurface::IOSurface;
+        let format = u32::from_be_bytes(*b"BGRA");
+        let surface = IOSurface::create(width as usize, height as usize, format, 4)
+            .expect("IOSurface");
+        // Different content per frame so the encoder emits real inter frames.
+        {
+            let mut guard = surface.lock_read_write().expect("lock IOSurface");
+            // SAFETY: the surface was created a few lines up and is not shared
+            // with anything else; it stays locked for this block.
+            if let Some(bytes) = unsafe { guard.as_slice_mut() } {
+                for (index, byte) in bytes.iter_mut().enumerate() {
+                    *byte = shade.wrapping_add((index % 251) as u8);
+                }
+            }
+        }
+        let pixels = CVPixelBuffer::create_with_io_surface(&surface).expect("pixel buffer");
+        RawFrame {
+            width,
+            height,
+            captured_at_ms: 0,
+            pixels: Pixels::PixelBuffer(pixels),
+        }
+    }
+
+    /// The regression this guards: a governor step used to rebuild the whole
+    /// VideoToolbox session, so every step produced new parameter sets and a
+    /// forced keyframe. The viewer reads that as a broken reference chain and
+    /// throws its decoder away — and the startup probe steps several times in
+    /// the first seconds of every session, which is what blacked the preview.
+    ///
+    /// Changing the bitrate must leave the stream decodable *as is*: the very
+    /// next frame is an ordinary inter frame with no new configuration record.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_bitrate_change_does_not_restart_the_stream() {
+        let mut encoder = match H264::new(640, 360, 4_000_000, 30) {
+            Ok(encoder) => encoder,
+            Err(error) => {
+                eprintln!("跳过：本机没有可用的硬件 H.264 编码器（{error}）");
+                return;
+            }
+        };
+        let first = encoder.encode(&synthetic_frame(640, 360, 0)).expect("首帧");
+        assert!(first.keyframe, "首帧必须是关键帧");
+        assert!(first.description.is_some(), "首帧必须带解码器配置");
+
+        // Settle into inter frames.
+        for shade in 1..6 {
+            encoder.encode(&synthetic_frame(640, 360, shade)).expect("帧");
+        }
+
+        for bitrate in [3_000_000, 2_000_000, 5_000_000, 8_000_000] {
+            encoder.set_bitrate(bitrate).expect("set_bitrate");
+            let after = encoder
+                .encode(&synthetic_frame(640, 360, 40))
+                .expect("改码率后的第一帧");
+            assert!(
+                after.description.is_none(),
+                "改码率到 {bitrate} 后不应下发新的解码器配置（会让手机重置解码器）"
+            );
+            assert!(
+                !after.keyframe,
+                "改码率到 {bitrate} 后不应被迫插入关键帧"
+            );
+        }
     }
 
     #[test]

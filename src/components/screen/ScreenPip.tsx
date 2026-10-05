@@ -86,16 +86,15 @@ export function ScreenPip({ snapshot, placement, onPlacement }: {
     style={{ position: "fixed", zIndex: 60 }}
     enableResizing={{
       top: true, right: true, bottom: true, left: true,
-      topRight: true, bottomRight: true, bottomLeft: true, topLeft: true,
+      topRight: true, bottomRight: true, bottomLeft: false, topLeft: true,
     }}
-    // The default handles are 10px, which is not a phone target. The two bottom
-    // corners get a real hit area and a visible grip; the edges stay as they are
+    // The default handles are 10px, which is not a phone target. The bottom-right
+    // corner gets a real hit area and a visible grip; the edges stay as they are
     // so the picture is not surrounded by invisible drag zones.
     resizeHandleStyles={{
       bottomRight: { width: 28, height: 28, right: -2, bottom: -2, zIndex: 4 },
-      bottomLeft: { width: 28, height: 28, left: -2, bottom: -2, zIndex: 4 },
     }}
-    resizeHandleClasses={{ bottomRight: "screen-pip-grip", bottomLeft: "screen-pip-grip" }}
+    resizeHandleClasses={{ bottomRight: "screen-pip-grip" }}
   >
     <header className="screen-pip-bar">
       <span className="screen-state-dot" aria-hidden />

@@ -84,6 +84,8 @@ export type RemoteScreenStatus = {
   encodeMsAvg: number
   encodeMsMax: number
   bitsPerSecond: number
+  /** Excess viewer-reported queueing delay the host governor is acting on. */
+  queueDelayMs: number
   failure?: string
 }
 

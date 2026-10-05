@@ -76,11 +76,12 @@ describe("floating screen window", () => {
     // missing `enableResizing` looks like at runtime.
     // Edges report `row`/`col`, corners report a diagonal; both are handles.
     const handles = html.match(/cursor:(?:row|col|[ns][ew]|[ns]|[ew])-resize/g) ?? []
-    expect(handles.length).toBe(8)
-    // The two bottom corners get a real touch target rather than the library's
+    // 左下角已移除（只保留右下角一个可见角标），其余 7 个仍可拖。
+    expect(handles.length).toBe(7)
+    // The bottom-right corner gets a real touch target rather than the library's
     // 10px default, which is not a phone target.
     const grips = html.match(/class="screen-pip-grip" style="[^"]*width:28px;height:28px/g) ?? []
-    expect(grips.length).toBe(2)
+    expect(grips.length).toBe(1)
   })
 
   test("honours a stored size instead of a preset", () => {
