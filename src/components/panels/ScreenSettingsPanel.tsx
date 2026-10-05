@@ -13,6 +13,7 @@ import {
   type ScreenSource,
 } from "../../lib/screen-settings"
 import { hasWebCodecs, supportsHardwareH264 } from "../../lib/remote-screen"
+import { ScreenDiagnostics } from "../screen/ScreenDiagnostics"
 import {
   formatBitrate,
   onScreenHostStatus,
@@ -42,6 +43,10 @@ export function ScreenSettingsPanel() {
     <div className="panel-heading">
       <div><h1><Icon name="desktop" />屏幕</h1></div>
     </div>
+
+    {mobile && <SettingsGroup title="诊断" icon="bug" description="从电脑采集到手机显示，每一段一个数字，外加两端的日志。黑屏时按「复制全部诊断」，把文字发过来即可。">
+      <ScreenDiagnostics />
+    </SettingsGroup>}
 
     <SettingsGroup title="画面来源" icon="desktop" description="跟随当前应用时，小窗显示的是正在被操作的那个窗口；它有 computer use，操作哪个应用就会把哪个应用带到前台。">
       <SettingRow title="来源" description={preferences.source === "app" ? "跟随当前应用窗口（推荐）" : "整个显示器画面"}>

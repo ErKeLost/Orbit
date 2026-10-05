@@ -110,6 +110,130 @@ const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 /// visibly moved on.
 const TARGET_RECHECK: Duration = Duration::from_secs(1);
 
+/// How many host events the diagnostics keep. Enough to cover the last minute of
+/// a session without turning `screen.stats` into a log dump.
+const EVENT_LOG_CAPACITY: usize = 60;
+
+/// One line of the host's screen log, shown on the phone's diagnostics page.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScreenEvent {
+    pub at_ms: u64,
+    pub message: String,
+}
+
+/// What the captured pixels actually look like, measured before any codec has
+/// touched them. This is the number that separates "the computer captured a
+/// black picture" from "the phone failed to show a good one".
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptureSample {
+    /// Mean brightness 0–255 of a sparse grid of pixels.
+    pub brightness: f64,
+    /// Brightest sampled pixel, 0–255. A real desktop has *something* bright.
+    pub max_brightness: f64,
+    /// Share of sampled pixels that are (near) pure black, 0–1.
+    pub black_ratio: f64,
+    /// Share of sampled pixels that are identical to the previous sample, 0–1.
+    /// 1.0 on a playing video means the capture is frozen.
+    pub unchanged_ratio: f64,
+    pub width: u32,
+    pub height: u32,
+    /// Where the pixels came from: an IOSurface-backed buffer or plain bytes.
+    pub backing: String,
+    pub at_ms: u64,
+}
+
+/// Sample a frame's pixels on a coarse grid without copying the frame.
+fn sample_frame(frame: &capture::RawFrame, previous: &[u8]) -> (CaptureSample, Vec<u8>) {
+    const COLUMNS: usize = 32;
+    const ROWS: usize = 18;
+    let width = frame.width as usize;
+    let height = frame.height as usize;
+    let row_step = (height / ROWS).max(1);
+    let column_step = (width / COLUMNS).max(1);
+    let mut grid = Vec::with_capacity(COLUMNS * ROWS);
+    let mut row_index = 0usize;
+    let backing = match &frame.pixels {
+        #[cfg(target_os = "macos")]
+        capture::Pixels::PixelBuffer(buffer) => {
+            if buffer.io_surface().is_some() { "IOSurface" } else { "CVPixelBuffer（无 IOSurface）" }
+        }
+        capture::Pixels::Bgra { .. } => "BGRA 字节",
+    };
+    let visited = frame.pixels.for_each_row(width, height, &mut |row| {
+        if row_index % row_step == 0 && grid.len() < COLUMNS * ROWS {
+            let mut column = 0usize;
+            while column < width && grid.len() < COLUMNS * ROWS {
+                let offset = column * 4;
+                if offset + 2 < row.len() {
+                    let luma = (u16::from(row[offset]) + u16::from(row[offset + 1]) + u16::from(row[offset + 2])) / 3;
+                    grid.push(luma as u8);
+                }
+                column += column_step;
+            }
+        }
+        row_index += 1;
+    });
+    let mut sample = CaptureSample {
+        width: frame.width,
+        height: frame.height,
+        backing: if visited.is_ok() { backing.into() } else { format!("{backing}：读取失败") },
+        at_ms: now_ms() as u64,
+        ..CaptureSample::default()
+    };
+    if !grid.is_empty() {
+        let count = grid.len() as f64;
+        sample.brightness = grid.iter().map(|&value| f64::from(value)).sum::<f64>() / count;
+        sample.max_brightness = f64::from(*grid.iter().max().unwrap_or(&0));
+        sample.black_ratio = grid.iter().filter(|&&value| value <= 4).count() as f64 / count;
+        if previous.len() == grid.len() {
+            sample.unchanged_ratio =
+                grid.iter().zip(previous).filter(|(left, right)| left == right).count() as f64 / count;
+        }
+    }
+    (sample, grid)
+}
+
+/// Who is doing the capturing. Screen-recording consent belongs to a code
+/// signature, so the exact binary that is running matters.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostIdentity {
+    pub pid: u32,
+    pub executable: String,
+    pub version: String,
+    pub os: String,
+}
+
+fn host_identity() -> HostIdentity {
+    HostIdentity {
+        pid: std::process::id(),
+        executable: std::env::current_exe()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default(),
+        version: env!("CARGO_PKG_VERSION").into(),
+        os: os_version(),
+    }
+}
+
+fn os_version() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("/usr/bin/sw_vers")
+            .arg("-productVersion")
+            .output()
+            .ok()
+            .and_then(|output| String::from_utf8(output.stdout).ok())
+            .map(|version| format!("macOS {}", version.trim()))
+            .unwrap_or_else(|| "macOS".into())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        std::env::consts::OS.into()
+    }
+}
+
 fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -310,6 +434,11 @@ pub struct ScreenBus {
     /// Cached minimum of the cursors.
     delivered: AtomicU64,
     next_subscription_id: AtomicU64,
+    /// Recent host-side events, newest last. Lives on the bus rather than the
+    /// pipeline so a restart does not erase the reason for the restart.
+    events: Mutex<std::collections::VecDeque<ScreenEvent>>,
+    /// The most recent pixel sample, taken before encoding.
+    sample: Mutex<Option<CaptureSample>>,
 }
 
 impl Default for ScreenBus {
@@ -324,6 +453,8 @@ impl Default for ScreenBus {
             entries: Mutex::new(std::collections::HashMap::new()),
             delivered: AtomicU64::new(0),
             next_subscription_id: AtomicU64::new(1),
+            events: Mutex::new(std::collections::VecDeque::with_capacity(EVENT_LOG_CAPACITY)),
+            sample: Mutex::new(None),
         }
     }
 }
@@ -332,6 +463,32 @@ impl ScreenBus {
     #[must_use]
     pub fn subscribers(&self) -> usize {
         self.subscribers.load(Ordering::Acquire)
+    }
+
+    /// Record one line in the host's screen log.
+    pub fn log(&self, message: impl Into<String>) {
+        let message = message.into();
+        log::info!("[screen] {message}");
+        if let Ok(mut events) = self.events.lock() {
+            if events.len() >= EVENT_LOG_CAPACITY {
+                events.pop_front();
+            }
+            events.push_back(ScreenEvent { at_ms: now_ms() as u64, message });
+        }
+    }
+
+    fn events(&self) -> Vec<ScreenEvent> {
+        self.events.lock().map(|events| events.iter().cloned().collect()).unwrap_or_default()
+    }
+
+    fn set_sample(&self, sample: CaptureSample) {
+        if let Ok(mut slot) = self.sample.lock() {
+            *slot = Some(sample);
+        }
+    }
+
+    fn sample(&self) -> Option<CaptureSample> {
+        self.sample.lock().ok().and_then(|slot| slot.clone())
     }
 
     #[must_use]
@@ -509,12 +666,14 @@ impl ScreenSubscription {
         }
         self.bus.subscribers.fetch_add(1, Ordering::AcqRel);
         self.bus.register(self.id, version, self.wake.clone());
+        self.bus.log(format!("观看端 #{} 订阅（当前 {} 个）", self.id, self.bus.subscribers()));
     }
 
     pub fn deactivate(&self) {
         if self.active.swap(false, Ordering::AcqRel) {
             self.bus.subscribers.fetch_sub(1, Ordering::AcqRel);
             self.bus.forget(self.id);
+            self.bus.log(format!("观看端 #{} 退订（剩 {} 个）", self.id, self.bus.subscribers()));
         }
     }
 
@@ -593,6 +752,9 @@ struct Stats {
     /// the whole session. RustDesk keeps the same minimum out of its delay
     /// history for the same reason.
     queue_delay_floor_ms: AtomicU64,
+    keyframes: AtomicU64,
+    refreshes: AtomicU64,
+    started_at_ms: AtomicU64,
     failure: Mutex<Option<String>>,
     /// Codec the running pipeline actually settled on, which can differ from
     /// the request when the platform has no hardware encoder.
@@ -797,23 +959,33 @@ impl ScreenHost {
         if let Some(pipeline) = slot.as_mut() {
             if pipeline.resolved == requested && !pipeline.stop.load(Ordering::Acquire) {
                 let codec = pipeline.stats.codec().unwrap_or(requested.codec);
+                self.bus.log("screen.start：参数未变，沿用正在运行的采集（只补一个关键帧）");
                 return Ok((pipeline.display.clone(), codec));
             }
         }
         if let Some(mut previous) = slot.take() {
+            self.bus.log(if previous.stop.load(Ordering::Acquire) {
+                "上一条采集已结束，重新启动".to_string()
+            } else {
+                format!("screen.start：参数变化，重启采集（{:?} → {:?}）", previous.resolved, requested)
+            });
             previous.stop();
         }
         let app = self.app();
         let (pipeline, display) = match start_pipeline(self.bus.clone(), requested, app.clone()) {
             Ok(started) => started,
             Err(error) if requested.codec == Codec::H264 && unavailable_encoder(&error) => {
+                self.bus.log(format!("本机没有硬件 H.264 编码器，改用 JPEG：{error}"));
                 // The platform has no hardware H.264 encoder. Downgrade once,
                 // explicitly, instead of failing the request: a JPEG preview is
                 // still a preview, and the reply tells the client what it got.
                 requested.codec = Codec::Jpeg;
                 start_pipeline(self.bus.clone(), requested, app).map_err(|_| error)?
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                self.bus.log(format!("启动采集失败：{error}"));
+                return Err(error);
+            }
         };
         self.set_display(Some(display.clone()));
         let codec = pipeline.stats.codec().unwrap_or(requested.codec);
@@ -832,6 +1004,9 @@ impl ScreenHost {
                 subscribers: self.bus.subscribers(),
                 displays: capture::displays().unwrap_or_default(),
                 failure: None,
+                capture_sample: self.bus.sample(),
+                identity: host_identity(),
+                events: self.bus.events(),
                 ..ScreenStatus::default()
             };
         };
@@ -885,6 +1060,15 @@ fn status_of(
         bits_per_second: stats.bits_per_second.load(Ordering::Acquire) as f64,
         queue_delay_ms: stats.queue_delay_excess(),
         failure: stats.failure(),
+        capture_sample: bus.sample(),
+        keyframes: stats.keyframes.load(Ordering::Acquire),
+        refreshes: stats.refreshes.load(Ordering::Acquire),
+        uptime_seconds: {
+            let started = stats.started_at_ms.load(Ordering::Acquire);
+            if started == 0 { 0 } else { (now_ms() as u64).saturating_sub(started) / 1000 }
+        },
+        identity: host_identity(),
+        events: bus.events(),
     }
 }
 
@@ -931,6 +1115,17 @@ pub struct ScreenStatus {
     /// screen, a bad report is invisible and looks like "it just went slow".
     pub queue_delay_ms: u64,
     pub failure: Option<String>,
+    /// The captured pixels, measured on the computer before encoding.
+    pub capture_sample: Option<CaptureSample>,
+    /// Frames the encoder produced that were keyframes, and how many times the
+    /// viewer asked for a fresh start.
+    pub keyframes: u64,
+    pub refreshes: u64,
+    /// Seconds since the running pipeline started.
+    pub uptime_seconds: u64,
+    pub identity: HostIdentity,
+    /// The host's recent screen events, newest last.
+    pub events: Vec<ScreenEvent>,
 }
 
 /// Pick the capture box so the frame is *exactly* the target content.
@@ -1307,6 +1502,23 @@ fn pipeline_loop(
     // The first frame of a session is always a fresh start for the decoder.
     let mut announce_resync = true;
     let mut last_target_check = Instant::now();
+    // One pixel sample per second is enough to answer "is the capture black?"
+    // and costs one coarse grid walk, not a frame copy.
+    let mut last_sample = Instant::now() - Duration::from_secs(2);
+    let mut previous_grid: Vec<u8> = Vec::new();
+    let mut first_frame_logged = false;
+    stats.started_at_ms.store(now_ms() as u64, Ordering::Release);
+    bus.log(format!(
+        "采集开始：{}（{}）{}×{}，{} fps 上限，画质 {}，编码 {}，来源 {}",
+        display.name,
+        if display.kind == capture::TargetKind::Window { "窗口" } else { "显示器" },
+        frame_size.0,
+        frame_size.1,
+        resolved.max_fps,
+        resolved.quality,
+        codec.as_str(),
+        resolved.source.as_str(),
+    ));
 
     while !stop.load(Ordering::Acquire) {
         // Idle out once nobody is watching. `screen.start` from a new client
@@ -1314,12 +1526,14 @@ fn pipeline_loop(
         if bus.subscribers() == 0 {
             let since = *empty_since.get_or_insert_with(Instant::now);
             if since.elapsed() >= IDLE_GRACE {
+                bus.log("没有观看端，采集停止");
                 break;
             }
         } else {
             empty_since = None;
         }
         if let Some(failure) = capture.failure() {
+            bus.log(format!("采集失败：{failure}"));
             stats.set_failure(failure);
             break;
         }
@@ -1344,9 +1558,10 @@ fn pipeline_loop(
                             // continuation of the previous one.
                             encoder.refresh();
                             announce_resync = true;
+                            bus.log(format!("跟随应用：切换到 {}", display.name));
                         }
                         Err(error) => {
-                            log::debug!("切换预览窗口失败，保持当前画面：{error}");
+                            bus.log(format!("切换预览窗口失败，保持当前画面：{error}"));
                         }
                     }
                 }
@@ -1362,6 +1577,16 @@ fn pipeline_loop(
             continue;
         };
         stats.captured.fetch_add(1, Ordering::AcqRel);
+        if !first_frame_logged {
+            first_frame_logged = true;
+            bus.log(format!("收到第一帧：{}×{}", frame.width, frame.height));
+        }
+        if last_sample.elapsed() >= Duration::from_secs(1) {
+            last_sample = Instant::now();
+            let (sample, grid) = sample_frame(&frame, &previous_grid);
+            previous_grid = grid;
+            bus.set_sample(sample);
+        }
 
         // Somebody must be waiting: this is what keeps an inter-frame codec
         // legal, because publishing ahead of the viewers would force the
@@ -1383,9 +1608,13 @@ fn pipeline_loop(
 
         // A joining viewer needs a keyframe; a viewer whose sequence numbers
         // jumped needs one even more urgently.
-        if bus.take_refresh() | bus.take_resync() {
+        let refresh = bus.take_refresh();
+        let resync = bus.take_resync();
+        if refresh || resync {
             encoder.refresh();
             announce_resync = true;
+            stats.refreshes.fetch_add(1, Ordering::AcqRel);
+            bus.log(if resync { "观看端跳帧，强制关键帧" } else { "观看端加入或请求刷新，强制关键帧" });
         }
 
         // A size change invalidates the reference chain, so it restarts the
@@ -1402,8 +1631,10 @@ fn pipeline_loop(
                 Ok(rebuilt) => {
                     encoder = rebuilt;
                     announce_resync = true;
+                    bus.log(format!("画面尺寸变化，重建编码器：{}×{}", frame.width, frame.height));
                 }
                 Err(error) => {
+                    bus.log(format!("重建编码器失败：{error}"));
                     stats.set_failure(error);
                     break;
                 }
@@ -1424,6 +1655,7 @@ fn pipeline_loop(
                     // be smaller, and skipping one is cheaper than losing the
                     // connection. For H.264 the keyframe that follows repairs
                     // the chain.
+                    bus.log(format!("单帧 {} 字节超过上限，丢弃并降档", encoded.bytes.len()));
                     governor.force_downshift();
                     governor.apply(&mut encoder);
                     encoder.refresh();
@@ -1432,6 +1664,9 @@ fn pipeline_loop(
                     continue;
                 }
                 seq += 1;
+                if encoded.keyframe {
+                    stats.keyframes.fetch_add(1, Ordering::AcqRel);
+                }
                 let bytes = encoded.bytes.len();
                 let data = base64::engine::general_purpose::STANDARD.encode(&encoded.bytes);
                 // A resync frame carries the decoder configuration even when
@@ -1485,6 +1720,7 @@ fn pipeline_loop(
                 }
             }
             Err(error) => {
+                bus.log(format!("编码失败：{error}"));
                 stats.set_failure(error);
                 break;
             }
@@ -1502,8 +1738,19 @@ fn pipeline_loop(
             );
             // The excess over the best delay this session has seen, not the
             // absolute value: see `queue_delay_excess`.
+            let (quality_before, fps_before) = (governor.quality, governor.fps);
             governor.observe(window_bytes, stats.queue_delay_excess());
             governor.apply(&mut encoder);
+            if governor.quality != quality_before || (governor.fps - fps_before).abs() >= 1.0 {
+                bus.log(format!(
+                    "调节器：画质 {quality_before}→{}，帧率 {:.0}→{:.0}（本秒 {} 字节，排队 {} ms）",
+                    governor.quality,
+                    fps_before,
+                    governor.fps,
+                    window_bytes,
+                    stats.queue_delay_excess(),
+                ));
+            }
             window_bytes = 0;
             window_frames = 0;
             last_window = Instant::now();
@@ -1553,6 +1800,10 @@ pub fn handle_request(
                 .map_err(|_| "screen.start 参数无效".to_string())
                 .map(|settings| settings.unwrap_or_default());
             settings.and_then(|settings| {
+                host.bus.log(format!(
+                    "收到 screen.start：maxWidth={:?} maxFps={:?} quality={:?} codec={:?} source={:?} displayId={:?}",
+                    settings.max_width, settings.max_fps, settings.quality, settings.codec, settings.source, settings.display_id,
+                ));
                 settings.resolve_checked()?;
                 let (display, codec) = host.ensure(settings)?;
                 subscription.activate();
@@ -2184,6 +2435,65 @@ mod tests {
             );
         }
         session.stop();
+    }
+
+    /// The pixel sample is what the diagnostics page trusts to say "the capture
+    /// is black", so it must actually tell black from not-black.
+    #[test]
+    fn the_capture_sample_tells_a_black_frame_from_a_real_one() {
+        let frame = |shade: u8| capture::RawFrame {
+            width: 64,
+            height: 36,
+            captured_at_ms: 0,
+            pixels: capture::Pixels::Bgra { bytes: vec![shade; 64 * 36 * 4], bytes_per_row: 64 * 4 },
+        };
+        let (black, black_grid) = sample_frame(&frame(0), &[]);
+        assert!(black.max_brightness < 1.0, "全黑帧最亮应为 0，得到 {}", black.max_brightness);
+        assert!(black.black_ratio > 0.99);
+        let (bright, _) = sample_frame(&frame(180), &black_grid);
+        assert!((bright.brightness - 180.0).abs() < 1.0, "亮度应为 180，得到 {}", bright.brightness);
+        assert!(bright.black_ratio < 0.01);
+        // Compared against the black grid, nothing is the same.
+        assert!(bright.unchanged_ratio < 0.01);
+        // The same frame twice is fully unchanged — a frozen capture.
+        let (_, bright_grid) = sample_frame(&frame(180), &[]);
+        let (again, _) = sample_frame(&frame(180), &bright_grid);
+        assert!(again.unchanged_ratio > 0.99);
+    }
+
+    /// Same sampler, real ScreenCaptureKit frames (IOSurface-backed).
+    ///
+    /// ```text
+    /// cargo test --lib screen::tests::the_capture_sample_reads_real_frames -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires screen-recording permission and a real display"]
+    fn the_capture_sample_reads_real_frames() {
+        if !capture::permission_granted() {
+            eprintln!("未授权：{}", capture::permission_hint());
+            return;
+        }
+        for display in capture::displays().expect("显示器列表") {
+            let (width, height) = capture_box(&display, 1080);
+            let mut session = capture::open(CaptureRequest {
+                display_id: Some(display.id),
+                window_id: None,
+                width,
+                height,
+                fps: 30,
+                shows_cursor: true,
+            })
+            .expect("启动捕获");
+            let frame = session.next_frame(Duration::from_secs(5)).expect("一帧");
+            let (sample, _) = sample_frame(&frame, &[]);
+            session.stop();
+            eprintln!(
+                "{} id={}: 亮度 {:.1} 最亮 {:.0} 纯黑 {:.0}% 来源 {} {}x{}",
+                display.name, display.id, sample.brightness, sample.max_brightness,
+                sample.black_ratio * 100.0, sample.backing, sample.width, sample.height
+            );
+            assert!(sample.backing.starts_with("IOSurface"), "应读取 IOSurface，得到 {}", sample.backing);
+        }
     }
 
     fn frame(seq: u64) -> EncodedFrame {
