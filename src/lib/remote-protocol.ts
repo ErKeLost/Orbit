@@ -38,9 +38,6 @@ export type RemoteScreenCodec = "h264" | "jpeg"
 export type RemoteDisplay = {
   id: number
   name: string
-  /** A whole display, or one application window. */
-  kind?: "display" | "window"
-  ownerPid?: number | null
   logicalX: number
   logicalY: number
   logicalWidth: number
@@ -90,37 +87,6 @@ export type RemoteScreenStatus = {
   /** Excess viewer-reported queueing delay the host governor is acting on. */
   queueDelayMs: number
   failure?: string
-  /** The captured pixels, measured on the computer before encoding. */
-  captureSample?: RemoteCaptureSample | null
-  keyframes: number
-  refreshes: number
-  uptimeSeconds: number
-  identity: RemoteHostIdentity
-  /** The host's recent screen events, newest last. */
-  events: RemoteScreenEvent[]
-}
-
-export type RemoteCaptureSample = {
-  brightness: number
-  maxBrightness: number
-  blackRatio: number
-  unchangedRatio: number
-  width: number
-  height: number
-  backing: string
-  atMs: number
-}
-
-export type RemoteHostIdentity = {
-  pid: number
-  executable: string
-  version: string
-  os: string
-}
-
-export type RemoteScreenEvent = {
-  atMs: number
-  message: string
 }
 
 export type RemoteRequest =

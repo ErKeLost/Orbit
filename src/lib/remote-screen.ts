@@ -31,57 +31,6 @@ import type {
 
 export type ScreenChannelState = "idle" | "connecting" | "live" | "failed"
 
-export type ScreenDiag = {
-  received: number
-  /** Frames handed to the decoder. */
-  decoded: number
-  /** Frames the decoder produced and that were drawn onto the canvas. */
-  painted: number
-  /** Frames the decoder produced but there was no canvas to draw them on. */
-  noCanvas: number
-  /** Dropped while waiting for a keyframe after a break. */
-  waitingForKeyframe: number
-  /** Could not configure the decoder (no description yet, or it threw). */
-  noDecoderConfig: number
-  /** The decoder reported an error. */
-  decodeErrors: number
-  /** Last thing that went wrong, in words. */
-  lastProblem: string | null
-}
-
-export const EMPTY_DIAG: ScreenDiag = {
-  received: 0,
-  decoded: 0,
-  painted: 0,
-  noCanvas: 0,
-  waitingForKeyframe: 0,
-  noDecoderConfig: 0,
-  decodeErrors: 0,
-  lastProblem: null,
-}
-
-/** One line of the phone's screen log. */
-export type ScreenLogEntry = { at: number; message: string }
-
-/**
- * What the phone actually put on screen, read back from the pixels.
- *
- * The counters only say a frame was handed to `drawImage` or to an `<img>`;
- * only reading the result back says whether that frame was a picture.
- */
-export type ScreenReadback = {
-  /** Mean brightness 0–255 of a grid of on-screen pixels; -1 when unreadable. */
-  brightness: number
-  maxBrightness: number
-  /** Which surface was read: the H.264 canvas or the JPEG image. */
-  surface: "canvas" | "image" | "none"
-  width: number
-  height: number
-  /** Why it could not be read, if it could not. */
-  error: string | null
-  at: number
-}
-
 export type ScreenChannelSnapshot = {
   state: ScreenChannelState
   error: string | null
@@ -122,10 +71,6 @@ export type ScreenChannelSnapshot = {
    * say what happened to it. Without these a dead preview and a preview that
    * never got a frame look identical (0.0 fps).
    */
-  diag: ScreenDiag
-  /** The phone's own recent events, newest last. */
-  log: ScreenLogEntry[]
-  readback: ScreenReadback | null
   /** Round trip to the host, measured from the stats request. */
   rttMs: number | null
   /** What we last told the host: delay above the round trip. */
@@ -154,9 +99,6 @@ const EMPTY: ScreenChannelSnapshot = {
   receivedFps: 0,
   latencyMs: null,
   decodeRecoveries: 0,
-  diag: EMPTY_DIAG,
-  log: [],
-  readback: null,
   rttMs: null,
   reportedQueueDelayMs: null,
   decodeQueue: 0,
@@ -316,13 +258,6 @@ class ScreenChannel {
   }
 
   get current(): ScreenChannelSnapshot {
-    // Counters are bumped on the frame path without publishing (a render per
-    // counter would double the work of every frame), so the stored snapshot can
-    // be one step behind them. Anyone *reading* gets the live values.
-    if (this.snapshot.diag !== this.diag || this.diag.painted !== this.paintedCount) {
-      if (this.diag.painted !== this.paintedCount) this.diag = { ...this.diag, painted: this.paintedCount }
-      this.snapshot = { ...this.snapshot, diag: this.diag }
-    }
     return this.snapshot
   }
 
@@ -364,43 +299,11 @@ class ScreenChannel {
     this.rendering = rendering
   }
 
-  /**
-   * Bump one diagnostic counter.
-   *
-   * Counters live outside the snapshot and ride along on the `emit` the frame
-   * path already does, so counting costs no extra React render per frame. A
-   * counter that carries a *reason* is a problem, and problems are published
-   * straight away: that is the whole point of having them.
-   */
-  private diag: ScreenDiag = { ...EMPTY_DIAG }
-  /** Hot-path counters: folded into `diag` on the next emit, not per frame. */
-  private paintedCount = 0
   /** Every frame since the channel was created; never reset, so a reply can tell whether frames raced ahead of it. */
   private receivedTotal = 0
-  private noCanvasCount = 0
-
-  private logEntries: ScreenLogEntry[] = []
-
-  /** Record one line in the phone's screen log and publish it. */
-  private note(message: string): void {
-    this.logEntries = [...this.logEntries.slice(-79), { at: Date.now(), message }]
-    this.emit({ log: this.logEntries })
-  }
-
-  private tally(key: Exclude<keyof ScreenDiag, "lastProblem">, problem?: string): void {
-    this.diag = { ...this.diag, [key]: this.diag[key] + 1, ...(problem ? { lastProblem: problem } : {}) }
-    if (problem) {
-      // A problem that repeats every frame would flood the log; record it when it
-      // first appears and then every 30th time.
-      const count = this.diag[key]
-      if (count === 1 || count % 30 === 0) this.note(`${problem}（第 ${count} 次）`)
-      else this.emit({ diag: this.diag })
-    }
-  }
 
   private emit(patch: Partial<ScreenChannelSnapshot>): void {
-    if (this.diag.painted !== this.paintedCount) this.diag = { ...this.diag, painted: this.paintedCount }
-    this.snapshot = { ...this.snapshot, ...patch, diag: this.diag }
+    this.snapshot = { ...this.snapshot, ...patch }
     for (const listener of this.listeners) listener(this.snapshot)
   }
 
@@ -439,7 +342,6 @@ class ScreenChannel {
             ? "上一次 H.264 解码失败，已改用 JPEG"
             : `本机不支持 H.264（探测 ${this.probeDetail ?? "无结果"}），已改用 JPEG`
       const receivedBefore = this.receivedTotal
-      this.note(`发送 screen.start：codec=${codec} maxWidth=${settings.maxWidth ?? "默认"} maxFps=${settings.maxFps ?? "默认"} quality=${settings.quality ?? "默认"} source=${settings.source ?? "默认"}`)
       const result = await client.request(
         { type: "screen.start", settings: { ...settings, codec } },
         20_000,
@@ -451,14 +353,6 @@ class ScreenChannel {
         hasDecoder: this.decoder !== null,
         framesSinceRequest: this.receivedTotal - receivedBefore,
       })
-      this.note(`screen.start 回复：codec=${result.codec} 画面=${result.display?.name ?? "?"} ${result.width}×${result.height}；回复前已收 ${this.receivedTotal - receivedBefore} 帧 → 解码器 ${({ build: "新建", keep: "保留", release: "释放" } as const)[action]}`)
-      if (action !== "keep") {
-        // Counters describe the decoder they were measured on; a kept decoder
-        // keeps its counters too.
-        this.diag = { ...EMPTY_DIAG }
-        this.paintedCount = 0
-        this.noCanvasCount = 0
-      }
       if (action === "build") this.resetDecoder()
       else if (action === "release") this.releaseFrameUrl()
       // The caller's request, not the merged result: comparing against the
@@ -485,7 +379,6 @@ class ScreenChannel {
     } catch (error) {
       if (this.closed) return
       this.wasLive = false
-      this.note(`screen.start 失败：${message(error)}`)
       this.emit({ state: "failed", error: message(error) })
       throw error instanceof Error ? error : new Error(String(error))
     }
@@ -510,9 +403,6 @@ class ScreenChannel {
     this.stopStatsPolling()
     this.releaseFrameUrl()
     this.releaseDecoder()
-    this.diag = { ...EMPTY_DIAG }
-    this.paintedCount = 0
-    this.noCanvasCount = 0
     this.emit({ state: "idle", frame: null, latencyMs: null, receivedFps: 0 })
     const client = this.client
     if (!client) return
@@ -561,7 +451,6 @@ class ScreenChannel {
           // failure here is what made a backgrounded phone look permanently
           // broken when it was about to come back.
           this.stopStatsPolling()
-          this.note(this.wasLive ? "屏幕连接断开，等待重连" : "屏幕连接断开")
           this.emit({
             state: this.wasLive ? "connecting" : "failed",
             error: this.wasLive ? "已断开，正在重连电脑…" : "与桌面的屏幕连接已断开",
@@ -570,10 +459,7 @@ class ScreenChannel {
         }
         // Back online on a fresh connection: the subscription died with the
         // old socket, so it has to be re-established.
-        if (state === "online" && this.wasLive) {
-          this.note("屏幕连接恢复，重新订阅")
-          void this.resubscribe()
-        }
+        if (state === "online" && this.wasLive) void this.resubscribe()
       },
       // Subscription state lives on the connection, so a reconnect produces a
       // connection that is *not* subscribed. Re-issuing `screen.start` here is
@@ -606,10 +492,6 @@ class ScreenChannel {
     const receivedAt = Date.now()
     this.windowFrames += 1
     this.receivedTotal += 1
-    if (this.diag.received === 0) {
-      this.note(`收到第一帧：#${frame.seq} ${frame.codec} ${frame.width}×${frame.height} ${frame.keyframe ? "关键帧" : "非关键帧"}${frame.description ? " 带解码配置" : " 无解码配置"} ${frame.bytes} 字节`)
-    }
-    this.tally("received")
     if (!this.windowStart) this.windowStart = receivedAt
     const elapsed = receivedAt - this.windowStart
     let receivedFps = this.snapshot.receivedFps
@@ -669,7 +551,6 @@ class ScreenChannel {
     if (!this.decoder) this.resetDecoder()
     const decoder = this.decoder
     if (!decoder) {
-      this.tally("noDecoderConfig", "此设备没有 WebCodecs 视频解码器")
       this.emit({ error: "H.264 解码器未就绪" })
       return
     }
@@ -678,25 +559,19 @@ class ScreenChannel {
       // The host only sends this when it changed, which for a static desktop
       // is once per session.
       this.description = base64ToBytes(frame.description)
-      this.note(`收到解码配置（#${frame.seq}，${this.description.length} 字节，${avcCodecString(this.description)}）`)
       this.configured = false
     }
-    if (frame.resync && !this.desynced) this.note(`主机标记重同步（#${frame.seq}）`)
     if (frame.resync) this.desynced = true
     // A gap against the last chunk *fed to the decoder* means the reference
     // chain is broken. The host detects the same gap and answers with a
     // keyframe; until then, feeding an orphaned P-frame would only paint
     // garbage over a good picture.
-    if (this.decodedSeq !== 0 && frame.seq > this.decodedSeq + 1) {
-      if (!this.desynced) this.note(`帧号跳跃：上次解码 #${this.decodedSeq}，现在 #${frame.seq}，等关键帧`)
-      this.desynced = true
-    }
+    if (this.decodedSeq !== 0 && frame.seq > this.decodedSeq + 1) this.desynced = true
 
     if (this.desynced && !frame.keyframe) {
       // Waiting. The watchdog below asks the host for a keyframe if one does not
       // arrive on its own.
       this.waitingForKeyframeSince ??= Date.now()
-      this.tally("waitingForKeyframe", "解码链中断，正在等关键帧")
       return
     }
 
@@ -705,19 +580,13 @@ class ScreenChannel {
       // dead chain, and leaves the decoder needing a fresh configuration.
       try {
         decoder.reset()
-        this.note(`用关键帧 #${frame.seq} 恢复解码`)
       } catch {
         return
       }
       this.configured = false
       this.emit({ decodeRecoveries: this.snapshot.decodeRecoveries + 1 })
     }
-    if (!this.configured && !this.configureDecoder(frame.width, frame.height)) {
-      // Not silent any more: without a configuration record the decoder cannot
-      // start, and this used to leave the picture blank with no explanation.
-      this.tally("noDecoderConfig", this.description ? "解码器配置失败" : "还没收到解码器配置（description）")
-      return
-    }
+    if (!this.configured && !this.configureDecoder(frame.width, frame.height)) return
 
     let chunk: EncodedVideoChunk
     try {
@@ -732,12 +601,10 @@ class ScreenChannel {
     }
     try {
       decoder.decode(chunk)
-      this.tally("decoded")
       this.decodedSeq = frame.seq
       this.desynced = false
       this.waitingForKeyframeSince = null
     } catch (error) {
-      this.tally("decodeErrors", message(error))
       this.emit({ error: message(error) })
     }
   }
@@ -746,7 +613,6 @@ class ScreenChannel {
   private fallbackToJpeg(reason: string): void {
     if (this.h264Failed || this.fallbacking) return
     this.fallbacking = true
-    this.note(`H.264 解码失败，改用 JPEG：${reason}`)
     this.h264Failed = true
     this.codecNoteOverride = `H.264 解码失败，已改用 JPEG：${reason}`
     this.emit({ codecNote: this.codecNoteOverride })
@@ -807,15 +673,6 @@ class ScreenChannel {
       output: frame => {
         try {
           const canvas = this.rendering ? this.canvas : null
-          if (!canvas) {
-            // The decoder is working but there is nowhere to put the picture.
-            // This used to be silent, which is exactly what a black preview with
-            // a healthy frame rate looks like.
-            this.noCanvasCount += 1
-            if (this.noCanvasCount === 1 || this.noCanvasCount % 30 === 0) {
-              this.tally("noCanvas", this.rendering ? "解码正常，但没有可绘制的画布" : "解码正常，但预览被暂停渲染")
-            }
-          }
           if (canvas) {
             // Match the frame's own geometry; CSS decides how big it is shown.
             if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
@@ -824,7 +681,6 @@ class ScreenChannel {
             }
             const context = canvas.getContext("2d")
             context?.drawImage(frame, 0, 0, canvas.width, canvas.height)
-            this.paintedCount += 1
           }
         } finally {
           // Mandatory: an unclosed VideoFrame pins GPU memory until GC, and at
@@ -833,7 +689,6 @@ class ScreenChannel {
         }
       },
       error: error => {
-        this.tally("decodeErrors", message(error))
         // A decoder that reports an error will keep reporting it; the useful
         // response is to stop asking it to decode.
         this.fallbackToJpeg(message(error))
@@ -886,7 +741,6 @@ class ScreenChannel {
       this.waitingForKeyframeSince = null
       // `start` with unchanged settings does not restart capture — the host sees
       // the same shape and answers by forcing a keyframe for this subscriber.
-      this.note(`等关键帧超过 0.8 秒，向主机请求关键帧`)
       void this.start(this.settings).catch(() => undefined)
     }, 500)
   }
@@ -918,7 +772,6 @@ class ScreenChannel {
           if (this.closed || !result) return
           const status = result as unknown as RemoteScreenStatus
           this.emit({ status })
-          void this.readBack()
           if (status.failure) this.emit({ error: status.failure })
           this.watchDecodeBacklog()
         })
@@ -980,48 +833,6 @@ class ScreenChannel {
 
   private fpsNote: string | null = null
   private previousFps: number | undefined
-
-  /**
-   * Read back what is actually on screen.
-   *
-   * H.264 is drawn into a canvas, so the canvas is read. JPEG is shown as an
-   * `<img>`, so the same blob is decoded into a small offscreen canvas and
-   * read. Either way this measures the picture the user is looking at, which is
-   * the only number that can tell "the computer sent black" from "the phone
-   * drew black".
-   */
-  private async readBack(): Promise<void> {
-    const at = Date.now()
-    const failed = (surface: ScreenReadback["surface"], error: string): void => {
-      this.emit({ readback: { brightness: -1, maxBrightness: -1, surface, width: 0, height: 0, error, at } })
-    }
-    try {
-      if (this.snapshot.codec === "h264") {
-        const canvas = this.canvas
-        if (!canvas) return failed("none", "没有挂载画布（小窗未显示）")
-        if (canvas.width === 0 || canvas.height === 0) return failed("canvas", `画布尺寸为 ${canvas.width}×${canvas.height}`)
-        const reading = readPixels(canvas, canvas.width, canvas.height)
-        this.emit({ readback: { ...reading, surface: "canvas", width: canvas.width, height: canvas.height, error: null, at } })
-        return
-      }
-      const url = this.frameUrl
-      if (!url) return failed("none", "还没有收到 JPEG 画面")
-      const image = new Image()
-      image.decoding = "async"
-      image.src = url
-      await image.decode()
-      const scratch = document.createElement("canvas")
-      scratch.width = Math.min(320, image.naturalWidth || 1)
-      scratch.height = Math.max(1, Math.round(scratch.width * (image.naturalHeight || 1) / (image.naturalWidth || 1)))
-      const context = scratch.getContext("2d", { willReadFrequently: true })
-      if (!context) return failed("image", "无法创建读取画布")
-      context.drawImage(image, 0, 0, scratch.width, scratch.height)
-      const reading = readPixels(scratch, scratch.width, scratch.height)
-      this.emit({ readback: { ...reading, surface: "image", width: image.naturalWidth, height: image.naturalHeight, error: null, at } })
-    } catch (error) {
-      failed(this.snapshot.codec === "h264" ? "canvas" : "image", message(error))
-    }
-  }
 
   private stopStatsPolling(): void {
     if (this.statsTimer) clearInterval(this.statsTimer)
@@ -1103,29 +914,6 @@ export function decoderActionOnStart(input: {
   if (input.codec !== "h264") return "release"
   if (!input.hasDecoder) return "build"
   return input.framesSinceRequest > 0 ? "keep" : "build"
-}
-
-/** Mean and max brightness of a sparse grid of pixels on a canvas. */
-function readPixels(canvas: HTMLCanvasElement, width: number, height: number): { brightness: number; maxBrightness: number } {
-  const context = canvas.getContext("2d", { willReadFrequently: true })
-  if (!context) throw new Error("画布没有 2D 上下文")
-  const columns = 24
-  const rows = 14
-  let sum = 0
-  let max = 0
-  let samples = 0
-  for (let row = 0; row < rows; row += 1) {
-    for (let column = 0; column < columns; column += 1) {
-      const x = Math.min(width - 1, Math.floor(((column + 0.5) / columns) * width))
-      const y = Math.min(height - 1, Math.floor(((row + 0.5) / rows) * height))
-      const data = context.getImageData(x, y, 1, 1).data
-      const value = ((data[0] ?? 0) + (data[1] ?? 0) + (data[2] ?? 0)) / 3
-      sum += value
-      max = Math.max(max, value)
-      samples += 1
-    }
-  }
-  return { brightness: samples ? sum / samples : -1, maxBrightness: max }
 }
 
 /** The one screen channel this app owns. */

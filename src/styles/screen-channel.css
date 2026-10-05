@@ -136,12 +136,17 @@ canvas.screen-frame {
   z-index: 60;
   display: flex;
   flex-direction: column;
-  border-radius: 12px;
+  padding: 0;
+  border-radius: 16px;
   overflow: hidden;
-  background: color-mix(in oklab, #0b0b0d 92%, transparent);
-  border: 1px solid color-mix(in oklab, white 14%, transparent);
-  box-shadow: 0 18px 44px rgb(0 0 0 / 55%), 0 2px 8px rgb(0 0 0 / 40%);
-  backdrop-filter: blur(14px);
+  /* Glass, but dark enough that the picture is the brightest thing on screen. */
+  background: color-mix(in oklab, #101014 90%, transparent);
+  border: 1px solid color-mix(in oklab, white 12%, transparent);
+  box-shadow:
+    0 24px 60px rgb(0 0 0 / 58%),
+    0 6px 16px rgb(0 0 0 / 40%),
+    inset 0 1px 0 color-mix(in oklab, white 8%, transparent);
+  backdrop-filter: blur(18px) saturate(1.2);
   /* The window itself never scrolls; the picture fills it. */
   touch-action: none;
 }
@@ -149,13 +154,18 @@ canvas.screen-frame {
 .screen-pip-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 4px 0 9px;
+  gap: 7px;
+  height: 34px;
+  padding: 0 5px 0 11px;
   cursor: grab;
   touch-action: none;
   color: #f4f4f5;
-  background: color-mix(in oklab, white 7%, transparent);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in oklab, white 9%, transparent),
+    color-mix(in oklab, white 3%, transparent)
+  );
+  border-bottom: 1px solid color-mix(in oklab, white 6%, transparent);
 }
 
 .screen-pip-bar:active {
@@ -165,14 +175,31 @@ canvas.screen-frame {
 .screen-pip-title {
   font-size: 11.5px;
   font-weight: 500;
+  letter-spacing: 0.1px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 45%;
+  max-width: 44%;
+  color: color-mix(in oklab, #f4f4f5 88%, transparent);
 }
 
 .screen-pip-spacer {
   flex: 1 1 auto;
+}
+
+/* The one number worth showing. Tabular figures and a fixed width so a changing
+   rate does not shift the buttons around it. */
+.screen-pip-fps {
+  flex: none;
+  min-width: 47px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  text-align: center;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in oklab, #f4f4f5 62%, transparent);
+  background: color-mix(in oklab, white 6%, transparent);
 }
 
 /* Touch targets stay at 30px even though the bar is compact: this is a phone. */
@@ -181,10 +208,11 @@ canvas.screen-frame {
   height: 30px !important;
   min-width: 30px !important;
   padding: 0 !important;
-  border-radius: 7px;
+  border-radius: 9px;
   color: inherit;
   background: transparent;
   flex: none;
+  transition: background 120ms ease;
 }
 
 .screen-pip-action svg {
@@ -193,25 +221,26 @@ canvas.screen-frame {
 }
 
 .screen-pip-action:hover {
-  background: color-mix(in oklab, white 12%, transparent);
+  background: color-mix(in oklab, white 14%, transparent);
 }
 
 .screen-pip-body {
   display: block;
-  /* The window is resizable, so the picture takes whatever height is left after
-     the title bar and the numbers row. */
+  /* The window is resizable, so the picture takes whatever height is left. */
   flex: 1 1 auto;
   min-height: 0;
   position: relative;
   width: 100%;
-  padding: 0;
+  /* A thin inset so the picture reads as framed rather than bled to the edge. */
+  padding: 6px;
   border: 0;
-  background: #000;
+  background: transparent;
   cursor: zoom-in;
 }
 
 .screen-pip-body .screen-stage {
-  border-radius: 0;
+  border-radius: 11px;
+  box-shadow: 0 0 0 1px color-mix(in oklab, white 7%, transparent);
 }
 
 /* A free-form box: fill it and let the picture letterbox inside. */
@@ -224,52 +253,19 @@ canvas.screen-frame {
 .screen-pip-grip::after {
   content: "";
   position: absolute;
-  right: 5px;
-  bottom: 5px;
-  width: 9px;
-  height: 9px;
-  border-right: 2px solid color-mix(in oklab, white 55%, transparent);
-  border-bottom: 2px solid color-mix(in oklab, white 55%, transparent);
-  border-bottom-right-radius: 3px;
+  right: 6px;
+  bottom: 6px;
+  width: 10px;
+  height: 10px;
+  border-right: 2px solid color-mix(in oklab, white 42%, transparent);
+  border-bottom: 2px solid color-mix(in oklab, white 42%, transparent);
+  border-bottom-right-radius: 4px;
   pointer-events: none;
-}
-
-.screen-pip-grip[class*="left"]::after {
-  right: auto;
-  left: 5px;
-  border-right: 0;
-  border-left: 2px solid color-mix(in oklab, white 55%, transparent);
-  border-bottom-right-radius: 0;
-  border-bottom-left-radius: 3px;
 }
 
 /* While dragging or resizing, do not let the picture swallow the gesture. */
 .screen-pip .screen-surface {
   pointer-events: none;
-}
-
-.screen-pip-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  height: 22px;
-  padding: 0 9px;
-  font-size: 10.5px;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-variant-numeric: tabular-nums;
-  color: color-mix(in oklab, #f4f4f5 62%, transparent);
-  background: color-mix(in oklab, white 5%, transparent);
-}
-
-/* 浮窗里的问题提示：黑屏时唯一需要读的一行，所以允许换行、不截断。 */
-.screen-pip-problem {
-  padding: 4px 9px 6px;
-  font-size: 10.5px;
-  line-height: 1.35;
-  color: #fbbf24;
-  background: color-mix(in oklab, white 5%, transparent);
-  overflow-wrap: anywhere;
 }
 
 /* ── the enlarged view ─────────────────────────────────────────────── */
@@ -404,121 +400,4 @@ canvas.screen-frame {
 .titlebar-button.selected {
   color: var(--foreground);
   background: color-mix(in oklab, var(--primary, currentColor) 20%, transparent);
-}
-
-/* ── diagnostics ───────────────────────────────────────────────────── */
-
-.screen-diagnostics {
-  display: grid;
-  gap: 14px;
-  padding: 14px 16px;
-}
-
-.screen-diagnostics-bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.screen-diagnostics-state {
-  font-size: 12px;
-  color: var(--muted-foreground);
-}
-
-.screen-diagnostics-verdict {
-  margin: 0;
-  padding: 10px 12px;
-  border-radius: 8px;
-  font-size: 13px;
-  line-height: 1.5;
-  color: #fbbf24;
-  background: color-mix(in oklab, #fbbf24 10%, transparent);
-}
-
-.screen-diagnostics-section h3 {
-  margin: 0 0 6px;
-  font-size: 12.5px;
-  font-weight: 600;
-}
-
-.screen-diagnostics-section dl {
-  display: grid;
-  gap: 2px;
-  margin: 0;
-}
-
-.screen-diagnostics-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.screen-diagnostics-row dt {
-  flex: none;
-  color: var(--muted-foreground);
-}
-
-.screen-diagnostics-row dd {
-  margin: 0;
-  min-width: 0;
-  text-align: right;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
-
-.screen-diagnostics-row[data-warn] dd {
-  color: #fbbf24;
-}
-
-.screen-diagnostics-log {
-  display: grid;
-  gap: 3px;
-  max-height: 260px;
-  margin: 0;
-  padding: 0;
-  overflow: auto;
-  list-style: none;
-  font-size: 11px;
-  line-height: 1.45;
-  font-family: var(--font-mono, ui-monospace, monospace);
-}
-
-.screen-diagnostics-log li {
-  display: flex;
-  gap: 8px;
-}
-
-.screen-diagnostics-log time {
-  flex: none;
-  color: var(--muted-foreground);
-}
-
-.screen-diagnostics-log span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.screen-diagnostics-raw summary {
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--muted-foreground);
-}
-
-.screen-diagnostics-raw pre {
-  max-height: 320px;
-  margin: 8px 0 0;
-  padding: 10px;
-  overflow: auto;
-  border-radius: 8px;
-  background: color-mix(in oklab, white 4%, transparent);
-  font-size: 10.5px;
-  line-height: 1.45;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  user-select: text;
-  -webkit-user-select: text;
 }

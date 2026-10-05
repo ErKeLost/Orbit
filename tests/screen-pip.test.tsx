@@ -52,7 +52,6 @@ function snapshot(overrides: Partial<Record<string, unknown>> = {}) {
     receivedFps: 30,
     latencyMs: 12,
     decodeRecoveries: 0,
-    diag: { received: 0, decoded: 0, painted: 0, noCanvas: 0, waitingForKeyframe: 0, noDecoderConfig: 0, decodeErrors: 0, lastProblem: null },
     decodeQueue: 0,
     fpsNote: null,
     ...overrides,
@@ -157,16 +156,16 @@ describe("floating screen window", () => {
     expect(root).not.toContain("display:inline-block")
   })
 
-  test("shows numbers only once there is a picture", () => {
-    // A line of status text parked at the bottom of a small window is both noise
-    // and invisible at a glance; failures are toasts instead.
-    const withFrame = render({})
-    expect(withFrame).toContain("1728×1117")
-    expect(withFrame).toContain("30.0 fps")
-    const withoutFrame = render({}, snapshot({ frame: null }))
-    expect(withoutFrame).not.toContain("fps")
-    expect(withoutFrame).not.toContain("重连")
-    expect(withoutFrame).not.toContain("等待画面")
+  test("the bar carries the frame rate and nothing else", () => {
+    // The window is a picture. The only number it shows is the rate the phone is
+    // actually receiving; everything that needs explaining is a toast.
+    const html = render({})
+    expect(html).toContain("30 fps")
+    expect(html).toContain('class="screen-pip-fps"')
+    // The resolution row and the received/decoded/painted counters are gone.
+    expect(html).not.toContain("1728×1117")
+    expect(html).not.toContain("画")
+    expect(html).not.toContain("screen-pip-foot")
   })
 
   test("the picture letterboxes inside a free-form box", () => {

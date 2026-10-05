@@ -88,8 +88,10 @@ describe("screen.start reply racing the first frame", () => {
     // decoder was configured from the description that came with it.
     expect(alive[0]!.configured).toBeGreaterThan(0)
     expect(alive[0]!.decoded).toBe(1)
-    expect(channel.current.diag.decoded).toBe(1)
-    expect(channel.current.diag.lastProblem).toBeNull()
+    // Same fact from the channel's side: the frame reached the screen state and
+    // nothing was reported as an error.
+    expect(channel.current.frame?.seq).toBe(1)
+    expect(channel.current.error).toBeNull()
   })
 
   test("later frames keep decoding after the reply", async () => {
@@ -99,7 +101,8 @@ describe("screen.start reply racing the first frame", () => {
     handlers.onEvent?.(frame(2, false, false))
     handlers.onEvent?.(frame(3, false, false))
     expect(live.decoded).toBe(before + 2)
-    expect(channel.current.diag.decoded).toBe(before + 2)
+    expect(channel.current.frame?.seq).toBe(3)
+    expect(channel.current.error).toBeNull()
   })
 })
 
@@ -118,6 +121,7 @@ describe("keyframe re-request from the watchdog", () => {
     expect(aliveNow[0]).toBe(decoder)
     expect(decoder.closed).toBe(false)
     // And that keyframe was actually used.
-    expect(channel.current.diag.lastProblem).toBeNull()
+    expect(channel.current.error).toBeNull()
+    expect(decoder.configured).toBeGreaterThan(0)
   })
 })

@@ -136,6 +136,7 @@ export function ScreenPip({ snapshot, placement, onPlacement }: {
       <span className="screen-state-dot" aria-hidden />
       <span className="screen-pip-title">{snapshot.display?.name ?? "电脑屏幕"}</span>
       <span className="screen-pip-spacer" />
+      <span className="screen-pip-fps" title="手机实际收到的帧率">{`${Math.round(snapshot.receivedFps)} fps`}</span>
       <Button
         className="screen-pip-action"
         title="重置大小与位置"
@@ -166,21 +167,5 @@ export function ScreenPip({ snapshot, placement, onPlacement }: {
     >
       <ScreenFrame snapshot={snapshot} interactive={false} active={!expanded} fill />
     </div>
-    {/* Numbers only. Anything that needs explaining is a toast: a line of status
-        text parked at the bottom of a small floating window is both noise and
-        invisible at a glance, which is the opposite of what a status line is
-        for. The header dot carries the state. */}
-    {snapshot.frame && <footer className="screen-pip-foot">
-      <span>{`${snapshot.frame.width}×${snapshot.frame.height}`}</span>
-      {/* 收到 / 已解码 / 电脑发出：黑屏时一眼看出断在哪一段，不必先点开放大视图。 */}
-      <span>{`收${snapshot.diag.received} 解${snapshot.diag.decoded} 画${snapshot.diag.painted}`}</span>
-      <span>{`${snapshot.receivedFps.toFixed(1)} fps`}</span>
-    </footer>}
-    {(snapshot.diag.lastProblem || snapshot.status?.failure || (snapshot.diag.received > 0 && snapshot.diag.painted === 0)) && <div className="screen-pip-problem" role="status">
-      {snapshot.status?.failure
-        ? `电脑端：${snapshot.status.failure}`
-        : snapshot.diag.lastProblem
-          ?? `收到 ${snapshot.diag.received} 帧、送入解码 ${snapshot.diag.decoded}，但画到屏幕上的是 ${snapshot.diag.painted} 帧`}
-    </div>}
   </Rnd>
 }

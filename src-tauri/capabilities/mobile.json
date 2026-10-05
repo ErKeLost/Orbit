@@ -1,16 +1,10 @@
 {
   "$schema": "../gen/schemas/mobile-schema.json",
   "identifier": "mobile",
-  "description": "Camera, QR scanner, and copying screen diagnostics on Android and iOS",
-  "platforms": [
-    "android",
-    "iOS"
-  ],
-  "windows": [
-    "main"
-  ],
+  "description": "Camera and QR scanner access on Android and iOS",
+  "platforms": ["android", "iOS"],
+  "windows": ["main"],
   "permissions": [
-    "barcode-scanner:default",
-    "clipboard-manager:allow-write-text"
+    "barcode-scanner:default"
   ]
 }
