@@ -153,6 +153,58 @@ describe("offer set on a real Electron player window", () => {
     expect(observation.context).toContain("pruned=")
   })
 
+  test("never splits an emoji into an invalid lone surrogate when clipping", async () => {
+    // Video titles and author names are emoji-dense. Clipping with String.slice
+    // cuts by code unit, so an emoji straddling the limit becomes an unpaired
+    // surrogate — invalid Unicode that the service rejects with a 400, killing
+    // the whole turn. Clip by code point instead, and replace any unpaired
+    // surrogate already present in the source text.
+    const emoji = "😀"                                   // U+1F600, two code units
+    const prefix = "标".repeat(59)                        // 59 units: the emoji straddles unit 60
+    const snapshot: SnapshotData = {
+      app: "抖音", complete: true, ref_count: 1, snapshot_id: "s1",
+      window: { id: "w-1", title: "抖音" },
+      tree: {
+        role: "window", name: "抖音",
+        children: [{
+          role: "group", ref_id: "@s1:e1",
+          name: "标".repeat(20) + emoji + "放在中间" + emoji + "放在后面" + "字".repeat(80),
+          actions: ["press"],
+          children: [{ role: "image", ref_id: "@s1:e2", name: emoji + emoji, available_actions: ["SetFocus"] }],
+        }],
+      },
+    }
+    const emojiDriver: DesktopDriver = {
+      async run<T>(args: string[]): Promise<DesktopEnvelope<T>> {
+        if (args[0] !== "snapshot") return { version: "orbit.ax.v1", ok: true, command: args[0], data: { items: [] } } as DesktopEnvelope<T>
+        return { version: "orbit.ax.v1", ok: true, command: "snapshot", data: normalizeSnapshot(snapshot) } as DesktopEnvelope<T>
+      },
+      async dispose() { /* nothing to release */ },
+    }
+    const observation = await observeDesktop(emojiDriver, {
+      app: "抖音", goal: "打开一个视频", textSlots: [], usedSlotIds: new Set(), allowPressEnter: false,
+    }, { timeoutMs: 5_000 })
+
+    const hasLoneSurrogate = (text: string) =>
+      [...text].some(ch => { const code = ch.codePointAt(0) ?? 0; return code >= 0xd800 && code <= 0xdfff })
+
+    expect(hasLoneSurrogate(observation.context)).toBe(false)
+    for (const candidate of observation.candidates) {
+      if (candidate.criteria) {
+        for (const value of Object.values(candidate.criteria)) expect(hasLoneSurrogate(value)).toBe(false)
+      }
+      if (candidate.identity) {
+        for (const value of Object.values(candidate.identity)) expect(hasLoneSurrogate(String(value))).toBe(false)
+      }
+      expect(hasLoneSurrogate(candidate.description)).toBe(false)
+    }
+    // An emoji that fits inside the clip limit survives whole; one that would
+    // straddle it is dropped entire rather than sent as a broken half.
+    const lines = tableLines(observation)
+    expect(lines.some(line => line.includes(emoji))).toBe(true)
+    expect(lines.every(line => !line.includes("\uFFFD"))).toBe(true)
+  })
+
   test("keeps the search field typeable and referenced by its table index", async () => {
     const withSlot = await observeDesktop(driver, {
       app: "汽水音乐",

@@ -401,8 +401,20 @@ export function isRetryableJevError(error: unknown): boolean {
   return /timeout|timed out|fetch failed|connection|socket|temporarily unavailable|\b5\d\d\b/i.test(message)
 }
 
+/** Clip to `max` UTF-16 code units without ever splitting a surrogate pair,
+ * and replace lone surrogates already present in the source. Web labels are
+ * full of emoji, and half of one is invalid Unicode the service rejects. */
 function sanitize(value: string, max: number): string {
-  return String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max)
+  const text = String(value ?? "").replace(/\s+/g, " ").trim()
+  let out = ""
+  let used = 0
+  for (const chunk of text) {
+    if (used + chunk.length > max) break
+    const code = chunk.codePointAt(0) ?? 0
+    out += code >= 0xd800 && code <= 0xdfff ? "\uFFFD" : chunk
+    used += chunk.length
+  }
+  return out
 }
 
 function safeError(error: unknown): string {

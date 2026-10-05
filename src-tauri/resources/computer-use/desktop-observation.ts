@@ -773,7 +773,7 @@ function elementLine(node: FlatNode, index: number, operations: readonly string[
   if (structure) parts.push(structure)
   if (!label && !derived && node.bounds) parts.push(`at ${Math.round(node.bounds.x)},${Math.round(node.bounds.y)}`)
   if (operations.length) parts.push(operations.map(operation => operation.toLowerCase()).join(","))
-  return parts.join(" · ").slice(0, 200)
+  return parts.join(" · ").slice(0, 200).replace(/[\uD800-\uDFFF]/gu, chunk => (chunk.codePointAt(0) ?? 0) > 0xffff ? chunk : "\uFFFD")
 }
 
 function buildContext(
@@ -947,6 +947,19 @@ function findOverlay(root: DesktopNode): string | undefined {
   return undefined
 }
 
+/** Clip to `max` UTF-16 code units without ever splitting a surrogate pair,
+ * and replace lone surrogates already present in the source. Cutting an emoji
+ * in half yields an unpaired surrogate, which is invalid Unicode: the service
+ * rejects the whole request because of one broken icon in a video title. */
 function sanitize(value: string, max: number): string {
-  return value.replace(/\s+/g, " ").trim().slice(0, max)
+  const text = value.replace(/\s+/g, " ").trim()
+  let out = ""
+  let used = 0
+  for (const chunk of text) {
+    if (used + chunk.length > max) break
+    const code = chunk.codePointAt(0) ?? 0
+    out += code >= 0xd800 && code <= 0xdfff ? "\uFFFD" : chunk
+    used += chunk.length
+  }
+  return out
 }
