@@ -89,7 +89,7 @@ function ScreenMetrics({ snapshot }: { snapshot: ScreenChannelSnapshot }) {
       ["重同步", String(snapshot.decodeRecoveries)],
       // Where frames went. "收到 0" means the host never sent one; "收到 N 解码 0"
       // means they arrived and the phone could not use them — see 原因.
-      ["收到/解码", `${snapshot.diag.received}/${snapshot.diag.decoded}`],
+      ["收/解/画", `${snapshot.diag.received}/${snapshot.diag.decoded}/${snapshot.diag.painted}`],
       // The host's side of the same story: captured → published. If these stay
       // at 0 the desktop is not producing frames at all (permission, capture
       // session, encoder); if they climb while 收到 stays 0, the link is the
@@ -105,9 +105,9 @@ function ScreenMetrics({ snapshot }: { snapshot: ScreenChannelSnapshot }) {
       {rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
     </dl>
     {snapshot.status?.failure && <p className="screen-hint" role="alert">{`电脑端错误：${snapshot.status.failure}`}</p>}
-    {(diag.received > 0 && diag.decoded === 0) || problem
+    {(diag.received > 0 && diag.painted === 0) || problem
       ? <p className="screen-hint" role="status">
-        {`收到 ${diag.received} 帧，已显示 ${diag.decoded} 帧`}
+        {`收到 ${diag.received} 帧，送入解码 ${diag.decoded}，画出 ${diag.painted}`}
         {diag.waitingForKeyframe ? `，等关键帧丢弃 ${diag.waitingForKeyframe}` : ""}
         {diag.noDecoderConfig ? `，缺解码配置 ${diag.noDecoderConfig}` : ""}
         {diag.decodeErrors ? `，解码报错 ${diag.decodeErrors}` : ""}

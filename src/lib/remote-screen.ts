@@ -33,7 +33,12 @@ export type ScreenChannelState = "idle" | "connecting" | "live" | "failed"
 
 export type ScreenDiag = {
   received: number
+  /** Frames handed to the decoder. */
   decoded: number
+  /** Frames the decoder produced and that were drawn onto the canvas. */
+  painted: number
+  /** Frames the decoder produced but there was no canvas to draw them on. */
+  noCanvas: number
   /** Dropped while waiting for a keyframe after a break. */
   waitingForKeyframe: number
   /** Could not configure the decoder (no description yet, or it threw). */
@@ -47,6 +52,8 @@ export type ScreenDiag = {
 export const EMPTY_DIAG: ScreenDiag = {
   received: 0,
   decoded: 0,
+  painted: 0,
+  noCanvas: 0,
   waitingForKeyframe: 0,
   noDecoderConfig: 0,
   decodeErrors: 0,
@@ -332,6 +339,9 @@ class ScreenChannel {
    * straight away: that is the whole point of having them.
    */
   private diag: ScreenDiag = { ...EMPTY_DIAG }
+  /** Hot-path counters: folded into `diag` on the next emit, not per frame. */
+  private paintedCount = 0
+  private noCanvasCount = 0
 
   private tally(key: Exclude<keyof ScreenDiag, "lastProblem">, problem?: string): void {
     this.diag = { ...this.diag, [key]: this.diag[key] + 1, ...(problem ? { lastProblem: problem } : {}) }
@@ -339,6 +349,7 @@ class ScreenChannel {
   }
 
   private emit(patch: Partial<ScreenChannelSnapshot>): void {
+    if (this.diag.painted !== this.paintedCount) this.diag = { ...this.diag, painted: this.paintedCount }
     this.snapshot = { ...this.snapshot, ...patch, diag: this.diag }
     for (const listener of this.listeners) listener(this.snapshot)
   }
@@ -384,6 +395,8 @@ class ScreenChannel {
       if (this.closed) return
       if (!result?.display) throw new Error("桌面没有返回可捕获的显示器")
       this.diag = { ...EMPTY_DIAG }
+      this.paintedCount = 0
+      this.noCanvasCount = 0
       if (result.codec === "h264") this.resetDecoder()
       else this.releaseFrameUrl()
       // The caller's request, not the merged result: comparing against the
@@ -435,6 +448,8 @@ class ScreenChannel {
     this.releaseFrameUrl()
     this.releaseDecoder()
     this.diag = { ...EMPTY_DIAG }
+    this.paintedCount = 0
+    this.noCanvasCount = 0
     this.emit({ state: "idle", frame: null, latencyMs: null, receivedFps: 0 })
     const client = this.client
     if (!client) return
@@ -708,6 +723,15 @@ class ScreenChannel {
       output: frame => {
         try {
           const canvas = this.rendering ? this.canvas : null
+          if (!canvas) {
+            // The decoder is working but there is nowhere to put the picture.
+            // This used to be silent, which is exactly what a black preview with
+            // a healthy frame rate looks like.
+            this.noCanvasCount += 1
+            if (this.noCanvasCount === 1 || this.noCanvasCount % 30 === 0) {
+              this.tally("noCanvas", this.rendering ? "解码正常，但没有可绘制的画布" : "解码正常，但预览被暂停渲染")
+            }
+          }
           if (canvas) {
             // Match the frame's own geometry; CSS decides how big it is shown.
             if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
@@ -716,6 +740,7 @@ class ScreenChannel {
             }
             const context = canvas.getContext("2d")
             context?.drawImage(frame, 0, 0, canvas.width, canvas.height)
+            this.paintedCount += 1
           }
         } finally {
           // Mandatory: an unclosed VideoFrame pins GPU memory until GC, and at

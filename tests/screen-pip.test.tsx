@@ -52,6 +52,7 @@ function snapshot(overrides: Partial<Record<string, unknown>> = {}) {
     receivedFps: 30,
     latencyMs: 12,
     decodeRecoveries: 0,
+    diag: { received: 0, decoded: 0, painted: 0, noCanvas: 0, waitingForKeyframe: 0, noDecoderConfig: 0, decodeErrors: 0, lastProblem: null },
     decodeQueue: 0,
     fpsNote: null,
     ...overrides,

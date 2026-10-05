@@ -28,6 +28,9 @@ import { ScreenFrame } from "./ScreenFrame"
  * the point: a three-step cycle cannot match "that show, in that corner, at
  * that size".
  */
+/** A drag that ends within this distance of where it began was a tap. */
+const TAP_SLOP_PX = 6
+
 export function ScreenPip({ snapshot, placement, onPlacement }: {
   snapshot: ScreenChannelSnapshot
   placement: PipPlacement
@@ -69,11 +72,29 @@ export function ScreenPip({ snapshot, placement, onPlacement }: {
     maxWidth={limits.max}
     maxHeight={Math.round(viewport.height * 0.9)}
     // No `dragHandleClassName`: the whole window drags, which is what a phone
-    // wants — a 30px title bar is a poor target. A tap still behaves as a tap
-    // (the library suppresses the click only after the pointer has moved), so
-    // tapping the picture can still enlarge it.
+    // wants — a 30px title bar is a poor target.
+    //
+    // But on a touch screen `react-draggable` calls `preventDefault()` on
+    // `touchstart` (to stop the page scrolling under the drag), and that makes
+    // the browser skip the `click` it would otherwise synthesize. So nothing
+    // inside this window ever received a tap: the close and refresh buttons and
+    // "tap the picture to enlarge" were all dead on a phone, while working with a
+    // mouse. Two parts to the fix:
+    //  * `cancel` keeps the buttons out of the drag entirely, so they get their
+    //    ordinary touch handling and their `click`;
+    //  * a tap on the picture is recognised when the drag *ends* without having
+    //    moved, instead of waiting for a `click` that will not come.
+    cancel=".screen-pip-action"
     onDragStart={() => { dragged.current = true }}
-    onDragStop={(_event, data) => onPlacement({ ...placement, x: data.x, y: data.y })}
+    onDragStop={(event, data) => {
+      const moved = Math.hypot(data.x - box.left, data.y - box.top)
+      const target = event.target instanceof Element ? event.target : null
+      if (moved < TAP_SLOP_PX && target?.closest(".screen-pip-body")) {
+        useWorkspace.getState().set({ screenExpanded: true })
+        return
+      }
+      onPlacement({ ...placement, x: data.x, y: data.y })
+    }}
     onResizeStop={(_event, _direction, element, _delta, position) => {
       onPlacement({
         ...placement,
@@ -136,7 +157,15 @@ export function ScreenPip({ snapshot, placement, onPlacement }: {
         for. The header dot carries the state. */}
     {snapshot.frame && <footer className="screen-pip-foot">
       <span>{`${snapshot.frame.width}×${snapshot.frame.height}`}</span>
+      {/* 收到 / 已解码 / 电脑发出：黑屏时一眼看出断在哪一段，不必先点开放大视图。 */}
+      <span>{`收${snapshot.diag.received} 解${snapshot.diag.decoded} 画${snapshot.diag.painted}`}</span>
       <span>{`${snapshot.receivedFps.toFixed(1)} fps`}</span>
     </footer>}
+    {(snapshot.diag.lastProblem || snapshot.status?.failure || (snapshot.diag.received > 0 && snapshot.diag.painted === 0)) && <div className="screen-pip-problem" role="status">
+      {snapshot.status?.failure
+        ? `电脑端：${snapshot.status.failure}`
+        : snapshot.diag.lastProblem
+          ?? `收到 ${snapshot.diag.received} 帧、送入解码 ${snapshot.diag.decoded}，但画到屏幕上的是 ${snapshot.diag.painted} 帧`}
+    </div>}
   </Rnd>
 }

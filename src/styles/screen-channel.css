@@ -262,6 +262,16 @@ canvas.screen-frame {
   background: color-mix(in oklab, white 5%, transparent);
 }
 
+/* 浮窗里的问题提示：黑屏时唯一需要读的一行，所以允许换行、不截断。 */
+.screen-pip-problem {
+  padding: 4px 9px 6px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: #fbbf24;
+  background: color-mix(in oklab, white 5%, transparent);
+  overflow-wrap: anywhere;
+}
+
 /* ── the enlarged view ─────────────────────────────────────────────── */
 
 .screen-sheet-backdrop {
