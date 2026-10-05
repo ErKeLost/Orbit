@@ -13,9 +13,8 @@ const MAX_OFFERED_ELEMENTS = MAX_QUESTION_OPTIONS - ALWAYS_OFFERED_OPERATIONS
 // The only budgeted resource is the interface text the decision model reads. It
 // is allocated here and never re-cut downstream, so the observation cannot be
 // sliced mid-sentence by the state sanitizer.
-// The offer set dominates the budget; screen text is context for it. Expressed
-// as a share rather than an absolute so the two scale together.
-const CONTEXT_TEXT_SHARE = 0.25
+// The element table is the interface; screen text is secondary context for it.
+const CONTEXT_TEXT_SHARE = 0.15
 const MAX_VISIBLE_TEXT = 32
 const OVERLAY_ROLES = new Set(["sheet", "alert", "dialog", "menu", "popover"])
 
@@ -64,39 +63,26 @@ export async function observeDesktop(
   const nodes = flatten(snapshot.tree)
     .filter(node => node.ref_id && !(node.states ?? []).some(state => state === "disabled" || state === "hidden"))
   const actionableNodes = nodes.filter(hasSupportedCapability)
-  // Prune structurally instead of truncating by count. A layout shell is an
-  // anonymous wrapper whose controls live deeper: offering the wrapper as a
-  // target competes with the control itself and dilutes the choice (upstream
-  // withholds exactly these). Anonymous decoration with no action of its own
-  // is never a target either, and any text it shows is already carried as
-  // observed text. What survives is every real control, in relevance order.
+  // Prune structurally, never by relevance. A layout shell is an anonymous
+  // wrapper whose controls live deeper; anonymous decoration is never a target.
+  // What survives is every real control, in the tree's own reading order — the
+  // order a person reads the screen, and the only order that cannot
+  // systematically bury one control behind another. Ordering by inferred
+  // relevance is what let a nameless control fall past a fixed cutoff.
   const shells = shellRefs(snapshot.tree)
-  const filteredNodes = actionableNodes.filter(node => !isLayoutShell(node, shells) && !isDecoration(node))
-  // Prioritize locally supplied semantic anchors when the observed element
-  // visibly contains one. This is generic relevance ordering, not an
-  // application-specific rule, and it decides rendering order only.
+  const elements = actionableNodes.filter(node => !isLayoutShell(node, shells) && !isDecoration(node)).slice(0, MAX_OFFERED_ELEMENTS)
+  // Every element gets one index. The observation table and the per-target
+  // questions both refer to it, so the detail lives in the state once instead
+  // of being repeated for each candidate.
+  const indexOf = new Map<string, number>()
+  elements.forEach((node, index) => indexOf.set(node.ref_id as string, index + 1))
   const anchorValues = [...input.textSlots.map((slot: TextSlot) => slot.value), ...quotedGoalAnchors(input.goal ?? "")].filter(value => value.length > 0)
-  const orderedNodes = filteredNodes
-    .map((node, index) => ({ node, index }))
-    .sort((a, b) => compareRelevance(a.node, b.node, anchorValues, shells, a.index, b.index))
-    .map(item => item.node)
-  const offeredNodes = orderedNodes.slice(0, MAX_OFFERED_ELEMENTS)
   const windowBounds = snapshot.tree.children?.find(node => node.role === "window")?.bounds
   const menu = !input.root && findOverlay(snapshot.tree) === undefined
     ? await readMenuBar(client, snapshot.window.title, options)
     : []
-  let candidates = buildCandidates(offeredNodes, input.textSlots, input.usedSlotIds, Boolean(input.root), input.allowPressEnter, !snapshot.complete, windowBounds, findOverlay(snapshot.tree), input.goal ?? "")
+  let candidates = buildCandidates(elements, input.textSlots, input.usedSlotIds, Boolean(input.root), input.allowPressEnter, !snapshot.complete, windowBounds, findOverlay(snapshot.tree), input.goal ?? "", indexOf)
   candidates = addMenuCandidates(candidates, menu, input.goal ?? "")
-  // Order is part of the interface, not just the array: the readable lines Jev
-  // gets are the first ones that fit the text budget, so the controls a goal
-  // can act on must lead. Primary operations come before the contextual menu
-  // route (an Electron window offers a context menu on nearly every node), and
-  // within each tier relevance order applies. Every candidate stays offered.
-  const rankByRef = new Map(offeredNodes.map((node, index) => [node.ref_id as string, index]))
-  const tierOf = (candidate: DesktopCandidate) => (candidate.operation === "RIGHT_CLICK" ? 1 : 0)
-  candidates = [...candidates].sort((left, right) =>
-    tierOf(left) - tierOf(right)
-    || (rankByRef.get(left.ref ?? "") ?? Number.MAX_SAFE_INTEGER) - (rankByRef.get(right.ref ?? "") ?? Number.MAX_SAFE_INTEGER))
   // Text slots add mutation candidates; they must never hide navigation or
   // activation candidates. The semantic layer decides whether a field is the
   // intended target after the user has identified the right surface.
@@ -108,10 +94,12 @@ export async function observeDesktop(
     snapshot,
     candidates,
     input.root,
-    { observed: actionableNodes.length, pruned: actionableNodes.length - filteredNodes.length, offered: filteredNodes.length, kept: offeredNodes.length },
+    { observed: actionableNodes.length, pruned: actionableNodes.length - elements.length, offered: elements.length, kept: elements.length },
     media,
     nodes,
     anchorValues,
+    elements,
+    indexOf,
   )
   const treeFingerprint = createHash("sha256").update(JSON.stringify(nodes.map(node => ({
     role: node.role,
@@ -357,12 +345,13 @@ function siblingIdentity(node: DesktopNode): string {
   return `${node.role}:${capabilities.join(",")}`
 }
 
-function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet<string>, insideRoot: boolean, allowPressEnter: boolean, allowDrill: boolean, windowBounds?: DesktopBounds, overlay?: string, goal = ""): DesktopCandidate[] {
+function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet<string>, insideRoot: boolean, allowPressEnter: boolean, allowDrill: boolean, windowBounds: DesktopBounds | undefined, overlay: string | undefined, goal: string, indexOf: ReadonlyMap<string, number>): DesktopCandidate[] {
   const candidates: DesktopCandidate[] = []
   const nextSlot = nextTextSlot(nodes, slots, used)
-  let identity: Record<string, string> | undefined
+  let display: Record<string, string> | undefined
+  let stable: Record<string, string | number> | undefined
   const add = (candidate: Omit<DesktopCandidate, "id">) => {
-    candidates.push({ ...candidate, ...(identity ? { criteria: identity } : {}), id: `candidate-${candidates.length + 1}` })
+    candidates.push({ ...candidate, ...(display ? { criteria: display } : {}), ...(stable ? { identity: stable } : {}), id: `candidate-${candidates.length + 1}` })
   }
   // Wrapper elements whose label belongs to a specific named control inside
   // them are inert targets: pressing the wrapper does nothing, and offering it
@@ -393,7 +382,7 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
     const label = (node.name ?? node.description ?? "").trim()
     if (!label || (labelCounts.get(`${node.role}:${label}`) ?? 0) < 2) return undefined
     const context = node.ancestorText?.find(text => text.trim() && text.trim() !== label)
-    return context ? sanitize(context.split(" · ").filter(part => part.trim() !== label).join(" · "), 140) : undefined
+    return context ? sanitize(context.split(" · ").filter(part => part.trim() !== label).join(" · "), 60) : undefined
   }
   for (const node of nodes) {
     // A top-level window is not a content target, but activating it is a real
@@ -405,7 +394,8 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
       // normalized tree may expose this action under a platform-specific
       // spelling, so do not make the activation candidate depend on that
     // spelling surviving normalization.
-      identity = candidateCriteria(node, slots)
+      display = candidateCriteria(node, slots, indexOf.get(node.ref_id as string) ?? 0)
+      stable = candidateIdentity(node)
       add({ operation: "ACTIVATE", headed: false, description: `${describeNode(node)}; bring this application to the foreground before interacting with its content` })
       continue
     }
@@ -414,13 +404,13 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
     const actions = new Set(node.available_actions ?? [])
     const wrapperOfSpecific = isWrapperOfSpecific(node)
     const inItem = itemContext(node)
-    const descriptor = inItem ? `${describeNode(node)}; inside item "${inItem}"` : describeNode(node)
-    identity = candidateCriteria(node, slots)
-    if (inItem) identity.in_item = inItem
-    // Local fact: the element's own label occurs verbatim in the goal. It
-    // orders truncated target lists; choosing stays with Jev.
+    const descriptor = describeNode(node)
+    display = candidateCriteria(node, slots, indexOf.get(node.ref_id as string) ?? 0)
+    stable = candidateIdentity(node)
+    if (inItem) display.in_item = inItem
+    // Local fact: the element's own label occurs verbatim in the goal.
     const ownLabel = (node.name ?? node.description ?? "").trim()
-    if (ownLabel.length >= 2 && goal.includes(ownLabel)) identity.goal_match = "label appears in the goal"
+    if (ownLabel.length >= 2 && goal.includes(ownLabel)) display.goal_match = "label appears in the goal"
     const webContent = node.path.some(part => /^web_?area\b/.test(part))
     const offscreen = (node.states ?? []).includes("offscreen")
     if (offscreen && (hasClickAction(actions) || actions.has("SetValue") || actions.has("TypeText") || (actions.has("SetFocus") && node.children_count))) {
@@ -469,10 +459,15 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
         add({ operation: "DOUBLE_CLICK", ref, headed: true, evidence: "structural", speculative: true, expect: ["no_overlay"], description: `${descriptor}; activate this observed list item itself with two rapid verified pointer clicks` })
       }
     }
-    // A declared context-menu capability is the generic "more actions on this
-    // item" route; the opened menu's items become candidates in the next
-    // observation. Delivered as the semantic AXShowMenu action.
-    if (actions.has("RightClick")) {
+    // A context menu is the route to an action the app did not expose as a
+    // control. Nearly every element in web content advertises one, so offering
+    // it beside a primary action multiplies the offer set without adding a
+    // reachable outcome. It is offered only where the element is a discrete
+    // item a menu could belong to: the app named it, or repetition proved it is
+    // a list row. A summary of descendant text does not qualify — almost every
+    // container has one.
+    const identifiable = Boolean(node.name || node.description || node.listRow)
+    if (actions.has("RightClick") && identifiable) {
       add({ operation: "RIGHT_CLICK", ref, headed: false, description: `${descriptor}; open this item's context menu` })
     }
     if (actions.has("Toggle")) {
@@ -531,7 +526,8 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
       add({ operation: "DRILL", ref, description: descriptor })
     }
   }
-  identity = undefined
+  display = undefined
+  stable = undefined
   // Return submits whatever the focused field holds. It is a real option
   // both right after this task typed text and whenever the focused editable
   // field already contains text (e.g. a draft left in a chat composer).
@@ -552,29 +548,45 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
  * structured criteria disambiguate better than a flat sentence, and pointer
  * position is spent only on an element with no name, no description and no
  * value. Operation semantics stay out of these fields. */
-function candidateCriteria(node: FlatNode, slots: TextSlot[] = []): Record<string, string> {
+function candidateCriteria(node: FlatNode, slots: TextSlot[] = [], index = 0): Record<string, string> {
   const label = node.name ?? node.description
   const derived = !label ? node.descendantSummary : undefined
   const embedded = !label && !derived && node.actionableAncestor
+  // One short line per target. The element's full detail belongs in the
+  // observation once; repeating it per candidate is what made a dense window
+  // impossible to describe inside the request budget.
   const criteria: Record<string, string> = {
-    what: `${node.role}${label ? ` "${sanitize(label, 120)}"` : derived ? ` containing "${sanitize(derived, 90)}"` : embedded ? " embedded control" : ""}`,
+    what: `${index ? `[${index}] ` : ""}${node.role}${label ? ` "${sanitize(label, 60)}"` : derived ? ` containing "${sanitize(derived, 46)}"` : embedded ? " embedded control" : ""}`,
   }
-  const path = node.path.slice(-5).join(" > ")
-  if (path) criteria.where = sanitize(path, 160)
   const value = visibleValue(node)
-  if (value) criteria.holds = sanitize(value, 120)
-  if (node.states?.length) criteria.state = node.states.join(", ")
-  if ((node.siblingCount ?? 0) > 1) criteria.sibling = `item ${node.siblingOrdinal} of ${node.siblingCount} among sibling ${node.role} elements with the same capabilities`
-  if (node.children_count) criteria.contains = childrenFact(node)
+  if (value) criteria.holds = sanitize(value, 60)
+  if ((node.siblingCount ?? 0) > 1) criteria.sibling = `${node.siblingOrdinal}/${node.siblingCount}`
   const structure = structuralFacts(node)
-  if (structure) criteria.structure = structure
-  criteria.supports = node.available_actions?.length ? node.available_actions.join(", ") : "no declared action"
+  if (structure) criteria.where = structure
   const haystack = `${node.name ?? ""} ${node.description ?? ""} ${value ?? ""}`
   const matchingSlot = slots.find(slot => slot.value.length > 0 && haystack.includes(slot.value))
-  if (matchingSlot) criteria.local_match = `contains caller-prepared text for ${sanitize(matchingSlot.description, 120)}`
-  if (/群聊|群消息|群[，,：:]/u.test(haystack)) criteria.group_marker = "group chat marker is visible"
+  if (matchingSlot) criteria.local_match = `prepared text for ${sanitize(matchingSlot.description, 60)}`
   if (!label && !derived && !value && node.bounds) criteria.at = `${Math.round(node.bounds.x)},${Math.round(node.bounds.y)}`
   return criteria
+}
+
+/** Re-identification of a target, kept out of the model-facing criteria so that
+ * making that view terser cannot destabilise quarantine, the risk cache or
+ * affordance memory. Only properties the tree actually exposes are used, so the
+ * same element yields the same key across snapshots of one application. */
+function candidateIdentity(node: FlatNode): Record<string, string | number> {
+  const label = node.name ?? node.description
+  const value = visibleValue(node)
+  const identity: Record<string, string | number> = { role: node.role }
+  if (label) identity.label = sanitize(label, 120)
+  else if (node.descendantSummary) identity.contains = sanitize(node.descendantSummary, 120)
+  if (value) identity.holds = sanitize(value, 120)
+  if (node.listRow) identity.row = `${node.listRow.ordinal}/${node.listRow.count}`
+  if (node.cluster) identity.cluster = `${node.cluster.ordinal}/${node.cluster.count}#${node.cluster.sizeRank}`
+  if ((node.siblingCount ?? 0) > 1) identity.sibling = `${node.siblingOrdinal}/${node.siblingCount}`
+  if ((node.states ?? []).includes("offscreen")) identity.offscreen = 1
+  if (!label && !node.descendantSummary && !value && node.bounds) identity.at = `${Math.round(node.bounds.x)},${Math.round(node.bounds.y)}`
+  return identity
 }
 
 function nextTextSlot(_nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet<string>): TextSlot | undefined {
@@ -738,9 +750,29 @@ function compactCandidate(candidate: DesktopCandidate): string {
   const what = criteria.what ?? candidate.description.split(";")[0]
   const parts = [candidate.operation.toLowerCase(), what]
   if (criteria.holds) parts.push(`holds ${criteria.holds}`)
-  if (criteria.structure) parts.push(criteria.structure)
+  if (criteria.where) parts.push(criteria.where)
   if (criteria.in_item) parts.push(`in ${criteria.in_item}`)
   if (criteria.at) parts.push(`at ${criteria.at}`)
+  return parts.join(" · ").slice(0, 200)
+}
+
+/** One line per element: the model's whole view of what it can act on here, in
+ * reading order, with the operations available on it. Every target question
+ * repeats only the `[index]` reference from this table, never the detail; that
+ * is what keeps a dense window describable inside one request. */
+function elementLine(node: FlatNode, index: number, operations: readonly string[]): string {
+  const label = node.name ?? node.description
+  const derived = !label ? node.descendantSummary : undefined
+  const parts = [`[${index}] ${node.role}${label ? ` "${sanitize(label, 60)}"` : derived ? ` containing "${sanitize(derived, 46)}"` : ""}`]
+  const value = visibleValue(node)
+  if (value) parts.push(`holds "${sanitize(value, 40)}"`)
+  if (isEditableTextRole(node.role, node)) parts.push("editable")
+  if ((node.states ?? []).includes("offscreen")) parts.push("offscreen")
+  if ((node.siblingCount ?? 0) > 1) parts.push(`${node.siblingOrdinal}/${node.siblingCount}`)
+  const structure = structuralFacts(node)
+  if (structure) parts.push(structure)
+  if (!label && !derived && node.bounds) parts.push(`at ${Math.round(node.bounds.x)},${Math.round(node.bounds.y)}`)
+  if (operations.length) parts.push(operations.map(operation => operation.toLowerCase()).join(","))
   return parts.join(" · ").slice(0, 200)
 }
 
@@ -752,61 +784,58 @@ function buildContext(
   media?: string,
   nodes: FlatNode[] = [],
   anchors: string[] = [],
+  elements: FlatNode[] = [],
+  indexOf: ReadonlyMap<string, number> = new Map(),
 ): string {
-  const targets = candidates.filter(candidate => candidate.ref)
-  // Candidates already arrive in interface order (controls first, contextual
-  // menu routes last); render them as given.
+  const operationsByRef = new Map<string, string[]>()
+  for (const candidate of candidates) {
+    if (!candidate.ref) continue
+    const list = operationsByRef.get(candidate.ref) ?? []
+    if (!list.includes(candidate.operation)) list.push(candidate.operation)
+    operationsByRef.set(candidate.ref, list)
+  }
   const header = [
     `app=${snapshot.app}`,
     `window=${snapshot.window.title}`,
     `scope=${root ? "drilled region" : "full local accessibility tree"}`,
     `complete=${snapshot.complete}`,
-    // Pruning and truncation are reported instead of silent, so a control that
-    // is missing from the list is diagnosable from the observation alone.
-    `elements_actionable=${stats.observed} pruned_structural=${stats.pruned} offered=${stats.offered}${stats.kept < stats.offered ? ` node_cap_applied=${stats.offered - stats.kept}` : ""}`,
-    `candidates=${targets.length}`,
+    // Pruning and the safety net are reported instead of silent, so a control
+    // missing from the table is diagnosable from the observation alone.
+    `elements=${stats.observed} pruned=${stats.pruned} offered=${stats.offered}${stats.kept < stats.offered ? ` safety_cap_applied=${stats.offered - stats.kept}` : ""}`,
+    `candidates=${candidates.filter(candidate => candidate.ref).length}`,
     ...(media ? [media] : []),
   ].join("\n")
-  const visibleText = collectVisibleText(snapshot.tree).slice(0, MAX_VISIBLE_TEXT)
-  // Relevant AX evidence may sit beyond the first static-text leaves. Preserve
-  // its container path (not just an isolated message leaf) so Jev can judge
-  // whether two facts share a view. Evidence and visible text share one budget,
-  // evidence first.
+  // Elements are never dropped from the table to fit the budget: a table that
+  // omits a control is the defect this shape exists to prevent. The screen text
+  // shrinks first and an overflow is reported rather than hidden. Only elements
+  // that actually carry an operation are listed: an entry the model cannot act
+  // on is noise, and its index stays unique even when neighbours are omitted.
+  const actionableRefs = new Set([...operationsByRef.keys()])
+  const table = elements
+    .filter(node => node.ref_id && actionableRefs.has(node.ref_id))
+    .map(node => elementLine(node, indexOf.get(node.ref_id as string) ?? 0, operationsByRef.get(node.ref_id as string) ?? []))
+    .join("\n")
   const matches = nodes.filter(node => {
     const text = `${node.name ?? ""} ${node.description ?? ""} ${visibleValue(node) ?? ""}`
     return anchors.some(anchor => text.includes(anchor))
   }).slice(0, 12).map(node => `${node.role} ${sanitize(node.name ?? node.description ?? visibleValue(node) ?? "", 120)} in ${sanitize(node.path.join(" > "), 180)}`)
   const evidence = matches.length ? `\nobserved_goal_matches:\n${matches.map((value, index) => `${index + 1}. ${value}`).join("\n")}` : ""
+  const room = OBSERVATION_CHARS - header.length - table.length - evidence.length - 4
   const textLines: string[] = []
-  let textUsed = evidence.length
-  const textBudget = Math.floor(OBSERVATION_CHARS * CONTEXT_TEXT_SHARE)
-  for (const value of visibleText) {
-    if (textUsed + value.length + 1 > textBudget) break
-    textLines.push(`${textLines.length + 1}. ${value}`)
-    textUsed += value.length + 1
+  if (room > 0) {
+    let textUsed = evidence.length
+    const textBudget = Math.floor(OBSERVATION_CHARS * CONTEXT_TEXT_SHARE)
+    for (const value of collectVisibleText(snapshot.tree).slice(0, MAX_VISIBLE_TEXT)) {
+      if (textUsed + value.length + 1 > textBudget) break
+      textLines.push(`${textLines.length + 1}. ${value}`)
+      textUsed += value.length + 1
+    }
   }
   const textBlock = `${evidence}${textLines.length ? `\nobserved_text:\n${textLines.join("\n")}` : ""}`
-  // The text block is capped, not reserved: whatever it does not use flows to
-  // the candidate lines, so a sparse screen shows more of its interface rather
-  // than leaving budget idle. Candidates are rendered in interface order until
-  // that is spent, then the remainder is reported. The reserve covers the
-  // ` not_rendered=` suffix and the newline before the body, so the assembled
-  // observation is inside the budget by construction rather than by luck.
-  const MAX_SUFFIX_CHARS = 24
-  const candidateChars = Math.max(0, OBSERVATION_CHARS - header.length - textBlock.length - 1 - MAX_SUFFIX_CHARS)
-  const lines: string[] = []
-  let used = 0
-  for (const candidate of targets) {
-    const line = `${lines.length + 1}. ${compactCandidate(candidate)}`
-    if (used + line.length + 1 > candidateChars) break
-    lines.push(line)
-    used += line.length + 1
-  }
-  const omitted = targets.length - lines.length
-  const body = lines.join("\n")
-  // The interface block is labelled so the readable list of what can be done is
-  // never confused with the text that happens to be on screen.
-  return `${header}${omitted > 0 ? ` not_rendered=${omitted}` : ""}${textBlock}${body ? `\ninterface:\n${body}` : ""}`
+  const overflow = room > 0 ? "" : ` table_over_budget=${table.length + header.length - OBSERVATION_CHARS}`
+  // The table is labelled so the list of what can be acted on is never confused
+  // with the text that happens to be on screen.
+  return `${header}${overflow}${textBlock}${table ? `\nelements:\n${table}` : ""}`
 }
 
 function collectVisibleText(root: DesktopNode): string[] {

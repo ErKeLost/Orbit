@@ -6,7 +6,26 @@ export type TextSlot = { id: string; value: string; description: string }
 /** The observation text budget. The observer builds to exactly this size and the
  * state sanitizer truncates at the same value, so a request is never cut
  * mid-line by a budget the observer did not know about: one number, one place. */
-export const OBSERVATION_CHARS = 8_000
+/** One Jev request carries the observation and the questions in a single input
+ * budget. Measured against the live service: a request up to ~125K characters
+ * is accepted and one above it is rejected, whatever the split between the two.
+ * The offer set needs the larger share, so the observation takes a third. */
+export const REQUEST_CHARS = 125_000
+export const OBSERVATION_CHARS = Math.floor(REQUEST_CHARS / 3)
+
+/** Criteria keys that change as a result of the action being judged, so they
+ * cannot take part in a stable identity. Shared so the engine's exclusion sets
+ * and affordance memory agree on what "the same target" means when a candidate
+ * carries criteria but no dedicated identity (menu commands, test candidates). */
+const VOLATILE_CRITERIA_KEYS = ["state", "holds", "local_match", "goal_match", "new", "at", "sibling", "structure", "contains"]
+
+export function stableCriteria(criteria: Readonly<Record<string, string>> | undefined): string | undefined {
+  if (!criteria) return undefined
+  const stable = Object.fromEntries(Object.entries(criteria)
+    .filter(([key]) => !VOLATILE_CRITERIA_KEYS.includes(key))
+    .sort(([left], [right]) => left.localeCompare(right)))
+  return Object.keys(stable).length ? JSON.stringify(stable) : undefined
+}
 export type ExecutionBudget = { maxActions: number; maxDecisions: number; maxDurationMs: number }
 export type GuiTaskInput = {
   goal: string
@@ -46,10 +65,16 @@ export type DesktopCandidate = {
   id: string
   operation: DesktopOperation
   description: string
-  /** Structured identity fields sent to Jev as Choice criteria; operation
-   * semantics stay in description. Structured criteria disambiguate better
-   * than a flat sentence. */
+  /** What the decision model sees for this target: a short label plus the few
+   * observations that discriminate it from its siblings. Short by design; the
+   * detail an element carries belongs in the state once, not repeated per
+   * candidate. */
   criteria?: Record<string, string>
+  /** How the engine re-identifies this target across snapshots. Kept out of
+   * `criteria` so making the model-facing view terser cannot destabilise
+   * quarantine, risk caching or affordance memory. Order is stable, so two
+   * runs over one window produce the same key. */
+  identity?: Record<string, string | number>
   ref?: string
   /** MENU_ITEM: exact title path from the menu bar. */
   menuPath?: string[]

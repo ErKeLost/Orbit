@@ -100,15 +100,11 @@ export async function decideDesktop(
       }, Object.fromEntries(targetGroup.map(candidate => [candidate.id, candidate.criteria ?? sanitize(candidate.description, 260)])))
     }
     if (isMutationOperation(operation)) {
-      // Parallel heads cost almost nothing extra per request (measured:
-      // ~300ms with 1 or 20 questions), while a missing answer costs a whole
-      // separate risk call. Ask for every uncached target.
-      for (const candidate of targetGroup) {
-        // Undo risk of the same target does not change within a task; the
-        // engine caches earlier answers so the request stays small.
-        if (typeof knownRisks[candidate.id] === "number") continue
-        questions[riskQuestion(candidate.id)] = noul(`Would executing ${operation} on ${sanitize(candidate.criteria?.what ?? candidate.description, 160)} be hard or impossible to undo, such as deleting, overwriting existing content, sending, purchasing, quitting without saving, or confirming a warning?`)
-      }
+      // Risk is not asked per candidate. It matters for the one target that
+      // gets chosen, and a missing answer already falls back to a single call
+      // per target that the risk cache then remembers. Asking every candidate
+      // multiplied the request by the size of the offer set for no gain.
+      continue
     }
   }
   // Completion prediction (speculative, like the target heads): if the chosen
@@ -243,11 +239,30 @@ async function callJev(
 ): Promise<any> {
   const stateChars = JSON.stringify(request.state).length
   const questionChars = JSON.stringify(request.questions).length
+  // Sizes are the only way to see a request that is too large before the model
+  // rejects it, and the state and the questions share one budget.
+  if (process.env.ORBIT_CU_REQUEST_DEBUG) {
+    const largest = Object.entries(request.questions)
+      .map(([key, value]) => [key, JSON.stringify(value).length] as const)
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 5)
+      .map(([key, size]) => `${key}=${size}`)
+      .join(", ")
+    console.error(`[cu] stage=${stage} state=${stateChars} questions=${questionChars} total=${stateChars + questionChars} count=${Object.keys(request.questions).length} largest: ${largest}`)
+  }
   try {
     const response = await client.systemOne(request, { signal })
     return response
   } catch (error) {
-    throw new Error(`Jev ${stage} request rejected (state_chars=${stateChars}, question_chars=${questionChars}): ${safeError(error)}`)
+    // Name the offending questions: a rejected request is otherwise a single
+    // number, and the size is almost never spread evenly across the keys.
+    const largest = Object.entries(request.questions)
+      .map(([key, value]) => [key, JSON.stringify(value).length] as const)
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 5)
+      .map(([key, size]) => `${key}=${size}`)
+      .join(", ")
+    throw new Error(`Jev ${stage} request rejected (state_chars=${stateChars}, question_chars=${questionChars}, questions=${Object.keys(request.questions).length}; largest: ${largest}): ${safeError(error)}`)
   }
 }
 

@@ -4,7 +4,7 @@ import { resolveDesktopApp } from "./desktop-app-resolver.ts"
 import { attachMedia, invalidateMenuCache, observeDesktop, readMediaFact } from "./desktop-observation.ts"
 import { isReplayableOperation, lookupTemplate, memoryIdentity, resolveStep, memoryKey, parameterize, type AffordanceMemory, type MemoryStep } from "./affordance-memory.ts"
 import { assessDesktopRisk, decideDesktop, isRetryableJevError, redactLocalSlots } from "./jev.ts"
-import { validateTaskInput, type DesktopCandidate, type DesktopDecision, type DesktopNode, type DesktopObservation, type GuiTaskEvent, type GuiTaskInput, type GuiTaskMetrics, type GuiTaskResult, type GuiTaskStatus, type GuiTaskTrace } from "./gui-task-contract.ts"
+import { validateTaskInput, type DesktopCandidate, type DesktopDecision, type DesktopNode, type DesktopObservation, type GuiTaskEvent, type GuiTaskInput, type GuiTaskMetrics, type GuiTaskResult, type GuiTaskStatus, type GuiTaskTrace, stableCriteria } from "./gui-task-contract.ts"
 import { describeDiff, diffTrees, findNodeByIdentity } from "./tree-diff.ts"
 
 const CHROMIUM_RENDERER_SETTLE_MS = 2_000
@@ -877,8 +877,10 @@ function isContextualMutation(operation: DesktopCandidate["operation"]): boolean
  * `state` and `holds` are excluded: both change as a result of the very
  * action being judged, so they cannot participate in a stable identity. */
 function targetKey(candidate: DesktopCandidate, anyOperation = false): string {
-  const { state: _state, holds: _holds, new: _new, goal_match: _goalMatch, ...identity } = candidate.criteria ?? {}
-  return `${anyOperation ? "*" : candidate.operation}:${candidate.criteria ? JSON.stringify(identity) : candidate.description.split(";")[0]}`
+  const key = candidate.identity
+    ? JSON.stringify(candidate.identity)
+    : stableCriteria(candidate.criteria) ?? candidate.description.split(";")[0]
+  return `${anyOperation ? "*" : candidate.operation}:${key}`
 }
 
 /** Stable comparison of what a region offers, used to detect a drill that

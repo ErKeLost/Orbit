@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import type { DesktopCandidate, DesktopOperation, TextSlot } from "./gui-task-contract.ts"
+import { stableCriteria, type DesktopCandidate, type DesktopOperation, type TextSlot } from "./gui-task-contract.ts"
 
 /**
  * Affordance Memory: a local cache of verified task trajectories.
@@ -46,7 +46,9 @@ const MAX_STEPS = 40
  * cannot identify it across runs. Role, label, container path, in_item and
  * capabilities remain: a same-named control in a reordered list still
  * matches, a renamed or relocated one does not. */
-const VOLATILE_CRITERIA = new Set(["state", "holds", "local_match", "goal_match", "new", "at", "sibling", "structure", "contains"])
+const VOLATILE_IDENTITY = new Set(["holds", "at", "offscreen"])
+// Candidates the observer did not derive from a tree node (menu commands) carry
+// criteria instead of an identity; the same reasoning applies to them.
 
 export function memoryKey(app: string, goal: string, slots: readonly TextSlot[], readOnly: boolean): string {
   const redacted = redact(goal, slots).replace(/\s+/g, " ").trim().toLowerCase()
@@ -55,14 +57,11 @@ export function memoryKey(app: string, goal: string, slots: readonly TextSlot[],
 }
 
 export function memoryIdentity(candidate: DesktopCandidate, slots: readonly TextSlot[]): string {
-  const base = candidate.criteria
-    ? Object.fromEntries(Object.entries(candidate.criteria)
-      .filter(([key]) => !VOLATILE_CRITERIA.has(key))
-      // Container paths embed a summary of their current contents
-      // (`list containing "a · b · c"`); keep only the container role.
-      .map(([key, value]) => [key, key === "where" ? value.replace(/ containing "[^"]*"/g, "") : value])
+  const base: unknown = candidate.identity
+    ? Object.fromEntries(Object.entries(candidate.identity)
+      .filter(([key]) => !VOLATILE_IDENTITY.has(key))
       .sort(([a], [b]) => a.localeCompare(b)))
-    : { what: candidate.description.split(";")[0] }
+    : stableCriteria(candidate.criteria) ?? JSON.stringify({ what: candidate.description.split(";")[0] })
   return redact(JSON.stringify([candidate.headed ? "headed" : "semantic", base]), slots)
 }
 

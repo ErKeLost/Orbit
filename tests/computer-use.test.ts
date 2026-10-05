@@ -4,7 +4,7 @@ import { observeDesktop } from "../src-tauri/resources/computer-use/desktop-obse
 import { selectInstalledDesktopApp, type InstalledDesktopApp } from "../src-tauri/resources/computer-use/desktop-app-resolver"
 import { runGuiTaskEngine } from "../src-tauri/resources/computer-use/gui-task-engine"
 import { formatResult } from "../src-tauri/resources/computer-use/gui-task"
-import { validateTaskInput, type DesktopDecision, type DesktopObservation, type GuiTaskInput } from "../src-tauri/resources/computer-use/gui-task-contract"
+import { OBSERVATION_CHARS, validateTaskInput, type DesktopDecision, type DesktopObservation, type GuiTaskInput } from "../src-tauri/resources/computer-use/gui-task-contract"
 import { isRetryableJevError, redactLocalSlots } from "../src-tauri/resources/computer-use/jev"
 import { applyComputerUseMode, COMPUTER_USE_INSTRUCTIONS } from "../src-tauri/resources/computer-use/mode"
 
@@ -330,21 +330,22 @@ describe("AX-first desktop observation", () => {
       allowPressEnter: false,
     }, { timeoutMs: 5_000 })
 
-    // Nothing is silently evicted to fit: every real control is offered, and
-    // the text Jev reads is what is budgeted instead.
-    expect(result.context.length).toBeLessThanOrEqual(8_000)
-    expect(result.context).toContain("elements_actionable=100")
+    // Nothing is silently evicted to fit: every real control is offered, and an
+    // element the caller prepared text for is present in the table like any
+    // other. The table is in reading order, so its position is not a ranking.
+    expect(result.context.length).toBeLessThanOrEqual(OBSERVATION_CHARS)
+    expect(result.context).toContain("elements=100")
     expect(result.context).toContain("offered=100")
-    expect(result.context).not.toContain("not_rendered")
+    expect(result.context).not.toContain("safety_cap_applied")
+    expect(result.context).not.toContain("table_over_budget")
     const refs = new Set(result.candidates.map(candidate => candidate.ref))
     expect([...Array(100).keys()].every(index => refs.has(`@s1:e${index}`))).toBe(true)
     expect(result.candidates.find(candidate => candidate.criteria?.local_match)).toEqual(expect.objectContaining({
       criteria: expect.objectContaining({ local_match: expect.stringContaining("单人聊天联系人") }),
     }))
-    // The caller-prepared anchor is rendered first, so a dense list cannot
-    // push the intended control out of the readable interface.
-    const first = result.context.split("\n").find(line => /^1\. /.test(line))
-    expect(first).toContain("赵东升")
+    const matched = result.candidates.find(candidate => candidate.criteria?.local_match)!
+    const index = /^\[(\d+)\]/.exec(matched.criteria!.what)?.[1]
+    expect(result.context.split("\n").some(line => line.startsWith(`[${index}] `))).toBe(true)
   })
 
   test("attaches structured identity criteria to node candidates", async () => {
@@ -380,13 +381,19 @@ describe("AX-first desktop observation", () => {
       allowPressEnter: false,
     }, { timeoutMs: 5_000 })
     const button = result.candidates.find(candidate => candidate.ref === "@s1:e1")
+    // The model-facing line stays short; the stable detail the engine needs to
+    // re-identify the element travels in `identity` and is never sent.
     expect(button?.criteria?.what).toContain("开启读屏标签")
-    expect(button?.criteria?.state).toBe("offscreen")
-    expect(button?.criteria?.supports).toBe("Click")
-    expect(button?.criteria?.at).toBeUndefined()
+    expect(button?.criteria?.state).toBeUndefined()
+    expect(button?.criteria?.supports).toBeUndefined()
+    expect(button?.identity?.label).toBe("开启读屏标签")
+    expect(button?.identity?.offscreen).toBe(1)
+    expect(button?.identity?.at).toBeUndefined()
+    // The element table states what can be done here, once per element.
+    expect(result.context).toContain('button "开启读屏标签"')
     const group = result.candidates.find(candidate => candidate.ref === "@s1:e2")
-    expect(group?.criteria?.contains).toBe("5 items not shown")
-    expect(group?.criteria?.at).toBeDefined()
+    expect(group?.identity?.at).toBe("10,20")
+    expect(group?.criteria?.contains).toBeUndefined()
     expect(result.candidates.find(candidate => candidate.operation === "WAIT")?.criteria).toBeUndefined()
   })
 
