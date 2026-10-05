@@ -143,6 +143,20 @@ describe("floating screen window", () => {
     expect(fitSize(wantedWidth, wantedHeight, portrait)).toEqual({ width: wantedWidth, height: wantedHeight })
   })
 
+  test("the window is a flex column, so the picture gets the height", () => {
+    // The black preview: react-rnd writes `display: inline-block` as an inline
+    // style on the window, and an inline style beats the stylesheet's
+    // `display: flex`. Without a flex parent the picture's `flex: 1` does
+    // nothing, the picture box collapses to zero height, and the window shows
+    // only its own dark background — while the canvas inside holds a perfectly
+    // good frame (the diagnostics measured identical brightness on both ends).
+    const html = render({})
+    const root = html.match(/<div[^>]*class="[^"]*screen-pip[ "][^>]*>/)?.[0] ?? ""
+    expect(root).toContain("display:flex")
+    expect(root).toContain("flex-direction:column")
+    expect(root).not.toContain("display:inline-block")
+  })
+
   test("shows numbers only once there is a picture", () => {
     // A line of status text parked at the bottom of a small window is both noise
     // and invisible at a glance; failures are toasts instead.

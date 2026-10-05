@@ -113,7 +113,13 @@ export function ScreenPip({ snapshot, placement, onPlacement }: {
         y: position.y,
       })
     }}
-    style={{ position: "fixed", zIndex: 60 }}
+    // `react-rnd` writes `display: inline-block` as an *inline* style, which
+    // beats the stylesheet's `display: flex`. Without a flex parent the
+    // picture's `flex: 1` does nothing and its box collapses to zero height:
+    // the canvas holds a good frame, but the window shows only its own dark
+    // background. That was the black preview. Restating the layout here puts it
+    // after the library's defaults in the same inline style, so it wins.
+    style={{ position: "fixed", zIndex: 60, display: "flex", flexDirection: "column" }}
     enableResizing={{
       top: true, right: true, bottom: true, left: true,
       topRight: true, bottomRight: true, bottomLeft: false, topLeft: true,
