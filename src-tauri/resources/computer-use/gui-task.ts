@@ -127,5 +127,9 @@ export function formatResult(input: GuiTaskInput, result: GuiTaskResult): string
       : "未确认应用已打开"
   const action = result.lastAction ? `最近动作=${result.lastAction.operation} 交付=${result.lastAction.delivery ?? "未知"}` : "尚无桌面动作"
   const goal = result.goalVerified ? "Jev 根据当前界面判断目标已完成" : "目标未获 Jev 验证"
-  return `[${result.status}] ${input.goal}\n应用=${launch}；${action}；${goal}\nactions=${result.actions} decisions=${result.decisions} ${timing}\njev=${last?.operation ?? "not_called"}${last?.confidence === undefined ? "" : ` confidence=${last.confidence.toFixed(2)}`}${reason ? `\nreason=${reason}` : ""}\n${result.evidence}`
+  // 失败必须能定位到分支：调用方（模型）看不到循环内部，这一行是它诊断的唯一入口。
+  const failureLine = result.failure
+    ? `\n失败分支=${result.failure.stage}${result.failure.branch ? `/${result.failure.branch}` : ""}：${result.failure.detail}${result.failure.hint ? `\n建议=${result.failure.hint}` : ""}`
+    : ""
+  return `[${result.status}] ${input.goal}\n应用=${launch}；${action}；${goal}${failureLine}\nactions=${result.actions} decisions=${result.decisions} ${timing}\njev=${last?.operation ?? "not_called"}${last?.confidence === undefined ? "" : ` confidence=${last.confidence.toFixed(2)}`}${reason ? `\nreason=${reason}` : ""}\n${result.evidence}`
 }

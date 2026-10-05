@@ -169,6 +169,20 @@ export type GuiTaskTrace = {
   ms?: number
   note?: string
 }
+/** Where a stopped run actually stopped. `gui_task` is one tool, so the calling
+ * model cannot see the loop's interior: this is the part that tells it which
+ * branch failed, in terms it can act on (retry, rephrase, raise a budget,
+ * confirm interactively) without re-reading the whole trace. */
+export type GuiTaskFailure = {
+  stage: "launch" | "observe" | "decide" | "risk-gate" | "deliver" | "settle" | "verify" | "wait" | "budget" | "offer-set"
+  /** The specific route inside the stage, e.g. "request-size", "stale-ref",
+   * "credentials", "pointer-fallback". */
+  branch?: string
+  detail: string
+  /** What would unblock the task, in one sentence. */
+  hint?: string
+}
+
 export type GuiTaskResult = {
   status: GuiTaskStatus
   appLaunched: boolean
@@ -179,6 +193,7 @@ export type GuiTaskResult = {
   evidence: string
   metrics: GuiTaskMetrics
   trace: GuiTaskTrace[]
+  failure?: GuiTaskFailure
 }
 export type GuiTaskEvent = {
   type: "launching" | "observed" | "decided" | "acted" | "status"

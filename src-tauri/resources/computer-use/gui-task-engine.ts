@@ -4,7 +4,7 @@ import { resolveDesktopApp } from "./desktop-app-resolver.ts"
 import { attachMedia, invalidateMenuCache, observeDesktop, readMediaFact } from "./desktop-observation.ts"
 import { isReplayableOperation, lookupTemplate, memoryIdentity, resolveStep, memoryKey, parameterize, type AffordanceMemory, type MemoryStep } from "./affordance-memory.ts"
 import { assessDesktopRisk, decideDesktop, isRetryableJevError, redactLocalSlots } from "./jev.ts"
-import { validateTaskInput, type DesktopCandidate, type DesktopDecision, type DesktopNode, type DesktopObservation, type GuiTaskEvent, type GuiTaskInput, type GuiTaskMetrics, type GuiTaskResult, type GuiTaskStatus, type GuiTaskTrace, stableCriteria } from "./gui-task-contract.ts"
+import { validateTaskInput, type DesktopCandidate, type DesktopDecision, type DesktopNode, type DesktopObservation, type GuiTaskEvent, type GuiTaskFailure, type GuiTaskInput, type GuiTaskMetrics, type GuiTaskResult, type GuiTaskStatus, type GuiTaskTrace, stableCriteria } from "./gui-task-contract.ts"
 import { describeDiff, diffTrees, findNodeByIdentity } from "./tree-diff.ts"
 
 const CHROMIUM_RENDERER_SETTLE_MS = 2_000
@@ -112,6 +112,31 @@ export async function runGuiTaskEngine({
   }
 
   const remaining = () => Math.max(1, deadline - Date.now())
+  /** Map a stopped run to the branch that stopped it. `gui_task` is one tool,
+   * so this is the calling model's only view of the loop's interior: naming the
+   * branch (and what would unblock it) turns a dead end into something the
+   * model can retry or rephrase instead of guessing. */
+  const classifyFailure = (status: GuiTaskStatus, note?: string): GuiTaskFailure | undefined => {
+    if (status === "done") return undefined
+    const text = note ?? ""
+    const has = (needle: string) => text.toLowerCase().includes(needle.toLowerCase())
+    // Signature failures first: they can surface under several statuses, and
+    // the branch is what the caller needs.
+    if (has("live element missing")) return { stage: "deliver", branch: "stale-ref", detail: text, hint: "the interface refreshed between observation and delivery; retrying usually succeeds" }
+    if (has("max_tokens_exceeded")) return { stage: "decide", branch: "request-size", detail: text, hint: "the observation plus the offer set exceeded the model input budget; nothing was executed" }
+    if (has("invalid unicode")) return { stage: "decide", branch: "unicode", detail: text, hint: "an element label carried invalid Unicode; labels are sanitized, so retrying may succeed" }
+    if (has("typesafe_api_key") || has("api key")) return { stage: "decide", branch: "credentials", detail: text, hint: "save the Jev key in Orbit settings or via the environment" }
+    if (has("permission")) return { stage: "deliver", branch: "permission", detail: text, hint: "grant the app Accessibility permission in System Settings" }
+    if (status === "needs_review") return { stage: "risk-gate", detail: text, hint: "re-run in an interactive session so the confirmation can be shown, or approve the target app" }
+    if (status === "needs_text") return { stage: "decide", branch: "text-slot", detail: text, hint: "provide a textSlot carrying the value the field needs" }
+    if (status === "blocked") return { stage: "offer-set", detail: text, hint: "the window offered no usable action; check the app state or rephrase the goal" }
+    if (status === "max_actions") return { stage: "budget", branch: "actions", detail: `action budget (${input.budget.maxActions}) was spent before the goal was verified`, hint: "raise budget.maxActions or narrow the goal to one step" }
+    if (status === "max_decisions") return { stage: "budget", branch: "decisions", detail: `decision budget (${input.budget.maxDecisions}) was spent`, hint: "raise budget.maxDecisions or narrow the goal" }
+    if (status === "timeout") return { stage: "budget", branch: "duration", detail: `time budget (${input.budget.maxDurationMs}ms) was spent`, hint: "raise budget.maxDurationMs" }
+    if (status === "error") return { stage: "decide", detail: text }
+    return undefined
+  }
+
   const finish = (status: GuiTaskStatus, observation?: DesktopObservation, note?: string): GuiTaskResult => {
     metrics.elapsedMs = Math.max(0, Date.now() - startedAt)
     if (status === "done" && memory && memoryKeyValue && !learningTainted && learnedSteps.length > 0) {
@@ -120,7 +145,8 @@ export async function runGuiTaskEngine({
       if (template) void memory.recordSuccess(template.key, template.steps, learnedCompletion).catch(() => undefined)
     }
     if (note) trace.push({ step: decisions, stateId: observation?.fingerprint ?? "unobserved", note })
-    return { status, appLaunched, goalVerified, lastAction, actions, decisions, evidence: observation?.context.slice(0, 2_000) ?? "", metrics, trace }
+    const failure = classifyFailure(status, note)
+    return { status, appLaunched, goalVerified, lastAction, actions, decisions, evidence: observation?.context.slice(0, 2_000) ?? "", metrics, trace, ...(failure ? { failure } : {}) }
   }
   if (signal?.aborted) return finish("aborted")
   emit({ type: "launching", step: 0, status: "running", payload: { app: input.target.app } })
@@ -176,6 +202,55 @@ export async function runGuiTaskEngine({
   let prefetched: DesktopObservation | undefined
   let staleRetries = 0
   let consecutiveFailures = 0
+  // AX 事件产出率：从不发事件的 app（Electron 内容常见）不再 arm observer，
+  // 改为条件轮询；一旦发过事件立即恢复事件等待。
+  let eventSilenceStreak = 0
+  // Condition wait: poll the interface until an expectation is met or the
+  // world goes quiet. There is no sleep here — the gap between reads is the
+  // cost of reading itself, so a fast app is answered on the first read and a
+  // slow one is polled at its own pace. Two identical consecutive reads mean
+  // the application has finished updating; waiting longer cannot reveal
+  // anything new, so the read ends and the model judges what it got.
+  const QUIESCENT_READS = 2
+  const MAX_WAIT_POLLS = 10
+  const anchorHits = (observation: DesktopObservation, anchors: readonly string[]): number => {
+    if (!anchors.length) return 0
+    const table = observation.context.split("\nelements:\n")[1] ?? ""
+    return anchors.reduce((total, anchor) => total + (table.includes(anchor) ? 1 : 0), 0)
+  }
+  const waitForInterface = async (
+    start: DesktopObservation,
+    met: (observation: DesktopObservation) => boolean,
+    anchors: readonly string[],
+  ): Promise<DesktopObservation | undefined> => {
+    let previous = start
+    let stable = 0
+    for (let poll = 1; poll <= MAX_WAIT_POLLS; poll++) {
+      if (Date.now() >= deadline || signal?.aborted) return previous
+      let next: DesktopObservation | undefined
+      try {
+        next = await observe(client, {
+          app: launched.app || input.target.app, goal: input.goal,
+          textSlots: input.textSlots ?? [], usedSlotIds, allowPressEnter,
+        }, { timeoutMs: remaining(), signal })
+      } catch {
+        return previous
+      }
+      if (met(next)) return next
+      const changed = (next.treeFingerprint ?? next.fingerprint) !== (previous.treeFingerprint ?? previous.fingerprint)
+        || next.media !== previous.media
+        || anchorHits(next, anchors) !== anchorHits(previous, anchors)
+      stable = changed ? 0 : stable + 1
+      if (stable >= QUIESCENT_READS) return next
+      previous = next
+    }
+    return previous
+  }
+  const anchorValuesFor = (): string[] => [
+    ...(input.textSlots ?? []).map(slot => slot.value),
+    ...(input.goal ?? "").match(/[\u201c\u300c\u300e"]([^\u201d\u300d\u300f"]{2,120})[\u201d\u300d\u300f"]/g) ?? [],
+  ].map(value => value.trim()).filter(value => value.length > 0)
+
   while (true) {
     if (signal?.aborted) return finish("aborted", observation)
     if (Date.now() >= deadline) return finish("timeout", observation)
@@ -305,7 +380,8 @@ export async function runGuiTaskEngine({
       const offered = input.readOnly
         ? eligible.filter(candidate => !isMutation(candidate.operation) && !isContextualMutation(candidate.operation) && candidate.operation !== "PRESS_ENTER")
         : eligible
-      // Affordance Memory replay: the next remembered step, matched by
+
+  // Memory replay: the next remembered step, matched by
       // observed identity against what is offered right now. A miss hands
       // control back to Jev for the rest of the task (self-heal).
       let replayed: DesktopDecision | undefined
@@ -524,9 +600,20 @@ export async function runGuiTaskEngine({
       consecutiveWaits++
       unchangedMutations = 0
       if (consecutiveWaits >= 3) return finish("blocked", observation, "Jev waited three consecutive turns without selecting a progress operation")
-      await delay(Math.min(250, remaining()), undefined, { signal })
+      // Waiting is conditioned, never timed: hold until the goal's anchors
+      // appear (a search result, a loaded pane) or the interface goes quiet,
+      // whichever comes first. The model said "not ready yet" — the engine
+      // decides when ready actually is.
+      const anchors = anchorValuesFor()
+      const current = observation
+      const before = anchorHits(current, anchors)
+      const waited = await waitForInterface(current, after => anchorHits(after, anchors) > before || after.media !== current.media, anchors)
+      const changed = (waited?.fingerprint ?? "") !== current.fingerprint || (waited?.media ?? "") !== current.media
       entry.outcome = "waited"
-      history.push("WAIT")
+      history.push(changed
+        ? `WAIT; the interface changed while waiting${anchorHits(waited ?? observation, anchors) > before ? " and goal anchors appeared" : ""}`
+        : "WAIT; nothing changed while waiting")
+      prefetched = waited
       continue
     }
 
@@ -534,7 +621,14 @@ export async function runGuiTaskEngine({
     try {
       const mutating = isMutation(candidate.operation) || isContextualMutation(candidate.operation)
       const identitiesBefore = new Set(observation.candidates.filter(item => item.ref).map(item => targetKey(item, true)))
-      const executed = await executeCandidateDetailed(client, launched.app || input.target.app, candidate, input, remaining(), signal, mutating ? Math.min(EVENT_SETTLE_TIMEOUT_MS, remaining()) : undefined)
+      // The AX observer is event-driven, which is the right way to wait for an
+      // app that posts notifications. Toolkits that never post (CEF/Electron
+      // content is the common case) make it a pure delay, so the engine stops
+      // arming it after two silent settles and falls back to condition polling.
+      const settleArgs = mutating && eventSilenceStreak < 2 ? ["--settle-timeout-ms", String(Math.round(Math.min(EVENT_SETTLE_TIMEOUT_MS, remaining())))] : []
+      const executed = await executeCandidateDetailed(client, launched.app || input.target.app, candidate, input, remaining(), signal, settleArgs.length ? Math.round(Math.min(EVENT_SETTLE_TIMEOUT_MS, remaining())) : undefined)
+      // 投递与等待分开计时：此前 settle 被算进 action，导致各相位之和大于总时长。
+      metrics.actionMs += performance.now() - actionStarted
       const outcome = executed.delivery
       actions++
       consecutiveWaits = 0
@@ -546,46 +640,55 @@ export async function runGuiTaskEngine({
       if (mutating) {
         const settleStarted = performance.now()
         const observeSettled = () => observe(client, { app: launched.app || input.target.app, goal: input.goal, textSlots: input.textSlots ?? [], usedSlotIds, allowPressEnter, skipMedia: true }, { timeoutMs: remaining(), signal })
-        const before = observation.treeFingerprint ?? observation.fingerprint
         const report = executed.settle
+        const anchors = anchorValuesFor()
+        const beforeAnchors = anchorHits(observation, anchors)
+        // Did the action achieve what it was trying to achieve? Fingerprint or
+        // media movement is the generic answer; anchors appearing is the
+        // specific one (a search that now shows results, a load that now shows
+        // the named pane). Waiting is conditioned on these, never on a clock.
+        const actionBaseline = observation
+        const settled = (after: DesktopObservation): boolean =>
+          (after.treeFingerprint ?? after.fingerprint) !== (actionBaseline.treeFingerprint ?? actionBaseline.fingerprint)
+          || after.media !== actionBaseline.media
+          || anchorHits(after, anchors) > beforeAnchors
         if (report?.supported) {
-          // Event-driven: the worker already blocked until the app posted
-          // accessibility notifications and went quiet. Observe once.
+          // Event-driven: the worker blocked until the app posted accessibility
+          // notifications and went quiet. Observe once.
           metrics.settleEvents += report.events ?? 0
+          if ((report.events ?? 0) > 0) eventSilenceStreak = 0
+          else eventSilenceStreak += 1
           entry.note = entry.note ?? (report.events ? `settled after ${report.events} AX events (${(report.notifications ?? []).join(",")}) in ${report.ms}ms` : `no AX events within ${report.ms}ms`)
           try {
             prefetched = await observeSettled()
           } catch {
             prefetched = undefined
           }
-        } else {
-          // Polling fallback: re-observe until the tree differs from the
-          // pre-action state (or a short ceiling passes). Media is not read
-          // inside the loop; it is attached once below.
-          const settleDeadline = Date.now() + Math.min(SETTLE_CEILING_MS, remaining())
-          for (;;) {
-            await delay(SETTLE_POLL_MS, undefined, { signal })
-            try {
-              const next = await observeSettled()
-              prefetched = next
-              if ((next.treeFingerprint ?? next.fingerprint) !== before || Date.now() >= settleDeadline) break
-            } catch {
-              prefetched = undefined
-              break
-            }
+        }
+        // A silent settle is not a failed one, and it is not a reason to hand
+        // the model a half-loaded screen: keep reading while the world still
+        // moves, until the action's condition is met or the interface goes
+        // quiet. Reads are the clock here; there is no sleep to tune.
+        if (!prefetched || !settled(prefetched)) {
+          const afterWait = await waitForInterface(
+            prefetched ?? observation,
+            settled,
+            anchors,
+          )
+          if (afterWait) prefetched = afterWait
+          if (!report?.supported) {
+            entry.note = entry.note ?? `settled by condition polling in ${Math.round(performance.now() - settleStarted)}ms`
+          } else if ((prefetched?.fingerprint ?? "") !== (observation.fingerprint ?? "")) {
+            entry.note = `${entry.note ? `${entry.note}; ` : ""}condition met after the settle read`
+          } else {
+            entry.note = `${entry.note ? `${entry.note}; ` : ""}interface stayed quiet; handing the model what settled`
           }
         }
-        // Busy-aware settle: the app acknowledged the action but is still
-        // working (progress/busy indicator present, or an autocomplete field
-        // was typed into and its suggestions have not arrived yet). Keep
-        // observing, bounded, instead of spending a Jev WAIT turn on it.
-        if (prefetched) {
-          const busyDeadline = Date.now() + Math.min(BUSY_CEILING_MS, remaining())
-          const awaitingSuggestions = candidate.operation === "SET_VALUE" || candidate.operation === "TYPE_TEXT"
-            ? isAutocompleteField(candidate) && !hasNewPopupList(observation.tree, prefetched.tree)
-            : false
-          let suggestionDeadline = awaitingSuggestions ? Date.now() + SUGGESTION_WAIT_MS : 0
-          while (prefetched && Date.now() < busyDeadline && (isBusy(prefetched.tree) || Date.now() < suggestionDeadline)) {
+        // Autocomplete suggestions and busy indicators are the same condition
+        // shape: keep reading while a busy indicator is visible, until it goes.
+        if (prefetched && isBusy(prefetched.tree)) {
+          const busyStart = performance.now()
+          while (prefetched && isBusy(prefetched.tree) && performance.now() - busyStart < Math.min(remaining(), BUSY_CEILING_MS)) {
             await delay(BUSY_POLL_MS, undefined, { signal })
             try {
               prefetched = await observeSettled()
@@ -593,7 +696,6 @@ export async function runGuiTaskEngine({
               prefetched = undefined
               break
             }
-            if (suggestionDeadline && prefetched && hasNewPopupList(observation.tree, prefetched.tree)) suggestionDeadline = 0
           }
         }
         if (prefetched?.mediaSkipped) prefetched = attachMedia(prefetched, await readMediaFact(client, { timeoutMs: Math.min(remaining(), 5_000), signal }))

@@ -766,6 +766,43 @@ describe("desktop goal loop", () => {
     expect(commands[1]).toContain("private song")
   })
 
+  test("names the failed branch so a caller can act without re-reading the trace", async () => {
+    // A request-size rejection must surface as decide/request-size with the
+    // model-input hint, not as a bare "error" the caller cannot act on.
+    const client = mockClient(() => ({ version: "2.4", ok: true, command: "launch", data: { app: "Music", pid: 1 } }))
+    const result = await runGuiTaskEngine({
+      input: task({ textSlots: [] }), client, resolveApp,
+      decide: async () => { throw new Error('Jev step request rejected (state_chars=8426, question_chars=191756): 400 {"detail":{"error_type":"max_tokens_exceeded"}}') },
+      observe: async () => observation("dense", [{ id: "row", operation: "CLICK", ref: "@s1:e1", description: "chat row" }]),
+    })
+    expect(result.status).toBe("error")
+    expect(result.failure?.stage).toBe("decide")
+    expect(result.failure?.branch).toBe("request-size")
+    expect(result.failure?.hint).toContain("input budget")
+  })
+
+  test("reports a stale reference as deliver/stale-ref with a retry hint", async () => {
+    let calls = 0
+    const client = mockClient(args => {
+      calls++
+      if (args[0] === "launch") return { version: "2.4", ok: true, command: "launch", data: { app: "Music", pid: 1, window: { id: "w-1", title: "Music" } } }
+      throw new DesktopCommandError("double-click", { code: "AX_ERROR", message: "live element missing", disposition: { delivery: "not_delivered", retry: "never" } })
+    })
+    const current = observation("row", [{ id: "row", operation: "DOUBLE_CLICK", ref: "@s1:e1", headed: true, description: "result row" }])
+    const result = await runGuiTaskEngine({
+      input: task({ textSlots: [] }), client, resolveApp,
+      observe: async () => current,
+      decide: async () => choice("DOUBLE_CLICK", "row"),
+      assessRisk: async () => ({ probability: 0.1, model: "t", latencyMs: 1, usage: { inputTokens: 0, outputTokens: 0 } }),
+    })
+    // A non-retryable delivery failure stops for review — and names its branch.
+    expect(result.status).toBe("needs_review")
+    expect(result.failure?.stage).toBe("deliver")
+    expect(result.failure?.branch).toBe("stale-ref")
+    expect(result.failure?.hint).toContain("retrying usually succeeds")
+    void calls
+  })
+
   test("never replays an action after uncertain delivery", async () => {
     let clicks = 0
     const client = mockClient(args => {
