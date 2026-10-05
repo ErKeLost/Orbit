@@ -33,7 +33,7 @@ globals.localStorage ??= {
 const { renderToStaticMarkup } = await import("react-dom/server")
 const { ScreenPip } = await import("../src/components/screen/ScreenPip")
 const { ScreenFrame } = await import("../src/components/screen/ScreenFrame")
-const { pipBox, currentViewport, minWidth, maxWidth } = await import("../src/lib/screen-pip")
+const { pipBox, currentViewport, minWidth, maxWidth, defaultWidth, fitSize } = await import("../src/lib/screen-pip")
 
 const viewport = currentViewport()
 
@@ -109,6 +109,38 @@ describe("floating screen window", () => {
     // An out-of-range stored position is corrected rather than trusted.
     const stray = render({ width: 300, height: 220, x: 99999, y: -99999 })
     expect(stray).toContain(`translate(${box.left}px,${box.top}px)`)
+  })
+
+  test("landscape: a drag keeps a real vertical range instead of snapping to the top", () => {
+    // The regression: in landscape the viewport is wide but short, the default
+    // width is a share of the *width*, and the height derived from it was taller
+    // than the space the window can move in. The allowed vertical range
+    // collapsed to a few pixels, so every drag ended pinned to the top edge.
+    for (const landscape of [
+      { left: 0, top: 0, width: 800, height: 360 },
+      { left: 0, top: 0, width: 915, height: 412 },
+      { left: 0, top: 0, width: 2400, height: 1080 },
+    ]) {
+      const wantedWidth = defaultWidth(landscape)
+      const wantedHeight = Math.round(wantedWidth * 0.62) + 34
+      const { width, height } = fitSize(wantedWidth, wantedHeight, landscape)
+      expect(height).toBeLessThanOrEqual(wantedHeight)
+      // y < 0 means "pin to the bottom" in pipBox, so the top end is asked for with 0.
+      const highest = pipBox(10, 0, width, height, landscape).top
+      const lowest = pipBox(10, 99999, width, height, landscape).top
+      // Enough room to put the window somewhere other than the top edge.
+      expect(lowest - highest).toBeGreaterThanOrEqual(Math.round(landscape.height * 0.25))
+      // A position in the middle of that range is kept, not pulled to the top.
+      const middle = Math.round((highest + lowest) / 2)
+      expect(pipBox(10, middle, width, height, landscape).top).toBe(middle)
+    }
+  })
+
+  test("portrait sizes are left alone by the landscape fit", () => {
+    const portrait = { left: 0, top: 0, width: 360, height: 800 }
+    const wantedWidth = defaultWidth(portrait)
+    const wantedHeight = Math.round(wantedWidth * 0.62) + 34
+    expect(fitSize(wantedWidth, wantedHeight, portrait)).toEqual({ width: wantedWidth, height: wantedHeight })
   })
 
   test("shows numbers only once there is a picture", () => {

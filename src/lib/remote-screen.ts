@@ -289,6 +289,13 @@ class ScreenChannel {
   }
 
   get current(): ScreenChannelSnapshot {
+    // Counters are bumped on the frame path without publishing (a render per
+    // counter would double the work of every frame), so the stored snapshot can
+    // be one step behind them. Anyone *reading* gets the live values.
+    if (this.snapshot.diag !== this.diag || this.diag.painted !== this.paintedCount) {
+      if (this.diag.painted !== this.paintedCount) this.diag = { ...this.diag, painted: this.paintedCount }
+      this.snapshot = { ...this.snapshot, diag: this.diag }
+    }
     return this.snapshot
   }
 
@@ -341,6 +348,8 @@ class ScreenChannel {
   private diag: ScreenDiag = { ...EMPTY_DIAG }
   /** Hot-path counters: folded into `diag` on the next emit, not per frame. */
   private paintedCount = 0
+  /** Every frame since the channel was created; never reset, so a reply can tell whether frames raced ahead of it. */
+  private receivedTotal = 0
   private noCanvasCount = 0
 
   private tally(key: Exclude<keyof ScreenDiag, "lastProblem">, problem?: string): void {
@@ -388,17 +397,27 @@ class ScreenChannel {
           : wants === "jpeg"
             ? "上一次 H.264 解码失败，已改用 JPEG"
             : `本机不支持 H.264（探测 ${this.probeDetail ?? "无结果"}），已改用 JPEG`
+      const receivedBefore = this.receivedTotal
       const result = await client.request(
         { type: "screen.start", settings: { ...settings, codec } },
         20_000,
       ) as RemoteScreenStartResult | undefined
       if (this.closed) return
       if (!result?.display) throw new Error("桌面没有返回可捕获的显示器")
-      this.diag = { ...EMPTY_DIAG }
-      this.paintedCount = 0
-      this.noCanvasCount = 0
-      if (result.codec === "h264") this.resetDecoder()
-      else this.releaseFrameUrl()
+      const action = decoderActionOnStart({
+        codec: result.codec,
+        hasDecoder: this.decoder !== null,
+        framesSinceRequest: this.receivedTotal - receivedBefore,
+      })
+      if (action !== "keep") {
+        // Counters describe the decoder they were measured on; a kept decoder
+        // keeps its counters too.
+        this.diag = { ...EMPTY_DIAG }
+        this.paintedCount = 0
+        this.noCanvasCount = 0
+      }
+      if (action === "build") this.resetDecoder()
+      else if (action === "release") this.releaseFrameUrl()
       // The caller's request, not the merged result: comparing against the
       // merged shape would report a difference on every call (the reply adds a
       // concrete `codec`) and restart capture each time.
@@ -538,6 +557,7 @@ class ScreenChannel {
     if (this.closed) return
     const receivedAt = Date.now()
     this.windowFrames += 1
+    this.receivedTotal += 1
     this.tally("received")
     if (!this.windowStart) this.windowStart = receivedAt
     const elapsed = receivedAt - this.windowStart
@@ -591,8 +611,14 @@ class ScreenChannel {
   // ── H.264 ────────────────────────────────────────────────────────
 
   private decodeH264(frame: RemoteScreenFrame): void {
+    // The first frame can beat the `screen.start` reply here, and it is the only
+    // one that carries the decoder configuration. Dropping it for want of a
+    // decoder — which is only built once the reply lands — loses that
+    // configuration for good, so build the decoder on demand instead.
+    if (!this.decoder) this.resetDecoder()
     const decoder = this.decoder
     if (!decoder) {
+      this.tally("noDecoderConfig", "此设备没有 WebCodecs 视频解码器")
       this.emit({ error: "H.264 解码器未就绪" })
       return
     }
@@ -952,6 +978,29 @@ function base64ToBytes(value: string): Uint8Array<ArrayBuffer> {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * What to do with the decoder when a `screen.start` reply arrives.
+ *
+ * The host activates the subscription *before* it answers, so the first frame —
+ * the only one carrying the decoder configuration — can reach the phone ahead of
+ * the reply. Tearing the decoder down then throws that configuration away, and
+ * the host does not send it again until someone asks for a keyframe. The
+ * watchdog's request is another `screen.start`, whose reply tears the decoder
+ * down again: a loop in which frames arrive at full rate (so the frame counter
+ * looks healthy) and none is ever decodable. That is a black preview at 28 fps.
+ *
+ * A decoder that already took frames since this request was sent is left alone.
+ */
+export function decoderActionOnStart(input: {
+  codec: RemoteScreenCodec
+  hasDecoder: boolean
+  framesSinceRequest: number
+}): "build" | "keep" | "release" {
+  if (input.codec !== "h264") return "release"
+  if (!input.hasDecoder) return "build"
+  return input.framesSinceRequest > 0 ? "keep" : "build"
 }
 
 /** The one screen channel this app owns. */

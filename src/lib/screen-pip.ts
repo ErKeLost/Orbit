@@ -73,6 +73,47 @@ export function savePlacement(placement: PipPlacement): void {
   }
 }
 
+/** Share of the usable height the window may take, so it can still be moved. */
+const MAX_HEIGHT_RATIO = 0.62
+
+/**
+ * The room left for the window vertically once the home indicator and the
+ * composer are accounted for. Landscape is where this matters: the viewport is
+ * wide but short, so a width taken as a fraction of the *width* gave a window
+ * taller than the space it was allowed to move in.
+ */
+export function usableHeight(viewport: PipViewport): number {
+  const clear = safeAreaBottom() + dockClearance(viewport)
+  return Math.max(0, viewport.height - 2 * MARGIN - clear)
+}
+
+/**
+ * Fit a window to the viewport.
+ *
+ * Width alone is not enough. In landscape a width of 52% of a wide viewport
+ * turns into a height larger than the whole usable area; the allowed vertical
+ * range then collapses to a few pixels and every drag snaps to the top edge.
+ * Capping the *height* and deriving the width back from the picture's aspect
+ * keeps a real range to move in.
+ */
+export function fitSize(
+  width: number,
+  height: number,
+  viewport: PipViewport,
+  chrome = PIP_CHROME_HEIGHT,
+): { width: number; height: number } {
+  const ceiling = Math.max(chrome + 40, Math.floor(usableHeight(viewport) * MAX_HEIGHT_RATIO))
+  if (height <= ceiling) return { width, height }
+  // Shrink along the picture's aspect: the bar/footer are fixed, the picture
+  // area is what gives.
+  const picture = Math.max(1, height - chrome)
+  const scale = (ceiling - chrome) / picture
+  return { width: Math.max(1, Math.round(width * scale)), height: ceiling }
+}
+
+/** Title bar plus the numbers row, which do not scale with the picture. */
+export const PIP_CHROME_HEIGHT = 34
+
 export type PipBox = { width: number; height: number; left: number; top: number }
 
 /**
@@ -159,18 +200,20 @@ export function dockClearance(viewport: PipViewport): number {
 export type PipConstraints = { left: number; top: number; right: number; bottom: number }
 
 export function pipConstraints(viewport: PipViewport, width: number, height: number): PipConstraints {
-  const { left, right, bottom } = pipBounds(viewport, width, height)
-  return { left, top: viewport.top + MARGIN, right, bottom }
+  const { left, right, top, bottom } = pipBounds(viewport, width, height)
+  return { left, top, right, bottom }
 }
 
 /** Width in CSS pixels, which is also what the pixel budget is derived from. */
 export function pipBox(x: number, y: number, width: number, height: number, viewport: PipViewport): PipBox {
-  const { left, right, bottom } = pipBounds(viewport, width, height)
+  const { left, right, top, bottom } = pipBounds(viewport, width, height)
   return {
     width,
     height,
     left: Math.min(Math.max(x < 0 ? right : x, left), right),
-    top: Math.min(Math.max(y < 0 ? bottom : y, left), bottom),
+    // The vertical lower bound is the *top* margin. It used to reuse `left`, which
+    // only happened to be equal while the viewport had no vertical offset.
+    top: Math.min(Math.max(y < 0 ? bottom : y, top), bottom),
   }
 }
 
@@ -180,9 +223,7 @@ function pipBounds(viewport: PipViewport, width: number, height: number) {
   const right = Math.max(left, viewport.left + viewport.width - width - MARGIN)
   // Clearance for the home indicator and the composer dock, both measured.
   const clear = safeAreaBottom() + dockClearance(viewport)
-  const bottom = Math.max(
-    viewport.top + MARGIN,
-    viewport.top + viewport.height - height - MARGIN - clear,
-  )
-  return { left, right, bottom }
+  const top = viewport.top + MARGIN
+  const bottom = Math.max(top, viewport.top + viewport.height - height - MARGIN - clear)
+  return { left, right, top, bottom }
 }

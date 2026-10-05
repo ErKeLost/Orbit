@@ -7,6 +7,7 @@ import type { ScreenChannelSnapshot } from "../../lib/remote-screen"
 import {
   currentViewport,
   defaultWidth,
+  fitSize,
   maxWidth,
   minWidth,
   pipBox,
@@ -47,8 +48,11 @@ export function ScreenPip({ snapshot, placement, onPlacement }: {
 
   // The stored size can be out of range after a rotation, and `react-rnd` only
   // clamps while the user is actually dragging.
-  const width = Math.min(Math.max(placement.width, limits.min), limits.max)
-  const height = placement.height > 0 ? placement.height : Math.round(width * 0.62) + 34
+  const wanted = Math.min(Math.max(placement.width, limits.min), limits.max)
+  const wantedHeight = placement.height > 0 ? placement.height : Math.round(wanted * 0.62) + 34
+  // Fitted to the *height* as well: in landscape the width-based size is taller
+  // than the space the window can move in, and every drag then snaps to the top.
+  const { width, height } = fitSize(wanted, wantedHeight, viewport)
   const box = pipBox(placement.x, placement.y, width, height, viewport)
 
   // `react-rnd` is controlled for position, so an out-of-range stored position
@@ -66,7 +70,6 @@ export function ScreenPip({ snapshot, placement, onPlacement }: {
     aria-label="电脑屏幕预览"
     size={{ width, height }}
     position={{ x: box.left, y: box.top }}
-    bounds="window"
     minWidth={limits.min}
     minHeight={Math.round(limits.min * 0.62) + 34}
     maxWidth={limits.max}
@@ -93,7 +96,13 @@ export function ScreenPip({ snapshot, placement, onPlacement }: {
         useWorkspace.getState().set({ screenExpanded: true })
         return
       }
-      onPlacement({ ...placement, x: data.x, y: data.y })
+      // Clamped with the same function that positions the window, so the
+      // library and this component can never disagree about where the edge is.
+      // `bounds="window"` used `innerHeight` while placement uses the visual
+      // viewport minus the composer, and in landscape the two differ enough
+      // that every release was pulled back to the top.
+      const settled = pipBox(data.x, data.y, width, height, viewport)
+      onPlacement({ ...placement, x: settled.left, y: settled.top })
     }}
     onResizeStop={(_event, _direction, element, _delta, position) => {
       onPlacement({
