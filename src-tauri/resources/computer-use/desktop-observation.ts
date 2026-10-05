@@ -358,18 +358,6 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
   // lets the wrapper win the choice about half the time (upstream offerable()
   // withholds exactly these). Withhold wrapper clicks when a same-named
   // button/link advertises the action itself.
-  const specificLabels = new Set<string>()
-  for (const node of nodes) {
-    const label = (node.name ?? node.description ?? "").trim()
-    if (label && (node.role === "button" || node.role === "link") && hasClickAction(new Set(node.available_actions ?? []))) specificLabels.add(label)
-  }
-  const isWrapperOfSpecific = (node: FlatNode) => {
-    if (node.role !== "group" && node.role !== "link") return false
-    const own = (node.name ?? node.description ?? "").trim()
-    if (own && specificLabels.has(own)) return true
-    const parts = (node.descendantSummary ?? "").split(" · ").map(part => part.trim())
-    return parts.some(part => part && specificLabels.has(part))
-  }
   // Controls sharing one label (a "Play" button in every row) are only
   // distinguishable by the item that contains them. Attach the nearest
   // ancestor text that differs between them.
@@ -402,7 +390,6 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
     if (node.role === "application" && node.children_count) continue
     const ref = node.ref_id!
     const actions = new Set(node.available_actions ?? [])
-    const wrapperOfSpecific = isWrapperOfSpecific(node)
     const inItem = itemContext(node)
     const descriptor = describeNode(node)
     display = candidateCriteria(node, slots, indexOf.get(node.ref_id as string) ?? 0)
@@ -448,14 +435,28 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
     if (actions.has("SetFocus") && !hasClickAction(actions) && !passiveText && !node.children_count && !isEditableTextRole(node.role, node)) {
       add({ operation: "FOCUS", ref, headed: false, description: `${descriptor}; focus the observed accessibility element without activating it` })
     }
-    if (hasClickAction(actions) && !isEditableTextRole(node.role, node) && !wrapperOfSpecific) {
-      // One target, one candidate. Delivery is a code decision, not a rival
-      // option: two deliveries for the same element split the choice and read
-      // as doubt, which is what a decision model measures as low confidence
-      // (upstream keeps its action set mutually exclusive and falls back to a
-      // pointer click when the press is refused). The engine performs that
-      // fallback itself, so it does not have to be offered here.
-      add({ operation: "CLICK", ref, headed: false, description: `${descriptor}; delivery=semantic accessibility press, then exact-window pointer delivery when it produces no visible change` })
+    if (hasClickAction(actions) && !isEditableTextRole(node.role, node)) {
+      // Gesture follows shape: a LEAF pressable is a button (single click);
+      // an anonymous pressable CONTAINER is a list row or card, whose desktop
+      // gesture is a double-click — its inner controls (like, links, more) are
+      // separate targets with their own routes. Named containers keep the
+      // semantic press. Without this split the model either clicks the row's
+      // fragments (and can never open the row) or drowns in wrapper options.
+      // A row/card is a wide, short band: an icon button inside a transparent
+      // wrapper has the same "anonymous group with a child" shape but a
+      // square-ish frame, and its gesture stays a single click. The ratio is
+      // shape semantics (wide and short), not a tuned scenario constant.
+      const bounds = node.bounds
+      const wideBand = Boolean(bounds) && bounds!.width >= bounds!.height * 3 && bounds!.width >= 200
+      const rowLike = Boolean(node.children_count) && !node.name && !node.description && !visibleValue(node) && wideBand
+      if (rowLike) {
+        add({ operation: "DOUBLE_CLICK", ref, headed: true, evidence: "structural", speculative: true, expect: ["no_overlay"], description: `${descriptor}; double-click this row or card to open or play it` })
+      } else {
+        // One target, one candidate. Delivery is a code decision, not a rival
+        // option: two deliveries for the same element split the choice and read
+        // as doubt, which is what a decision model measures as low confidence.
+        add({ operation: "CLICK", ref, headed: false, description: `${descriptor}; delivery=semantic accessibility press, then exact-window pointer delivery when it produces no visible change` })
+      }
       if (webContent && node.role === "group" && !node.name && !node.description && node.listRow) {
         add({ operation: "DOUBLE_CLICK", ref, headed: true, evidence: "structural", speculative: true, expect: ["no_overlay"], description: `${descriptor}; activate this observed list item itself with two rapid verified pointer clicks` })
       }
@@ -531,6 +532,16 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
   }
   display = undefined
   stable = undefined
+  // Structural invariant: one candidate per (target, operation). Two routes
+  // for the same element is option-level overlap that reads as doubt to a
+  // decision model — enforce it here so no branch can double-offer.
+  const seen = new Set<string>()
+  const unique = candidates.filter(candidate => {
+    const key = `${candidate.operation}:${candidate.ref ?? candidate.description}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
   // Return submits whatever the focused field holds. It is a real option
   // both right after this task typed text and whenever the focused editable
   // field already contains text (e.g. a draft left in a chat composer).
@@ -544,7 +555,7 @@ function buildCandidates(nodes: FlatNode[], slots: TextSlot[], used: ReadonlySet
   add({ operation: "WAIT", description: "Wait briefly and obtain a fresh accessibility observation without mutating the app." })
   add({ operation: "DONE", description: "Every part of the user's goal is visibly satisfied in the current observation." })
   add({ operation: "BLOCKED", description: "No offered operation can safely make progress toward the goal." })
-  return candidates
+  return unique
 }
 
 /** Structured identity criteria, following the upstream act.mjs describe():
@@ -647,6 +658,10 @@ function shellRefs(root: DesktopNode): Set<string> {
  * children are offered directly instead (upstream `offerable()` withholds
  * exactly these). */
 function isLayoutShell(node: FlatNode, shells: ReadonlySet<string>): boolean {
+  // A container that declares its own press can be the target itself — list
+  // rows are opened by double-clicking the row, not one of its controls. Only
+  // a NON-pressable anonymous wrapper is pure layout.
+  if (hasClickAction(new Set(node.available_actions ?? []))) return false
   if (node.name || node.description || visibleValue(node)) return false
   return Boolean(node.ref_id && shells.has(node.ref_id))
 }

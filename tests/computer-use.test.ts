@@ -432,7 +432,7 @@ describe("AX-first desktop observation", () => {
     expect(result.candidates.some(candidate => candidate.operation === "DRILL")).toBe(false)
   })
 
-  test("withholds inert wrapper clicks when a named control inside shares the label", async () => {
+  test("offers the wrapper click beside the named control inside it", async () => {
     const snapshot: SnapshotData = {
       app: "抖音",
       complete: true,
@@ -462,8 +462,10 @@ describe("AX-first desktop observation", () => {
     const result = await observeDesktop(client, {
       app: "抖音", textSlots: [], usedSlotIds: new Set(), allowPressEnter: false,
     }, { timeoutMs: 5_000 })
+    // 能力优先于整洁：包装自身的 click 也提供（它可能是行/卡片本体的手势）。
+    // 点它若无效果，引擎的 no-effect 检测会自愈，而不是让这层永远够不到。
     const groupClicks = result.candidates.filter(candidate => candidate.ref === "@s1:e1" && candidate.operation === "CLICK")
-    expect(groupClicks).toHaveLength(0)
+    expect(groupClicks).toHaveLength(1)
     const buttonClicks = result.candidates.filter(candidate => candidate.ref === "@s1:e2" && candidate.operation === "CLICK")
     expect(buttonClicks.length).toBeGreaterThanOrEqual(1)
   })

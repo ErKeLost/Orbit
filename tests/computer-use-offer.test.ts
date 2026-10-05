@@ -205,6 +205,49 @@ describe("offer set on a real Electron player window", () => {
     expect(lines.every(line => !line.includes("\uFFFD"))).toBe(true)
   })
 
+  test("keeps pressable list rows even when they contain smaller controls", async () => {
+    // 汽水音乐-style search results: each row is an ANONYMOUS pressable group
+    // that contains smaller controls (a like button, links, a more button).
+    // The row itself is the playback target (double-click/press to play) —
+    // pruning it as a "layout shell" leaves the model only the fragments, and
+    // it can never open the row no matter how it clicks.
+    const row = (index: number, ref: string): DesktopNode => ({
+      role: "group", ref_id: ref,
+      actions: ["press"],
+      bounds: { x: 232, y: 483 + index * 48, width: 2296, height: 48 },
+      children: [
+        { role: "group", ref_id: `${ref}:like`, actions: ["press"], bounds: { x: 294, y: 491 + index * 48, width: 32, height: 32 } },
+        { role: "link", ref_id: `${ref}:title`, name: index === 0 ? "蓝" : `歌${index}`, actions: ["press"], bounds: { x: 340, y: 491 + index * 48, width: 60, height: 20 } },
+      ],
+    })
+    const snapshot: SnapshotData = {
+      app: "汽水音乐", complete: true, ref_count: 3, snapshot_id: "s1",
+      window: { id: "w-1", title: "汽水音乐" },
+      tree: { role: "window", name: "汽水音乐", children: [row(0, "@s1:r1"), row(1, "@s1:r2"), row(2, "@s1:r3")] },
+    }
+    const rowDriver: DesktopDriver = {
+      async run<T>(args: string[]): Promise<DesktopEnvelope<T>> {
+        if (args[0] !== "snapshot") return { version: "orbit.ax.v1", ok: true, command: args[0], data: { items: [] } } as DesktopEnvelope<T>
+        return { version: "orbit.ax.v1", ok: true, command: "snapshot", data: normalizeSnapshot(snapshot) } as DesktopEnvelope<T>
+      },
+      async dispose() { /* nothing to release */ },
+    }
+    const observation = await observeDesktop(rowDriver, {
+      app: "汽水音乐", goal: "播放搜索结果第一行", textSlots: [], usedSlotIds: new Set(), allowPressEnter: false,
+    }, { timeoutMs: 5_000 })
+
+    // The row survives, and so do its inner controls — one target per element.
+    for (const ref of ["@s1:r1", "@s1:r2", "@s1:r3"]) {
+      // The row's desktop gesture is a double-click (open/play); its inner
+      // like-button keeps its own single click.
+      expect(observation.candidates.some(candidate => candidate.ref === ref && candidate.operation === "DOUBLE_CLICK")).toBe(true)
+      expect(observation.candidates.some(candidate => candidate.ref === `${ref}:like` && candidate.operation === "CLICK")).toBe(true)
+    }
+    // The row is in the readable table, with its own song text as the label.
+    const lines = tableLines(observation)
+    expect(lines.some(line => line.includes("\"蓝\"") && line.includes("double_click"))).toBe(true)
+  })
+
   test("keeps the search field typeable and referenced by its table index", async () => {
     const withSlot = await observeDesktop(driver, {
       app: "汽水音乐",
@@ -225,19 +268,19 @@ describe("offer set on a real Electron player window", () => {
     const observation = await observePlayer()
     const lines = tableLines(observation)
     expect(lines.slice(0, 10)).toEqual([
-      '[2] link "推荐" · 1/6 · right_click',
-      '[5] link "听歌模式" · 2/6 · right_click',
-      '[10] link "我喜欢的音乐" · 3/6 · right_click',
-      '[13] link "抖音收藏的音乐" · 4/6 · right_click',
-      '[16] link "历史播放" · 5/6 · right_click',
+      '[2] link "推荐" · 1/6 · click,right_click',
+      '[5] link "听歌模式" · 2/6 · click,right_click',
+      '[10] link "我喜欢的音乐" · 3/6 · click,right_click',
+      '[13] link "抖音收藏的音乐" · 4/6 · click,right_click',
+      '[16] link "历史播放" · 5/6 · click,right_click',
       '[20] group "创建歌单" · click,right_click',
-      '[21] link "小玉的歌单" · 6/6 · right_click',
+      '[21] link "小玉的歌单" · 6/6 · click,right_click',
       '[26] image "/o4gCBWqFI3eMeNviAAAzet8HaLDXO4QNAQ8Q20~tplv-b829550vbb-crop" · focus',
       '[30] group containing "VIP" · cluster 2/3 size-rank 3 27x17 · click',
-      '[32] link "王睿卓" · cluster 1/2 size-rank 2 43x17 · right_click',
+      '[32] link "王睿卓" · cluster 1/2 size-rank 2 43x17 · click,right_click',
     ])
     // The whole window is described; nothing was dropped to fit.
-    expect(lines).toHaveLength(76)
-    expect(observation.candidates.filter(candidate => candidate.ref)).toHaveLength(165)
+    expect(lines).toHaveLength(77)
+    expect(observation.candidates.filter(candidate => candidate.ref)).toHaveLength(129)
   })
 })
