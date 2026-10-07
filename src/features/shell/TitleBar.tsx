@@ -2,14 +2,16 @@ import { useMemo } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { useWorkspace } from "../../lib/store";
 import { mergeProjectSessions, useProjectSessions } from "../../hooks/use-project-sessions";
+import { queryClient, report, retireSession } from "../../lib/rpc";
+import { toast } from "../../shared/ui/toast";
 import { compactTitle } from "../../lib/session-visual";
 import { TabLabel } from "../../shared/ui/TabLabel";
 import { useAnimatedReorder } from "../../shared/hooks/useAnimatedReorder";
-import { PanelLeft, Settings, Terminal, X } from "../../shared/ui/icons";
+import { GripVertical, PanelLeft, Settings, Terminal, X } from "../../shared/ui/icons";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { IS_MAC, MOD, TitleIconButton } from "./chrome";
 import { TerminalSpinner } from "./TerminalSpinner";
-import { useShell } from "./shellStore";
+import { useShell, type OpenFile } from "./shellStore";
 
 type SortableApi = ReturnType<typeof useAnimatedReorder>;
 
@@ -34,6 +36,7 @@ function TitleTab({
   onClose?: () => void;
   onPin?: () => void;
 }) {
+  const dragging = sortable?.draggingId === tab.id;
   return (
     <div
       ref={sortable ? (el) => sortable.setItemRef(tab.id, el) : undefined}
@@ -72,6 +75,14 @@ function TitleTab({
             active ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
           }`}
         >
+          {canDrag ? (
+            <span
+              aria-hidden
+              className={`mr-0.5 flex shrink-0 items-center text-content/30 transition-opacity ${dragging ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+            >
+              <GripVertical className="size-3" strokeWidth={2} />
+            </span>
+          ) : null}
           {tab.kind === "session" ? (
             tab.busy ? <TerminalSpinner className="inline-block w-3.5 select-none text-center text-[11px] leading-none text-accent" /> : null
           ) : (
@@ -123,17 +134,35 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
   const focusFile = useShell((state) => state.focusFile);
   const closeFile = useShell((state) => state.closeFile);
   const pinFile = useShell((state) => state.pinFile);
-  const reorderFiles = useShell((state) => state.reorderFiles);
+  const reorderTabs = useShell((state) => state.reorderTabs);
+  const sessionSlot = useShell((state) => state.sessionSlot);
   const sessions = useProjectSessions(cwd);
   const merged = useMemo(() => mergeProjectSessions(cwd, sessions.data ?? [], liveSessions), [cwd, sessions.data, liveSessions]);
   const session = merged.sessions.find((item) => item.path === sessionFile);
   const sessionTitle = compactTitle(session?.name || session?.firstMessage, "新会话", 60);
 
+  async function closeSession() {
+    if (!session) return;
+    try {
+      await retireSession(session.path);
+      await queryClient.invalidateQueries({ queryKey: ["pi", "sessions", cwd] });
+      toast.success("会话已关闭");
+    } catch (error) {
+      report(error);
+    }
+  }
+
   const fileIds = useMemo(() => files.map((file) => file.path), [files]);
-  const sortable = useAnimatedReorder(fileIds, (ids) => reorderFiles(ids), "x");
-  const canDragFiles = files.length > 1;
+  // One strip, like MonoCode: the session tab and open files share one drag
+  // order, so every tab drags as soon as there are two.
+  const stripIds = useMemo(() => ["session", ...fileIds], [fileIds]);
+  const sortable = useAnimatedReorder(stripIds, (ids) => reorderTabs(ids), "x");
+  const canDragTabs = stripIds.length > 1;
 
   const sessionTab: Tab = { id: "session", kind: "session", headline: sessionTitle, busy: running };
+  const fileTab = (file: OpenFile): Tab => ({ id: file.path, kind: "file", headline: file.name, preview: file.preview, fileName: file.name });
+  const before = files.slice(0, sessionSlot).map(fileTab);
+  const after = files.slice(sessionSlot).map(fileTab);
 
   return (
     <header className="flex h-10 shrink-0 select-none items-stretch border-b border-stroke" data-tauri-drag-region>
@@ -150,17 +179,36 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
       <div className="flex min-w-0 flex-1 items-stretch">
         <div className="relative h-full min-w-0 flex-1 overflow-hidden">
           <div className="scrollbar-none flex h-full min-w-0 cursor-default items-center gap-0.5 overflow-x-auto overflow-y-hidden overscroll-none pl-1.5 pr-2.5" data-tauri-drag-region>
-            <TitleTab tab={sessionTab} active={!activeFile} onSelect={() => focusFile(null)} />
-            {files.map((file) => (
+            {before.map((tab) => (
               <TitleTab
-                key={file.path}
-                tab={{ id: file.path, kind: "file", headline: file.name, preview: file.preview, fileName: file.name }}
-                active={activeFile === file.path}
+                key={tab.id}
+                tab={tab}
+                active={activeFile === tab.id}
                 sortable={sortable}
-                canDrag={canDragFiles}
-                onSelect={() => focusFile(file.path)}
-                onClose={() => closeFile(file.path)}
-                onPin={() => pinFile(file.path)}
+                canDrag={canDragTabs}
+                onSelect={() => focusFile(tab.id)}
+                onClose={() => closeFile(tab.id)}
+                onPin={() => pinFile(tab.id)}
+              />
+            ))}
+            <TitleTab
+              tab={sessionTab}
+              active={!activeFile}
+              sortable={sortable}
+              canDrag={canDragTabs}
+              onSelect={() => focusFile(null)}
+              onClose={session ? () => { void closeSession(); } : undefined}
+            />
+            {after.map((tab) => (
+              <TitleTab
+                key={tab.id}
+                tab={tab}
+                active={activeFile === tab.id}
+                sortable={sortable}
+                canDrag={canDragTabs}
+                onSelect={() => focusFile(tab.id)}
+                onClose={() => closeFile(tab.id)}
+                onPin={() => pinFile(tab.id)}
               />
             ))}
           </div>

@@ -55,6 +55,8 @@ type ShellState = {
   /** File tabs open beside the chat; at most one preview (italic) tab. */
   files: OpenFile[];
   activeFile: string | null;
+  /** Where the session tab sits in the strip; files fill the rest in order. */
+  sessionSlot: number;
   setProjectRailOpen: (open: boolean) => void;
   setSessionSidebarOpen: (open: boolean) => void;
   setSidebarTab: (tab: SidebarTab) => void;
@@ -64,7 +66,7 @@ type ShellState = {
   pinFile: (path: string) => void;
   closeFile: (path: string) => void;
   focusFile: (path: string | null) => void;
-  reorderFiles: (paths: string[]) => void;
+  reorderTabs: (ids: string[]) => void;
 };
 
 function fileName(path: string) {
@@ -98,6 +100,7 @@ export const useShell = create<ShellState>((set, get) => ({
   sessionSidebarWidth: readNumber(SESSION_SIDEBAR_WIDTH_KEY, 272),
   files: [],
   activeFile: null,
+  sessionSlot: 0,
   setProjectRailOpen: (open) => { write(PROJECT_RAIL_KEY, String(open)); set({ projectRailOpen: open }); },
   setSessionSidebarOpen: (open) => { write(SESSION_SIDEBAR_KEY, String(open)); set({ sessionSidebarOpen: open }); },
   setSidebarTab: (tab) => { write(SIDEBAR_TAB_KEY, tab); set({ sidebarTab: tab }); },
@@ -115,29 +118,37 @@ export const useShell = create<ShellState>((set, get) => ({
     }
     // Like MonoCode, a single click replaces the current preview tab.
     const kept = options?.pin ? files : files.filter((file) => !file.preview);
-    set({ files: [...kept, { path, name: fileName(path), preview: !options?.pin }], activeFile: path });
+    const next = [...kept, { path, name: fileName(path), preview: !options?.pin }];
+    set({ files: next, activeFile: path, sessionSlot: Math.min(get().sessionSlot, next.length) });
   },
   pinFile: (path) => set((state) => ({ files: state.files.map((file) => (file.path === path ? { ...file, preview: false } : file)) })),
   closeFile: (path) =>
     set((state) => {
       const files = state.files.filter((file) => file.path !== path);
-      return { files, activeFile: state.activeFile === path ? (files.at(-1)?.path ?? null) : state.activeFile };
+      return { files, activeFile: state.activeFile === path ? (files.at(-1)?.path ?? null) : state.activeFile, sessionSlot: Math.min(state.sessionSlot, files.length) };
     }),
   focusFile: (path) => set({ activeFile: path }),
-  reorderFiles: (paths) =>
+  // One strip: the session tab and open files share one drag order. "session"
+  // marks the chat's slot; files keep their relative order around it.
+  reorderTabs: (ids) =>
     set((state) => {
       const byPath = new Map(state.files.map((file) => [file.path, file]));
       const next: OpenFile[] = [];
       const seen = new Set<string>();
-      for (const path of paths) {
-        const file = byPath.get(path);
-        if (!file || seen.has(path)) continue;
-        seen.add(path);
+      let slot = 0;
+      for (const id of ids) {
+        if (id === "session") {
+          slot = next.length;
+          continue;
+        }
+        const file = byPath.get(id);
+        if (!file || seen.has(id)) continue;
+        seen.add(id);
         next.push(file);
       }
       for (const file of state.files) {
         if (!seen.has(file.path)) next.push(file);
       }
-      return next.length === state.files.length ? { files: next } : {};
+      return { files: next, sessionSlot: Math.min(slot, next.length) };
     }),
 }));
