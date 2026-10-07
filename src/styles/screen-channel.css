@@ -5,9 +5,12 @@
  *
  * - `.screen-pip` is the phone's floating window. It sits over the conversation
  *   and must never take it over: it is small, draggable, and its picture is
- *   watch-only.
+ *   watch-only. The chrome is always dark glass — the picture must stay the
+ *   brightest thing on screen — but every color mixes from theme tokens.
  * - `.screen-sheet` is the enlarged view where input is enabled, rendered as an
- *   overlay so closing it returns to the session untouched.
+ *   overlay so closing it returns to the session untouched. The picture gets
+ *   every vertical pixel left over: status is one muted strip, the full stats
+ *   grid and the input dock sit below it.
  * - `.screen-page` is the desktop's host status page, which shares only the
  *   counters.
  */
@@ -65,7 +68,7 @@ canvas.screen-frame {
   padding: 16px;
   text-align: center;
   font-size: 12.5px;
-  color: color-mix(in oklab, color-mix(in srgb, var(--color-content) 50%, transparent) 88%, white 12%);
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
 }
 
 .screen-placeholder-block {
@@ -80,12 +83,14 @@ canvas.screen-frame {
   height: 28px;
 }
 
+/* ── connection state ──────────────────────────────────────────────── */
+
 .screen-state {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
-  color: color-mix(in srgb, var(--color-content) 50%, transparent);
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
   white-space: nowrap;
 }
 
@@ -93,13 +98,20 @@ canvas.screen-frame {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--color-content) 50%, transparent);
+  background: color-mix(in srgb, var(--color-content) 40%, transparent);
   flex: none;
 }
 
-.screen-state[data-state="live"],
-.screen-pip[data-state="live"] .screen-state-dot {
-  color: var(--color-content);
+.screen-state[data-state="live"] {
+  color: color-mix(in oklab, var(--chart-2, #34d399) 82%, white);
+}
+
+.screen-state[data-state="connecting"] {
+  color: color-mix(in oklab, var(--chart-4, #fbbf24) 82%, white);
+}
+
+.screen-state[data-state="failed"] {
+  color: color-mix(in oklab, var(--destructive, #ef4444) 78%, white);
 }
 
 .screen-pip[data-state="live"] .screen-state-dot,
@@ -137,11 +149,12 @@ canvas.screen-frame {
   display: flex;
   flex-direction: column;
   padding: 0;
-  border-radius: 16px;
+  border-radius: 14px;
   overflow: hidden;
-  /* Glass, but dark enough that the picture is the brightest thing on screen. */
-  background: color-mix(in oklab, #101014 90%, transparent);
-  border: 1px solid color-mix(in oklab, white 12%, transparent);
+  /* Dark glass mixed from the theme base, then pulled toward black: on a phone
+   * the picture is the content and the chrome only frames it. */
+  background: color-mix(in oklab, color-mix(in oklab, var(--color-background-base) 30%, #0b0b10) 92%, transparent);
+  border: 1px solid color-mix(in oklab, white 11%, transparent);
   box-shadow:
     0 24px 60px rgb(0 0 0 / 58%),
     0 6px 16px rgb(0 0 0 / 40%),
@@ -154,18 +167,18 @@ canvas.screen-frame {
 .screen-pip-bar {
   display: flex;
   align-items: center;
-  gap: 7px;
-  height: 34px;
-  padding: 0 5px 0 11px;
+  gap: 8px;
+  height: 38px;
+  padding: 0 4px 0 12px;
   cursor: grab;
   touch-action: none;
   color: #f4f4f5;
   background: linear-gradient(
     to bottom,
-    color-mix(in oklab, white 9%, transparent),
-    color-mix(in oklab, white 3%, transparent)
+    color-mix(in oklab, white 8%, transparent),
+    color-mix(in oklab, white 2%, transparent)
   );
-  border-bottom: 1px solid color-mix(in oklab, white 6%, transparent);
+  border-bottom: 1px solid color-mix(in oklab, white 7%, transparent);
 }
 
 .screen-pip-bar:active {
@@ -174,13 +187,13 @@ canvas.screen-frame {
 
 .screen-pip-title {
   font-size: 11.5px;
-  font-weight: 500;
+  font-weight: 550;
   letter-spacing: 0.1px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 44%;
-  color: color-mix(in oklab, #f4f4f5 88%, transparent);
+  max-width: 46%;
+  color: color-mix(in oklab, #f4f4f5 90%, transparent);
 }
 
 .screen-pip-spacer {
@@ -188,11 +201,12 @@ canvas.screen-frame {
 }
 
 /* The one number worth showing. Tabular figures and a fixed width so a changing
-   rate does not shift the buttons around it. */
+ * rate does not shift the buttons around it. Live tints it toward the state
+ * color; the chip itself never changes size. */
 .screen-pip-fps {
   flex: none;
-  min-width: 47px;
-  padding: 3px 7px;
+  min-width: 50px;
+  padding: 3px 8px;
   border-radius: 999px;
   text-align: center;
   font-family: var(--font-mono, ui-monospace, monospace);
@@ -202,17 +216,36 @@ canvas.screen-frame {
   background: color-mix(in oklab, white 6%, transparent);
 }
 
+.screen-pip[data-state="live"] .screen-pip-fps {
+  color: color-mix(in oklab, var(--chart-2, #34d399) 72%, #f4f4f5);
+  background: color-mix(in oklab, var(--chart-2, #34d399) 12%, transparent);
+}
+
 /* Touch targets stay at 30px even though the bar is compact: this is a phone. */
 .screen-pip-action {
-  width: 30px !important;
-  height: 30px !important;
-  min-width: 30px !important;
-  padding: 0 !important;
-  border-radius: 9px;
-  color: inherit;
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  color: color-mix(in oklab, #f4f4f5 78%, transparent);
   background: transparent;
   flex: none;
+  cursor: pointer;
   transition: background 120ms ease;
+}
+
+.screen-sheet .screen-pip-action {
+  color: color-mix(in srgb, var(--color-content) 70%, transparent);
+}
+
+.screen-sheet .screen-pip-action:hover {
+  background: var(--color-selection);
+  color: var(--color-content);
 }
 
 .screen-pip-action svg {
@@ -221,9 +254,13 @@ canvas.screen-frame {
 }
 
 .screen-pip-action:hover {
-  background: color-mix(in oklab, white 14%, transparent);
+  background: color-mix(in oklab, white 13%, transparent);
+  color: #f4f4f5;
 }
 
+/* Edge to edge: the window is already a frame, and six pixels of matte on each
+ * side cost the preview a visible slice of a small screen. A hairline inside
+ * the picture still separates it from the chrome. */
 .screen-pip-body {
   display: block;
   /* The window is resizable, so the picture takes whatever height is left. */
@@ -231,16 +268,16 @@ canvas.screen-frame {
   min-height: 0;
   position: relative;
   width: 100%;
-  /* A thin inset so the picture reads as framed rather than bled to the edge. */
-  padding: 6px;
   border: 0;
   background: transparent;
   cursor: zoom-in;
+  padding: 0;
 }
 
 .screen-pip-body .screen-stage {
-  border-radius: 11px;
-  box-shadow: 0 0 0 1px color-mix(in oklab, white 7%, transparent);
+  border-radius: 0;
+  height: 100%;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, white 6%, transparent);
 }
 
 /* A free-form box: fill it and let the picture letterbox inside. */
@@ -249,23 +286,62 @@ canvas.screen-frame {
 }
 
 /* `react-rnd` owns the gesture; the class is only for the visible grip, so the
-   corner reads as resizable rather than as a seam. */
+ * corner reads as resizable rather than as a seam. */
 .screen-pip-grip::after {
   content: "";
   position: absolute;
-  right: 6px;
-  bottom: 6px;
+  right: 7px;
+  bottom: 7px;
   width: 10px;
   height: 10px;
-  border-right: 2px solid color-mix(in oklab, white 42%, transparent);
-  border-bottom: 2px solid color-mix(in oklab, white 42%, transparent);
-  border-bottom-right-radius: 4px;
+  border-right: 2px solid color-mix(in oklab, white 46%, transparent);
+  border-bottom: 2px solid color-mix(in oklab, white 46%, transparent);
+  border-bottom-right-radius: 3px;
   pointer-events: none;
 }
 
 /* While dragging or resizing, do not let the picture swallow the gesture. */
 .screen-pip .screen-surface {
   pointer-events: none;
+}
+
+/* State veil over the last frame: a blip says "重连中", not black. Purely
+ * informational — taps pass through to the body's enlarge action. */
+.screen-veil {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, white 12%, transparent);
+  background: color-mix(in oklab, #000 62%, transparent);
+  backdrop-filter: blur(6px);
+  color: color-mix(in oklab, white 86%, transparent);
+  font-size: 11px;
+  letter-spacing: 0.1px;
+  pointer-events: none;
+}
+
+.screen-veil-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--chart-4, #fbbf24);
+  animation: screen-pulse 1.6s ease-in-out infinite;
+}
+
+.screen-veil[data-state="failed"] .screen-veil-dot {
+  background: var(--destructive, #ef4444);
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen-veil-dot { animation: none; }
 }
 
 /* ── the enlarged view ─────────────────────────────────────────────── */
@@ -277,21 +353,25 @@ canvas.screen-frame {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 14px;
+  padding: 10px;
+  padding-top: calc(10px + var(--safe-top, 0px));
+  padding-bottom: calc(10px + var(--safe-bottom, 0px));
   background: color-mix(in oklab, #000 66%, transparent);
   backdrop-filter: blur(3px);
 }
 
+/* A full-height sheet: the picture owns the middle, chrome hugs the edges.
+ * Landscape tablets get a centered pane; phones get the whole viewport. */
 .screen-sheet {
   display: flex;
   flex-direction: column;
-  gap: 9px;
   width: 100%;
-  max-width: 680px;
+  max-width: 720px;
+  height: 100%;
   max-height: 100%;
-  overflow: auto;
-  padding: 12px;
-  border-radius: 16px;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 18px;
   background: var(--color-background-base);
   border: 1px solid var(--color-stroke);
   box-shadow: 0 24px 60px rgb(0 0 0 / 55%);
@@ -300,56 +380,282 @@ canvas.screen-frame {
 .screen-sheet-bar {
   display: flex;
   align-items: center;
-  gap: 7px;
-  flex-wrap: wrap;
+  gap: 8px;
+  flex: none;
+  height: 46px;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--color-stroke);
+}
+
+.screen-sheet-titles {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .screen-sheet-title {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 30%;
+  max-width: 55%;
 }
 
+/* The picture, edge to edge and letterboxed by `contain`. Everything else on
+ * this surface is a strip above or below it. */
+.screen-sheet-view {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  background: #000;
+}
+
+.screen-sheet-view .screen-stage {
+  height: 100%;
+  border-radius: 0;
+}
+
+/* One muted line: the numbers a person actually glances at. The full grid
+ * lives behind the 统计 toggle so the picture keeps the vertical space. */
+.screen-status-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  min-height: 30px;
+  padding: 0 6px 0 14px;
+  border-top: 1px solid var(--color-stroke);
+}
+
+.screen-strip-metrics {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
+}
+
+.screen-strip-toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-content) 55%, transparent);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.screen-strip-toggle:hover {
+  background: var(--color-selection);
+  color: var(--color-content);
+}
+
+.screen-strip-toggle svg {
+  width: 11px;
+  height: 11px;
+  transition: rotate 140ms var(--motion-ease-out, ease);
+}
+
+.screen-strip-toggle.open svg {
+  rotate: 180deg;
+}
+
+/* Full stats, only when asked for. Label over value, mono figures. */
 .screen-metrics-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
-  gap: 6px 10px;
+  grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
+  gap: 8px 10px;
+  flex: none;
   margin: 0;
-  padding: 8px 10px;
-  border-radius: 9px;
-  background: color-mix(in oklab, color-mix(in srgb, var(--color-content) 6%, transparent) 40%, transparent);
-  font-size: 11px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--color-stroke);
+  background: color-mix(in srgb, var(--color-content) 3%, transparent);
 }
 
 .screen-metrics-row > div {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 6px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .screen-metrics-row dt {
-  color: color-mix(in srgb, var(--color-content) 50%, transparent);
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+  font-size: 9.5px;
+  letter-spacing: 0.2px;
 }
 
 .screen-metrics-row dd {
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
+  color: var(--color-content);
 }
 
+/* ── the input dock ────────────────────────────────────────────────── */
+
+.screen-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  flex: none;
+  padding: 9px 10px calc(9px + var(--safe-bottom, 0px));
+  border-top: 1px solid var(--color-stroke);
+}
+
+/* Composer-shaped: quiet container, ring on focus, square primary send. */
 .screen-type-row {
   display: flex;
   gap: 6px;
   align-items: center;
+  height: 42px;
+  padding: 0 5px 0 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  background: color-mix(in srgb, var(--color-content) 3%, transparent);
+  transition: border-color 120ms ease;
+}
+
+.screen-type-row:focus-within {
+  border-color: color-mix(in srgb, var(--color-content) 22%, transparent);
 }
 
 .screen-type-row input {
-  height: 34px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-content);
+  font-size: 12.5px;
 }
+
+.screen-type-row input::placeholder {
+  color: color-mix(in srgb, var(--color-content) 35%, transparent);
+}
+
+.screen-send {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border: 0;
+  border-radius: 9px;
+  background: var(--color-content);
+  color: var(--color-background-base);
+  cursor: pointer;
+  transition: opacity 120ms ease;
+}
+
+.screen-send svg {
+  width: 15px;
+  height: 15px;
+}
+
+.screen-send:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ── display picker (MonoCode popover menu) ────────────────────────── */
+
+.screen-picker-trigger {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  max-width: 140px;
+  padding: 0 7px 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--color-selection);
+  color: var(--color-content);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.screen-picker-trigger span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.screen-picker-trigger svg {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
+}
+
+.screen-picker-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 2px 7px 5px;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.screen-picker-row {
+  display: flex;
+  width: 100%;
+  min-height: 32px;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--color-content);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.screen-picker-row:hover,
+.screen-picker-row.active {
+  background: var(--color-selection);
+}
+
+.screen-picker-row span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screen-picker-row svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  color: var(--color-accent);
+}
+
+/* ── shared notices ────────────────────────────────────────────────── */
 
 .screen-error,
 .screen-note {
@@ -373,9 +679,9 @@ canvas.screen-frame {
 }
 
 .screen-hint {
-  margin: 0;
-  font-size: 11.5px;
-  color: color-mix(in srgb, var(--color-content) 50%, transparent);
+  margin: 0 2px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
 }
 
 /* ── the desktop status page ───────────────────────────────────────── */

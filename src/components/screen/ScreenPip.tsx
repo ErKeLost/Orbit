@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Rnd } from "react-rnd"
 import { useWorkspace } from "../../lib/store"
 import { Icon } from "../Icon"
-import { Button } from "../UI"
 import type { ScreenChannelSnapshot } from "../../lib/remote-screen"
 import {
   currentViewport,
@@ -137,18 +136,20 @@ export function ScreenPip({ snapshot, placement, onPlacement }: {
       <span className="screen-pip-title">{snapshot.display?.name ?? "电脑屏幕"}</span>
       <span className="screen-pip-spacer" />
       <span className="screen-pip-fps" title="手机实际收到的帧率">{`${Math.round(snapshot.receivedFps)} fps`}</span>
-      <Button
+      <button
+        type="button"
         className="screen-pip-action"
         title="重置大小与位置"
         aria-label="重置大小与位置"
         onClick={() => onPlacement({ x: -1, y: -1, width: defaultWidth(viewport), height: -1 })}
-      ><Icon name="arrows-clockwise" /></Button>
-      <Button
+      ><Icon name="arrows-clockwise" /></button>
+      <button
+        type="button"
         className="screen-pip-action"
         title="关闭屏幕预览"
         aria-label="关闭屏幕预览"
         onClick={() => useWorkspace.getState().set({ screenPip: false, screenExpanded: false })}
-      ><Icon name="x" /></Button>
+      ><Icon name="x" /></button>
     </header>
     {/* `role="button"` rather than a real <button>: a button may only contain
         phrasing content, and the picture inside is not. */}
@@ -166,6 +167,14 @@ export function ScreenPip({ snapshot, placement, onPlacement }: {
       }}
     >
       <ScreenFrame snapshot={snapshot} interactive={false} active={!expanded} fill />
+      {/* 断线时最后一帧留在画面上，状态浮层说明现在是什么状态 —— 比黑屏或
+          没有任何提示的静止画面都诚实。点击仍穿透到放大动作。 */}
+      {snapshot.state !== "live" ? (
+        <span className="screen-veil" data-state={snapshot.state}>
+          <span className="screen-veil-dot" aria-hidden />
+          {snapshot.state === "connecting" ? "重连中…" : snapshot.state === "failed" ? "已停止" : "未开始"}
+        </span>
+      ) : null}
     </div>
   </Rnd>
 }
