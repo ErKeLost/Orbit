@@ -24,12 +24,9 @@ fn expand_home(path: &str) -> PathBuf {
 fn sessions_dir() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
     let home = PathBuf::from(home);
-    for candidate in [home.join(".pi/agent/sessions"), home.join(".pi/sessions")] {
-        if candidate.is_dir() {
-            return Some(candidate);
-        }
-    }
-    None
+    [home.join(".pi/agent/sessions"), home.join(".pi/sessions")]
+        .into_iter()
+        .find(|candidate| candidate.is_dir())
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -279,7 +276,7 @@ pub async fn search_sessions(query: String) -> Result<Vec<SessionHit>, String> {
                 }
             }
         }
-        files.sort_by(|a, b| b.1.cmp(&a.1));
+        files.sort_by_key(|a| std::cmp::Reverse(a.1));
         let mut hits = Vec::new();
         for (path, _) in files.into_iter().take(MAX_SESSIONS_SCANNED) {
             let Some((title, blob, _, modified)) = session_text(&path) else { continue };

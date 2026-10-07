@@ -24,6 +24,20 @@ function filesUnder(root: string, extension: string): string[] {
 const COMPONENTS = filesUnder("src", ".tsx")
 const SOURCES = [...filesUnder("src", ".ts"), ...COMPONENTS]
 
+describe("icon imports", () => {
+  test("deep imports match the catalog filename case on every platform", () => {
+    // macOS and Windows can resolve misspelled case that fails on Linux.
+    const catalog = new Set(readdirSync("node_modules/@hugeicons/core-free-icons/dist/types"))
+    const invalid: string[] = []
+    for (const file of SOURCES) {
+      for (const match of readFileSync(file, "utf8").matchAll(/from ["']@hugeicons\/core-free-icons\/([^"']+)["']/g)) {
+        if (!catalog.has(`${match[1]}.d.ts`)) invalid.push(`${file}: ${match[1]}`)
+      }
+    }
+    expect(invalid).toEqual([])
+  })
+})
+
 describe("durable state", () => {
   test("every key written to localStorage is either mirrored or explicitly excluded", () => {
     // `localStorage` lives in the WebView's storage area, which the system can
@@ -43,6 +57,9 @@ describe("durable state", () => {
       "pi-gui.multiAgentEnabled": "a switch whose default is fine",
       "pi-gui.computerUseEnabled": "a switch whose default is fine",
       "pi-gui.sidebarOpen": "cosmetic; note the narrow variant below IS durable",
+      "orbit.terminal.position": "cosmetic dock placement, defaults to bottom",
+      "orbit.terminal.open": "cosmetic visibility, defaults to closed",
+      "orbit.shell.collapsedRail": "cosmetic rail style, defaults to compact",
     }
 
     const written = new Set<string>()

@@ -223,7 +223,7 @@ fn save(app: &AppHandle, automations: &[Automation]) -> Result<(), String> {
 fn save_runs(app: &AppHandle, runs: &[AutomationRun]) -> Result<(), String> {
     let mut trimmed = runs.to_vec();
     // Keep the newest MAX_RUNS_STORED, per-automation history is trimmed separately.
-    trimmed.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    trimmed.sort_by_key(|a| std::cmp::Reverse(a.created_at));
     trimmed.truncate(MAX_RUNS_STORED);
     write_json(&runs_path(app)?, &trimmed)
 }
@@ -334,7 +334,7 @@ fn trim_history(runs: &mut Vec<AutomationRun>, automation_id: &str) {
     }
     // Keep the newest N by created_at; identity-based so index shifts cannot
     // drop the wrong row.
-    mine.sort_by(|a, b| b.1.cmp(&a.1));
+    mine.sort_by_key(|a| std::cmp::Reverse(a.1));
     let keep: std::collections::HashSet<String> = mine
         .into_iter()
         .take(MAX_RUNS_PER_AUTOMATION)
@@ -417,7 +417,7 @@ pub async fn automation_runs_list(app: AppHandle, automation_id: String, limit: 
         .into_iter()
         .filter(|run| run.automation_id == automation_id)
         .collect();
-    runs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    runs.sort_by_key(|a| std::cmp::Reverse(a.created_at));
     runs.truncate(limit.unwrap_or(20).min(MAX_RUNS_PER_AUTOMATION));
     Ok(runs)
 }

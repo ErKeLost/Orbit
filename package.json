@@ -1,7 +1,7 @@
 {
   "name": "orbit",
   "private": true,
-  "version": "0.6.5",
+  "version": "0.6.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,7 @@
     "check": "tsc -b && bun run check:computer-use && bun run lint",
     "check:computer-use": "node scripts/sync-computer-use.mjs && tsc -p tsconfig.computer-use.json",
     "doctor": "react-doctor src --no-supply-chain --no-score",
-    "test": "bun test",
+    "test": "bun test ./tests ./src/features/source-control/model && vitest run",
     "test:pi": "node scripts/smoke-pi.mjs",
     "signing:setup": "bash scripts/make-signing-cert.sh",
     "icons:android": "node scripts/sync-android-icons.mjs",
@@ -90,11 +90,13 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
     "@vitejs/plugin-react": "6.1.1",
+    "happy-dom": "^20.14.5",
     "oxlint": "1.82.0",
     "react-doctor": "^0.9.13",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
-    "vite": "8.2.2"
+    "vite": "8.2.2",
+    "vitest": "^5.0.3"
   },
   "packageManager": "bun@1.4.2",
   "overrides": {

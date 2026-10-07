@@ -54,7 +54,7 @@ jobs:
       # against the TypeScript one, and the bundled icon set against every icon
       # name used in the app.
       - name: Tests
-        run: bun test
+        run: bun run test
 
       - name: Build the frontend
         run: bun run build
@@ -65,6 +65,21 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.16.0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      # tauri-build copies the desktop resources even for cargo test/clippy.
+      # A fresh checkout must generate the same runtime files as a release.
+      - name: Prepare desktop runtime resources
+        run: |
+          bun install --frozen-lockfile
+          bun run bundle:pi
 
       # Pinned to what `rust-toolchain.toml` declares, not `stable`: a newer
       # clippy introduces new lints, and a gate that fails because the runner
@@ -113,6 +128,16 @@ jobs:
           echo "PATH=$PATH" >> "$GITHUB_ENV"
           sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-36" "build-tools;35.0.0" "ndk;29.0.13846066"
+
+      # Direct cargo checks do not get the NDK environment that Tauri's
+      # Android build command supplies. Match the app's minimum API level.
+      - name: Configure Android native compiler
+        run: |
+          ndk_bin="$ANDROID_HOME/ndk/29.0.13846066/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$ndk_bin/aarch64-linux-android24-clang"
+          echo "CC_aarch64_linux_android=$ndk_bin/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=$ndk_bin/llvm-ar" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$ndk_bin/aarch64-linux-android24-clang" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@master
         with:

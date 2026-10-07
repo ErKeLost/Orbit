@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, expect, it, vi } from "bun:test";
+import { afterEach, expect, it, vi } from "vitest";
 import { SwitchBranchDialog } from "./SwitchBranchDialog";
 import { generateCommitMessage } from "../../../integrations/harness";
 

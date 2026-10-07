@@ -91,7 +91,7 @@ describe("turn projection", () => {
 describe("assistant turns", () => {
   test("folds settled work behind the worked-for line and keeps the answer full size", () => {
     const html = render(phases, phaseTools, false, 14_000);
-    expect(html).toContain("GPT-6.1-Sol worked for 14s");
+    expect(text(html)).toContain("Worked for 14s");
     expect(html).toContain('aria-label="展开过程"');
     // Settled work is folded away entirely; only the line remains.
     expect(html).not.toContain("zen-fold-rail");
@@ -108,7 +108,7 @@ describe("assistant turns", () => {
     ] } }];
     const html = render(live, { run: { name: "bash", running: true } }, true);
     expect(html).toContain("shimmer-text");
-    expect(html).toContain("GPT-6.1-Sol working");
+    expect(text(html)).toContain("Working");
     expect(html).toContain('data-fold-state="open"');
     expect(html).not.toContain('aria-label="复制回复"');
   });
@@ -117,7 +117,7 @@ describe("assistant turns", () => {
     const html = render([{ id: "plain", message: { role: "assistant", stopReason: "stop", content: "直接回复" } }], {}, false, 3_000);
     expect(text(html)).toContain("直接回复");
     expect(html).not.toContain("zen-fold-rail");
-    expect(html).toContain("GPT-6.1-Sol worked for 3s");
+    expect(text(html)).toContain("Worked for 3s");
   });
 
   test("marks failed tool rows in red with an error glyph", () => {

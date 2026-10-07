@@ -11,13 +11,6 @@ use tauri::Manager;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-fn home_dir() -> Result<PathBuf, String> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .ok_or_else(|| "找不到用户目录".into())
-}
-
 fn gitlab_secret_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -161,11 +154,6 @@ pub async fn github_inbox() -> Result<Vec<InboxItem>, String> {
     })
     .await
     .map_err(|e| e.to_string())?
-}
-
-fn http_error(status: u16, body: &str) -> String {
-    let message = body.lines().next().unwrap_or_default();
-    format!("GitLab API {status}：{message}")
 }
 
 fn gitlab_request(host: &str, token: &str, path: &str) -> Result<Vec<serde_json::Value>, String> {

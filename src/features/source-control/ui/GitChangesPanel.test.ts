@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(async () => {}),
@@ -90,6 +90,7 @@ beforeEach(() => {
   // Keep delayed file invalidations from reaching the next test's mocks.
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("alert", vi.fn());
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -140,7 +141,7 @@ describe("GitChangesPanel commit message generation", () => {
     await act(async () => {
       container
         .querySelector<HTMLButtonElement>(
-          '[aria-label="Generate commit message"]',
+          '[aria-label="生成提交信息"]',
         )!
         .click();
     });
@@ -150,14 +151,14 @@ describe("GitChangesPanel commit message generation", () => {
     await act(async () => {
       container
         .querySelector<HTMLButtonElement>(
-          '[aria-label="Cancel commit message generation"]',
+          '[aria-label="取消生成提交信息"]',
         )!
         .click();
     });
     expect(signal?.aborted).toBe(true);
     expect(
       container.querySelector<HTMLButtonElement>(
-        '[aria-label="Generate commit message"]',
+        '[aria-label="生成提交信息"]',
       )?.disabled,
     ).toBe(false);
     expect(container.querySelector("textarea")?.disabled).toBe(false);
@@ -165,7 +166,7 @@ describe("GitChangesPanel commit message generation", () => {
     await act(async () => {
       container
         .querySelector<HTMLButtonElement>(
-          '[aria-label="Generate commit message"]',
+          '[aria-label="生成提交信息"]',
         )!
         .click();
     });
@@ -204,7 +205,7 @@ async function renderPanel(cwd = "/repo") {
 
 async function openBranchMenu() {
   const toggle = container.querySelector<HTMLButtonElement>(
-    '[aria-label="Branch actions"]',
+    '[aria-label="分支操作"]',
   )!;
   await act(async () => toggle.click());
   await act(async () => {});
@@ -229,7 +230,7 @@ function changedFile(
 
 async function showTree() {
   const toggle = container.querySelector<HTMLButtonElement>(
-    '[aria-label="View as Tree"]',
+    '[aria-label="树形视图"]',
   );
   if (toggle) await act(async () => toggle.click());
   let collapsed: HTMLButtonElement | null;
@@ -370,7 +371,7 @@ describe("GitChangesPanel folder actions", () => {
     });
     const actions = [
       ...container.querySelectorAll<HTMLButtonElement>(
-        'button[aria-label^="Stage Changes"], button[aria-label="Discard Changes"]',
+        'button[aria-label^="Stage Changes"], button[aria-label="放弃更改"]',
       ),
     ];
     expect(actions.length).toBeGreaterThan(2);
@@ -423,7 +424,7 @@ describe("GitChangesPanel pull action", () => {
     await renderPanel();
 
     const pull = await openBranchMenu();
-    expect(pull.textContent).toContain("Pull");
+    expect(pull.textContent).toContain("拉取");
     expect(pull.disabled).toBe(true);
   });
 

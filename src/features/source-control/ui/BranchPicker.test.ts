@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "bun:test";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 vi.mock("../../../platform/tauri/fs", () => ({
   gitBranches: vi.fn(async () => ({
@@ -62,7 +62,7 @@ it("autofocuses the branch search input only once the popover frame is visible",
   await act(async () => {});
 
   const input = document.querySelector<HTMLInputElement>(
-    'input[aria-label="Search or create a branch"]',
+    'input[aria-label="搜索或新建分支"]',
   );
   expect(input).not.toBeNull();
   // Focusing a `visibility: hidden` element is a no-op in real browsers, so
@@ -80,7 +80,7 @@ it("uses the interface typeface for branch names and search", async () => {
 
   const picker = document.querySelector<HTMLElement>("[data-branch-picker]")!;
   const search = picker.querySelector<HTMLInputElement>(
-    'input[aria-label="Search or create a branch"]',
+    'input[aria-label="搜索或新建分支"]',
   )!;
   const branchName = picker.querySelector<HTMLElement>('[role="option"] span')!;
 
@@ -100,7 +100,7 @@ it("asks for a branch name before creating from the fixed action", async () => {
   const create = [...picker.querySelectorAll<HTMLButtonElement>("button")].find(
     (button) => button.textContent === "New branch",
   )!;
-  const list = picker.querySelector('[role="listbox"][aria-label="Branches"]')!;
+  const list = picker.querySelector('[role="listbox"][aria-label="分支"]')!;
   expect(list.contains(create)).toBe(false);
   expect(create.parentElement?.className).toContain("border-t");
   expect(create.parentElement?.className).toContain("shrink-0");
@@ -111,7 +111,7 @@ it("asks for a branch name before creating from the fixed action", async () => {
   expect(gitCreateBranch).not.toHaveBeenCalled();
 
   const input = document.querySelector<HTMLInputElement>(
-    'input[aria-label="Branch name"]',
+    'input[aria-label="分支名称"]',
   )!;
   expect(input).not.toBeNull();
   await act(async () => {});
@@ -144,7 +144,7 @@ it("updates the branch creation row with the entered name", async () => {
   await act(async () => container.querySelector("button")!.click());
 
   const input = document.querySelector<HTMLInputElement>(
-    'input[aria-label="Search or create a branch"]',
+    'input[aria-label="搜索或新建分支"]',
   )!;
   const setter = Object.getOwnPropertyDescriptor(
     HTMLInputElement.prototype,
@@ -184,7 +184,7 @@ it("checks out the highlighted matching branch when Enter is pressed", async () 
   await act(async () => container.querySelector("button")!.click());
 
   const input = document.querySelector<HTMLInputElement>(
-    'input[aria-label="Search or create a branch"]',
+    'input[aria-label="搜索或新建分支"]',
   )!;
   const setter = Object.getOwnPropertyDescriptor(
     HTMLInputElement.prototype,

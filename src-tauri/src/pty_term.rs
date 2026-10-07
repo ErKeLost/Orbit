@@ -64,7 +64,6 @@ struct PtyExit {
 }
 
 struct LivePty {
-    cwd: std::path::PathBuf,
     writer: Mutex<Box<dyn Write + Send>>,
     #[cfg(unix)]
     master_fd: i32,
@@ -78,17 +77,6 @@ pub struct PtyHost {
 }
 
 impl PtyHost {
-    pub(crate) fn has_working_dir(&self, path: &std::path::Path) -> bool {
-        self.sessions
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .values()
-            .any(|_live| {
-                let _ = path;
-                false
-            })
-    }
-
     pub fn new() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
@@ -331,7 +319,6 @@ fn spawn_unix(
     let writer = unsafe { File::from_raw_fd(dup_fd(master)?) };
 
     let live = Arc::new(LivePty {
-        cwd: workdir.clone(),
         writer: Mutex::new(Box::new(writer)),
         master_fd: master,
         pid,
@@ -447,7 +434,6 @@ fn spawn_windows(
         .map_err(|err| format!("Failed to write to terminal: {err}"))?;
 
     let live = Arc::new(LivePty {
-        cwd: workdir.clone(),
         writer: Mutex::new(Box::new(writer)),
         master: Mutex::new(pair.master),
         pid,
@@ -494,7 +480,7 @@ fn working_dir(cwd: &str) -> std::path::PathBuf {
     if path.is_dir() {
         return path;
     }
-    dirs_home().map(std::path::PathBuf::from).unwrap_or(path)
+    dirs_home().unwrap_or(path)
 }
 
 fn default_shell() -> (String, Vec<String>) {
@@ -848,7 +834,6 @@ mod tests {
         host.insert(
             "term".into(),
             Arc::new(LivePty {
-                cwd: std::path::PathBuf::from("/test"),
                 writer: Mutex::new(Box::new(std::io::sink())),
                 master_fd: -1,
                 pid: 42,

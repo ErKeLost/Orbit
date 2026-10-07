@@ -33,13 +33,15 @@ fn path_to_js(path: &Path) -> String {
 }
 
 fn git_cmd() -> Command {
-    let mut cmd = Command::new("git");
+    let cmd = Command::new("git");
     #[cfg(windows)]
-    {
+    let cmd = {
+        let mut cmd = cmd;
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+        cmd
+    };
     cmd
 }
 
@@ -587,8 +589,6 @@ fn index_files(root: &Path) -> Vec<SourceControlFile> {
     paths.sort();
     paths.dedup();
     let mut files = Vec::new();
-    let mut additions = 0;
-    let mut deletions = 0;
     for path in paths {
         let staged = staged_map.contains_key(&path);
         let unstaged_acc = unstaged_map.get(&path);
@@ -597,8 +597,6 @@ fn index_files(root: &Path) -> Vec<SourceControlFile> {
             + unstaged_acc.map(|acc| acc.additions).unwrap_or(0);
         let acc_del = staged_map.get(&path).map(|acc| acc.deletions).unwrap_or(0)
             + unstaged_acc.map(|acc| acc.deletions).unwrap_or(0);
-        additions += acc_add;
-        deletions += acc_del;
         files.push(SourceControlFile {
             relative: path.clone(),
             path: root.join(&path).to_string_lossy().replace('\\', "/"),
@@ -692,7 +690,7 @@ pub async fn git_diff_files(cwd: String) -> Result<GitDiffIndex, String> {
 const DIFF_MAX_BYTES: u64 = 2 * 1024 * 1024;
 
 fn blob_or_empty(root: &Path, spec: &str) -> String {
-    git_run(root, &["show", &format!("{spec}")]).unwrap_or_default()
+    git_run(root, &["show", spec]).unwrap_or_default()
 }
 
 fn is_binary_bytes(bytes: &[u8]) -> bool {
@@ -702,6 +700,9 @@ fn is_binary_bytes(bytes: &[u8]) -> bool {
 /// Full original/current contents for one file's unstaged or staged diff.
 #[tauri::command]
 pub async fn git_file_diff(cwd: String, relative: String, staged: bool) -> Result<GitFileDiff, String> {
+    // Keep the RPC argument for older clients; the combined Changes view
+    // compares HEAD with the working tree for both staged and unstaged rows.
+    let _ = staged;
     tauri::async_runtime::spawn_blocking(move || {
         let root = expand_home(&cwd);
         let relative = relative.trim_start_matches('/');
@@ -923,7 +924,7 @@ pub async fn git_discard_file(cwd: String, relative: String) -> Result<(), Strin
         }
         // Untracked files have no HEAD copy; deleting is the only discard.
         let worktree = root.join(&relative);
-        if !git_run(&root, &["ls-files", "--", &relative]).map_or(false, |text| !text.trim().is_empty()) {
+        if !git_run(&root, &["ls-files", "--", &relative]).is_some_and(|text| !text.trim().is_empty()) {
             let _ = std::fs::remove_file(&worktree);
         }
         Ok(())

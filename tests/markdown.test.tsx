@@ -24,11 +24,11 @@ describe("shared Markdown renderer", () => {
     expect(html).toContain("is-streaming");
   });
 
-  test("wraps the live tail per character for the streaming color trail", () => {
-    const html = renderToStaticMarkup(<Markdown content="trail" animated />);
+  test("animates streaming words with the current fade duration", () => {
+    const html = renderToStaticMarkup(<Markdown content="live trail" animated />);
 
-    expect(html.match(/class="stream-char"/g)).toHaveLength(5);
-    expect(html).toContain("animation-duration: 900ms");
+    expect(html.match(/class="stream-char"/g)).toHaveLength(2);
+    expect(html).toContain("animation-duration: 180ms");
   });
 
   test("renders fenced code as a pre block before Shiki upgrades it", () => {
