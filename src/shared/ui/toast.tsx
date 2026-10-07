@@ -59,13 +59,22 @@ export const toast = {
   dismiss: (id: number) => useToasts.getState().dismiss(id),
   promise<T>(
     promise: Promise<T>,
-    messages: { loading: string; success: string; error: string } & ToastOptions,
+    messages: {
+      loading: string;
+      success: string;
+      /** 传函数可在失败时拿到原因，拼进 title/description，而不是只给一句固定文案。 */
+      error: string | ((error: unknown) => string | ToastOptions);
+    } & ToastOptions,
   ) {
     const { loading, success, error, ...options } = messages;
     const id = show("loading", loading, { ...options, duration: Infinity });
     promise.then(
       () => useToasts.getState().update(id, { tone: "success", title: success, duration: 4000 }),
-      () => useToasts.getState().update(id, { tone: "error", title: error, duration: 6000 }),
+      (cause) => {
+        const failure = typeof error === "function" ? error(cause) : error;
+        const patch = typeof failure === "string" ? { title: failure } : failure;
+        useToasts.getState().update(id, { tone: "error", duration: 10000, ...patch });
+      },
     );
     return promise;
   },

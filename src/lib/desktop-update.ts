@@ -37,7 +37,11 @@ export async function installDesktopUpdate() {
     gooeyToast.promise(installation, {
       loading: "正在下载更新",
       success: "更新已安装，正在重启",
-      error: "更新安装失败",
+      error: (cause) => ({
+        title: "更新安装失败",
+        description: `${cause instanceof Error ? cause.message : String(cause)}。多为网络/代理无法稳定下载 GitHub 更新包，可稍后重试；或在设置里打开发布页手动下载安装包。`,
+        showTimestamp: false,
+      }),
       showTimestamp: false,
     })
     await installation
