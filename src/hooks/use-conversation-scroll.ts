@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { isLowPerf } from "../lib/perf-tier";
 
 /** 距底部多少像素以内算“在底部”。 */
@@ -19,7 +19,8 @@ const SCROLL_UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
  *   锚到顶部的 pauseFollow + 对齐滚动）会把 following/atBottom 置 false，但那
  *   不是用户离开底部，「跳到最新」按钮（!atBottom && userUnpinned）不该弹出。
  */
-export function useConversationScroll() {
+export function useConversationScroll(options: { /** 置 true 时贴底逻辑整体挂起（发送后的锚定窗口期），避免乐观追加先把视图拽到底部。 */ holdStickRef?: RefObject<boolean> } = {}) {
+  const holdStickRef = options.holdStickRef;
   const ref = useRef<HTMLDivElement>(null);
   const followingRef = useRef(true);
   const [atBottom, setAtBottomState] = useState(true);
@@ -46,6 +47,9 @@ export function useConversationScroll() {
     const markIntent = () => undefined;
 
     const stickToBottom = () => {
+      // 锚定窗口期（刚发送、等锚定接管）不贴底：先把视图拽到底再拉回顶部
+      // 就是你能看见的那一下抖动。
+      if (holdStickRef?.current) return;
       const target = element.scrollHeight - element.clientHeight;
       // 已经贴底时不再写 scrollTop：写操作会派发 scroll 事件并让下一次
       // 布局失效，长会话下每帧白跑一次。
@@ -144,6 +148,7 @@ export function useConversationScroll() {
   const scrollToBottom = useCallback(() => {
     const element = ref.current;
     if (!element) return;
+    if (holdStickRef?.current) return;
     followingRef.current = true;
     setAtBottom(true);
     setUserUnpinned(false);

@@ -93,7 +93,13 @@ export function ChatPane() {
   const agents = useWorkspace((state) => state.agents);
   const statuses = useWorkspace((state) => state.statuses);
   const transcript = useFrameStream();
-  const { ref, atBottom, userUnpinned, scrollToBottom, pauseFollow } = useConversationScroll();
+  const holdStickRef = useRef(false);
+  // 发送那一刻置位（onSubmitted 在乐观追加渲染前同步调用），锚定接管后由
+  // rAF 与 settle 清除；窗口期内贴底逻辑整体挂起，避免先拽到底再拉回来。
+  const beginAnchoredSend = useCallback(() => {
+    holdStickRef.current = true;
+  }, []);
+  const { ref, atBottom, userUnpinned, scrollToBottom, pauseFollow } = useConversationScroll({ holdStickRef });
   const sessionFile = useWorkspace((state) => state.state?.sessionFile) ?? persistedSessionFile(project);
   const dockPosition = useShell((state) => state.terminalPosition);
   const dockOpen = useShell((state) => state.terminalOpen);
@@ -200,6 +206,7 @@ export function ChatPane() {
     const now = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
     scroller.scrollTop += now - promptOffset.current;
     promptOffset.current = null;
+    holdStickRef.current = false;
   });
 
   // A sent prompt aligns to the top of the pane and following stops: the answer
@@ -214,6 +221,7 @@ export function ChatPane() {
       pauseFollow();
       const delta = box.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
       scroller.scrollTop = Math.max(0, scroller.scrollTop + delta - 8);
+      holdStickRef.current = false;
       // 这一次滚动就是锚定本身，不是漂移：立刻把 prompt 锚定后的位置写回
       // promptOffset。否则一个没有任何中间流提交的短轮（1s 的空回复就够）
       // 结束时，settle 回写用的还是锚定前贴底的旧偏移，会把刚发出去的
@@ -233,7 +241,7 @@ export function ChatPane() {
   if (groups.length === 0 && !waiting) {
     return (
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <EmptySession cwd={project} onSubmitted={scrollToBottom} />
+        <EmptySession cwd={project} onSubmitted={beginAnchoredSend} />
       </div>
     );
   }
@@ -298,7 +306,7 @@ export function ChatPane() {
       </div>
       {Object.entries(statuses).flatMap(([key, value]) => (!key.startsWith("gui-") && value ? [<div key={key} className="extension-status">{key}: {value}</div>] : []))}
       {/* Sending anchors the turn to the top instead of pinning to the bottom. */}
-      <Composer onSubmitted={() => undefined} />
+      <Composer onSubmitted={beginAnchoredSend} />
       </div>
       {dockPosition === "bottom" || dockPosition === "right" ? dock : null}
     </div>
