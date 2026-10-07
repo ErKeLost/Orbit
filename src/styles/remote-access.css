@@ -299,10 +299,17 @@
 .remote-host-device small { display: inline-flex; align-items: center; gap: 6px; color: color-mix(in srgb, var(--color-content) 50%, transparent); font-size: 10px; }
 .remote-host-device small i { width: 6px; height: 6px; border-radius: 50%; background: var(--color-content); }
 
+/* ── Mobile pairing (phone entry surface) ─────────────────────────────
+   Token-based: every color derives from the app theme, so the page follows
+   light/dark instead of carrying its own palette. */
+
 .remote-pairing-screen {
+  --pairing-muted: color-mix(in srgb, var(--color-content) 52%, transparent);
+  position: relative;
+  isolation: isolate;
   display: grid;
-  min-height: 100dvh;
   place-items: center;
+  min-height: 100dvh;
   overflow: auto;
   padding: max(38px, env(safe-area-inset-top)) max(22px, env(safe-area-inset-right)) max(30px, env(safe-area-inset-bottom)) max(22px, env(safe-area-inset-left));
   background: var(--color-background-base);
@@ -311,119 +318,149 @@
 
 .remote-pairing-content {
   width: min(100%, 420px);
+  padding: 0 clamp(4px, 1.2vw, 10px);
 }
 
-.remote-pairing-emblem {
-  position: relative;
-  width: 55px;
-  height: 55px;
-  margin-bottom: 32px;
-  color: var(--color-content);
-  font: 46px/55px Georgia, serif;
-}
-
-.remote-pairing-emblem > i {
-  position: absolute;
-  right: -5px;
-  bottom: -1px;
+.remote-pairing-brand {
   display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  border: 2px solid var(--color-background-base);
-  border-radius: 50%;
-  background: var(--color-content);
-  color: var(--color-background-base);
+  justify-items: center;
+  margin-bottom: clamp(16px, 3dvh, 28px);
 }
 
-.remote-pairing-emblem svg {
-  width: 12px;
-  height: 12px;
+.remote-pairing-brand img {
+  width: clamp(116px, 32vw, 164px);
+  height: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 14px 22px color-mix(in srgb, var(--color-content) 14%, transparent));
 }
 
-.remote-pairing-heading > p {
-  margin: 0 0 8px;
-  color: color-mix(in srgb, var(--color-content) 50%, transparent);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
+.remote-pairing-heading > p { display: none; }
 
 .remote-pairing-heading h1 {
   margin: 0;
-  font-size: 25px;
-  font-weight: 560;
-  letter-spacing: 0;
-  line-height: 1.3;
+  color: var(--color-content);
+  font-size: clamp(26px, 7vw, 34px);
+  font-weight: 680;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  text-align: center;
+  text-wrap: balance;
 }
 
 .remote-pairing-heading > span {
   display: block;
-  margin-top: 11px;
-  color: color-mix(in srgb, var(--color-content) 50%, transparent);
-  font-size: 12px;
-  line-height: 1.7;
+  margin-top: 10px;
+  color: var(--pairing-muted);
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
 }
+
+.remote-pairing-scan-card {
+  display: grid !important;
+  grid-template-columns: 52px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 14px;
+  width: 100% !important;
+  height: auto !important;
+  min-height: 84px !important;
+  margin-top: clamp(20px, 3.5dvh, 30px);
+  padding: 16px 18px !important;
+  border: 1px solid var(--color-stroke) !important;
+  border-radius: 16px !important;
+  background: color-mix(in srgb, var(--color-content) 3%, var(--color-background-base)) !important;
+  box-shadow: none !important;
+  color: var(--color-content) !important;
+  text-align: left;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.remote-pairing-scan-card:hover {
+  border-color: color-mix(in srgb, var(--color-content) 18%, transparent) !important;
+  background: color-mix(in srgb, var(--color-content) 6%, var(--color-background-base)) !important;
+}
+
+.remote-pairing-scan-card > span:nth-child(2) { display: grid; gap: 3px; min-width: 0; }
+.remote-pairing-scan-card strong { color: var(--color-content); font-size: 16px; font-weight: 620; }
+.remote-pairing-scan-card small { overflow: hidden; color: var(--pairing-muted); font-size: 11.5px; font-weight: 450; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.remote-pairing-scan-card > svg { width: 20px; height: 20px; color: var(--pairing-muted); }
+
+.remote-pairing-scan-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  color: var(--color-accent);
+}
+
+.remote-pairing-scan-icon svg { width: 28px; height: 28px; }
+
+.remote-pairing-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0 12px;
+  color: var(--pairing-muted);
+  font-size: 11.5px;
+}
+
+.remote-pairing-divider::before,
+.remote-pairing-divider::after { height: 1px; flex: 1; background: var(--color-stroke); content: ""; }
 
 .remote-pairing-form {
   display: grid;
   gap: 10px;
-  margin-top: 34px;
-  padding-top: 24px;
-  border-top: 1px solid var(--color-stroke);
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
 
-.remote-pairing-form > label {
-  font-size: 11px;
-  font-weight: 550;
+.remote-pairing-form > label { color: var(--color-content); font-size: 12px; font-weight: 550; }
+
+.remote-pairing-input-shell { position: relative; display: flex; align-items: center; }
+
+.remote-pairing-input-shell [data-slot="input"] {
+  height: 46px;
+  padding-right: 46px;
+  border-color: var(--color-stroke);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-content) 3%, var(--color-background-base));
+  color: var(--color-content);
+  font: 12px/1.5 var(--font-mono);
 }
 
-.remote-pairing-form [data-slot="input"] {
-  height: 43px;
-  border-radius: 10px;
-  padding-inline: 12px;
-  font: 11px/1.5 var(--font-mono);
+.remote-pairing-input-shell [data-slot="input"]::placeholder { color: color-mix(in srgb, var(--color-content) 38%, transparent); }
+
+.remote-pairing-input-shell [data-slot="input"]:focus-visible {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 16%, transparent);
 }
 
-.remote-pairing-form [data-slot="button"] {
-  width: 100%;
-  height: 43px;
-  margin-top: 8px;
-  border-radius: 10px;
-}
+.remote-pairing-input-shell [data-slot="button"] { position: absolute; right: 6px; color: var(--pairing-muted); }
 
-.remote-pairing-help,
-.remote-pairing-error,
-.remote-pairing-security {
-  margin: 0;
-  color: color-mix(in srgb, var(--color-content) 50%, transparent);
-  font-size: 10px;
-  line-height: 1.55;
-}
+.remote-pairing-help { display: none; }
 
 .remote-pairing-error,
 .remote-pairing-security {
   display: flex;
   align-items: flex-start;
   gap: 7px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.55;
 }
 
-.remote-pairing-error {
-  color: #f87171;
-}
+/* tailwind red-400, same red the app surfaces use */
+.remote-pairing-error { color: #f87171; }
 
 .remote-pairing-error svg,
-.remote-pairing-security svg {
-  width: 13px;
-  height: 13px;
-  flex: none;
-  margin-top: 1px;
-}
+.remote-pairing-security svg { width: 13px; height: 13px; flex: none; margin-top: 1px; }
 
-.remote-pairing-security {
-  margin-top: 22px;
-}
+.remote-pairing-security { margin-top: 16px; color: var(--pairing-muted); }
+
+.remote-pairing-file-input { display: none; }
 
 @media (max-width: 680px) {
   .mobile-access-surface {
@@ -479,130 +516,58 @@
   }
 }
 
-/* Pairing is the mobile entry surface. The supplied cloud artwork stays
-   visible around a compact translucent card so the form remains readable. */
-.remote-pairing-screen {
-  position: relative;
-  isolation: isolate;
-  min-height: 100dvh;
-  background: #cdd6ff url("/remote-clouds.png") center / cover no-repeat;
-  color: #25234c;
+/* Phone viewport: keep pairing controls inside one dynamic viewport. */
+@media (max-width: 520px) {
+  .remote-pairing-screen {
+    place-items: start center;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+    padding: max(20px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  }
+
+  .remote-pairing-content {
+    display: grid;
+    width: min(100%, 420px);
+    max-height: 100%;
+    align-content: start;
+    padding: 0;
+  }
+
+  .remote-pairing-brand { margin-bottom: clamp(6px, 1.4dvh, 14px); }
+  .remote-pairing-brand img { width: min(30vw, 15dvh, 128px); height: auto; }
+
+  .remote-pairing-heading h1 { font-size: clamp(23px, 4dvh, 30px); }
+  .remote-pairing-heading > span { margin-top: 6px; font-size: 12px; line-height: 1.45; }
+
+  .remote-pairing-scan-card {
+    grid-template-columns: 46px minmax(0, 1fr) 17px;
+    gap: 11px;
+    min-height: clamp(66px, 9dvh, 80px) !important;
+    margin-top: clamp(12px, 2dvh, 18px);
+    padding: 12px 14px !important;
+    border-radius: 14px !important;
+  }
+
+  .remote-pairing-scan-icon { width: 46px; height: 46px; border-radius: 12px; }
+  .remote-pairing-scan-icon svg { width: 25px; height: 25px; }
+  .remote-pairing-scan-card > span:nth-child(2) { gap: 2px; }
+  .remote-pairing-scan-card strong { font-size: 15px; line-height: 1.25; }
+  .remote-pairing-scan-card small { font-size: 10.5px; }
+  .remote-pairing-scan-card > svg { width: 18px; height: 18px; }
+
+  .remote-pairing-divider { gap: 10px; margin: clamp(10px, 1.6dvh, 14px) 0 8px; font-size: 11px; }
+
+  .remote-pairing-form { gap: 6px; }
+  .remote-pairing-form > label { font-size: 11px; }
+  .remote-pairing-input-shell [data-slot="input"] { height: 42px; padding-right: 42px; border-radius: 11px; font-size: 11px; }
+  .remote-pairing-input-shell [data-slot="button"] { right: 4px; width: 34px; height: 34px; }
+  .remote-pairing-error { max-height: 32px; overflow: hidden; font-size: 10px; line-height: 1.45; }
+  .remote-pairing-connect { min-height: 42px !important; height: 42px !important; margin-top: 3px !important; border-radius: 11px !important; font-size: 13px !important; }
+  .remote-pairing-security { margin-top: 9px; font-size: 10px; line-height: 1.4; }
 }
 
-.remote-pairing-screen::before {
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  background: rgb(255 255 255 / 12%);
-  content: "";
-}
-
-.remote-pairing-content {
-  width: min(100%, 470px);
-  padding: 30px clamp(22px, 5vw, 42px) 26px;
-  border: 1px solid rgb(255 255 255 / 72%);
-  border-radius: 28px;
-  background: rgb(255 255 255 / 84%);
-  box-shadow: 0 24px 70px rgb(79 67 155 / 22%), inset 0 1px rgb(255 255 255 / 80%);
-  backdrop-filter: blur(14px);
-}
-
-.remote-pairing-mark {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 22px;
-  color: #7165b5;
-  font-size: 12px;
-  font-weight: 750;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-}
-
-.remote-pairing-mark > i {
-  display: grid;
-  width: 22px;
-  height: 22px;
-  place-items: center;
-  border: 1px solid rgb(255 255 255 / 90%);
-  border-radius: 50%;
-  background: #8e79d2;
-  color: #fff;
-}
-
-.remote-pairing-mark svg { width: 12px; height: 12px; }
-.remote-pairing-emblem { display: none; }
-
-.remote-pairing-heading > p { color: #8a7ec2; }
-.remote-pairing-heading h1 { color: #292650; font-size: clamp(25px, 6vw, 34px); letter-spacing: -.03em; }
-.remote-pairing-heading > span { color: #746f8d; }
-
-.remote-pairing-scan-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 24px;
-}
-
-.remote-pairing-scan-actions [data-slot="button"] {
-  min-height: 38px;
-  border-color: rgb(146 120 211 / 38%);
-  border-radius: 12px;
-  background: rgb(255 255 255 / 58%);
-  color: #5a4e9b;
-}
-
-.remote-pairing-scan-actions [data-slot="button"]:hover {
-  border-color: rgb(146 120 211 / 68%);
-  background: rgb(255 255 255 / 86%);
-  color: #443682;
-}
-
-.remote-pairing-scan-actions svg { width: 15px; height: 15px; }
-.remote-pairing-file-input { display: none; }
-
-.remote-pairing-form {
-  margin-top: 18px;
-  padding-top: 20px;
-  border-top-color: rgb(125 108 185 / 18%);
-}
-
-.remote-pairing-form > label { color: #49436d; }
-
-.remote-pairing-form [data-slot="input"] {
-  height: 44px;
-  border-color: rgb(223 132 203 / 62%);
-  border-radius: 13px;
-  background: rgb(255 255 255 / 76%);
-  color: #302b57;
-  box-shadow: 0 5px 16px rgb(177 130 222 / 10%);
-}
-
-.remote-pairing-form [data-slot="input"]:focus-visible {
-  border-color: #d889c9;
-  box-shadow: 0 0 0 3px rgb(216 137 201 / 22%);
-}
-
-.remote-pairing-help,
-.remote-pairing-security { color: #77718d; }
-
-.remote-pairing-form [data-slot="button"] {
-  min-height: 46px;
-  border: 0;
-  border-radius: 15px;
-  background: linear-gradient(100deg, #ef91c9, #ae8ce9);
-  box-shadow: 0 10px 24px rgb(193 111 210 / 25%);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.remote-pairing-form [data-slot="button"]:hover { filter: brightness(1.04); }
-.remote-pairing-form [data-slot="button"]:disabled { opacity: .62; }
-.remote-pairing-error { color: #b33d58; }
-.remote-pairing-security { padding-top: 2px; }
-.remote-pairing-security svg { color: #7669b4; }
-
+/* Native scanning hands the whole surface to the camera; hide the page. */
 html.remote-native-scanning,
 html.remote-native-scanning body,
 html.remote-native-scanning #root {
@@ -618,387 +583,20 @@ html.remote-native-scanning .remote-pairing-content {
   visibility: hidden;
 }
 
-.remote-pairing-scanner {
-  position: fixed;
-  z-index: 40;
-  inset: 0;
-  overflow: hidden;
-  background: #000;
-  color: #fff;
+/* The scanner follows the familiar camera surface/* Native scanning hands the whole surface to the camera; hide the page. */
+html.remote-native-scanning,
+html.remote-native-scanning body,
+html.remote-native-scanning #root {
+  background: transparent !important;
 }
 
-.remote-pairing-scanner[data-native="true"] {
-  background: transparent;
+html.remote-native-scanning .remote-pairing-screen {
+  background: transparent !important;
 }
 
-.remote-pairing-scanner video {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  background: #000;
-}
-
-.remote-pairing-scanner-mask {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  pointer-events: none;
-}
-
-.remote-pairing-scanner-window {
-  position: relative;
-  width: min(72vw, 280px);
-  aspect-ratio: 1;
-  box-shadow: 0 0 0 999vmax rgb(0 0 0 / 48%);
-}
-
-.remote-pairing-scanner-corner {
-  position: absolute;
-  width: 22px;
-  height: 22px;
-  border: 3px solid #07c160;
-}
-
-.remote-pairing-scanner-corner.is-tl { top: 0; left: 0; border-right: 0; border-bottom: 0; }
-.remote-pairing-scanner-corner.is-tr { top: 0; right: 0; border-left: 0; border-bottom: 0; }
-.remote-pairing-scanner-corner.is-bl { bottom: 0; left: 0; border-right: 0; border-top: 0; }
-.remote-pairing-scanner-corner.is-br { bottom: 0; right: 0; border-left: 0; border-top: 0; }
-
-.remote-pairing-scanner-line {
-  position: absolute;
-  top: 6%;
-  left: 8%;
-  right: 8%;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, #7dff9a 18%, #07c160 50%, #7dff9a 82%, transparent);
-  box-shadow: 0 0 14px 3px rgb(7 193 96 / 55%);
-  animation: remote-pairing-scan-line 2.2s ease-in-out infinite;
-}
-
-@keyframes remote-pairing-scan-line {
-  0% { top: 6%; opacity: 0; }
-  10% { opacity: 1; }
-  90% { opacity: 1; }
-  100% { top: 90%; opacity: 0; }
-}
-
-.remote-pairing-scanner-close,
-.remote-pairing-scanner-album {
-  position: absolute;
-  z-index: 3;
-  display: grid;
-  width: 40px;
-  height: 40px;
-  place-items: center;
-  border: 0;
-  border-radius: 50%;
-  background: rgb(28 28 30 / 55%);
-  color: #fff;
-  cursor: pointer;
-  appearance: none;
-}
-
-.remote-pairing-scanner-close:hover,
-.remote-pairing-scanner-album:hover {
-  background: rgb(48 48 50 / 78%);
-}
-
-.remote-pairing-scanner-close:focus-visible,
-.remote-pairing-scanner-album:focus-visible {
-  outline: 2px solid #fff;
-  outline-offset: 3px;
-}
-
-.remote-pairing-scanner-close {
-  top: max(14px, env(safe-area-inset-top));
-  left: max(16px, env(safe-area-inset-left));
-}
-
-.remote-pairing-scanner-close svg,
-.remote-pairing-scanner-album svg {
-  width: 20px;
-  height: 20px;
-}
-
-.remote-pairing-scanner-sr {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-}
-
-.remote-pairing-scanner-status {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  z-index: 2;
-  display: grid;
-  width: min(72vw, 280px);
-  justify-items: center;
-  gap: 10px;
-  margin: 0;
-  padding: 18px;
-  color: #fff;
-  font-size: 13px;
-  line-height: 1.5;
-  text-align: center;
-  transform: translate(-50%, -50%);
-}
-
-.remote-pairing-scanner-status svg { width: 22px; height: 22px; }
-
-.remote-pairing-scanner-footer {
-  position: absolute;
-  z-index: 3;
-  right: max(18px, env(safe-area-inset-right));
-  bottom: max(28px, env(safe-area-inset-bottom));
-  left: max(18px, env(safe-area-inset-left));
-  display: grid;
-  justify-items: center;
-  gap: 22px;
-}
-
-.remote-pairing-scanner-footer > p {
-  margin: 0;
-  color: rgb(255 255 255 / 88%);
-  font-size: 14px;
-  letter-spacing: .02em;
-  text-align: center;
-  text-shadow: 0 1px 8px rgb(0 0 0 / 55%);
-}
-
-.remote-pairing-scanner-album {
-  position: relative;
-  justify-self: end;
-  width: 48px;
-  height: 48px;
-  background: rgb(48 48 50 / 72%);
-}
-
-@media (max-width: 520px) {
-  .remote-pairing-screen { place-items: end center; padding: 16px max(12px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); }
-  .remote-pairing-content { padding: 24px 20px 20px; border-radius: 24px; }
-  .remote-pairing-mark { margin-bottom: 16px; }
-}
-
-/* Mobile pairing artwork and scan-first composition. */
-.remote-pairing-screen {
-  align-items: flex-start;
-  background: #e4e1fa url("/orbit-pairing-background.png") center / cover fixed no-repeat;
-  padding-top: max(64px, env(safe-area-inset-top));
-}
-
-.remote-pairing-screen::before { background: rgb(255 255 255 / 7%); }
-
-.remote-pairing-content {
-  width: min(100%, 620px);
-  padding: 0 clamp(22px, 5vw, 52px) 32px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-}
-
-.remote-pairing-brand {
-  display: grid;
-  justify-items: center;
-  margin-bottom: 42px;
-}
-
-.remote-pairing-brand img {
-  width: clamp(190px, 48vw, 292px);
-  height: clamp(170px, 42vw, 260px);
-  object-fit: contain;
-  filter: drop-shadow(0 16px 18px rgb(104 91 177 / 17%));
-}
-
-.remote-pairing-heading > p { display: none; }
-.remote-pairing-heading h1 { color: #292650; font-size: clamp(30px, 8vw, 42px); font-weight: 750; letter-spacing: -.04em; }
-.remote-pairing-heading > span { margin-top: 12px; color: #716d83; font-size: 15px; line-height: 1.55; }
-
-.remote-pairing-scan-card {
-  display: grid !important;
-  grid-template-columns: 76px minmax(0, 1fr) 22px;
-  align-items: center;
-  gap: 14px;
-  width: 100% !important;
-  height: auto !important;
-  min-height: 108px !important;
-  margin-top: 34px;
-  padding: 18px 20px !important;
-  border: 1px solid rgb(255 255 255 / 76%) !important;
-  border-radius: 22px !important;
-  background: rgb(255 255 255 / 68%) !important;
-  box-shadow: 0 12px 30px rgb(118 105 177 / 12%);
-  color: #6459d5 !important;
-  text-align: left;
-}
-
-.remote-pairing-scan-card:hover { background: rgb(255 255 255 / 84%) !important; }
-.remote-pairing-scan-card > span:nth-child(2) { display: grid; gap: 5px; min-width: 0; }
-.remote-pairing-scan-card strong { color: #625bd3; font-size: 23px; font-weight: 700; }
-.remote-pairing-scan-card small { color: #77718d; font-size: 12px; font-weight: 450; }
-.remote-pairing-scan-card > svg { width: 25px; height: 25px; color: #625bd3; }
-
-.remote-pairing-scan-icon {
-  display: grid;
-  width: 64px;
-  height: 64px;
-  place-items: center;
-  border-radius: 18px;
-  background: rgb(111 100 226 / 10%);
-  color: #655bd8;
-}
-
-.remote-pairing-scan-icon svg { width: 38px; height: 38px; }
-
-.remote-pairing-divider {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin: 24px 0 14px;
-  color: #817c91;
-  font-size: 15px;
-}
-
-.remote-pairing-divider::before,
-.remote-pairing-divider::after { height: 1px; flex: 1; background: rgb(111 100 160 / 18%); content: ""; }
-
-.remote-pairing-form { margin-top: 0; padding-top: 0; border-top: 0; gap: 10px; }
-.remote-pairing-form > label { color: #4e4779; font-size: 14px; }
-.remote-pairing-input-shell { position: relative; display: flex; align-items: center; }
-.remote-pairing-input-shell [data-slot="input"] { height: 52px; padding-right: 52px; border-color: rgb(255 255 255 / 78%); border-radius: 17px; background: rgb(255 255 255 / 65%); color: #302b57; font: 13px/1.5 var(--font-mono); box-shadow: 0 8px 24px rgb(118 105 177 / 8%); }
-.remote-pairing-input-shell [data-slot="input"]:focus-visible { border-color: rgb(103 91 211 / 48%); box-shadow: 0 0 0 3px rgb(103 91 211 / 13%); }
-.remote-pairing-input-shell [data-slot="button"] { position: absolute; right: 7px; color: #655bd8; }
-.remote-pairing-help { display: none; }
-.remote-pairing-connect { min-height: 52px !important; border: 1px solid rgb(103 91 211 / 62%) !important; border-radius: 17px !important; background: rgb(255 255 255 / 38%) !important; color: #625bd3 !important; box-shadow: none !important; font-size: 16px !important; font-weight: 650 !important; }
-.remote-pairing-connect:hover { background: rgb(255 255 255 / 65%) !important; }
-.remote-pairing-security { margin-top: 18px; color: #77718d; font-size: 12px; }
-.remote-pairing-security svg { color: #7669c8 !important; }
-
-
-@media (max-width: 520px) {
-  .remote-pairing-screen { place-items: start center; padding-top: max(32px, env(safe-area-inset-top)); }
-  .remote-pairing-content { padding-inline: 22px; }
-  .remote-pairing-brand { margin-bottom: 28px; }
-  .remote-pairing-brand img { width: 218px; height: 198px; }
-  .remote-pairing-scan-card { grid-template-columns: 62px minmax(0, 1fr) 18px; min-height: 94px !important; padding: 14px !important; }
-  .remote-pairing-scan-icon { width: 54px; height: 54px; }
-  .remote-pairing-scan-icon svg { width: 32px; height: 32px; }
-  .remote-pairing-scan-card strong { font-size: 20px; }
-  .remote-pairing-scan-card small { font-size: 11px; }
-}
-
-/* Pairing copy stays neutral; purple is reserved for the QR accent. */
-.remote-pairing-heading h1 { color: #171717; }
-.remote-pairing-heading > span { color: #666; }
-.remote-pairing-scan-card { color: #222 !important; }
-.remote-pairing-scan-card strong { color: #222; }
-.remote-pairing-scan-card small { color: #666; }
-.remote-pairing-scan-card > svg { color: #555; }
-.remote-pairing-divider { color: #777; }
-.remote-pairing-form > label { color: #333; }
-.remote-pairing-input-shell [data-slot="input"] { color: #222; }
-.remote-pairing-input-shell [data-slot="input"]::placeholder { color: #777; }
-.remote-pairing-input-shell [data-slot="button"] { color: #555; }
-.remote-pairing-connect,
-.remote-pairing-connect:hover { border-color: rgb(0 0 0 / 22%) !important; background: rgb(255 255 255 / 48%) !important; color: #222 !important; }
-.remote-pairing-security { color: #666; }
-.remote-pairing-security svg { color: #555 !important; }
-
-/* Final phone layout: keep pairing controls inside one dynamic viewport. */
-@media (max-width: 520px) {
-  .remote-pairing-screen {
-    width: 100%;
-    height: 100dvh;
-    min-height: 0;
-    align-items: start;
-    overflow: hidden;
-    padding: max(12px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
-    background-attachment: scroll;
-  }
-
-  .remote-pairing-content {
-    display: grid;
-    width: min(100%, 420px);
-    height: 100%;
-    max-height: 100%;
-    align-content: start;
-    overflow: hidden;
-    padding: 0;
-  }
-
-  .remote-pairing-brand {
-    margin: 0 0 clamp(6px, 1.4dvh, 12px);
-  }
-
-  .remote-pairing-brand img {
-    width: min(34vw, 19dvh, 150px);
-    height: min(34vw, 19dvh, 150px);
-    min-width: 88px;
-    min-height: 88px;
-  }
-
-  .remote-pairing-heading h1 {
-    font-size: clamp(24px, 4dvh, 31px);
-    line-height: 1.18;
-  }
-
-  .remote-pairing-heading > span {
-    margin-top: 6px;
-    font-size: 12px;
-    line-height: 1.45;
-  }
-
-  .remote-pairing-scan-card {
-    grid-template-columns: 46px minmax(0, 1fr) 17px;
-    gap: 11px;
-    min-height: clamp(66px, 9dvh, 78px) !important;
-    margin-top: clamp(12px, 2dvh, 18px);
-    padding: 10px 13px !important;
-    border-radius: 18px !important;
-  }
-
-  .remote-pairing-scan-icon {
-    width: 44px;
-    height: 44px;
-    border-radius: 13px;
-  }
-
-  .remote-pairing-scan-icon svg { width: 25px; height: 25px; }
-  .remote-pairing-scan-card > span:nth-child(2) { gap: 2px; }
-  .remote-pairing-scan-card strong { font-size: 16px; line-height: 1.25; }
-  .remote-pairing-scan-card small { overflow: hidden; font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
-  .remote-pairing-scan-card > svg { width: 18px; height: 18px; }
-
-  .remote-pairing-divider {
-    gap: 10px;
-    margin: clamp(10px, 1.6dvh, 14px) 0 8px;
-    font-size: 12px;
-  }
-
-  .remote-pairing-form { gap: 6px; }
-  .remote-pairing-form > label { font-size: 11px; }
-  .remote-pairing-input-shell [data-slot="input"] { height: 42px; padding-right: 44px; border-radius: 13px; font-size: 11px; }
-  .remote-pairing-input-shell [data-slot="button"] { right: 4px; width: 34px; height: 34px; }
-  .remote-pairing-error { max-height: 32px; overflow: hidden; font-size: 10px; line-height: 1.45; }
-  .remote-pairing-connect { min-height: 42px !important; height: 42px !important; margin-top: 3px !important; border-radius: 13px !important; font-size: 13px !important; }
-  .remote-pairing-security { margin-top: 9px; font-size: 10px; line-height: 1.4; }
-}
-
-@media (max-width: 520px) and (max-height: 720px) {
-  .remote-pairing-brand img { width: 84px; height: 84px; min-width: 84px; min-height: 84px; }
-  .remote-pairing-heading h1 { font-size: 23px; }
-  .remote-pairing-heading > span { font-size: 11px; }
-  .remote-pairing-scan-card { min-height: 60px !important; margin-top: 10px; }
-  .remote-pairing-divider { margin-block: 8px 6px; }
-  .remote-pairing-security { margin-top: 7px; }
+html.remote-native-scanning .remote-pairing-screen::before,
+html.remote-native-scanning .remote-pairing-content {
+  visibility: hidden;
 }
 
 /* The scanner follows the familiar camera surface: a quiet top bar, a
