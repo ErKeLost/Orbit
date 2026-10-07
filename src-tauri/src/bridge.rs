@@ -2911,6 +2911,54 @@ impl PiEventBatch {
     }
 }
 
+/// One-shot text generation through the project's Pi CLI (no session, no tools).
+/// Powers AI commit messages and PR descriptions without touching the chat.
+#[tauri::command]
+pub async fn pi_oneshot(app: AppHandle, cwd: String, prompt: String) -> Result<String, String> {
+    #[cfg(mobile)]
+    {
+        let _ = (&app, &cwd, &prompt);
+        return Err("移动端通过 Orbit Host 使用 Pi，不能启动本地 Pi 进程".into());
+    }
+    #[cfg(desktop)]
+    {
+        let path = project(&cwd)?;
+        let runtime = RuntimePaths::resolve(&app, &path)?;
+        let pi = runtime.pi.clone();
+        let node = runtime.node.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let output = Command::new(&node)
+                .arg(&pi)
+                .args([
+                    "--print",
+                    "--no-session",
+                    "--no-extensions",
+                    "--no-skills",
+                    "--no-tools",
+                ])
+                .arg(&prompt)
+                .current_dir(&path)
+                .stdin(Stdio::null())
+                .output()
+                .map_err(|e| e.to_string())?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                return Err(if !stderr.is_empty() {
+                    stderr
+                } else if !stdout.is_empty() {
+                    stdout
+                } else {
+                    format!("pi 退出码 {:?}", output.status.code())
+                });
+            }
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+}
+
 #[tauri::command]
 pub async fn pi_connect(
     app: AppHandle,

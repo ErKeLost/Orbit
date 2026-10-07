@@ -243,6 +243,7 @@ pub fn run() {
             bridge::clipboard_file_paths,
             bridge::read_file_attachment,
             bridge::save_media_file,
+            bridge::pi_oneshot,
             bridge::pi_connect,
             bridge::pi_send,
             bridge::pi_disconnect,
