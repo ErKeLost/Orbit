@@ -15,6 +15,8 @@ import {
   Inbox as InboxIcon,
   ArrowDownCircle,
   Copy,
+  Folder,
+  FolderOpen,
   FolderPlus,
   FolderTree,
   Loader,
@@ -160,6 +162,13 @@ function ProjectCard({
         aria-current={selected ? "true" : undefined}
         className="flex min-w-0 flex-1 cursor-default items-center gap-2 text-left transition-[padding] duration-150 group-hover:pr-6 motion-reduce:transition-none"
       >
+        {busy ? (
+          <Loader className="size-4 shrink-0 animate-spin text-accent" strokeWidth={1.75} aria-hidden />
+        ) : selected ? (
+          <FolderOpen className="size-4 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden />
+        ) : (
+          <Folder className="size-4 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden />
+        )}
         {busy ? (
           <Shimmer as="span" duration={1.4} className={labelClassName}>{project.name}</Shimmer>
         ) : (
