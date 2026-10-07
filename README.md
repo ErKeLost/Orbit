@@ -5,7 +5,7 @@
 ## 运行
 
 ```sh
-git clone https://github.com/ErKeLost/pi-gui.git
+git clone https://github.com/ErKeLost/Orbit.git
 cd pi-gui
 bun install --frozen-lockfile
 bun run tauri dev

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Orbit",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "identifier": "ai.pi.gui",
   "build": {
     "frontendDist": "../dist",
@@ -46,7 +46,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY5MEM1MjBFNDUwREVDMTAKUldRUTdBMUZEbElNYWRINzZkMWNreEoyL2k5eGxXenpHTE1PTiswQnhTT0UxeWptOTdzMUZ5WFgK",
       "endpoints": [
-        "https://github.com/ErKeLost/pi-gui/releases/latest/download/latest.json"
+        "https://github.com/ErKeLost/Orbit/releases/latest/download/latest.json"
       ]
     }
   },

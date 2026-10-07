@@ -30,7 +30,7 @@ mod android {
 
     pub async fn install(app: AppHandle, url: String, version: String) -> Result<(), String> {
         let expected = format!(
-            "https://github.com/ErKeLost/pi-gui/releases/download/v{version}/orbit-android-arm64-v{version}.apk"
+            "https://github.com/ErKeLost/Orbit/releases/download/v{version}/orbit-android-arm64-v{version}.apk"
         );
         if url != expected
             || !version
@@ -55,7 +55,7 @@ mod android {
             .build()
             .map_err(|error| error.to_string())?;
         let response = client
-            .get("https://github.com/ErKeLost/pi-gui/releases/latest")
+            .get("https://github.com/ErKeLost/Orbit/releases/latest")
             .send()
             .await
             .map_err(|error| error.to_string())?;

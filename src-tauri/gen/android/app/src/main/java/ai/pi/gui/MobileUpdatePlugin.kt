@@ -46,7 +46,7 @@ class MobileUpdatePlugin(private val activity: Activity) : Plugin(activity) {
         return
       }
       val args = invoke.parseArgs(InstallUpdateArgs::class.java)
-      val expected = "https://github.com/ErKeLost/pi-gui/releases/download/v${args.version}/orbit-android-arm64-v${args.version}.apk"
+      val expected = "https://github.com/ErKeLost/Orbit/releases/download/v${args.version}/orbit-android-arm64-v${args.version}.apk"
       if (args.url != expected || !args.version.matches(Regex("\\d+\\.\\d+\\.\\d+"))) {
         invoke.reject("Android 更新地址无效")
         return

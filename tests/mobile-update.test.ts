@@ -16,13 +16,13 @@ describe("Android release updates", () => {
       body: "Fixes",
       assets: [{
         name: "orbit-android-arm64-v0.2.16.apk",
-        browser_download_url: "https://github.com/ErKeLost/pi-gui/releases/download/v0.2.16/orbit-android-arm64-v0.2.16.apk",
+        browser_download_url: "https://github.com/ErKeLost/Orbit/releases/download/v0.2.16/orbit-android-arm64-v0.2.16.apk",
       }],
     });
     expect(update).toEqual({
       version: "0.2.16",
       body: "Fixes",
-      downloadUrl: "https://github.com/ErKeLost/pi-gui/releases/download/v0.2.16/orbit-android-arm64-v0.2.16.apk",
+      downloadUrl: "https://github.com/ErKeLost/Orbit/releases/download/v0.2.16/orbit-android-arm64-v0.2.16.apk",
     });
     expect(parseMobileUpdate("0.2.15", {
       tag_name: "v0.2.16",
@@ -51,7 +51,7 @@ describe("Android release updates", () => {
       body: "Fixes",
       assets: [{
         name: "orbit-android-arm64-v0.2.23.apk",
-        browser_download_url: "https://github.com/ErKeLost/pi-gui/releases/download/v0.2.23/orbit-android-arm64-v0.2.23.apk",
+        browser_download_url: "https://github.com/ErKeLost/Orbit/releases/download/v0.2.23/orbit-android-arm64-v0.2.23.apk",
       }],
     };
     let attempts = 0;
@@ -63,7 +63,7 @@ describe("Android release updates", () => {
     await expect(checkMobileUpdate("0.2.22", fetcher)).resolves.toEqual({
       version: "0.2.23",
       body: "Fixes",
-      downloadUrl: "https://github.com/ErKeLost/pi-gui/releases/download/v0.2.23/orbit-android-arm64-v0.2.23.apk",
+      downloadUrl: "https://github.com/ErKeLost/Orbit/releases/download/v0.2.23/orbit-android-arm64-v0.2.23.apk",
     });
     expect(attempts).toBe(2);
   });
