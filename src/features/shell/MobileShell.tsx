@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useWorkspace } from "../../lib/store";
 import { changeSession, report } from "../../lib/rpc";
 import { LAYER } from "../../shared/lib/layers";
-import { Plus, Settings, SlidersHorizontal, X, MessageMultiple, PanelLeft } from "../../shared/ui/icons";
+import { Plus, Settings, SlidersHorizontal, X, MessageMultiple, PanelLeft, AppWindow } from "../../shared/ui/icons";
 import { ChatPane } from "../chat/ChatPane";
 import { SettingsView } from "../settings/SettingsView";
 import { SettingsNav } from "../settings/SettingsNav";
@@ -24,6 +24,7 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
   const panel = useWorkspace((state) => state.panel);
   const cwd = useWorkspace((state) => state.cwd);
   const online = useWorkspace((state) => state.connection === "online");
+  const screenPip = useWorkspace((state) => state.screenPip);
   const sessionFile = useWorkspace((state) => state.state?.sessionFile);
   const liveSessions = useWorkspace((state) => state.liveSessions);
   const [drawer, setDrawer] = useState(false);
@@ -48,6 +49,14 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
         <span className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-[14px] font-medium">
           <span className="min-w-0 truncate">{title}</span>
         </span>
+        <TitleIconButton
+          label={screenPip ? "关闭屏幕" : "打开屏幕"}
+          active={screenPip}
+          disabled={!online}
+          onClick={() => useWorkspace.getState().set({ screenPip: !screenPip })}
+        >
+          <AppWindow className="size-4" strokeWidth={1.75} />
+        </TitleIconButton>
         <TitleIconButton label="新会话" disabled={!online} onClick={() => { useWorkspace.getState().set({ panel: "chat" }); void changeSession({ type: "new_session" }).catch(report); }}>
           <Plus className="size-4" strokeWidth={1.75} />
         </TitleIconButton>
