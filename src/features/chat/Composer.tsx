@@ -418,6 +418,12 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
       const before = attachments;
       setAttachments([]);
       draftRef.current?.clear();
+      // 从首页（EmptySession）发出的第一条消息会把整个 composer 重挂载到会话底部。
+      // 被卸载的实例不会再 flush effect，draft/attachment 缓存里仍留着刚发出的内容，
+      // 重挂载的 composer 会按同一个 composerKey 把它们原样捞回来（发出去的消息
+      // 「回到输入框」）。这里必须同步清掉当前会话的缓存，不能只清本地状态。
+      draftCache.delete(composerKey);
+      lruCache(attachmentCache, composerKey, []);
       const previewUrls: string[] = [];
       const previewContent = [
         ...(message ? [{ type: "text" as const, text: message }] : []),
@@ -447,12 +453,20 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
         previewUrls.forEach((url) => URL.revokeObjectURL(url));
         useWorkspace.getState().event({ type: "queued_preview_revert", id: previewId });
         useWorkspace.getState().event({ type: "prompt_settled" });
-        setAttachments((current) => [...before, ...current]);
-        draftRef.current?.restore(draftText);
+        if (draftRef.current) {
+          // composer 还挂着（会话内发送失败）：直接恢复，缓存由它的 effect 回写。
+          setAttachments((current) => [...before, ...current]);
+          draftRef.current.restore(draftText);
+        } else {
+          // composer 已随视图切换重挂载，ref 已被置空；把草稿写回缓存，
+          // 让重挂载（回退首页或底部新实例）的 composer 恢复内容。
+          lruCache(draftCache, composerKey, draftText);
+          lruCache(attachmentCache, composerKey, before);
+        }
         report(error);
       }
     },
-    [attachments, mentionLabels, onSubmitted, project, running],
+    [attachments, composerKey, mentionLabels, onSubmitted, project, running],
   );
 
   const onKeyDown = useCallback(
