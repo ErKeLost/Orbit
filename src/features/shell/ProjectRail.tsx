@@ -22,7 +22,7 @@ import {
   Plus,
   Search,
   Settings,
-  SlidersHorizontal,
+  SmartPhone,
   File,
   Trash2 as Trash,
   Zap,
@@ -78,7 +78,7 @@ function RailSearch({ onClick, active }: { onClick?: () => void; active?: boolea
       } disabled:cursor-default disabled:opacity-40`}
     >
       <Search className="size-4 shrink-0 opacity-70" strokeWidth={1.75} />
-      <span className="min-w-0 flex-1 truncate text-sm font-medium leading-tight">Search</span>
+      <span className="min-w-0 flex-1 truncate text-sm font-medium leading-tight">搜索</span>
       <span aria-hidden className="shrink-0 text-[11px] text-content/40">{MOD}K</span>
     </button>
   );
@@ -214,11 +214,11 @@ function UpdateFooter() {
 }
 
 const NAV: { id: Panel; label: string; icon: IconComponent }[] = [
-  { id: "inbox", label: "Inbox", icon: InboxIcon },
-  { id: "notes", label: "Notes", icon: File },
-  { id: "automations", label: "Automations", icon: Zap },
+  { id: "inbox", label: "收件箱", icon: InboxIcon },
+  { id: "notes", label: "笔记", icon: File },
+  { id: "automations", label: "自动化", icon: Zap },
   // 「技能与命令」和「常用工具」从侧栏撤下；面板保留，仍可从设置里进。
-  { id: "mobile-access", label: "移动端", icon: SlidersHorizontal },
+  { id: "mobile-access", label: "移动端", icon: SmartPhone },
 ];
 
 export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch: () => void }) {

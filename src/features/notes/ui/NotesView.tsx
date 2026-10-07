@@ -333,7 +333,7 @@ export function NotesView({
             className="size-3.5 shrink-0 text-content/45"
             strokeWidth={1.75}
           />
-          <span className="min-w-0 truncate text-content">Notes</span>
+          <span className="min-w-0 truncate text-content">笔记</span>
         </div>
       </div>
       <div className="flex min-h-0 min-w-0 flex-1">

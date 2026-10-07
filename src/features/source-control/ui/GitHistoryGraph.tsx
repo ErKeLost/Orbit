@@ -79,7 +79,7 @@ export function GitHistoryGraph({
           {!cwd || cwd === "~" ? (
             <p className="px-3 py-2 text-[12px] text-content/45">No project folder</p>
           ) : commits.length === 0 ? (
-            <p className="px-3 py-2 text-[12px] text-content/45">No commits yet</p>
+            <p className="px-3 py-2 text-[12px] text-content/45">还没有提交</p>
           ) : (
             <ul className="min-w-0 max-w-full">
               {commits.map((commit, index) => {

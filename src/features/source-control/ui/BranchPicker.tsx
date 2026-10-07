@@ -368,7 +368,7 @@ export function BranchPicker({
           maxHeight={MENU_MAX_HEIGHT}
           onDismiss={(reason) => dismiss(reason === "escape")}
           role="dialog"
-          aria-label="Branch picker"
+          aria-label="分支选择"
           data-branch-picker
           className="flex flex-col overflow-hidden"
         >
@@ -378,8 +378,8 @@ export function BranchPicker({
               ref={search}
               type="text"
               value={query}
-              placeholder="Search or create a branch..."
-              aria-label="Search or create a branch"
+              placeholder="搜索或新建分支…"
+              aria-label="搜索或新建分支"
               spellCheck={false}
               autoComplete="off"
               autoCorrect="off"
@@ -465,7 +465,7 @@ function BranchList({
     <div
       ref={lockOverscroll}
       role="listbox"
-      aria-label="Branches"
+      aria-label="分支"
       className="min-h-0 flex-1 overflow-y-auto overscroll-none px-1.5 py-1.5"
     >
       {rows.map((row, index) => {

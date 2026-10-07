@@ -31,7 +31,7 @@ export function CreateBranchDialog({ busy, error, onCreate, onCancel }: Props) {
 
   return (
     <Modal
-      title="New branch"
+      title="新建分支"
       description="Create and check out a branch in this project."
       size="sm"
       onClose={() => {
@@ -48,7 +48,7 @@ export function CreateBranchDialog({ busy, error, onCreate, onCancel }: Props) {
             type="text"
             value={name}
             placeholder="feature/my-branch"
-            aria-label="Branch name"
+            aria-label="分支名称"
             spellCheck={false}
             autoComplete="off"
             autoCorrect="off"

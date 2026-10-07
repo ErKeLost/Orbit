@@ -139,7 +139,7 @@ export function SwitchBranchDialog({
             value={message}
             placeholder={`Message (${MOD}↩ to commit)`}
             disabled={Boolean(busy) || generating}
-            aria-label="Commit message"
+            aria-label="提交信息"
             className="max-h-40 w-full resize-none overflow-y-auto rounded-md bg-content/10 py-1 pr-8 pl-2 text-[13px] leading-5 text-content outline-none placeholder:text-content/35 disabled:opacity-40"
             onChange={(event) => setMessage(event.target.value)}
             onKeyDown={(event) => {

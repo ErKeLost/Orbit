@@ -211,7 +211,7 @@ function WorkspaceTabs({ tab, onPick }: { tab: SidebarTab; onPick: (tab: Sidebar
   const items: { id: SidebarTab; label: string }[] = [
     { id: "sessions", label: "会话" },
     { id: "files", label: "文件" },
-    { id: "changes", label: "Changes" },
+    { id: "changes", label: "变更" },
   ];
   return (
     <div role="tablist" aria-label="Workspace" className="flex h-9 shrink-0 items-center gap-px border-b border-stroke px-2">

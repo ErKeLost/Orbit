@@ -39,6 +39,7 @@ import DashboardSquare01Icon from "@hugeicons/core-free-icons/DashboardSquare01I
 import Delete02Icon from "@hugeicons/core-free-icons/Delete02Icon";
 import DragDropVerticalIcon from "@hugeicons/core-free-icons/DragDropVerticalIcon";
 import File01Icon from "@hugeicons/core-free-icons/File01Icon";
+import SmartPhoneIcon from "@hugeicons/core-free-icons/SmartPhoneIcon";
 import FileAddIcon from "@hugeicons/core-free-icons/FileAddIcon";
 import FileDiffIcon from "@hugeicons/core-free-icons/FileDiffIcon";
 import FilePlusCornerIcon from "@hugeicons/core-free-icons/FilePlusCornerIcon";
@@ -192,6 +193,7 @@ export const CursorMagicSelection = wrap(
 export const DashboardSquare = wrap(DashboardSquare01Icon, "DashboardSquare");
 export const ExternalLink = wrap(LinkSquare02Icon, "ExternalLink");
 export const File = wrap(File01Icon, "File");
+export const SmartPhone = wrap(SmartPhoneIcon, "SmartPhone");
 export const FileDiff = wrap(FileDiffIcon, "FileDiff");
 export const FilePlus = wrap(FileAddIcon, "FilePlus");
 export const FilePlusCorner = wrap(FilePlusCornerIcon, "FilePlusCorner");

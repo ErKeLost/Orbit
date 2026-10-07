@@ -1021,11 +1021,7 @@ html.theme-light [data-composer-box] {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  margin: 0 18px 18px;
-  border: 1px solid color-mix(in srgb, var(--color-content) 8%, transparent);
-  border-radius: 12px;
-  padding: 44px 20px;
-  background: color-mix(in srgb, var(--color-content) 2%, transparent);
+  padding: 10px 0;
   text-align: center;
 }
 
