@@ -126,7 +126,7 @@ jobs:
           echo "ANDROID_HOME=$android_home" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$android_home" >> "$GITHUB_ENV"
           echo "PATH=$PATH" >> "$GITHUB_ENV"
-          sdkmanager --licenses >/dev/null || true
+          sdkmanager --licenses >/dev/null < <(yes)
           sdkmanager "platforms;android-36" "build-tools;35.0.0" "ndk;29.0.13846066"
 
       # Direct cargo checks do not get the NDK environment that Tauri's

@@ -5,7 +5,7 @@ import { join } from "node:path"
 import type { DesktopDriver, DesktopEnvelope } from "../src-tauri/resources/computer-use/desktop-driver"
 import { createFileMemory, createInMemoryMemory, matchStep, memoryIdentity, memoryKey } from "../src-tauri/resources/computer-use/affordance-memory"
 import { attachMedia } from "../src-tauri/resources/computer-use/desktop-observation"
-import { runGuiTaskEngine } from "../src-tauri/resources/computer-use/gui-task-engine"
+import { runGuiTaskEngine } from "./helpers/gui-task-engine"
 import type { DesktopCandidate, DesktopDecision, DesktopObservation, GuiTaskInput } from "../src-tauri/resources/computer-use/gui-task-contract"
 
 const task = (overrides: Partial<GuiTaskInput> = {}): GuiTaskInput => ({

@@ -16,14 +16,14 @@ import { describe, expect, test } from "bun:test"
 // geometry is a pure function of the visual viewport, so a component that
 // measures one cannot be imported without one.
 const globals = globalThis as unknown as Record<string, unknown>
-globals.window ??= {
+Object.assign(globals.window ??= {}, {
   innerWidth: 390,
   innerHeight: 844,
   devicePixelRatio: 3,
   visualViewport: { offsetLeft: 0, offsetTop: 0, width: 390, height: 844, addEventListener() {}, removeEventListener() {} },
   addEventListener() {},
   removeEventListener() {},
-}
+})
 globals.localStorage ??= {
   getItem: () => null,
   setItem: () => undefined,

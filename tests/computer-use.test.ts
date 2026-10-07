@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { DesktopCommandError, type DesktopDriver, type DesktopEnvelope, type SnapshotData } from "../src-tauri/resources/computer-use/desktop-driver"
 import { observeDesktop } from "../src-tauri/resources/computer-use/desktop-observation"
 import { selectInstalledDesktopApp, type InstalledDesktopApp } from "../src-tauri/resources/computer-use/desktop-app-resolver"
-import { runGuiTaskEngine } from "../src-tauri/resources/computer-use/gui-task-engine"
+import { runGuiTaskEngine } from "./helpers/gui-task-engine"
 import { formatResult } from "../src-tauri/resources/computer-use/gui-task"
 import { OBSERVATION_CHARS, validateTaskInput, type DesktopDecision, type DesktopObservation, type GuiTaskInput } from "../src-tauri/resources/computer-use/gui-task-contract"
 import { isRetryableJevError, redactLocalSlots } from "../src-tauri/resources/computer-use/jev"
@@ -1006,6 +1006,7 @@ describe("desktop goal loop", () => {
     const result = await runGuiTaskEngine({
       input: task({ textSlots: [] }), client,
       observe: async (_client, options) => (options.windowId ? client.run(["snapshot", "--window-id", options.windowId]).then(() => current) : current),
+      decide: async () => choice("DONE", "done"),
       resolveApp,
     })
     expect(result.status).toBe("done")
