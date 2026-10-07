@@ -93,7 +93,7 @@ export function ChatPane() {
   const agents = useWorkspace((state) => state.agents);
   const statuses = useWorkspace((state) => state.statuses);
   const transcript = useFrameStream();
-  const { ref, atBottom, scrollToBottom, pauseFollow } = useConversationScroll();
+  const { ref, atBottom, userUnpinned, scrollToBottom, pauseFollow } = useConversationScroll();
   const sessionFile = useWorkspace((state) => state.state?.sessionFile) ?? persistedSessionFile(project);
   const dockPosition = useShell((state) => state.terminalPosition);
   const dockOpen = useShell((state) => state.terminalOpen);
@@ -272,14 +272,15 @@ export function ChatPane() {
           </div>
         </div>
         <PromptOutline messages={transcript.messages} scope={ref} />
-        {!atBottom ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-2 z-30 flex justify-center">
+        {/* 只在用户自己滚离底部时出现；发送后锚定到顶部的程序化定位不算。 */}
+        {!atBottom && userUnpinned ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-5 z-30 flex justify-center">
             <button
               type="button"
               title="跳到最新"
               aria-label="跳到最新"
               onClick={scrollToBottom}
-              className="pointer-events-auto grid size-6 place-items-center rounded-md border border-content/15 bg-content/10 text-content shadow-md backdrop-blur-md hover:bg-content/5"
+              className="pointer-events-auto grid size-6 place-items-center rounded-full border border-content/15 bg-content/10 text-content shadow-md backdrop-blur-md hover:bg-content/5"
             >
               <ChevronDown className="size-4" strokeWidth={2} />
             </button>

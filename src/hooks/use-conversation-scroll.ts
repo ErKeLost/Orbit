@@ -15,6 +15,9 @@ const SCROLL_UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
  * - 用户滚回底部附近即恢复跟随。
  * - 监听内容区尺寸（ResizeObserver）+ DOM/文本变化（MutationObserver），
  *   图片/代码块渲染后撑高也能跟上。
+ * - `userUnpinned` 只在用户自己滚离底部时为 true：程序化定位（发送后把新轮
+ *   锚到顶部的 pauseFollow + 对齐滚动）会把 following/atBottom 置 false，但那
+ *   不是用户离开底部，「跳到最新」按钮（!atBottom && userUnpinned）不该弹出。
  */
 export function useConversationScroll() {
   const ref = useRef<HTMLDivElement>(null);
@@ -25,6 +28,13 @@ export function useConversationScroll() {
     if (atBottomRef.current === value) return;
     atBottomRef.current = value;
     setAtBottomState(value);
+  }, []);
+  const [userUnpinned, setUserUnpinnedState] = useState(false);
+  const userUnpinnedRef = useRef(false);
+  const setUserUnpinned = useCallback((value: boolean) => {
+    if (userUnpinnedRef.current === value) return;
+    userUnpinnedRef.current = value;
+    setUserUnpinnedState(value);
   }, []);
 
   useEffect(() => {
@@ -56,9 +66,15 @@ export function useConversationScroll() {
     // and a small reversal inside the bottom margin all keep the position —
     // which is what leaves an anchored prompt still.
     const onScroll = () => {
+      const movement = element.scrollTop - lastScrollTop;
       followingRef.current = followsAfterScroll(element, lastScrollTop, followingRef.current);
       lastScrollTop = element.scrollTop;
       setAtBottom(followingRef.current);
+      // 向上位移是用户在离开最新内容（滚轮/键盘/触摸/拖滚动条都汇聚到这里）。
+      // 程序化定位只有对齐新轮的向下滚动和轮后回落的零位移，不会向上；
+      // 恢复跟随（回到最新）时清除标记。
+      if (movement < 0) setUserUnpinned(true);
+      else if (followingRef.current) setUserUnpinned(false);
     };
 
     const onWheel = (event: WheelEvent) => {
@@ -66,6 +82,8 @@ export function useConversationScroll() {
       // 向上滚一下立即停止跟随，避免下一帧又被贴回底部“抢滚动”。
       if (event.deltaY < 0 && element.scrollTop > 0 && !scrollableAncestorCanConsume(event.target, element, event.deltaY)) {
         followingRef.current = false;
+        setAtBottom(false);
+        setUserUnpinned(true);
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
@@ -73,7 +91,12 @@ export function useConversationScroll() {
     };
     const onPointerDown = (event: PointerEvent) => {
       markIntent();
-      if (event.target === element) followingRef.current = false;
+      // 命中滚动容器本身 = 拖它的滚动条，是用户在手动滚动。
+      if (event.target === element) {
+        followingRef.current = false;
+        setAtBottom(false);
+        setUserUnpinned(true);
+      }
     };
 
     element.addEventListener("scroll", onScroll, { passive: true });
@@ -108,7 +131,7 @@ export function useConversationScroll() {
       resizeObserver.disconnect();
       mutationObserver.disconnect();
     };
-  }, [setAtBottom]);
+  }, [setAtBottom, setUserUnpinned]);
 
 
   const settleFrameRef = useRef(0);
@@ -123,6 +146,7 @@ export function useConversationScroll() {
     if (!element) return;
     followingRef.current = true;
     setAtBottom(true);
+    setUserUnpinned(false);
     cancelAnimationFrame(settleFrameRef.current);
     // 低配机器缩短到 400ms：足够覆盖乐观预览的首次渲染，又不让每帧强制布局持续太久；
     // 之后的增长由 ResizeObserver 驱动的 stickToBottom 接管。
@@ -134,16 +158,20 @@ export function useConversationScroll() {
       if (performance.now() < until) settleFrameRef.current = requestAnimationFrame(settle);
     };
     settle();
-  }, [setAtBottom]);
+  }, [setAtBottom, setUserUnpinned]);
 
-  /** Stop following without moving: used while a sent prompt is anchored. */
+  /**
+   * Stop following without moving: used while a sent prompt is anchored.
+   * 程序化暂停，不算用户离开底部：不动 userUnpinned，否则刚发送的消息
+   * （锚定在顶部、下方是拉伸的空白回合区）就会弹出「跳到最新」按钮。
+   */
   const pauseFollow = useCallback(() => {
     followingRef.current = false;
     setAtBottom(false);
     cancelAnimationFrame(settleFrameRef.current);
   }, [setAtBottom]);
 
-  return { ref, atBottom, scrollToBottom, pauseFollow } as const;
+  return { ref, atBottom, userUnpinned, scrollToBottom, pauseFollow } as const;
 }
 
 /** MonoCode's rules for whether a scroll event restarts following. */
