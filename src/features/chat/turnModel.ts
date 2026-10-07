@@ -145,10 +145,11 @@ export function projectTurn(
   const lastHasTool = steps.some((step) => step.messageIndex === lastIndex && step.kind === "tool");
 
   // The answer is the run of notes at the very end of the final message, as
-  // long as no tool call follows them. While streaming, the live tail prose is
-  // already shown as the answer so it reads at full size as it arrives.
+  // long as no tool call follows them. The prose is promoted only once the
+  // turn has settled: while streaming, every narration stays inside the work
+  // fold, so intermediate summaries never flash through the answer renderer.
   let split = steps.length;
-  if ((stoppedCleanly || streaming) && !lastHasTool) {
+  if (!streaming && stoppedCleanly && !lastHasTool) {
     while (split > 0) {
       const step = steps[split - 1];
       if (step.messageIndex !== lastIndex) break;

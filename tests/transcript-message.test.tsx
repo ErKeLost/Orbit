@@ -62,6 +62,20 @@ describe("turn projection", () => {
     expect(turn.answer).toEqual([]);
   });
 
+  test("streaming narration stays inside the work fold, never the answer", () => {
+    const live: DisplayMessage[] = [
+      { id: "a1", message: { role: "assistant", stopReason: "toolUse", content: [
+        { type: "text", text: "第一段小结" },
+        { type: "toolCall", id: "read", name: "read", arguments: { path: "src/app.ts" } },
+      ] } },
+      { id: "a2", message: { role: "assistant", content: [{ type: "text", text: "第二段小结，还在流式输出" }] } },
+    ];
+    const turn = projectTurn(live, phaseTools, true);
+    expect(turn.answer).toEqual([]);
+    expect(turn.work.some((step) => step.text === "第一段小结")).toBe(true);
+    expect(turn.work.some((step) => step.text === "第二段小结，还在流式输出")).toBe(true);
+  });
+
   test("narration starts a new phase and titles it", () => {
     const turn = projectTurn(phases, phaseTools, false);
     const built = buildPhases(turn.work, phaseTools);
