@@ -19,3 +19,7 @@ export function looksLikeProject(path: string): boolean {
 export function sameProjectPath(a: string, b: string): boolean {
   return slash(a).replace(/\/+$/, "") === slash(b).replace(/\/+$/, "");
 }
+
+export function isRemoteProjectPath(path: string): boolean {
+  return path.startsWith("remote:") || path.includes(".remote/");
+}

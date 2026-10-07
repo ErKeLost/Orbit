@@ -4,7 +4,7 @@ import { useWorkspace } from "../../lib/store";
 import { useProjects } from "../../lib/projects";
 import { changeSession, connect, queryClient, report, retireSession } from "../../lib/rpc";
 import { mergeProjectSessions, useProjectSessions } from "../../hooks/use-project-sessions";
-import { useGitBranches, useGitDiffStats } from "../../lib/git";
+import { useGitBranches } from "../../lib/git";
 import { useDragResize } from "../../shared/hooks/useDragResize";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { MenuItem, MenuSeparator, PointMenu } from "../../shared/ui/controls";
@@ -12,10 +12,11 @@ import { toast } from "../../shared/ui/toast";
 import { CircleAlert, Copy, GitBranch, ListFilter, MessageSquare, Plus, Search, Trash2 as Trash } from "../../shared/ui/icons";
 import { Icon } from "../../components/Icon";
 import { sessionGlyph } from "../../lib/session-visual";
-import { DevModeSlot, DiffStat, IS_MAC, MOD, ResizeHandle, TabVisitNav, TitleIconButton } from "./chrome";
+import { DevModeSlot, IS_MAC, MOD, ResizeHandle, TabVisitNav, TitleIconButton } from "./chrome";
 import { useShell, type SidebarTab } from "./shellStore";
 import { FileTree } from "./FileTree";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { GitChangesPanel } from "../source-control/ui/GitChangesPanel";
 import { TerminalSpinner } from "./TerminalSpinner";
 
 const SIDEBAR_MIN = 220;
@@ -206,10 +207,11 @@ function SessionsList({ cwd, query }: { cwd: string; query: string }) {
   );
 }
 
-function WorkspaceTabs({ tab, onPick, additions, deletions }: { tab: SidebarTab; onPick: (tab: SidebarTab) => void; additions: number; deletions: number }) {
-  const items: { id: SidebarTab | "changes"; label: string }[] = [
+function WorkspaceTabs({ tab, onPick }: { tab: SidebarTab; onPick: (tab: SidebarTab) => void }) {
+  const items: { id: SidebarTab; label: string }[] = [
     { id: "sessions", label: "会话" },
     { id: "files", label: "文件" },
+    { id: "changes", label: "Changes" },
   ];
   return (
     <div role="tablist" aria-label="Workspace" className="flex h-9 shrink-0 items-center gap-px border-b border-stroke px-2">
@@ -222,7 +224,7 @@ function WorkspaceTabs({ tab, onPick, additions, deletions }: { tab: SidebarTab;
               role="tab"
               aria-selected={active}
               data-tauri-drag-region="false"
-              onClick={() => onPick(item.id as SidebarTab)}
+              onClick={() => onPick(item.id)}
               className={`flex h-6 min-w-0 flex-1 items-center justify-center self-center rounded-md px-2 text-[12px] leading-none ${
                 active ? "bg-selection text-content" : "text-content/50"
               }`}
@@ -232,13 +234,6 @@ function WorkspaceTabs({ tab, onPick, additions, deletions }: { tab: SidebarTab;
           </div>
         );
       })}
-      {additions > 0 || deletions > 0 ? (
-        <div className="workspace-tab relative flex min-w-0 flex-1 items-stretch">
-          <span title="未提交的改动" className="flex h-6 min-w-0 flex-1 items-center justify-center self-center rounded-md px-2 text-[12px] leading-none">
-            <DiffStat additions={additions} deletions={deletions} />
-          </span>
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -250,6 +245,7 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
   const workspaceMode = useWorkspace((state) => state.workspaceMode);
   const tab = useShell((state) => state.sidebarTab);
   const setTab = useShell((state) => state.setSidebarTab);
+  const openFile = useShell((state) => state.openFile);
   const width = useShell((state) => state.sessionSidebarWidth);
   const setWidth = useShell((state) => state.setSessionSidebarWidth);
   const setProjectRailOpen = useShell((state) => state.setProjectRailOpen);
@@ -257,7 +253,6 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
   const searchRef = useRef<HTMLInputElement>(null);
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const project = workspaceMode === "project" && cwd && cwd !== homeDir ? cwd : "";
-  const stats = useGitDiffStats(project || undefined, visible).data;
   const resize = useDragResize({ min: SIDEBAR_MIN, max: () => SIDEBAR_MAX, defaultWidth: 272, initial: width, onCommit: setWidth });
 
   useEffect(() => setQuery(""), [project]);
@@ -295,10 +290,24 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
           </TitleIconButton>
         </div>
       </div>
-      <WorkspaceTabs tab={tab} onPick={setTab} additions={stats?.additions ?? 0} deletions={stats?.deletions ?? 0} />
+      <WorkspaceTabs tab={tab} onPick={setTab} />
 
       <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${tab === "files" ? "" : "hidden"}`}>
         {project ? <FileTree cwd={project} /> : <p className="px-3 py-2 text-[12px] text-content/50">没有项目文件夹</p>}
+      </div>
+
+      <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${tab === "changes" ? "" : "hidden"}`}>
+        {project ? (
+          <GitChangesPanel
+            cwd={project}
+            enabled={visible && tab === "changes" && online}
+            onOpenFile={(path, _kind, pin) => openFile(path, { pin })}
+            onOpenAllChanges={() => undefined}
+            onOpenCommit={() => undefined}
+          />
+        ) : (
+          <p className="px-3 py-2 text-[12px] text-content/50">没有项目文件夹</p>
+        )}
       </div>
 
       {tab === "sessions" && project ? (

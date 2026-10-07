@@ -2,7 +2,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
 import { readTextFile } from "../../lib/git";
 import { formatBytes, mediaKind, useMediaMeta, type MediaKind } from "../../lib/media";
-import { CodeChange } from "../../components/LazyCodeChange";
+import { FileHighlighter } from "../../components/FileHighlighter";
 import { ImagePlus, Loader } from "../../shared/ui/icons";
 import { X } from "../../shared/ui/icons";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
@@ -49,7 +49,7 @@ function MediaView({ file, kind }: { file: OpenFile; kind: MediaKind }) {
   );
 }
 
-/** A read-only file pane in MonoCode's split layout; text renders on @pierre/diffs. */
+/** A read-only file pane in MonoCode's split layout; text renders on shiki. */
 export function FileView({ file, cwd }: { file: OpenFile; cwd: string }) {
   const closeFile = useShell((state) => state.closeFile);
   const pinFile = useShell((state) => state.pinFile);
@@ -83,7 +83,7 @@ export function FileView({ file, cwd }: { file: OpenFile; cwd: string }) {
           ) : contents.isError ? (
             <p className="px-4 py-3 text-[12px] text-content/50">{String(contents.error)}</p>
           ) : (
-            <CodeChange change={{ kind: "file", name: file.name, contents: contents.data ?? "", label: false }} wrap />
+            <FileHighlighter code={contents.data ?? ""} fileName={file.name} wrap />
           )}
         </div>
       )}

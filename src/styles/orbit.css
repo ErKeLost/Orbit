@@ -1161,3 +1161,13 @@ html.theme-light [data-composer-box] {
   margin-top: 3px;
   font-size: 12px;
 }
+
+/* shiki-based file preview: inherits code-change spacing without the diff chrome. */
+.file-view .file-highlighter > pre,
+.file-view .file-highlighter div > pre {
+  margin: 0;
+  padding: 14px 16px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: transparent !important;
+}

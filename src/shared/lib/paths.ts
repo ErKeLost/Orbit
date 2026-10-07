@@ -48,6 +48,13 @@ export function prettyCwd(cwd: string): string {
   return trimmed;
 }
 
+export function parentPath(path: string): string {
+  const trimmed = slash(path);
+  const index = trimmed.lastIndexOf("/");
+  if (index <= 0) return "/";
+  return trimmed.slice(0, index);
+}
+
 /** Folder name for tab labels — `~` when the cwd is home. */
 export function projectName(cwd: string): string {
   if (!cwd || prettyCwd(cwd) === "~") return "~";

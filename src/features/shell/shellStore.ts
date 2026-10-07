@@ -5,7 +5,7 @@ import { create } from "zustand";
  * transcripts, sessions) stays in `lib/store`; this only knows which rails
  * are open, which sidebar tab is showing and which file tabs are open.
  */
-export type SidebarTab = "sessions" | "files";
+export type SidebarTab = "sessions" | "files" | "changes";
 export type CollapsedRailMode = "compact" | "hidden";
 export type DockPosition = "bottom" | "top" | "left" | "right";
 export type OpenFile = { path: string; name: string; preview: boolean };
@@ -74,7 +74,10 @@ export const useShell = create<ShellState>((set, get) => ({
   projectRailOpen: readBool(PROJECT_RAIL_KEY, true),
   sessionSidebarOpen: readBool(SESSION_SIDEBAR_KEY, true),
   sidebarTab: (() => {
-    try { return localStorage.getItem(SIDEBAR_TAB_KEY) === "files" ? "files" : "sessions"; } catch { return "sessions"; }
+    try {
+      const stored = localStorage.getItem(SIDEBAR_TAB_KEY);
+      return stored === "files" || stored === "changes" ? stored : "changes";
+    } catch { return "changes"; }
   })(),
   terminalPosition: (() => {
     const raw = localStorage.getItem("orbit.terminal.position");
