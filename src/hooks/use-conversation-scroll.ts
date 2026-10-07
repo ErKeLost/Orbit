@@ -58,10 +58,17 @@ export function useConversationScroll(options: { /** 置 true 时贴底逻辑整
     };
     // 内容变化：跟随中就在下一帧贴底。独立的 frame，滚动事件不会取消它。
     const onContentChange = () => {
-      if (!followingRef.current || followFrame) return;
+      if (followFrame) return;
       followFrame = requestAnimationFrame(() => {
         followFrame = 0;
-        if (followingRef.current) stickToBottom();
+        if (followingRef.current) {
+          stickToBottom();
+          setAtBottom(true);
+        } else {
+          // 没跟随时不写 scrollTop，但内容长高/变矮都会改变几何位置：
+          // 回合折叠可能把视口钳到底部（按钮该消失），新内容长在下面（该出现）。
+          setAtBottom(isAtBottom(element));
+        }
       });
     };
 
@@ -73,11 +80,15 @@ export function useConversationScroll(options: { /** 置 true 时贴底逻辑整
       const movement = element.scrollTop - lastScrollTop;
       followingRef.current = followsAfterScroll(element, lastScrollTop, followingRef.current);
       lastScrollTop = element.scrollTop;
-      setAtBottom(followingRef.current);
-      // 向上位移是用户在离开最新内容（滚轮/键盘/触摸/拖滚动条都汇聚到这里）。
+      // atBottom 是几何事实，不等于 following：内容收缩把 scrollTop 钳到底部、
+      // 或亚像素残差让最后一次下滚差一两像素到不了门槛时，人已经在底上，
+      // 之后再往下滚不会产生任何事件——按 following 算按钮就永远挂着。
+      setAtBottom(isAtBottom(element));
+      // 向上位移是用户在离开最新内容（滚轮/键盘/触摸/拖滚动条都汇聚到这里）；
+      // 跟随中的负位移只是布局收缩的钳制，不算用户意图。
       // 程序化定位只有对齐新轮的向下滚动和轮后回落的零位移，不会向上；
       // 恢复跟随（回到最新）时清除标记。
-      if (movement < 0) setUserUnpinned(true);
+      if (movement < 0 && !followingRef.current) setUserUnpinned(true);
       else if (followingRef.current) setUserUnpinned(false);
     };
 
@@ -183,7 +194,12 @@ export function useConversationScroll(options: { /** 置 true 时贴底逻辑整
 function followsAfterScroll(element: HTMLElement, previousTop: number, following: boolean): boolean {
   const movement = element.scrollTop - previousTop;
   if (movement === 0 || scrollClampedToBottom(element, previousTop)) return following;
-  return movement > 0 && element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
+  return movement > 0 && isAtBottom(element);
+}
+
+/** 几何意义的“在底部”，容差盖住亚像素滚动位置（缩放、分数行高）。 */
+function isAtBottom(element: HTMLElement): boolean {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
 }
 
 function scrollClampedToBottom(element: HTMLElement, previousTop: number): boolean {
