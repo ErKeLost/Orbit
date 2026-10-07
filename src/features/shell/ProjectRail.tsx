@@ -5,6 +5,7 @@ import { mergeProjects, projectExtraRoots, projectRoots, useProjects, type Proje
 import { connect, desktopRuntime, forgetProject, report, setSessionRoots } from "../../lib/rpc";
 import { installDesktopUpdate, useDesktopUpdate } from "../../lib/desktop-update";
 import { useGitDiffStats } from "../../lib/git";
+import { useAnimatedReorder } from "../../shared/hooks/useAnimatedReorder";
 import { useDragResize } from "../../shared/hooks/useDragResize";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { Popover } from "../../shared/ui/Popover";
@@ -120,11 +121,15 @@ function SectionHeader({ label, onAdd }: { label: string; onAdd?: () => void }) 
   );
 }
 
+type SortableApi = ReturnType<typeof useAnimatedReorder>;
+
 function ProjectCard({
   project,
   selected,
   busy,
   statsEnabled,
+  canDrag,
+  sortable,
   onSelect,
   onOpenMenu,
 }: {
@@ -132,6 +137,8 @@ function ProjectCard({
   selected: boolean;
   busy: boolean;
   statsEnabled: boolean;
+  canDrag: boolean;
+  sortable: SortableApi;
   onSelect: (path: string) => void;
   onOpenMenu: (project: Project, x: number, y: number) => void;
 }) {
@@ -142,12 +149,19 @@ function ProjectCard({
   const labelClassName = "min-w-0 flex-1 truncate text-sm font-medium leading-tight";
   return (
     <div
+      ref={(el) => sortable.setItemRef(project.path, el)}
       data-selected={selected || undefined}
-      className={`project-reorder-item group relative flex h-8 cursor-default items-stretch rounded-md px-2 ${
+      className={`reorder-item project-reorder-item group relative flex h-8 cursor-default touch-none items-stretch rounded-md px-2 ${
         selected ? "bg-selection-strong text-content" : "opacity-65 hover:opacity-100"
       }`}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        if ((event.target as HTMLElement | null)?.closest("[data-no-drag]")) return;
+        if (canDrag) sortable.onItemPointerDown(project.path, event);
+      }}
       onClick={(event) => {
         if ((event.target as HTMLElement | null)?.closest("[data-no-drag]")) return;
+        if (sortable.consumeClick()) return;
         onSelect(project.path);
       }}
       onContextMenu={(event: ReactMouseEvent) => {
@@ -247,7 +261,7 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
   const workspaceMode = useWorkspace((state) => state.workspaceMode);
   const homeDir = useWorkspace((state) => state.homeDir);
   const liveSessions = useWorkspace((state) => state.liveSessions);
-  const { projects, add, update, remove } = useProjects();
+  const { projects, add, update, remove, reorder } = useProjects();
   const width = useShell((state) => state.projectRailWidth);
   const setWidth = useShell((state) => state.setProjectRailWidth);
   const setProjectRailOpen = useShell((state) => state.setProjectRailOpen);
@@ -269,6 +283,10 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
     () => mergeProjects(projects, cwd && workspaceMode === "project" ? [cwd] : []),
     [cwd, projects, workspaceMode],
   );
+  const projectIds = useMemo(() => visibleProjects.map((project) => project.path), [visibleProjects]);
+  const onReorderProjects = (ids: string[]) => reorder(ids);
+  const projectSortable = useAnimatedReorder(projectIds, onReorderProjects, "y");
+  const canDragProjects = visibleProjects.length > 1;
   const runningProjects = useMemo(
     () => new Set(liveSessions.filter((session) => session.running).map((session) => session.cwd)),
     [liveSessions],
@@ -366,6 +384,8 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
                     selected={workspaceMode === "project" && project.path === cwd}
                     busy={busyProject === project.path || runningProjects.has(project.path)}
                     statsEnabled={visible}
+                    canDrag={canDragProjects}
+                    sortable={projectSortable}
                     onSelect={(path) => void chooseProject(path)}
                     onOpenMenu={(target, x, y) => setMenu({ project: target, x, y })}
                   />

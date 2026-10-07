@@ -60,6 +60,23 @@ export function removeProject(projects: Project[], path: string): Project[] {
   return projects.filter(project => project.path !== path)
 }
 
+/** Reorder projects to match `paths`; unknown or duplicate paths are ignored. */
+export function reorderProjects(projects: Project[], paths: string[]): Project[] {
+  const byPath = new Map(projects.map(project => [project.path, project]))
+  const next: Project[] = []
+  const seen = new Set<string>()
+  for (const path of paths) {
+    const project = byPath.get(path)
+    if (!project || seen.has(path)) continue
+    seen.add(path)
+    next.push(project)
+  }
+  for (const project of projects) {
+    if (!seen.has(project.path)) next.push(project)
+  }
+  return next
+}
+
 function persist(projects: Project[]): Project[] {
   localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects))
   return projects
@@ -82,9 +99,11 @@ export const useProjects = create<{
   add: (paths: string[]) => void
   update: (project: Project) => void
   remove: (path: string) => void
+  reorder: (paths: string[]) => void
 }>(set => ({
   projects: load(),
   add: paths => set(state => ({ projects: persist(mergeProjects(state.projects, paths)) })),
   update: project => set(state => ({ projects: persist(replaceProject(state.projects, project)) })),
   remove: path => set(state => ({ projects: persist(removeProject(state.projects, path)) })),
+  reorder: paths => set(state => ({ projects: persist(reorderProjects(state.projects, paths)) })),
 }))

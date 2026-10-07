@@ -8,7 +8,11 @@ export default defineConfig({
   plugins: [react()],
   resolve: { alias: { "@": path.resolve(import.meta.dirname, "src") } },
   test: {
-    include: ["src/features/source-control/ui/**/*.test.ts", "src/features/source-control/ui/**/*.test.tsx"],
+    include: [
+      "src/features/source-control/ui/**/*.test.ts",
+      "src/features/source-control/ui/**/*.test.tsx",
+      "src/shared/hooks/**/*.test.ts",
+    ],
     environment: "happy-dom",
   },
 });

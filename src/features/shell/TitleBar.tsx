@@ -1,28 +1,72 @@
 import { useMemo } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { useWorkspace } from "../../lib/store";
 import { mergeProjectSessions, useProjectSessions } from "../../hooks/use-project-sessions";
 import { compactTitle } from "../../lib/session-visual";
 import { TabLabel } from "../../shared/ui/TabLabel";
+import { useAnimatedReorder } from "../../shared/hooks/useAnimatedReorder";
 import { PanelLeft, Settings, Terminal, X } from "../../shared/ui/icons";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { IS_MAC, MOD, TitleIconButton } from "./chrome";
 import { TerminalSpinner } from "./TerminalSpinner";
 import { useShell } from "./shellStore";
 
-type Tab = { id: string; kind: "session" | "file"; headline: string; meta?: string; busy?: boolean; preview?: boolean; fileName?: string };
+type SortableApi = ReturnType<typeof useAnimatedReorder>;
 
-function TitleTab({ tab, active, onSelect, onClose }: { tab: Tab; active: boolean; onSelect: () => void; onClose?: () => void }) {
+type Tab =
+  | { id: "session"; kind: "session"; headline: string; busy?: boolean }
+  | { id: string; kind: "file"; headline: string; preview?: boolean; fileName: string };
+
+function TitleTab({
+  tab,
+  active,
+  sortable,
+  canDrag,
+  onSelect,
+  onClose,
+  onPin,
+}: {
+  tab: Tab;
+  active: boolean;
+  sortable?: SortableApi;
+  canDrag?: boolean;
+  onSelect: () => void;
+  onClose?: () => void;
+  onPin?: () => void;
+}) {
   return (
-    <div className="relative flex h-full w-56 min-w-28 shrink cursor-default items-center" data-tauri-drag-region="false">
-      <div className="tab-motion group @container relative flex h-full min-w-0 w-full cursor-default items-center self-stretch" data-tauri-drag-region="false">
+    <div
+      ref={sortable ? (el) => sortable.setItemRef(tab.id, el) : undefined}
+      className="reorder-item tab-motion group @container relative flex h-full w-56 min-w-28 shrink cursor-default touch-none items-center self-stretch"
+      data-tauri-drag-region="false"
+      onMouseDownCapture={(event) => {
+        if (event.button === 1) event.preventDefault();
+      }}
+      onAuxClick={(event) => {
+        if (event.button !== 1 || !onClose) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+      }}
+      onPointerDown={(event: ReactPointerEvent<HTMLDivElement>) => {
+        if (event.button !== 0) return;
+        if ((event.target as HTMLElement | null)?.closest("[data-no-drag]")) return;
+        if (canDrag && sortable) sortable.onItemPointerDown(tab.id, event);
+      }}
+    >
+      <div className="relative flex h-full min-w-0 w-full cursor-default items-center self-stretch" data-tauri-drag-region="false">
         <button
           type="button"
-          title={tab.meta ? `${tab.headline}\n${tab.meta}` : tab.headline}
+          title={tab.headline}
           aria-label={tab.headline}
+          aria-current={active ? "true" : undefined}
           data-tauri-drag-region="false"
-          onClick={onSelect}
+          onClick={() => {
+            if (sortable?.consumeClick()) return;
+            onSelect();
+          }}
           onDoubleClick={() => {
-            if (tab.kind === "file" && tab.preview) useShell.getState().pinFile(tab.id);
+            if (tab.kind === "file" && tab.preview) onPin?.();
           }}
           className={`relative flex h-7.5 min-w-0 flex-1 cursor-default items-center gap-1.5 self-center rounded-md px-2 text-left ${onClose ? "pr-7" : "pr-2.5"} ${
             active ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
@@ -32,14 +76,13 @@ function TitleTab({ tab, active, onSelect, onClose }: { tab: Tab; active: boolea
             tab.busy ? <TerminalSpinner className="inline-block w-3.5 select-none text-center text-[11px] leading-none text-accent" /> : null
           ) : (
             <span className={!active ? "opacity-55" : undefined}>
-              <FileTypeIcon name={tab.fileName ?? tab.headline} isDir={false} size={14} />
+              <FileTypeIcon name={tab.fileName} isDir={false} size={14} />
             </span>
           )}
           <span className="flex min-w-0 flex-1 flex-col justify-center">
             <span className="flex min-w-0 items-center gap-1">
-              <TabLabel className={`leading-tight ${tab.preview ? "italic" : ""} ${tab.meta ? "text-[13px] @min-[11rem]:text-[10px] @min-[11rem]:font-medium" : "text-[13px]"}`}>{tab.headline}</TabLabel>
+              <TabLabel className={`leading-tight ${tab.kind === "file" && tab.preview ? "italic" : ""} text-[13px]`}>{tab.headline}</TabLabel>
             </span>
-            {tab.meta ? <TabLabel className="hidden text-[10px] leading-tight text-content/45 @min-[11rem]:block">{tab.meta}</TabLabel> : null}
           </span>
         </button>
         {onClose ? (
@@ -47,6 +90,7 @@ function TitleTab({ tab, active, onSelect, onClose }: { tab: Tab; active: boolea
             type="button"
             title="关闭标签"
             aria-label={`关闭 ${tab.headline}`}
+            data-no-drag
             data-tauri-drag-region="false"
             onClick={(event) => {
               event.stopPropagation();
@@ -64,8 +108,9 @@ function TitleTab({ tab, active, onSelect, onClose }: { tab: Tab; active: boolea
 
 /**
  * MonoCode's title bar for the work area: the active Pi session is the
- * first tab; open files sit beside it. On narrow/no-rail layouts it also
- * carries the traffic-light gutter and the panel toggle.
+ * first tab; open files sit beside it and drag to reorder. Empty strip
+ * space drags the window. On narrow/no-rail layouts it also carries the
+ * traffic-light gutter and the panel toggle.
  */
 export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
   const cwd = useWorkspace((state) => state.cwd);
@@ -77,20 +122,18 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
   const terminalOpen = useShell((state) => state.terminalOpen);
   const focusFile = useShell((state) => state.focusFile);
   const closeFile = useShell((state) => state.closeFile);
+  const pinFile = useShell((state) => state.pinFile);
+  const reorderFiles = useShell((state) => state.reorderFiles);
   const sessions = useProjectSessions(cwd);
   const merged = useMemo(() => mergeProjectSessions(cwd, sessions.data ?? [], liveSessions), [cwd, sessions.data, liveSessions]);
   const session = merged.sessions.find((item) => item.path === sessionFile);
   const sessionTitle = compactTitle(session?.name || session?.firstMessage, "新会话", 60);
 
-  const tabs: Tab[] = [
-    { id: "session", kind: "session", headline: sessionTitle, busy: running },
-    ...files.map((file): Tab => ({ id: file.path, kind: "file", headline: file.name, meta: undefined, preview: file.preview, fileName: file.name })),
-  ];
-  // With a file beside the chat, the session tab reads "file · chat" like MonoCode's split tab.
-  if (files.length && activeFile) {
-    const file = files.find((item) => item.path === activeFile);
-    if (file) tabs[0] = { ...tabs[0], headline: file.name, meta: sessionTitle, fileName: file.name, kind: "session" };
-  }
+  const fileIds = useMemo(() => files.map((file) => file.path), [files]);
+  const sortable = useAnimatedReorder(fileIds, (ids) => reorderFiles(ids), "x");
+  const canDragFiles = files.length > 1;
+
+  const sessionTab: Tab = { id: "session", kind: "session", headline: sessionTitle, busy: running };
 
   return (
     <header className="flex h-10 shrink-0 select-none items-stretch border-b border-stroke" data-tauri-drag-region>
@@ -107,7 +150,19 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
       <div className="flex min-w-0 flex-1 items-stretch">
         <div className="relative h-full min-w-0 flex-1 overflow-hidden">
           <div className="scrollbar-none flex h-full min-w-0 cursor-default items-center gap-0.5 overflow-x-auto overflow-y-hidden overscroll-none pl-1.5 pr-2.5" data-tauri-drag-region>
-            <TitleTab tab={tabs[0]} active onSelect={() => focusFile(activeFile)} />
+            <TitleTab tab={sessionTab} active={!activeFile} onSelect={() => focusFile(null)} />
+            {files.map((file) => (
+              <TitleTab
+                key={file.path}
+                tab={{ id: file.path, kind: "file", headline: file.name, preview: file.preview, fileName: file.name }}
+                active={activeFile === file.path}
+                sortable={sortable}
+                canDrag={canDragFiles}
+                onSelect={() => focusFile(file.path)}
+                onClose={() => closeFile(file.path)}
+                onPin={() => pinFile(file.path)}
+              />
+            ))}
           </div>
         </div>
       </div>
@@ -125,9 +180,6 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
           </TitleIconButton>
         ) : null}
       </div>
-      {files.length > 1 ? (
-        <div className="hidden">{files.map((file) => <button key={file.path} type="button" onClick={() => closeFile(file.path)} />)}</div>
-      ) : null}
     </header>
   );
 }

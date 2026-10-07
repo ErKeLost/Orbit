@@ -64,6 +64,7 @@ type ShellState = {
   pinFile: (path: string) => void;
   closeFile: (path: string) => void;
   focusFile: (path: string | null) => void;
+  reorderFiles: (paths: string[]) => void;
 };
 
 function fileName(path: string) {
@@ -123,4 +124,20 @@ export const useShell = create<ShellState>((set, get) => ({
       return { files, activeFile: state.activeFile === path ? (files.at(-1)?.path ?? null) : state.activeFile };
     }),
   focusFile: (path) => set({ activeFile: path }),
+  reorderFiles: (paths) =>
+    set((state) => {
+      const byPath = new Map(state.files.map((file) => [file.path, file]));
+      const next: OpenFile[] = [];
+      const seen = new Set<string>();
+      for (const path of paths) {
+        const file = byPath.get(path);
+        if (!file || seen.has(path)) continue;
+        seen.add(path);
+        next.push(file);
+      }
+      for (const file of state.files) {
+        if (!seen.has(file.path)) next.push(file);
+      }
+      return next.length === state.files.length ? { files: next } : {};
+    }),
 }));
