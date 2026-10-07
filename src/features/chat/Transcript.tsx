@@ -320,11 +320,14 @@ function StepRow({ step, tools }: { step: TurnStep; tools: Record<string, Tool> 
   return null;
 }
 
-/** MonoCode `ActivityPhaseGroup`. */
-function PhaseGroup({ phase, tools, active }: { phase: Phase; tools: Record<string, Tool>; active: boolean }) {
-  const [override, setOverride] = useState<boolean | null>(null);
-  const open = override ?? active;
-  const title = phaseTitle(phase, tools, active);
+/**
+ * MonoCode `ActivityPhaseGroup`. Phases stay folded by default — the headline
+ * line (the agent's own narration) is the summary; steps only appear when the
+ * line is opened, even while the phase is still streaming.
+ */
+function PhaseGroup({ phase, tools, live }: { phase: Phase; tools: Record<string, Tool>; live: boolean }) {
+  const [open, setOpen] = useState(false);
+  const title = phaseTitle(phase, tools, live);
 
   if (!phase.headline && phase.steps.length === 1) {
     return (
@@ -336,7 +339,7 @@ function PhaseGroup({ phase, tools, active }: { phase: Phase; tools: Record<stri
       </div>
     );
   }
-  const label = active ? (
+  const label = live ? (
     <Shimmer className="min-w-0 truncate font-sans text-sm" duration={1.6}>{title}</Shimmer>
   ) : (
     <span className="min-w-0 flex-1 truncate font-sans text-sm text-content/50 transition-colors duration-200 group-hover:text-content/80">{title}</span>
@@ -344,7 +347,7 @@ function PhaseGroup({ phase, tools, active }: { phase: Phase; tools: Record<stri
   if (phase.steps.length === 0) {
     return (
       <div className="flex min-w-0 flex-col">
-        <button type="button" aria-expanded={open} onClick={() => setOverride(!open)} className="group flex w-full min-w-0 items-center gap-1.5 py-1 text-left">
+        <button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)} className="group flex w-full min-w-0 items-center gap-1.5 py-1 text-left">
           <PhaseIcon kind={phase.kind} />
           {label}
         </button>
@@ -362,7 +365,7 @@ function PhaseGroup({ phase, tools, active }: { phase: Phase; tools: Record<stri
         type="button"
         aria-expanded={open}
         aria-label={open ? `收起 ${title} 的步骤` : `展开 ${title} 的步骤`}
-        onClick={() => setOverride(!open)}
+        onClick={() => setOpen((value) => !value)}
         className="group flex w-full min-w-0 items-center gap-1.5 py-1 text-left"
       >
         <span className="relative flex size-3.5 shrink-0 items-center justify-center">
@@ -376,9 +379,9 @@ function PhaseGroup({ phase, tools, active }: { phase: Phase; tools: Record<stri
       </button>
       <div className="zen-phase-body" data-open={open}>
         {open ? (
-          <div className={active ? "zen-phase-live" : undefined}>
+          <div className={live ? "zen-phase-live" : undefined}>
             <div className="flex min-w-0 flex-col">
-              {override === true && phase.headline?.text ? (
+              {open && phase.headline?.text ? (
                 <div className="zen-phase-step py-1">
                   <Markdown content={phase.headline.text} />
                 </div>
@@ -401,7 +404,7 @@ const ActivityPhases = memo(function ActivityPhases({ steps, tools, done }: { st
   return (
     <div className="flex min-w-0 flex-col gap-1 px-4">
       {phases.map((phase, index) => (
-        <PhaseGroup key={phase.key || index} phase={phase} tools={tools} active={!done && index === phases.length - 1} />
+        <PhaseGroup key={phase.key || index} phase={phase} tools={tools} live={!done && index === phases.length - 1} />
       ))}
     </div>
   );
