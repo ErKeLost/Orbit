@@ -1702,6 +1702,16 @@ header[data-tauri-drag-region] button {
   background: color-mix(in srgb, var(--color-content) 6%, transparent);
 }
 
+/* 完成的消息绝不能依赖厂商的淡入动画跑完才可见。Streamdown 给段落和
+ * 代码块的 <pre>（.stream-block）加 opacity:0 + forwards 动画；主窗口
+ * 在闪屏后面隐藏挂载时 WebKit 可能不启动这段动画，内容就永远透明——
+ * 代码框里只剩头部一行。只要不在流式输出中，直接完整呈现。 */
+.agent-markdown.markdown-static .stream-block,
+.agent-markdown:not(.is-streaming) .stream-block {
+  opacity: 1;
+  animation: none;
+}
+
 .agent-markdown [data-streamdown="code-block"] {
   min-width: 0;
   max-width: 100%;

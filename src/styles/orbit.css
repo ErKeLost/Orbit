@@ -199,7 +199,7 @@
   color: color-mix(in srgb, var(--color-content) 50%, transparent);
 }
 
-.agent-markdown .code-block-header > span {
+.agent-markdown .code-block-header > span:nth-child(2) {
   min-width: 0;
   flex: 1;
   overflow: hidden;
