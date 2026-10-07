@@ -1,18 +1,8 @@
 import { File, X } from "../../../shared/ui/icons";
-import { useState } from "react";
-import { ProjectMascot } from "../../shell/ProjectMascot";
 import {
   noteSourceProject,
   type NoteCardMeta,
 } from "../notes";
-import { projectKey } from "../../../shared/lib/paths";
-import {
-  loadTabGroupColors,
-  loadTabGroupCustomColors,
-  loadTabGroupMascots,
-  resolveTabGroupColor,
-  resolveTabGroupMascot,
-} from "../../workspace/model/tabGroups";
 
 type Props = {
   card: NoteCardMeta;
@@ -21,16 +11,7 @@ type Props = {
 };
 
 export function NoteMiniCard({ card, onDismiss, embedded = false }: Props) {
-  const [mascots] = useState(loadTabGroupMascots);
-  const [colors] = useState(loadTabGroupColors);
-  const [customColors] = useState(loadTabGroupCustomColors);
   const project = noteSourceProject(card.sourceCwd);
-  const key = card.sourceCwd ? projectKey(card.sourceCwd) : null;
-  const mascotName = key ? resolveTabGroupMascot(key, mascots) : null;
-  const mascotColor =
-    key && project
-      ? resolveTabGroupColor(key, colors, customColors, project)
-      : undefined;
 
   const inner = (
     <div
@@ -53,12 +34,6 @@ export function NoteMiniCard({ card, onDismiss, embedded = false }: Props) {
         </span>
         {!embedded && project ? (
           <span className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-content/45">
-            <ProjectMascot
-              project={card.sourceCwd ?? project}
-              color={mascotColor}
-              name={mascotName ?? undefined}
-              className="size-3 shrink-0"
-            />
             <span className="min-w-0 truncate">{project}</span>
           </span>
         ) : null}

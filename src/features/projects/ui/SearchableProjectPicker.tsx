@@ -4,8 +4,6 @@ import { projectName } from "../../../shared/lib/paths";
 import { looksLikeProject, sameProjectPath, type RecentProject } from "../model/recents";
 import { Check, ChevronDown, Search } from "../../../shared/ui/icons";
 import { Popover } from "../../../shared/ui/Popover";
-import { ProjectMascot } from "../../shell/ProjectMascot";
-import { projectColor } from "../../shell/chrome";
 
 /**
  * Orbit's note-project picker: same props as MonoCode's searchable picker,
@@ -93,9 +91,6 @@ export function SearchableProjectPicker({
         onClick={() => setOpen((value) => !value)}
         className={`inline-flex h-6 min-w-0 max-w-56 items-center gap-1.5 rounded-md text-[11px] text-content/60 hover:bg-content/10 hover:text-content ${buttonClassName}`}
       >
-        {looksLikeProject(cwd) ? (
-          <ProjectMascot project={cwd} color={projectColor(cwd)} className="size-3 shrink-0" />
-        ) : null}
         <span className="min-w-0 truncate">{current ?? "No project"}</span>
         <ChevronDown className="size-3 shrink-0 opacity-60" strokeWidth={1.75} />
       </button>
@@ -144,11 +139,6 @@ export function SearchableProjectPicker({
                         index === active ? "bg-content/10 text-content" : "text-content/75"
                       }`}
                     >
-                      <ProjectMascot
-                        project={option.path}
-                        color={projectColor(option.path)}
-                        className="size-3 shrink-0"
-                      />
                       <span className="min-w-0 flex-1 truncate">{option.name}</span>
                       {selected ? <Check className="size-3 shrink-0" strokeWidth={2} /> : null}
                     </button>

@@ -7,8 +7,7 @@ import { report } from "../../lib/rpc";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { Group, PageHeader, Row, SecondaryButton, TextField } from "../../shared/ui/controls";
 import { BellOff, ChevronRight, CircleAlert, GitMerge, Inbox as InboxIcon, Loader, RefreshCw, Search } from "../../shared/ui/icons";
-import { ProjectMascot } from "../shell/ProjectMascot";
-import { projectColor } from "../shell/chrome";
+import { ProjectInitial } from "../shell/ProjectInitial";
 
 const time = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 
@@ -260,7 +259,7 @@ export function InboxSettings() {
           const isMuted = localStorage.getItem(mutedKey(path)) === "true";
           return (
             <div key={path} className="flex items-center gap-3 border-b border-content/5 px-4 py-3 last:border-b-0">
-              <ProjectMascot project={path} color={projectColor(path)} className="size-4" />
+              <ProjectInitial name={path} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[13px] font-medium text-content">{name}</div>
                 <div className="truncate text-[12px] text-content/45">

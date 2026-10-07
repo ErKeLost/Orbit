@@ -27,8 +27,7 @@ import { AUTOMATION_TEMPLATE_CATEGORIES, AUTOMATION_TEMPLATES, type AutomationTe
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { Group, Row, SecondaryButton, Select, Slider, TextArea, TextField, Toggle } from "../../shared/ui/controls";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
-import { ProjectMascot } from "../shell/ProjectMascot";
-import { projectColor } from "../shell/chrome";
+import { ProjectInitial } from "../shell/ProjectInitial";
 import { toast } from "../../shared/ui/toast";
 import {
   AlertCircle,
@@ -421,7 +420,7 @@ export function AutomationsView() {
                       options={(projects.length ? projects.map((item) => item.path) : project ? [project] : []).map((path) => ({
                         value: path,
                         label: path.split("/").filter(Boolean).at(-1) ?? path,
-                        icon: <ProjectMascot project={path} color={projectColor(path)} className="size-3.5" />,
+                        icon: <ProjectInitial name={path} className="size-3.5 shrink-0" />,
                       }))}
                       onChange={(value) => setDraft({ ...draft, cwd: value })}
                     />

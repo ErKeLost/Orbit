@@ -12,11 +12,9 @@ import {
 import { useMarkdownMode } from "../../chat/MarkdownModeToggle";
 import { Markdown as AgentMarkdown } from "../../../components/Markdown";
 import { MarkdownSourceEditor } from "../../chat/MarkdownSourceEditor";
-import { ProjectMascot } from "../../shell/ProjectMascot";
 import { SearchableProjectPicker } from "../../projects/ui/SearchableProjectPicker";
 import { useDragResize } from "../../../shared/hooks/useDragResize";
 import { useLockOverscroll } from "../../../shared/hooks/useLockOverscroll";
-import { useTabGroupLogos } from "../../projects/hooks/useTabGroupLogos";
 import { formatRelativeTime } from "../../inbox/model/relativeTime";
 import {
   createNote,
@@ -39,15 +37,8 @@ import {
   saveNoteImagesFromPaths,
   type NoteImageAsset,
 } from "../noteImages";
-import { projectKey, projectName } from "../../../shared/lib/paths";
+import { projectName } from "../../../shared/lib/paths";
 import { looksLikeProject, type RecentProject } from "../../projects/model/recents";
-import {
-  loadTabGroupColors,
-  loadTabGroupCustomColors,
-  loadTabGroupMascots,
-  resolveTabGroupColor,
-  resolveTabGroupMascot,
-} from "../../workspace/model/tabGroups";
 
 const MIN_WIDTH = 240;
 const MAX_WIDTH = 420;
@@ -124,10 +115,6 @@ export function NotesView({
     );
   });
   const [creating, setCreating] = useState(false);
-  const logos = useTabGroupLogos();
-  const [groupMascots] = useState(loadTabGroupMascots);
-  const [groupColors] = useState(loadTabGroupColors);
-  const [groupCustomColors] = useState(loadTabGroupCustomColors);
 
   const refresh = useCallback(async () => {
     try {
@@ -296,10 +283,6 @@ export function NotesView({
                 <NoteCard
                   note={note}
                   active={selected?.id === note.id}
-                  logos={logos}
-                  mascots={groupMascots}
-                  colors={groupColors}
-                  customColors={groupCustomColors}
                   onSelect={() => setSelectedId(note.id)}
                 />
               </li>
@@ -351,34 +334,10 @@ export function NotesView({
   );
 }
 
-type ProjectMarks = {
-  logos: Record<string, string>;
-  mascots: Record<string, string>;
-  colors: Record<string, number>;
-  customColors: Record<string, string>;
-};
-
-function NoteProjectMark({
-  cwd,
-  mascots,
-  colors,
-  customColors,
-}: {
-  cwd: string;
-} & ProjectMarks) {
-  const project = projectName(cwd);
-  const key = projectKey(cwd);
-  const mascotName = resolveTabGroupMascot(key, mascots);
-  const mascotColor = resolveTabGroupColor(key, colors, customColors, project);
+function NoteProjectMark({ cwd }: { cwd: string }) {
   return (
     <span className="flex min-w-0 items-center gap-1.5">
-      <ProjectMascot
-        project={cwd}
-        color={mascotColor}
-        name={mascotName ?? undefined}
-        className="size-3 shrink-0"
-      />
-      <span className="min-w-0 truncate">{project}</span>
+      <span className="min-w-0 truncate">{projectName(cwd)}</span>
     </span>
   );
 }
@@ -413,15 +372,12 @@ function NoteDetailTab({
 function NoteCard({
   note,
   active,
-  mascots,
-  colors,
-  customColors,
   onSelect,
 }: {
   note: Note;
   active: boolean;
   onSelect: () => void;
-} & ProjectMarks) {
+}) {
   const preview = notePreview(note.body, note.title);
   const project = noteSourceProject(note.sourceCwd);
   const time = formatRelativeTime(new Date(note.updatedAt).toISOString());
@@ -441,13 +397,7 @@ function NoteCard({
       <span className="flex items-center gap-2">
         {project && note.sourceCwd ? (
           <span className="min-w-0 flex-1 text-[11px] text-content/50">
-            <NoteProjectMark
-              cwd={note.sourceCwd}
-              logos={{}}
-              mascots={mascots}
-              colors={colors}
-              customColors={customColors}
-            />
+            <NoteProjectMark cwd={note.sourceCwd} />
           </span>
         ) : (
           <span className="min-w-0 flex-1" />

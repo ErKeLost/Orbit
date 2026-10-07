@@ -2,8 +2,8 @@ import { useWorkspace } from "../../lib/store";
 import { useProjects } from "../../lib/projects";
 import { connect, report } from "../../lib/rpc";
 import { PanelLeft, Plus, Settings } from "../../shared/ui/icons";
-import { ProjectMascot } from "./ProjectMascot";
-import { projectColor } from "./chrome";
+import { ProjectInitial } from "./ProjectInitial";
+import { IS_MAC } from "./chrome";
 import { useShell } from "./shellStore";
 import { toast } from "../../shared/ui/toast";
 
@@ -17,7 +17,7 @@ export function CompactRail() {
   const running = new Set(liveSessions.filter((s) => s.running).map((s) => s.cwd));
 
   return (
-    <nav aria-label="Projects" className="body-glass flex h-full w-12 shrink-0 flex-col items-center border-r border-stroke">
+    <nav aria-label="Projects" className={`body-glass flex h-full w-12 shrink-0 flex-col items-center border-r border-stroke ${IS_MAC ? "pt-10" : ""}`}>
       <button
         type="button"
         title="展开项目栏"
@@ -43,7 +43,7 @@ export function CompactRail() {
               }}
               className={`relative grid size-8 shrink-0 place-items-center rounded-md ${selected ? "bg-selection-strong text-content" : "text-content/70 hover:bg-content/10"}`}
             >
-              <ProjectMascot project={project.path} color={projectColor(project.path)} className="size-4" active={running.has(project.path)} />
+              <ProjectInitial name={project.name} className="size-4" />
               {running.has(project.path) ? <span aria-hidden className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-accent" /> : null}
             </button>
           );

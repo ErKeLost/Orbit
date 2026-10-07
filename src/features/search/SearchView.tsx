@@ -5,8 +5,7 @@ import { useProjects } from "../../lib/projects";
 import { MIN_QUERY, useFileSearch, useSessionSearch, type SearchFileHit, type SearchSessionHit } from "../../lib/search";
 import { useShell } from "../shell/shellStore";
 import { FileTypeIcon } from "../shell/FileTypeIcon";
-import { projectColor } from "../shell/chrome";
-import { ProjectMascot } from "../shell/ProjectMascot";
+import { ProjectInitial } from "../shell/ProjectInitial";
 import { Loader, MessageSquare, Search as SearchIcon } from "../../shared/ui/icons";
 
 type Tab = "all" | "sessions" | "files" | "projects";
@@ -135,7 +134,7 @@ export function SearchView() {
               {matchedProjects.map((item) => (
                 <Row
                   key={item.path}
-                  icon={<ProjectMascot project={item.path} color={projectColor(item.path)} className="size-3.5" />}
+                  icon={<ProjectInitial name={item.path} className="size-3.5 shrink-0" />}
                   title={item.name}
                   meta={item.path}
                   onClick={() => {
