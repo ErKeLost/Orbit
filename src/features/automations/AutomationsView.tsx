@@ -492,7 +492,7 @@ export function AutomationsView() {
                             </span>
                           </span>
                         }
-                        description={run.error ?? run.trigger === "manual" ? "手动触发" : "按计划触发"}
+                        description={run.error ?? (run.trigger === "manual" ? "手动触发" : "按计划触发")}
                       >
                         {run.status === "running" ? <Loader className="size-3.5 animate-spin text-content/40" /> : null}
                       </Row>
