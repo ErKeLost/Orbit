@@ -1,9 +1,13 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { readTextFile } from "../../lib/git";
 import { formatBytes, mediaKind, useMediaMeta, type MediaKind } from "../../lib/media";
 import { FileHighlighter } from "../../components/FileHighlighter";
-import { ImagePlus, Loader } from "../../shared/ui/icons";
+import { Markdown } from "../../components/Markdown";
+import { splitMarkdownFrontmatter } from "../../shared/lib/markdownFrontmatter";
+import { MarkdownViewShell, useMarkdownMode } from "../chat/MarkdownModeToggle";
+import { ChevronDown, ChevronRight, ImagePlus, Loader } from "../../shared/ui/icons";
 import { X } from "../../shared/ui/icons";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { FileTypeIcon } from "./FileTypeIcon";
@@ -49,12 +53,41 @@ function MediaView({ file, kind }: { file: OpenFile; kind: MediaKind }) {
   );
 }
 
+/** MonoCode's `isMarkdownPath`: the extensions that open in preview mode. */
+function isMarkdownPath(path: string): boolean {
+  const extension = (path.split(".").pop() ?? "").toLowerCase();
+  return extension === "md" || extension === "mdx" || extension === "markdown";
+}
+
+/** MonoCode's `MarkdownDocumentPreview`: rendered body with folded frontmatter. */
+function MarkdownDocumentPreview({ text }: { text: string }) {
+  const { metadata, body } = useMemo(() => splitMarkdownFrontmatter(text), [text]);
+  return (
+    <>
+      {metadata !== null ? (
+        <details className="group/metadata mb-6 rounded-lg border border-content/10 bg-content/[0.03]">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] text-content/60 hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent [&::-webkit-details-marker]:hidden">
+            <ChevronRight aria-hidden className="size-3.5 shrink-0 text-content/50 group-open/metadata:hidden" strokeWidth={1.75} />
+            <ChevronDown aria-hidden className="hidden size-3.5 shrink-0 text-content/50 group-open/metadata:block" strokeWidth={1.75} />
+            属性
+          </summary>
+          <pre className="whitespace-pre-wrap break-words border-t border-stroke px-3 py-2 font-mono text-[12px] leading-5 text-content/70">{metadata}</pre>
+        </details>
+      ) : null}
+      <Markdown content={body} />
+    </>
+  );
+}
+
 /** A read-only file pane in MonoCode's split layout; text renders on shiki. */
 export function FileView({ file, cwd }: { file: OpenFile; cwd: string }) {
   const closeFile = useShell((state) => state.closeFile);
   const pinFile = useShell((state) => state.pinFile);
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const kind = mediaKind(file.path);
+  const markdown = isMarkdownPath(file.path);
+  // Like MonoCode, markdown documents open as preview and remember the mode per file.
+  const [mode, setMode] = useMarkdownMode(file.path, "preview");
   const contents = useQuery({
     queryKey: ["file", file.path],
     queryFn: () => readTextFile(file.path),
@@ -76,6 +109,21 @@ export function FileView({ file, cwd }: { file: OpenFile; cwd: string }) {
       </div>
       {kind != null ? (
         <MediaView file={file} kind={kind} />
+      ) : markdown && contents.data != null ? (
+        <MarkdownViewShell
+          mode={mode}
+          onModeChange={setMode}
+          preview={
+            <div className="markdown-preview h-full overflow-auto px-5 pb-8 pt-12">
+              <MarkdownDocumentPreview text={contents.data} />
+            </div>
+          }
+          source={
+            <div className="h-full overflow-auto pt-10">
+              <FileHighlighter code={contents.data} fileName={file.name} wrap />
+            </div>
+          }
+        />
       ) : (
         <div ref={lockOverscroll} className="file-view min-h-0 flex-1 overflow-auto overscroll-none">
           {contents.isPending ? (
