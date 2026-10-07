@@ -20,7 +20,8 @@ pub mod disclaim;
 mod screen;
 mod bridge;
 mod git;
-mod git_inbox;
+mod github_inbox;
+mod gitlab;
 mod media;
 mod pty_term;
 mod search;
@@ -282,12 +283,27 @@ pub fn run() {
             git::git_create_branch,
             git::list_dir,
             git::read_text_file,
-            git_inbox::github_status,
-            git_inbox::github_inbox,
-            git_inbox::gitlab_status,
-            git_inbox::gitlab_connect,
-            git_inbox::gitlab_disconnect,
-            git_inbox::gitlab_inbox,
+            github_inbox::git_github_status,
+            github_inbox::git_github_repo,
+            github_inbox::git_github_repositories,
+            github_inbox::git_github_work_items,
+            github_inbox::git_github_work_item,
+            github_inbox::git_github_work_item_details,
+            github_inbox::git_github_work_item_thread,
+            github_inbox::git_github_work_item_comment,
+            github_inbox::git_github_pr_action,
+            github_inbox::git_github_pr_diff,
+            github_inbox::git_github_pr_checks,
+            github_inbox::git_github_check_details,
+            gitlab::gitlab_status,
+            gitlab::gitlab_set_config,
+            gitlab::gitlab_repo,
+            gitlab::gitlab_list_work_items,
+            gitlab::gitlab_list_todos,
+            gitlab::gitlab_work_item_details,
+            gitlab::gitlab_work_item_thread,
+            gitlab::gitlab_work_item_comment,
+            gitlab::gitlab_mr_diff,
             media::media_meta,
             pty_term::pty_spawn,
             pty_term::pty_write,
