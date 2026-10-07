@@ -180,6 +180,7 @@ export function ChatPane() {
   // stretching, its height collapses — put the difference back into scrollTop
   // so the reader's view does not jump.
   const lastUserMessage = [...transcript.messages].reverse().find((item) => item.message.role === "user");
+  const lastUserMessageId = lastUserMessage?.id ?? null;
   const promptOffset = useRef<number | null>(null);
   const wasRunning = useRef(transcript.running);
   useLayoutEffect(() => {
@@ -213,9 +214,17 @@ export function ChatPane() {
       pauseFollow();
       const delta = box.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
       scroller.scrollTop = Math.max(0, scroller.scrollTop + delta - 8);
+      // 这一次滚动就是锚定本身，不是漂移：立刻把 prompt 锚定后的位置写回
+      // promptOffset。否则一个没有任何中间流提交的短轮（1s 的空回复就够）
+      // 结束时，settle 回写用的还是锚定前贴底的旧偏移，会把刚发出去的
+      // 消息又滚回底部去。
+      const row = lastUserMessageId
+        ? scroller.querySelector<HTMLElement>(`[data-prompt-anchor="${CSS.escape(lastUserMessageId)}"]`)
+        : null;
+      if (row) promptOffset.current = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
     });
     return () => cancelAnimationFrame(frame);
-  }, [anchorFrom, pauseFollow, ref, transcript.running]);
+  }, [anchorFrom, lastUserMessageId, pauseFollow, ref, transcript.running]);
 
   const runningLabel = transcript.compacting ? "正在压缩上下文" : transcript.phase && transcript.phase !== "就绪" ? transcript.phase : "Working…";
   const dockVertical = dockPosition === "top" || dockPosition === "bottom";
