@@ -30,6 +30,10 @@ import {
   type ReactNode,
 } from "react";
 import { FileTypeIcon } from "../../files/ui/FileTypeIcon";
+import { useProjectBranches } from "../hooks/useProjectBranches";
+import { useWorkspace } from "../../../lib/store";
+import { useProjects } from "../../../lib/projects";
+import { workspaceExtraRootList } from "../../../lib/workspace-roots";
 import {
   GitHistoryGraph,
   GraphResizeSash,
@@ -206,6 +210,7 @@ export function GitChangesPanel({
             ref={branchMenuRef}
             className="relative ml-auto flex min-w-0 items-center gap-1"
           >
+            <RootBranchChips home={cwd} />
             <span className="flex min-w-0 items-center gap-1 text-[11px] text-content/50">
               <GitBranch className="size-3 shrink-0" strokeWidth={1.75} />
               <span className="min-w-0 truncate">{index.branch}</span>
@@ -1758,4 +1763,46 @@ function sameIndex(prev: GitDiffIndex | null, next: GitDiffIndex): boolean {
       file.unstaged === other.unstaged
     );
   });
+}
+
+/**
+ * 多 root 项目的分支簇：主分支 chip 左边，每个附加 root 一个只读 chip
+ * （目录名 + 各自的分支与 ahead/behind）。root 列表与 composer 同源
+ * （会话状态优先、项目配置兜底），分支数据走共享的 useProjectBranches
+ * 缓存，不新增查询通道。附加 root 的分支操作仍从 composer 的
+ * BranchPicker 进；这里只负责让「这是个多 root 项目」一眼可见。
+ */
+
+function RootBranchChips({ home }: { home: string }) {
+  const statuses = useWorkspace((state) => state.statuses);
+  const projects = useProjects((state) => state.projects);
+  const roots = useMemo(() => workspaceExtraRootList(home, statuses, projects), [home, statuses, projects]);
+  if (!roots.length) return null;
+  return (
+    <>
+      {roots.map((root) => (
+        <RootBranchChip key={root} root={root} />
+      ))}
+      <span aria-hidden className="h-3.5 w-px shrink-0 bg-content/10" />
+    </>
+  );
+}
+
+function RootBranchChip({ root }: { root: string }) {
+  const branches = useProjectBranches(root, true);
+  const name = root.split(/[\\/]/).filter(Boolean).at(-1) ?? root;
+  return (
+    <span
+      title={`${name}\n${root}${branches?.current ? `\n${branches.current}` : ""}`}
+      className="flex min-w-0 items-center gap-1 rounded-md bg-content/6 px-1.5 py-0.5 text-[11px] text-content/45"
+    >
+      <span className="min-w-0 max-w-20 truncate">{name}</span>
+      {branches?.current ? (
+        <>
+          <GitBranch className="size-3 shrink-0 opacity-70" strokeWidth={1.75} />
+          <span className="min-w-0 max-w-24 truncate">{branches.current}</span>
+        </>
+      ) : null}
+    </span>
+  );
 }
