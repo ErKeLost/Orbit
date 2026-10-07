@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Orbit",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "identifier": "ai.pi.gui",
   "build": {
     "frontendDist": "../dist",
