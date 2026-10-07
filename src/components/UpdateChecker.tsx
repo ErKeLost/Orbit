@@ -37,6 +37,12 @@ export function offerMobileUpdate(update: MobileUpdate) {
 }
 
 export async function checkForDesktopUpdate({ notifyNoUpdate = false }: DesktopUpdateOptions = {}) {
+  // 开发构建是裸二进制：更新器无法替换 .app，装了也只会装到构建时的版本。
+  // 更新只对打包安装的正式版有意义。
+  if (import.meta.env.DEV) {
+    if (notifyNoUpdate) gooeyToast.success("开发构建不走更新器，请用打包安装版", { showTimestamp: false })
+    return null
+  }
   const current = await getVersion()
   const { check } = await import("@tauri-apps/plugin-updater")
   const update = await check()
