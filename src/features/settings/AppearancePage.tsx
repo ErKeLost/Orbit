@@ -86,7 +86,7 @@ export function AppearancePage() {
             onChange={appearance.setPreference}
           />
         </Row>
-        <Row label="强调色" description="用于输入框的发送按钮和你的消息气泡。">
+        <Row label="强调色" description="发送按钮、消息气泡、Working 状态、加载图标、焦点环等强调色元素。">
           <div role="radiogroup" aria-label="强调色" className="flex items-center gap-2">
             <AccentSwatch color={null} active={appearance.accent == null} onSelect={() => appearance.setAccent(null)} label="默认" />
             {ACCENT_PRESETS.map((color) => (

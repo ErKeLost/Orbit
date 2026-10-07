@@ -145,10 +145,14 @@ function applyToDocument(state: Pick<AppearanceState, "scheme" | "hue" | "satura
     root.classList.add("has-user-accent");
     root.style.setProperty("--user-accent-color", state.accent);
     root.style.setProperty("--user-accent-foreground", accentForeground(state.accent));
+    // 强调色接管 --color-accent：Working 状态、加载图标、焦点环这些原来固定
+    // 蓝色的 UI 全部跟着主题强调色走，而不是只有气泡和发送按钮。
+    root.style.setProperty("--color-accent", state.accent);
   } else {
     root.classList.remove("has-user-accent");
     root.style.removeProperty("--user-accent-color");
     root.style.removeProperty("--user-accent-foreground");
+    root.style.removeProperty("--color-accent");
   }
   root.classList.toggle("diff-palette-colorblind", state.diffPalette === "colorblind");
   root.classList.toggle("diff-palette-high-contrast", state.diffPalette === "high-contrast");
