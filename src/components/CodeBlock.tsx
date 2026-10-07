@@ -9,9 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { FileIcon, Icon } from "./Icon";
-import { deviconFromHref, externalLinkIcon } from "../lib/link-visual";
-import { Button } from "./ui/button";
+import { FileTypeIcon } from "../features/shell/FileTypeIcon";
 import type { RenderOptions } from "beautiful-mermaid";
 
 /**
@@ -46,14 +44,14 @@ function rememberHighlight(key: string, html: string) {
 }
 
 const MERMAID_OPTIONS: RenderOptions = {
-  accent: "var(--foreground)",
-  bg: "var(--card)",
-  border: "var(--border)",
-  fg: "var(--foreground)",
-  font: '"Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-  line: "var(--muted-foreground)",
-  muted: "var(--muted-foreground)",
-  surface: "var(--muted)",
+  accent: "var(--color-content)",
+  bg: "transparent",
+  border: "var(--color-stroke)",
+  fg: "var(--color-content)",
+  font: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+  line: "color-mix(in srgb, var(--color-content) 45%, transparent)",
+  muted: "color-mix(in srgb, var(--color-content) 45%, transparent)",
+  surface: "color-mix(in srgb, var(--color-content) 6%, transparent)",
   transparent: true,
 };
 
@@ -176,23 +174,6 @@ const toText = (node: unknown): string => {
   return "";
 };
 
-function LinkBrandIcon({ icon, file }: { icon: string; file?: string }) {
-  if (file) return <FileIcon path={file} />;
-  return <Icon name={icon} />;
-}
-
-function fileNameFromHref(href?: string) {
-  if (!href || href.startsWith("mention:")) return "";
-  try {
-    const path = href.includes("://") ? new URL(href).pathname : href;
-    const file = decodeURIComponent(path.split("/").at(-1) ?? "");
-    const ext = file.includes(".") ? file.split(".").at(-1)?.toLowerCase() ?? "" : "";
-    return ext && !/^\d+$/.test(ext) && /^[a-z0-9]{1,8}$/.test(ext) ? file : "";
-  } catch {
-    return "";
-  }
-}
-
 export function MarkdownLink({
   href,
   children,
@@ -203,29 +184,9 @@ export function MarkdownLink({
   if (href?.startsWith("mention:")) {
     return <span className={`md-chip is-mention ${className}`.trim()}>{children}</span>;
   }
-
   const external = Boolean(href && /^https?:\/\//.test(href));
-  const label = toText(children).trim();
-  const autolink = Boolean(href && (label === href || label === href.replace(/^https?:\/\//, "")));
-  const brand = external ? externalLinkIcon(href) : "globe";
-  const file = autolink ? fileNameFromHref(href) : "";
-  const colored = !file && external && brand === "globe" ? deviconFromHref(href) : "";
   const attrs = external ? { target: "_blank" as const, rel: "noreferrer" } : {};
-  const iconName = file ? `file:${file}` : colored ? `devicon:${colored}` : brand;
-
-  if (autolink) {
-    return (
-      <a {...rest} {...attrs} href={href} className={`md-autolink ${className}`.trim()}>
-        <span className="md-autolink-icon" aria-hidden="true" data-link-icon={iconName}>
-          {external ? <LinkBrandIcon icon={iconName} file={file} /> : file ? <FileIcon path={file} /> : <Icon name={brand} />}
-        </span>
-        <span className="md-autolink-label">{children}</span>
-      </a>
-    );
-  }
-
-  if (external) return <a {...rest} {...attrs} href={href} className={`md-external-link ${className}`.trim()}><span className="md-autolink-icon" aria-hidden="true" data-link-icon={iconName}><LinkBrandIcon icon={iconName} /></span>{children}</a>;
-  return <a {...rest} {...attrs} href={href} className={className}>{children}</a>;
+  return <a {...rest} {...attrs} href={href} dir="auto" className={`text-sky-400/90 hover:text-sky-300 hover:underline ${className}`.trim()}>{children}</a>;
 }
 
 const LANGUAGE_LABELS: Record<string, string> = {
@@ -286,64 +247,50 @@ function languageExt(language?: string) {
   return LANGUAGE_EXT[key] ?? (key.length <= 8 ? key : "txt");
 }
 
-function CodeFrame({
-  language,
-  code,
-  children,
-}: {
-  language?: string;
-  code: string;
-  children: ReactNode;
-}) {
+function CodeCopyButton({ code }: { code: string }) {
   const [copied, setCopied] = useState(false);
-
+  const timer = useRef<number | null>(null);
+  useEffect(() => () => { if (timer.current != null) window.clearTimeout(timer.current); }, []);
   return (
-    <figure className="md-code">
-      <figcaption className="md-code-header">
-        <span className="md-code-lang">
-          <Icon name="code" className="md-code-icon" />
-          {languageLabel(language)}
-        </span>
-        <span className="md-code-actions">
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="md-code-action"
-            title="下载"
-            aria-label="下载代码"
-            onClick={() => {
-              const blob = new Blob([code], { type: "text/plain;charset=utf-8" });
-              const url = URL.createObjectURL(blob);
-              const link = document.createElement("a");
-              link.href = url;
-              link.download = `snippet.${languageExt(language)}`;
-              link.click();
-              URL.revokeObjectURL(url);
-            }}
-          >
-            <Icon name="export" className="md-code-icon" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="md-code-action"
-            title={copied ? "已复制" : "复制"}
-            aria-label={copied ? "已复制" : "复制代码"}
-            onClick={() => {
-              void navigator.clipboard.writeText(code).then(() => {
-                setCopied(true);
-                window.setTimeout(() => setCopied(false), 1600);
-              }).catch(() => undefined);
-            }}
-          >
-            <Icon name={copied ? "check" : "copy"} className="md-code-icon" />
-          </Button>
-        </span>
-      </figcaption>
-      <div className="md-code-body">{children}</div>
-    </figure>
+    <button
+      type="button"
+      title={copied ? "已复制" : "复制代码"}
+      aria-label={copied ? "已复制" : "复制代码"}
+      className={`markdown-code-copy ${copied ? "is-copied" : ""}`}
+      onClick={() => {
+        void navigator.clipboard.writeText(code).then(() => {
+          setCopied(true);
+          if (timer.current != null) window.clearTimeout(timer.current);
+          timer.current = window.setTimeout(() => setCopied(false), 1500);
+        }).catch(() => undefined);
+      }}
+    >
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <g className="markdown-code-copy-pages">
+          <path d="M12 4H6a2 2 0 0 0-2 2v6" />
+          <rect x="7" y="7" width="9" height="9" rx="1.5" />
+        </g>
+        <path className="markdown-code-copy-check" d="M4.5 10.5 8.2 14 15.5 6.5" />
+      </svg>
+    </button>
+  );
+}
+
+/** MonoCode's code-fence chrome (`.markdown-code-shell`) around Orbit's shiki block. */
+function CodeFrame({ language, code, children }: { language?: string; code: string; children: ReactNode }) {
+  return (
+    <div className="markdown-code-shell" dir="ltr">
+      <div className="code-block">
+        <div className="code-block-header">
+          <span className="grid size-4 shrink-0 place-items-center">
+            <FileTypeIcon name={`code.${languageExt(language)}`} isDir={false} size={14} />
+          </span>
+          <span>{languageLabel(language)}</span>
+          <CodeCopyButton code={code} />
+        </div>
+        {children}
+      </div>
+    </div>
   );
 }
 

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Orbit",
-  "version": "0.5.27",
+  "version": "0.6.0",
   "identifier": "ai.pi.gui",
   "build": {
     "frontendDist": "../dist",
@@ -27,12 +27,19 @@
         "trafficLightPosition": {
           "x": 16,
           "y": 18
-        }
+        },
+        "transparent": true
       }
     ],
     "macOSPrivateApi": true,
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "**"
+        ]
+      }
     }
   },
   "plugins": {
@@ -82,7 +89,6 @@
       "resources/node_modules",
       "resources/node-runtime",
       "resources/pi-runtime"
-    ],
-    "createUpdaterArtifacts": true
+    ]
   }
 }

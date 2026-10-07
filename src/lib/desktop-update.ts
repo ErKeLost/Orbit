@@ -1,5 +1,5 @@
 import { create } from "zustand"
-import { gooeyToast } from "goey-toast"
+import { toast as gooeyToast } from "../shared/ui/toast";
 
 type UpdateHandle = import("@tauri-apps/plugin-updater").Update
 

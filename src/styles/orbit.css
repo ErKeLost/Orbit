@@ -1,0 +1,1163 @@
+/*
+ * Orbit-only surfaces, written strictly in MonoCode's tokens
+ * (--color-content, --color-background-base, --color-stroke, selection
+ * strengths). Nothing here introduces a color MonoCode does not already use.
+ */
+
+:root {
+  --font-chat: var(--font-sans);
+  --composer-max-width: 56rem;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Native text selection stays on for chat, file and settings bodies. */
+.agent-transcript,
+.file-view,
+[data-app-settings] input,
+[data-app-settings] textarea,
+.selectable {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* ---- @pierre/diffs surfaces (tool cards, file view) ---------------------- */
+
+.code-change {
+  min-width: 0;
+  margin: 6px 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-content) 4%, transparent);
+}
+
+.code-change.is-compact {
+  margin: 4px 0;
+}
+
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 30px;
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid var(--color-stroke);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-content) 55%, transparent);
+}
+
+.code-change diffs-container {
+  display: block;
+  max-height: 520px;
+  overflow: auto;
+  --diffs-font-size: 12px;
+  --diffs-font-family: var(--font-mono);
+  --diffs-bg: transparent;
+}
+
+.file-view diffs-container {
+  display: block;
+  --diffs-font-size: 13px;
+  --diffs-line-height: 22px;
+  --diffs-font-family: var(--font-mono);
+  --diffs-bg: transparent;
+}
+
+.diff-fallback,
+.diff-loading-fallback {
+  margin: 0;
+  max-height: 520px;
+  overflow: auto;
+  padding: 10px 12px;
+  white-space: pre;
+  font: 12px/1.6 var(--font-mono);
+  color: color-mix(in srgb, var(--color-content) 75%, transparent);
+}
+
+/* ---- Markdown (shiki highlighting stays Orbit's own) --------------------- */
+
+.agent-markdown {
+  overflow-wrap: anywhere;
+}
+
+.agent-markdown > :first-child { margin-top: 0; }
+.agent-markdown > :last-child { margin-bottom: 0; }
+
+.agent-markdown p,
+.agent-markdown ul,
+.agent-markdown ol,
+.agent-markdown blockquote,
+.agent-markdown table {
+  margin-block: 0.6em;
+}
+
+.agent-markdown h1,
+.agent-markdown h2,
+.agent-markdown h3,
+.agent-markdown h4 {
+  margin: 1.1em 0 0.45em;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--color-content);
+}
+
+.agent-markdown h1 { font-size: 1.25em; }
+.agent-markdown h2 { font-size: 1.12em; }
+.agent-markdown h3 { font-size: 1em; }
+
+.agent-markdown ul,
+.agent-markdown ol {
+  padding-inline-start: 1.5rem;
+}
+
+.agent-markdown ul { list-style: disc; }
+.agent-markdown ol { list-style: decimal; }
+.agent-markdown li + li { margin-top: 0.2em; }
+
+.agent-markdown blockquote {
+  padding-inline-start: 1rem;
+  border-inline-start: 4px solid color-mix(in srgb, var(--color-content) 20%, transparent);
+  color: color-mix(in srgb, var(--color-content) 70%, transparent);
+}
+
+.agent-markdown a {
+  color: var(--link-color);
+}
+
+.agent-markdown a:hover { text-decoration: underline; }
+
+.agent-markdown :not(pre) > code {
+  display: inline;
+  padding: 0.12em 0.4em;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-content) 8%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+
+.agent-markdown hr {
+  margin: 1.2em 0;
+  border: 0;
+  border-top: 1px solid var(--color-stroke);
+}
+
+.agent-markdown table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 10px;
+}
+
+.agent-markdown th,
+.agent-markdown td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-stroke);
+  text-align: left;
+}
+
+.agent-markdown th {
+  background: color-mix(in srgb, var(--color-content) 6%, transparent);
+  font-weight: 600;
+}
+
+.agent-markdown img {
+  max-width: 100%;
+  border-radius: 10px;
+}
+
+.agent-markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* Code fence frame: MonoCode's `.markdown-code-shell` look around Orbit's shiki block. */
+.agent-markdown .code-block {
+  position: relative;
+  margin-block: 14px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-content) 6%, transparent);
+}
+
+.agent-markdown .code-block-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid var(--color-stroke);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
+}
+
+.agent-markdown .code-block-header > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-markdown .code-block-copy {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+}
+
+.agent-markdown .code-block-copy:hover {
+  background: color-mix(in srgb, var(--color-content) 10%, transparent);
+  color: var(--color-content);
+}
+
+.agent-markdown .code-block pre {
+  margin: 0;
+  overflow-x: auto;
+  padding: 10px 12px;
+  background: transparent !important;
+  font: 12.5px/1.65 var(--font-mono);
+}
+
+.agent-markdown .code-block pre code {
+  font: inherit;
+}
+
+/* Shiki dual-theme tokens: light uses inline colors, dark swaps to the var. */
+html:not(.theme-light) .agent-markdown .shiki,
+html:not(.theme-light) .agent-markdown .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: transparent !important;
+  font-style: var(--shiki-dark-font-style) !important;
+  font-weight: var(--shiki-dark-font-weight) !important;
+}
+
+.agent-markdown .mermaid {
+  margin-block: 14px;
+  overflow-x: auto;
+}
+
+/* Streaming reveal: the newest words fade in, like MonoCode's word-fade. */
+.agent-markdown.is-streaming .md-selectable-text:last-child {
+  animation: orbit-word-fade 320ms ease-out;
+}
+
+@keyframes orbit-word-fade {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+
+.agent-reasoning.agent-markdown {
+  color: color-mix(in srgb, var(--color-content) 55%, transparent);
+}
+
+/* ---- Composer attachments ------------------------------------------------ */
+
+.composer-attachment-photo {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+}
+
+.composer-attachment-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ---- Generated images (Orbit's grid reveal keeps its own canvas) --------- */
+
+.tool-image-generation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-block: 4px;
+}
+
+.message-image {
+  max-width: min(100%, 22rem);
+  max-height: 22rem;
+  border-radius: 12px;
+  object-fit: contain;
+}
+
+/* ---- Extension status line under the transcript -------------------------- */
+
+.extension-status {
+  padding: 2px 16px;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+}
+
+/* ---- Mobile / Android ---------------------------------------------------- */
+
+@media (max-width: 760px) {
+  html,
+  body,
+  #root {
+    user-select: none;
+  }
+
+  .mobile-shell {
+    padding-top: var(--safe-top);
+  }
+
+  .mobile-shell [data-composer-box] {
+    border-radius: 14px;
+  }
+
+  .mobile-shell .composer-field {
+    font-size: 16px; /* keeps Android/iOS from zooming the field */
+  }
+
+  .mobile-composer-dock {
+    padding-bottom: max(6px, var(--safe-bottom));
+  }
+
+  .mobile-drawer {
+    width: min(86vw, 320px);
+    padding-top: var(--safe-top);
+    padding-bottom: var(--safe-bottom);
+  }
+}
+
+@keyframes mobile-drawer-in {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes mobile-scrim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.mobile-drawer[data-open="true"] {
+  animation: mobile-drawer-in 220ms var(--motion-ease-out);
+}
+
+.mobile-scrim[data-open="true"] {
+  animation: mobile-scrim-in 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-drawer[data-open="true"],
+  .mobile-scrim[data-open="true"],
+  .agent-markdown.is-streaming .md-selectable-text:last-child {
+    animation: none;
+  }
+}
+
+/* Low-end devices: stop infinite repaint sources while streaming. */
+html[data-perf-tier="low"] .shimmer-text {
+  animation: none;
+  color: color-mix(in srgb, var(--color-content) 60%, transparent);
+  background: none;
+}
+
+html[data-page-visible="false"] * {
+  animation-play-state: paused !important;
+}
+
+/* The file pane is the whole surface: no card frame around its code. */
+.file-view .code-change {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.file-view .code-change diffs-container {
+  max-height: none;
+}
+
+/* ---- Orbit panels rendered inside MonoCode's settings frame -------------- */
+/* SettingsGroup/SettingRow (GeneralSettingsPanel) → MonoCode Group/Row. */
+
+.settings-page .settings-group,
+.panel-surface .settings-group {
+  padding-top: 2rem;
+}
+
+.settings-page .settings-group:first-of-type,
+.panel-surface .settings-group:first-of-type {
+  padding-top: 0;
+}
+
+.settings-group-heading {
+  display: block;
+  padding-bottom: 10px;
+}
+
+.settings-group-heading h2 {
+  display: block;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-content);
+}
+
+/* MonoCode's General/Appearance group titles carry no icons. */
+.settings-group-heading h2 svg {
+  display: none;
+}
+
+.settings-group-heading p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+}
+
+.settings-page .settings-group-card,
+.panel-surface .settings-group-card {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-content) 3%, transparent);
+  padding: 0 !important;
+}
+
+.settings-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  padding: 14px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-content) 5%, transparent);
+}
+
+.settings-item:last-child,
+.settings-item:last-of-type {
+  border-bottom: 0;
+}
+
+.settings-item-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-item-copy strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-content);
+}
+
+.settings-item-copy p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+}
+
+.settings-item-control {
+  display: flex;
+  min-width: 0;
+  max-width: 60%;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.remote-settings-note {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+}
+
+.settings-directory-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.settings-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 16px 14px;
+}
+
+.settings-stats > div {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-content) 4%, transparent);
+}
+
+.settings-stats span {
+  display: block;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+}
+
+.settings-stats strong {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-content);
+}
+
+.settings-runtime-path {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 16px;
+  font-size: 12px;
+}
+
+.settings-runtime-path span {
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
+}
+
+.settings-runtime-path code {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-content);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-runtime-paths {
+  margin-top: 10px;
+}
+
+/* Full-page Orbit panels opened from the rail (commands, tools, mobile). */
+.panel-surface {
+  margin: 0 auto;
+  width: 100%;
+  max-width: 64rem;
+  padding: 24px 20px 64px;
+}
+
+.panel-surface .panel-heading {
+  padding-bottom: 16px;
+}
+
+.panel-surface .panel-heading h1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--color-content);
+}
+
+.panel-surface .panel-heading h1 svg {
+  width: 18px;
+  height: 18px;
+  opacity: 0.6;
+}
+
+.panel-surface .panel-heading p {
+  margin-top: 6px;
+  max-width: 36rem;
+  font-size: 13px;
+  line-height: 1.6;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+}
+
+.panel-surface .search-input {
+  margin-bottom: 12px;
+  height: 32px;
+  font-size: 13px;
+}
+
+.command-list {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-content) 3%, transparent);
+}
+
+.command-list:empty {
+  display: none;
+}
+
+.command-row[data-slot="button"] {
+  display: flex;
+  justify-content: flex-start;
+  gap: 12px;
+  height: auto;
+  min-height: 56px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--color-stroke);
+  border-radius: 0;
+  text-align: left;
+  white-space: normal;
+}
+
+.command-row:last-child {
+  border-bottom: 0;
+}
+
+.command-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-content) 8%, transparent);
+}
+
+.command-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.command-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--color-content);
+}
+
+.command-source {
+  border-radius: 4px;
+  padding: 1px 6px;
+  background: color-mix(in srgb, var(--color-content) 8%, transparent);
+  font-size: 10px;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--color-content) 55%, transparent);
+}
+
+.command-description,
+.command-location {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 400;
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
+}
+
+.command-location {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-content) 35%, transparent);
+}
+
+.command-arrow {
+  opacity: 0.35;
+}
+
+.agent-markdown .md-chip.is-mention {
+  border-radius: 6px;
+  padding: 0 4px;
+  background: color-mix(in srgb, var(--color-mention) 15%, transparent);
+  color: var(--color-mention);
+  font-style: normal;
+}
+
+.tool-image-frame {
+  display: inline-block;
+  max-width: 100%;
+}
+
+/* ---- Legacy section panels inside the settings frame --------------------- */
+/* PiTools / ComputerUse / 通用设置 use .settings-section + .panel-heading. */
+
+.settings-page .panel-heading {
+  display: none;
+}
+
+.panel-surface .settings-section,
+.settings-page .settings-section {
+  margin-top: 2rem;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-content) 3%, transparent);
+}
+
+.settings-page .settings-section:first-of-type {
+  margin-top: 1.5rem;
+}
+
+.panel-surface .settings-section > h2,
+.settings-page .settings-section > h2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 14px 16px 0;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-content);
+}
+
+.panel-surface .settings-section > h2 svg,
+.settings-page .settings-section > h2 svg {
+  width: 15px;
+  height: 15px;
+  color: color-mix(in srgb, var(--color-content) 55%, transparent);
+}
+
+.panel-surface .settings-section > :not(h2),
+.settings-page .settings-section > :not(h2) {
+  padding-inline: 16px;
+}
+
+.panel-surface .settings-section > :last-child,
+.settings-page .settings-section > :last-child {
+  padding-bottom: 14px;
+}
+
+.settings-page .settings-section .settings-item,
+.panel-surface .settings-section .settings-item {
+  padding-inline: 0;
+}
+
+.tool-action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.tool-action-grid > button {
+  justify-content: flex-start;
+  height: 32px;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+}
+
+.input-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.settings-resource-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
+}
+
+.settings-package-section .input-row .search-input {
+  height: 30px;
+}
+
+/* Settings content always sits on the app background (no white flashes). */
+.settings-page,
+.settings-page * {
+  box-sizing: border-box;
+}
+
+.settings-page {
+  color: var(--color-content);
+  background: transparent;
+}
+
+/* 项目目录控件：输入框与按钮同一行，右对齐（MonoCode Row 的控件区）。 */
+.settings-directory-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.settings-directory-control input {
+  width: 240px;
+}
+
+.settings-directory-control .settings-directory-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---- Terminal dock (xterm.js over a Rust PTY) ---------------------------- */
+
+:root {
+  --font-terminal: "JetBrainsMono NFM", "JetBrainsMono Nerd Font Mono", "JetBrainsMono NF",
+    ui-monospace, SFMono-Regular, Menlo, Monaco, "Symbols Nerd Font Mono",
+    "Symbols Nerd Font", "MesloLGS NF", "MesloLGS Nerd Font Mono",
+    "FiraCode Nerd Font Mono", "Hack Nerd Font Mono", "CaskaydiaCove Nerd Font Mono",
+    Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.monocode-terminal {
+  overflow: hidden;
+  background: transparent;
+}
+
+.monocode-terminal .xterm,
+.monocode-terminal .xterm-screen,
+.monocode-terminal .xterm-screen canvas,
+.monocode-terminal .xterm-viewport {
+  background: transparent !important;
+}
+
+.monocode-terminal .xterm {
+  height: 100%;
+  padding: 2px 4px;
+}
+
+.monocode-terminal .xterm-viewport {
+  background: transparent !important;
+  scrollbar-width: none;
+}
+
+.monocode-terminal .xterm-screen {
+  user-select: text;
+}
+
+.monocode-terminal .xterm .xterm-scrollable-element > .shadow {
+  display: none !important;
+}
+
+.monocode-terminal .xterm-viewport::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* Search result rows and section labels follow the model menu's rhythm. */
+[aria-label="搜索"] section > div > button:hover {
+  background: color-mix(in srgb, var(--color-content) 5%, transparent);
+}
+
+/* Quieter chrome: the rail rows sit flat, and the composer's light-mode
+   shadow is dialled well back from MonoCode's 24px ambient blur. */
+nav[aria-label="Projects"] button {
+  box-shadow: none !important;
+}
+
+[data-composer-box] {
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--color-content) 4%, transparent);
+}
+
+html.theme-light [data-composer-box] {
+  box-shadow:
+    0 2px 10px color-mix(in srgb, var(--color-content) 6%, transparent),
+    0 1px 3px color-mix(in srgb, var(--color-content) 4%, transparent);
+}
+
+/* ---- 移动端页面：套用 MonoCode 的卡片体系 -------------------------------- */
+
+.mobile-access-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 24px 20px 64px;
+  color: var(--color-content);
+}
+
+.mobile-access-panel .panel-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 0;
+}
+
+.mobile-access-panel .panel-heading h1 {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.mobile-access-panel .panel-heading svg {
+  width: 18px;
+  height: 18px;
+  opacity: 0.6;
+}
+
+.mobile-access-version {
+  margin-left: auto;
+  border-radius: 999px;
+  padding: 2px 10px;
+  background: color-mix(in srgb, var(--color-content) 6%, transparent);
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
+}
+
+.mobile-access-layout {
+  display: block;
+}
+
+.mobile-access-main {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* The hero card lays its copy out in one line now that the column is wide. */
+.mobile-access-connect-heading > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.mobile-access-surface {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* 顶部连接卡：图标 + 标题 + 状态 */
+.mobile-access-connect-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 14px;
+  padding: 16px 18px;
+  background: color-mix(in srgb, var(--color-content) 3%, transparent);
+}
+
+.mobile-access-connect-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-content) 6%, transparent);
+}
+
+.mobile-access-connect-heading p {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: color-mix(in srgb, var(--color-content) 40%, transparent);
+}
+
+.mobile-access-connect-heading h2 {
+  margin: 2px 0 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.mobile-access-connect-heading span {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+}
+
+.mobile-access-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 3px 10px;
+  background: color-mix(in srgb, var(--color-content) 6%, transparent);
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-content) 55%, transparent);
+}
+
+/* 每一个区块 = 一张卡片 */
+.mobile-access-setup,
+.mobile-access-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--color-content) 3%, transparent);
+}
+
+.mobile-access-section-heading {
+  padding: 14px 18px 10px;
+}
+
+.mobile-access-section-heading h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mobile-access-section-heading h3 svg {
+  width: 15px;
+  height: 15px;
+  opacity: 0.55;
+}
+
+.mobile-access-qr-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 0 18px 18px;
+  border: 1px solid color-mix(in srgb, var(--color-content) 8%, transparent);
+  border-radius: 12px;
+  padding: 44px 20px;
+  background: color-mix(in srgb, var(--color-content) 2%, transparent);
+  text-align: center;
+}
+
+.mobile-access-qr-empty svg {
+  width: 26px;
+  height: 26px;
+  opacity: 0.35;
+}
+
+.mobile-access-qr-empty strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.mobile-access-qr-empty span {
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+}
+
+.mobile-access-host-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-top: 1px solid color-mix(in srgb, var(--color-content) 5%, transparent);
+}
+
+.mobile-access-control-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--color-content) 6%, transparent);
+}
+
+.mobile-access-control-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.mobile-access-control-copy strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.mobile-access-control-copy span {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+}
+
+.mobile-access-mode-fieldset {
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--color-content) 5%, transparent);
+  margin: 0;
+  padding: 14px 18px;
+}
+
+.mobile-access-mode-fieldset legend {
+  padding: 0 0 8px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
+}
+
+.mobile-access-mode-control {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 9px;
+  padding: 2px;
+}
+
+.mobile-access-mode-control button {
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  color: color-mix(in srgb, var(--color-content) 55%, transparent);
+}
+
+.mobile-access-mode-control button[aria-pressed="true"] {
+  background: var(--color-selection);
+  color: var(--color-content);
+}
+
+.mobile-access-mode-fieldset p {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+}
+
+.mobile-access-relay-settings {
+  border-top: 1px solid color-mix(in srgb, var(--color-content) 5%, transparent);
+}
+
+.mobile-access-relay-settings > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  font-size: 13px;
+  cursor: default;
+}
+
+.mobile-access-relay-settings > summary .mobile-access-pill {
+  margin-left: auto;
+}
+
+.mobile-access-complete {
+  align-self: center;
+  margin-top: 4px;
+}
+
+
+
+
+
+
+/* 内嵌的设置小行（Host Key / Relay 地址等）沿用 Row 语言 */
+.mobile-access-panel .settings-item {
+  padding: 12px 18px;
+}
+
+.mobile-access-panel .settings-item-copy strong {
+  font-size: 13px;
+}
+
+.mobile-access-panel .settings-item-copy p {
+  margin-top: 3px;
+  font-size: 12px;
+}

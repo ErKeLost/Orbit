@@ -1,4 +1,4 @@
-import { ArrowRight, Copy, Image, LoaderCircle, ScanQrCode, X } from "lucide-react";
+import { ChevronRight as ArrowRight, Copy, ImagePlus as Image, LoaderCircle, Share as ScanQrCode, X } from "../../shared/ui/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Input } from "../UI";
 import { Icon } from "../Icon";

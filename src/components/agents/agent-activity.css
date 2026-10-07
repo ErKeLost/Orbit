@@ -17,12 +17,12 @@
   margin-left: min(calc(var(--agent-depth, 0) * 24px), 96px);
   padding: 3px 0;
   border: 0;
-  color: var(--muted-foreground);
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
   text-align: left;
 }
 
-button.agent-feed-line:hover .agent-feed-copy strong { color: var(--foreground); }
-button.agent-feed-line:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+button.agent-feed-line:hover .agent-feed-copy strong { color: var(--color-content); }
+button.agent-feed-line:focus-visible { outline: 2px solid color-mix(in srgb, var(--color-accent) 60%, transparent); outline-offset: 2px; }
 
 .agent-feed-line:not([data-nested])::before { display: none; }
 .agent-feed-line::before {
@@ -32,7 +32,7 @@ button.agent-feed-line:focus-visible { outline: 2px solid var(--ring); outline-o
   left: -13px;
   width: 1px;
   content: "";
-  background: color-mix(in oklch, var(--border) 72%, transparent);
+  background: color-mix(in oklch, var(--color-stroke) 72%, transparent);
 }
 
 .agent-feed-avatar {
@@ -40,7 +40,7 @@ button.agent-feed-line:focus-visible { outline: 2px solid var(--ring); outline-o
   width: 20px;
   height: 20px;
   place-items: center;
-  color: var(--foreground);
+  color: var(--color-content);
 }
 
 .agent-feed-avatar svg { display: block; width: 20px; height: 20px; }
@@ -57,7 +57,7 @@ button.agent-feed-line:focus-visible { outline: 2px solid var(--ring); outline-o
   flex: none;
   overflow: hidden;
   max-width: 38%;
-  color: color-mix(in oklch, var(--foreground) 82%, var(--muted-foreground));
+  color: color-mix(in oklch, var(--color-content) 82%, color-mix(in srgb, var(--color-content) 50%, transparent));
   font-size: 12px;
   font-weight: 550;
   text-overflow: ellipsis;
@@ -67,7 +67,7 @@ button.agent-feed-line:focus-visible { outline: 2px solid var(--ring); outline-o
 .agent-feed-copy > span {
   min-width: 0;
   overflow: hidden;
-  color: var(--muted-foreground);
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -75,18 +75,18 @@ button.agent-feed-line:focus-visible { outline: 2px solid var(--ring); outline-o
 
 .agent-feed-line > time {
   min-width: 42px;
-  color: color-mix(in oklch, var(--muted-foreground) 78%, transparent);
+  color: color-mix(in oklch, color-mix(in srgb, var(--color-content) 50%, transparent) 78%, transparent);
   font: 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
 .agent-feed-line.is-failed .agent-feed-copy > span,
-.agent-feed-line.is-aborted .agent-feed-copy > span { color: var(--destructive); }
+.agent-feed-line.is-aborted .agent-feed-copy > span { color: #f87171; }
 
 .agent-feed-shimmer {
   color: transparent !important;
-  background: linear-gradient(100deg, var(--muted-foreground) 25%, var(--foreground) 48%, var(--muted-foreground) 70%);
+  background: linear-gradient(100deg, color-mix(in srgb, var(--color-content) 50%, transparent) 25%, var(--color-content) 48%, color-mix(in srgb, var(--color-content) 50%, transparent) 70%);
   background-size: 220% 100%;
   background-clip: text;
   -webkit-background-clip: text;
@@ -105,5 +105,5 @@ button.agent-feed-line:focus-visible { outline: 2px solid var(--ring); outline-o
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .agent-feed-shimmer { color: var(--muted-foreground) !important; background: none; animation: none; }
+  .agent-feed-shimmer { color: color-mix(in srgb, var(--color-content) 50%, transparent) !important; background: none; animation: none; }
 }

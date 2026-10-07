@@ -138,8 +138,26 @@ function applyEvent(event:Event,project:string){
  }
 }
 const burstEvents=new Set(['message_update','tool_execution_update'])
-const BURST_EVENT_WINDOW_MS=32
+// MonoCode's harness cadence (app/model/harnessFlush.ts): the visible
+// connection flushes once per animation frame; hidden connections and a
+// backgrounded window advance on a slower 100ms timer so background streams
+// never drive the whole UI at display refresh rate.
+const BACKGROUND_FLUSH_MS=100
+type FlushHandle={kind:'raf'|'timeout';id:number}
+const flushHandles=new Map<string,FlushHandle>()
+function cancelFlush(project:string){
+ const handle=flushHandles.get(project);if(!handle)return
+ if(handle.kind==='raf')cancelAnimationFrame(handle.id);else clearTimeout(handle.id)
+ flushHandles.delete(project)
+}
+function scheduleFlush(project:string){
+ if(flushHandles.has(project))return
+ const run=()=>{flushHandles.delete(project);flushEvents(project)}
+ const foreground=typeof document!=='undefined'&&!document.hidden&&useWorkspace.getState().connectionId===project&&typeof requestAnimationFrame==='function'
+ flushHandles.set(project,foreground?{kind:'raf',id:requestAnimationFrame(run)}:{kind:'timeout',id:setTimeout(run,BACKGROUND_FLUSH_MS) as unknown as number})
+}
 function flushEvents(project:string){
+ cancelFlush(project)
  const timer=flushTimers.get(project);if(timer)clearTimeout(timer);flushTimers.delete(project)
  const queue=eventQueues.get(project);if(!queue?.length)return;eventQueues.delete(project)
  // burst 队列里只会是 message_update / tool_execution_update。此前逐条
@@ -148,11 +166,16 @@ function flushEvents(project:string){
  const s=current(project)
  patch(project,{transcript:queue.reduce((transcript,event)=>reduceEvent(transcript,event),s.transcript),telemetry:queue.reduce((telemetry,event)=>observe(telemetry,event),s.telemetry)})
 }
-function clearEvents(project:string){const timer=flushTimers.get(project);if(timer)clearTimeout(timer);flushTimers.delete(project);eventQueues.delete(project)}
+function clearEvents(project:string){cancelFlush(project);const timer=flushTimers.get(project);if(timer)clearTimeout(timer);flushTimers.delete(project);eventQueues.delete(project)}
 function dispatch(event:Event,project:string){
+ // Anything a user may act on (approvals, dialogs, lifecycle) lands at once,
+ // after delivering the output that preceded it so ordering is preserved.
  if(!burstEvents.has(event.type)){flushEvents(project);applyEvent(event,project);return}
  const queue=eventQueues.get(project)??[];queue.push(event);eventQueues.set(project,queue)
- if(!flushTimers.has(project))flushTimers.set(project,setTimeout(()=>flushEvents(project),BURST_EVENT_WINDOW_MS))}
+ scheduleFlush(project)
+}
+/** Tab activation catches the visible connection up without waiting a frame. */
+export function flushForegroundEvents(){const id=useWorkspace.getState().connectionId;if(id)flushEvents(id)}
 export function dispatchRemoteEvent(project:string,payload:unknown){
  if(!project||typeof payload!=='object'||payload===null||typeof (payload as {type?:unknown}).type!=='string')return
  dispatch(payload as Event,project)
@@ -324,7 +347,7 @@ async function startConnection(cwd:string,id:string,options?:{restoreLast?:boole
   if(event.kind==='rpc'&&event.payload)dispatch(event.payload,id)
   // Rust 侧把连发的 message_update / tool_execution_update 攒成一批（bridge.rs 的
   // PI_EVENT_BATCH_*）。逐条 dispatch，顺序与逐条 IPC 完全一致，dispatch 内部
-  // 仍然按 32ms 窗口合并 store 提交。
+  // 仍按帧（可见连接）/ 100ms（后台连接）合并 store 提交。
   if(event.kind==='rpc-batch'&&event.payloads){for(const payload of event.payloads)dispatch(payload,id)}
   if(event.kind==='exit'){const cwd=connections.get(id)?.cwd,s=current(id),detail=event.message?`：${event.message}`:'';flushEvents(id);clearEvents(id);syncedModes.delete(id);connections.delete(id);if(cwd&&projectActive.get(cwd)===id)projectActive.delete(cwd);for(const [file,owner] of [...sessionOwners]) if(owner===id) sessionOwners.delete(file);patch(id,{connection:'offline',error:`Pi 进程已退出（${event.code??'signal'}）${detail}`,transcript:{...s.transcript,running:false,submitted:false,compacting:false,phase:'就绪',turnStartedAt:null}});failPending(id,'Pi 进程已退出')}
   if(event.kind==='protocol_error')patch(id,{error:event.message})
@@ -418,8 +441,37 @@ export async function forgetProject(project:string){
  const files=readSessionFiles();delete files[project];localStorage.setItem(SESSION_FILES_KEY,JSON.stringify(files))
  if(useWorkspace.getState().cwd===project)useWorkspace.getState().set({...fresh(),cwd:'',connectionId:''})
 }
+/** Pull every queued message back into the draft without stopping the turn. */
+export async function recallQueue(){const id=route(),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id);const s=current(id);patch(id,{draft:[s.draft,...cleared.steering,...cleared.followUp].filter(Boolean).join('\n'),transcript:reduceEvent(s.transcript,{type:'queued_preview_clear'})})}
+/** Promote one queued follow-up into the running turn as a steer (MonoCode's "Steer"). */
+export async function steerFollowUp(text:string){
+ const id=route(),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id)
+ let promoted=false
+ for(const message of cleared.steering)await request({type:'steer',message},30000,id)
+ for(const message of cleared.followUp){
+  if(!promoted&&message===text){promoted=true;await request({type:'steer',message},30000,id)}
+  else await request({type:'follow_up',message},30000,id)
+ }
+}
 export async function stop(){const id=route(),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id);await request({type:'abort'},60000,id);const s=current(id);patch(id,{draft:[s.draft,...cleared.steering,...cleared.followUp].filter(Boolean).join('\n'),transcript:reduceEvent(s.transcript,{type:'queued_preview_clear'})});await refresh(id)}
 export async function changeSession(command:RpcCommand){
+ try {
+  return await changeSessionOnce(command)
+ } catch (error) {
+  // A stale worker after a restart or project switch: reconnect and retry once.
+  const workspace=useWorkspace.getState()
+  if (!projectDisconnected(error) || mobileRuntime() || !workspace.cwd) throw error
+  const cwd=workspace.cwd
+  let task=reconnectingProjects.get(cwd)
+  if(!task){
+   task=connect(cwd,workspace.workspaceMode).finally(()=>reconnectingProjects.delete(cwd))
+   reconnectingProjects.set(cwd,task)
+  }
+  await task
+  return changeSessionOnce(command)
+ }
+}
+async function changeSessionOnce(command:RpcCommand){
  const cwd=useWorkspace.getState().cwd,active=route(cwd),running=current(active).transcript.running
  if(command.type==='switch_session'){
   if(useWorkspace.getState().state?.sessionFile===command.sessionPath){useWorkspace.getState().set({panel:'chat'});return}

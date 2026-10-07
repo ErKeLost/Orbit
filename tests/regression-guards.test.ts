@@ -24,33 +24,6 @@ function filesUnder(root: string, extension: string): string[] {
 const COMPONENTS = filesUnder("src", ".tsx")
 const SOURCES = [...filesUnder("src", ".ts"), ...COMPONENTS]
 
-describe("icon names", () => {
-  test("every icon the app renders exists in the bundled set", () => {
-    // The icon families are bundled locally (`addCollection`) so the app makes
-    // no network requests — which also means an unknown name renders as
-    // *nothing*, not as a fallback. Nine names were missing at one point and the
-    // symptom was buttons with no glyph on an offline phone.
-    const bundled = new Set(
-      Object.keys((JSON.parse(readFileSync("src/icons.generated.json", "utf8")) as { icons: Record<string, unknown> }).icons),
-    )
-    const missing = new Map<string, string[]>()
-    for (const file of COMPONENTS) {
-      const source = readFileSync(file, "utf8")
-      const literals = [
-        ...source.matchAll(/<Icon\s+name="([A-Za-z0-9:-]+)"/g),
-        ...source.matchAll(/icon="([A-Za-z0-9:-]+)"/g),
-      ]
-      for (const match of literals) {
-        const name = match[1]!
-        // A name with a prefix is from another collection (catppuccin, devicon).
-        if (name.includes(":") || bundled.has(name)) continue
-        missing.set(name, [...(missing.get(name) ?? []), file])
-      }
-    }
-    expect(Object.fromEntries(missing)).toEqual({})
-  })
-})
-
 describe("durable state", () => {
   test("every key written to localStorage is either mirrored or explicitly excluded", () => {
     // `localStorage` lives in the WebView's storage area, which the system can

@@ -2,20 +2,51 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="theme-color" content="#171717" />
     <link rel="icon" type="image/png" href="/favicon.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Orbit</title>
+    <!--
+      Appearance bootstrap, identical to MonoCode's: theme hue/saturation/
+      lightness and the light class are applied before first paint so nothing
+      flashes. Keys stay under Orbit's own namespace.
+    -->
     <script>
-      try {
-        const saved = localStorage.getItem('pi-gui.theme');
-        const dark = saved === 'dark' || ((saved === 'system' || !saved) && matchMedia('(prefers-color-scheme: dark)').matches);
-        document.documentElement.classList.toggle('dark', dark);
-        document.documentElement.dataset.theme = dark ? 'dark' : 'light';
-        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
-        document.querySelector('meta[name="theme-color"]').content = dark ? '#252525' : '#ffffff';
-      } catch {}
+      (function () {
+        try {
+          var root = document.documentElement;
+          var hue = localStorage.getItem("orbit.themeHue");
+          var sat = localStorage.getItem("orbit.themeSaturation");
+          var darkLightness = localStorage.getItem("orbit.themeDarkLightness");
+          var opacity = localStorage.getItem("orbit.sidebarOpacity");
+          if (hue != null) root.style.setProperty("--theme-hue", String(Math.max(0, Math.min(360, Number(hue) || 0))));
+          if (sat != null) root.style.setProperty("--theme-saturation", Math.max(0, Math.min(100, Number(sat) || 0)) + "%");
+          if (darkLightness != null) root.style.setProperty("--theme-dark-lightness", Math.max(0, Math.min(30, Number(darkLightness) || 0)) + "%");
+          if (opacity != null) root.style.setProperty("--sidebar-opacity", String(Math.max(0.15, Math.min(1, Number(opacity) || 0.85))));
+          var scheme = localStorage.getItem("orbit.colorScheme") || localStorage.getItem("pi-gui.theme") || "system";
+          if (scheme === "system") scheme = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          if (scheme === "light") root.classList.add("theme-light");
+          root.style.colorScheme = scheme === "light" ? "light" : "dark";
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.content = scheme === "light" ? "#f7f7f7" : "#171717";
+          var isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+          if (isMac) root.classList.add("is-mac");
+          if (/Android/i.test(navigator.userAgent)) root.classList.add("is-android");
+        } catch (_) {}
+      })();
     </script>
+    <style>
+      :root {
+        --theme-hue: 240;
+        --theme-saturation: 0%;
+        --theme-dark-lightness: 9%;
+        --sidebar-opacity: 0.85;
+        --background-lightness: var(--theme-dark-lightness);
+        --color-background-base: hsl(var(--theme-hue) var(--theme-saturation) var(--background-lightness));
+      }
+      html.theme-light { --background-lightness: 97%; }
+      html, body { margin: 0; background: var(--color-background-base); }
+    </style>
   </head>
   <body>
     <div id="root"></div>

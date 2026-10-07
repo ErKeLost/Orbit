@@ -65,7 +65,7 @@ canvas.screen-frame {
   padding: 16px;
   text-align: center;
   font-size: 12.5px;
-  color: color-mix(in oklab, var(--muted-foreground) 88%, white 12%);
+  color: color-mix(in oklab, color-mix(in srgb, var(--color-content) 50%, transparent) 88%, white 12%);
 }
 
 .screen-placeholder-block {
@@ -85,7 +85,7 @@ canvas.screen-frame {
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--muted-foreground);
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
   white-space: nowrap;
 }
 
@@ -93,13 +93,13 @@ canvas.screen-frame {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--muted-foreground);
+  background: color-mix(in srgb, var(--color-content) 50%, transparent);
   flex: none;
 }
 
 .screen-state[data-state="live"],
 .screen-pip[data-state="live"] .screen-state-dot {
-  color: var(--foreground);
+  color: var(--color-content);
 }
 
 .screen-pip[data-state="live"] .screen-state-dot,
@@ -292,8 +292,8 @@ canvas.screen-frame {
   overflow: auto;
   padding: 12px;
   border-radius: 16px;
-  background: var(--background);
-  border: 1px solid var(--border);
+  background: var(--color-background-base);
+  border: 1px solid var(--color-stroke);
   box-shadow: 0 24px 60px rgb(0 0 0 / 55%);
 }
 
@@ -320,7 +320,7 @@ canvas.screen-frame {
   margin: 0;
   padding: 8px 10px;
   border-radius: 9px;
-  background: color-mix(in oklab, var(--muted) 40%, transparent);
+  background: color-mix(in oklab, color-mix(in srgb, var(--color-content) 6%, transparent) 40%, transparent);
   font-size: 11px;
 }
 
@@ -332,7 +332,7 @@ canvas.screen-frame {
 }
 
 .screen-metrics-row dt {
-  color: var(--muted-foreground);
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
 }
 
 .screen-metrics-row dd {
@@ -367,7 +367,7 @@ canvas.screen-frame {
 
 /* A downgrade is information, not a failure: H.264 unavailable still previews. */
 .screen-note {
-  color: var(--foreground);
+  color: var(--color-content);
   background: color-mix(in oklab, var(--chart-4, #fbbf24) 16%, transparent);
   border: 1px solid color-mix(in oklab, var(--chart-4, #fbbf24) 32%, transparent);
 }
@@ -375,7 +375,7 @@ canvas.screen-frame {
 .screen-hint {
   margin: 0;
   font-size: 11.5px;
-  color: var(--muted-foreground);
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
 }
 
 /* ── the desktop status page ───────────────────────────────────────── */
@@ -393,11 +393,11 @@ canvas.screen-frame {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: var(--foreground);
+  color: var(--color-content);
   white-space: nowrap;
 }
 
 .titlebar-button.selected {
-  color: var(--foreground);
+  color: var(--color-content);
   background: color-mix(in oklab, var(--primary, currentColor) 20%, transparent);
 }

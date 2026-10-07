@@ -1,13 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { compactTitle, sessionGlyph } from "../src/lib/session-visual";
-import { modelFamily } from "../src/lib/model-meta";
+import { compactTitle } from "../src/lib/session-visual";
+import { modelFamily } from "../src/lib/model-family";
 
-describe("sessionGlyph", () => {
-  test("uses persisted agent metadata when the icon is bundled", () => {
-    expect(sessionGlyph("image-square")).toBe("image-square");
-    expect(sessionGlyph("code")).toBe("code");
-  });
-
+describe("compactTitle", () => {
   test("compacts first-message titles for the header", () => {
     expect(compactTitle("  还有一个\n你看看这个是 我用户的 也是可以支持 user message 气泡  ")).toBe(
       "还有一个 你看看这个是 我用户的 也是可以支持…",
@@ -16,10 +11,6 @@ describe("sessionGlyph", () => {
     expect(compactTitle("   ")).toBe("新会话");
   });
 
-  test("falls back to one default for missing or invalid metadata", () => {
-    expect(sessionGlyph()).toBe("chat-teardrop-text");
-    expect(sessionGlyph("not-a-bundled-icon")).toBe("chat-teardrop-text");
-  });
 });
 
 describe("modelFamily", () => {

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { gooeyToast } from "goey-toast";
+import { toast as gooeyToast } from "../../shared/ui/toast";
 import { useWorkspace } from "../../lib/store";
 import { desktopRuntime, loadMessages, refresh, report, request } from "../../lib/rpc";
 import { Button, Input } from "../UI";

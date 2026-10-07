@@ -6,9 +6,10 @@ import { useRuntimeDiscovery } from "../lib/runtime-diagnostics";
 import { notifyRemoteForeground, openRemoteRuntime, remoteHostSnapshot, storedPairingUri } from "../lib/remote-runtime";
 import { restoreRemoteHost } from "../lib/remote-host";
 import { restorePersistentState } from "../lib/persistent";
-import { gooeyToast } from "goey-toast";
+import { toast as gooeyToast } from "../shared/ui/toast";
 import type { RemoteConnection, RemoteHostSnapshot } from "../lib/remote-protocol";
 import { useWorkspace } from "../lib/store";
+import { useShell } from "../features/shell/shellStore";
 
 let runtimeStarted = false;
 
@@ -185,6 +186,17 @@ export function useWorkspaceShortcuts(
       if (event.key === "n") {
         event.preventDefault();
         if (online) void changeSession({ type: "new_session" }).catch(report);
+      }
+      if (event.key.toLowerCase() === "k") {
+        // Search everything, like MonoCode's ⌘K.
+        event.preventDefault();
+        useWorkspace.getState().set({ panel: "search" });
+      }
+      if (event.key.toLowerCase() === "j") {
+        // Toggle the built-in terminal dock (MonoCode's ⌘J).
+        event.preventDefault();
+        const shell = useShell.getState();
+        shell.setTerminalOpen(!shell.terminalOpen);
       }
       if (event.key === ",") {
         event.preventDefault();

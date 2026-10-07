@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Markdown } from "../src/components/Markdown";
-import { deviconFromHref, externalLinkIcon } from "../src/lib/link-visual";
+import { Markdown, preloadMath } from "../src/components/Markdown";
+
+await preloadMath();
 
 describe("shared Markdown renderer", () => {
   test("renders GFM tables and KaTeX through LobeHub Streamdown", () => {
@@ -12,6 +13,7 @@ describe("shared Markdown renderer", () => {
     expect(html).toContain("<table>");
     expect(html).toContain('class="katex"');
     expect(html).toContain("markdown-static");
+    expect(html).toContain("agent-markdown");
   });
 
   test("normalizes bracket-style math before rendering", () => {
@@ -34,17 +36,17 @@ describe("shared Markdown renderer", () => {
 
     expect(html).toContain("<pre>");
     expect(html).toContain("const reveal");
-    expect(html).toContain("md-code");
+    expect(html).toContain("markdown-code-shell");
     expect(html).toContain("TypeScript");
     expect(html).toContain("aria-label=\"复制代码\"");
   });
 
-  test("labels unlabeled fences as plain text with copy and download actions", () => {
+  test("labels unlabeled fences as plain text with a copy action", () => {
     const html = renderToStaticMarkup(<Markdown content={"```\nhello\n```"} />);
 
-    expect(html).toContain("md-code");
+    expect(html).toContain("markdown-code-shell");
     expect(html).toContain("纯文本");
-    expect(html).toContain("aria-label=\"下载代码\"");
+    expect(html).toContain("aria-label=\"复制代码\"");
     expect(html).toContain("hello");
   });
 
@@ -84,46 +86,15 @@ describe("shared Markdown renderer", () => {
     expect(html).toContain("<blockquote");
     expect(html).toContain("href=\"https://streamdown.lobehub.com\"");
     expect(html).toContain("target=\"_blank\"");
-    expect(html).toContain("md-autolink");
     expect(html).toContain("md-selectable-text");
     expect(html).not.toContain("node=\"[object Object]\"");
   });
 
-  test("renders file autolinks with an icon and package mentions as chips", () => {
-    const html = renderToStaticMarkup(
-      <Markdown content={"Read https://lobehub.com/icons/skill.md and follow @lobehub/icons"} />,
-    );
-
-    expect(html).toContain("md-autolink");
-    expect(html).toContain("href=\"https://lobehub.com/icons/skill.md\"");
-    expect(html).toContain('data-link-icon="file:skill.md"');
+  test("renders package mentions as chips", () => {
+    const html = renderToStaticMarkup(<Markdown content={"follow @lobehub/icons"} />);
     expect(html).toContain("md-chip is-mention");
   });
 
-  test("renders bundled brand logos for external links", () => {
-    const html = renderToStaticMarkup(<Markdown content="https://github.com/openai/codex" />);
 
-    expect(html).toContain("md-autolink-icon");
-    expect(html).toContain('data-link-icon="devicon:github"');
-    expect(externalLinkIcon("https://github.com/openai/codex")).toBe("devicon:github");
-    expect(deviconFromHref("https://github.com/openai/codex")).toBe("github");
-  });
 
-  test("keeps GitHub brand icons when the last path segment looks like a version", () => {
-    const html = renderToStaticMarkup(
-      <Markdown content="https://github.com/ErKeLost/pi-gui/releases/tag/v0.2.2" />,
-    );
-
-    expect(html).toContain('data-link-icon="devicon:github"');
-    expect(html).not.toContain("data-link-icon=\"file:");
-  });
-
-  test("matches colored Devicon logos from the hostname", () => {
-    const href = "https://vercel.com/docs/ai-gateway";
-    const html = renderToStaticMarkup(<Markdown content={href} />);
-
-    expect(deviconFromHref(href)).toBe("vercel");
-    expect(html).toContain('data-link-icon="devicon:vercel"');
-    expect(externalLinkIcon("https://youtube.com")).toBe("youtube-logo-fill");
-  });
 });

@@ -1,44 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { TranscriptMessage } from "../src/components/chat/TranscriptMessage";
-import type { DisplayMessage } from "../src/lib/protocol";
+import { TranscriptGroupView } from "../src/features/chat/Transcript";
+import { buildPhases, formatWorkingDuration, projectTurn, proseSummary, workSummaryLine } from "../src/features/chat/turnModel";
+import type { DisplayMessage, Tool } from "../src/lib/protocol";
 
-function render(message: DisplayMessage["message"]) {
+const text = (html: string) => html.replace(/<style[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, "");
+
+function render(items: DisplayMessage[], tools: Record<string, Tool> = {}, streaming = false, elapsedMs?: number) {
   return renderToStaticMarkup(
-    <TranscriptMessage
-      items={[{ id: "message", message }]}
-      tools={{}}
-      streaming={false}
-      thinking={false}
-    />,
+    <TranscriptGroupView group={{ id: items[0]?.id ?? "g", items, elapsedMs }} tools={tools} streaming={streaming} modelName="GPT-6.1-Sol" />,
   );
 }
-
-describe("transcript message actions", () => {
-  test("places the user timestamp and copy action below the message bubble", () => {
-    const html = render({ role: "user", content: "你好", timestamp: Date.UTC(2026, 8, 17, 6, 0) });
-    expect(html.indexOf("ai-message-content")).toBeGreaterThan(-1);
-    expect(html.indexOf("message-response-footer")).toBeGreaterThan(html.indexOf("ai-message-content"));
-    expect(html).toContain('data-slot="message-actions"');
-    expect(html).toContain("<time");
-    expect(html).not.toContain('aria-label="分支到新聊天"');
-  });
-
-  test("renders registry message actions for assistant replies without a timestamp", () => {
-    const html = render({ role: "assistant", content: "你好，有什么可以帮你的？", timestamp: Date.UTC(2026, 8, 17, 6, 0) });
-    expect(html).toContain('data-slot="message-actions"');
-    expect(html).toContain('aria-label="复制消息"');
-    expect(html).not.toContain("<time");
-    expect(html).toContain('aria-label="分支到新聊天"');
-    expect(html).not.toContain("select-none");
-  });
-
-  test("does not turn transient provider errors into transcript cards", () => {
-    const html = render({ role: "assistant", content: [], errorMessage: "Our servers are currently overloaded." });
-    expect(html).not.toContain("transcript-error");
-    expect(html).not.toContain("会话异常");
-  });
-});
 
 const phases: DisplayMessage[] = [
   { id: "first", message: { role: "assistant", stopReason: "toolUse", content: [
@@ -47,7 +19,6 @@ const phases: DisplayMessage[] = [
     { type: "toolCall", id: "read", name: "read", arguments: { path: "src/app.ts" } },
   ] } },
   { id: "second", message: { role: "assistant", stopReason: "toolUse", content: [
-    { type: "thinking", thinking: "第二轮思考", thinkingComplete: true },
     { type: "text", text: "现在运行验证" },
     { type: "toolCall", id: "test", name: "bash", arguments: { command: "bun test" } },
   ] } },
@@ -57,193 +28,109 @@ const phases: DisplayMessage[] = [
   ] } },
 ];
 
-function readableMarkup(html: string) {
-  return html.replace(/<span\b[^>]*>/g, "").replace(/<\/span>/g, "");
-}
+const phaseTools: Record<string, Tool> = {
+  read: { name: "read", running: false, result: "source" },
+  test: { name: "bash", running: false, result: "passed" },
+};
 
-function renderPhases(streaming = false, items = phases) {
-  return renderToStaticMarkup(<TranscriptMessage items={items} tools={{
-    read: { name: "read", running: false, result: "source" },
-    test: { name: "bash", running: false, result: "passed" },
-  }} streaming={streaming} thinking={false} savedDuration={33000} />);
-}
-
-describe("whole-turn process history", () => {
-  test("compresses a tool-only turn into one thinking row and one operation row", () => {
-    const items: DisplayMessage[] = [
-      { id: "thinking-1", message: { role: "assistant", stopReason: "toolUse", content: [
-        { type: "thinking", thinking: "先检查项目结构", thinkingComplete: true },
-        { type: "toolCall", id: "read-1", name: "read", arguments: { path: "src" } },
-      ] } },
-      { id: "thinking-2", message: { role: "assistant", stopReason: "toolUse", content: [
-        { type: "thinking", thinking: "再运行验证", thinkingComplete: true },
-        { type: "toolCall", id: "run-1", name: "bash", arguments: { command: "bun test" } },
-      ] } },
-      { id: "thinking-3", message: { role: "assistant", stopReason: "toolUse", content: [
-        { type: "thinking", thinking: "最后读取结果", thinkingComplete: true },
-        { type: "toolCall", id: "read-2", name: "read", arguments: { path: "test-results.txt" } },
-      ] } },
-    ];
-    const html = readableMarkup(renderToStaticMarkup(<TranscriptMessage items={items} tools={{
-      "read-1": { name: "read", running: false, result: "src/app.ts" },
-      "run-1": { name: "bash", running: false, result: "passed" },
-      "read-2": { name: "read", running: false, result: "3 passed" },
-    }} streaming={false} thinking={false} />));
-
-    expect(html.match(/class="thinking-summary"/g)?.length).toBe(1);
-    expect(html.match(/class="tool-activity-group"/g)?.length).toBe(1);
-    expect(html).toContain("最后读取结果");
-    expect(html).toContain("读取 2 次 · 运行 1 次");
-    expect(html).toContain("src/app.ts");
-    expect(html).toContain("bun test");
-    expect(html).toContain("test-results.txt");
+describe("user messages", () => {
+  test("renders a MonoCode chat bubble with copy and time below it", () => {
+    const html = render([{ id: "u", message: { role: "user", content: "你好", timestamp: Date.UTC(2026, 8, 17, 6, 0) } }]);
+    expect(html).toContain("user-message-bubble");
+    expect(html).toContain("rounded-full");
+    expect(html).toContain('aria-label="复制消息"');
+    expect(html).toContain("<time");
   });
 
-  test("keeps a single live thinking row while thinking text changes", () => {
-    const items: DisplayMessage[] = [{ id: "live", message: { role: "assistant", content: [
-      { type: "thinking", thinking: "正在检查" },
-    ] } }];
-    const html = readableMarkup(renderToStaticMarkup(<TranscriptMessage items={items} tools={{}} streaming thinking />));
-    expect(html.match(/class="thinking-summary"/g)?.length).toBe(1);
-    expect(html).toContain("正在检查");
-    expect(html).toContain('data-working="true"');
-  });
-
-  test("keeps failed compressed operations expanded and visible", () => {
-    const items: DisplayMessage[] = [{ id: "failed", message: { role: "assistant", stopReason: "toolUse", content: [
-      { type: "thinking", thinking: "执行检查", thinkingComplete: true },
-      { type: "toolCall", id: "run-failed", name: "bash", arguments: { command: "bun test" } },
-    ] } }];
-    const html = readableMarkup(renderToStaticMarkup(<TranscriptMessage items={items} tools={{
-      "run-failed": { name: "bash", running: false, result: "failed", isError: true },
-    }} streaming={false} thinking={false} />));
-    expect(html).toContain('class="tool-activity-group" data-open="true" data-error="true"');
-    expect(html).toContain("failed");
-  });
-
-  test("uses text as the only boundary while thinking stays in one changing row", () => {
-    const items: DisplayMessage[] = [
-      { id: "status-1", message: { role: "assistant", stopReason: "toolUse", content: [
-        { type: "thinking", thinking: "先理解需求", thinkingComplete: true },
-        { type: "text", text: "先检查 Pi 扩展怎么注册工具" },
-        { type: "toolCall", id: "read-1", name: "read", arguments: { path: "src" } },
-      ] } },
-      { id: "status-2", message: { role: "assistant", stopReason: "toolUse", content: [
-        { type: "thinking", thinking: "再确认 Node 通信方式", thinkingComplete: true },
-        { type: "toolCall", id: "run-1", name: "bash", arguments: { command: "bun test" } },
-      ] } },
-      { id: "status-3", message: { role: "assistant", stopReason: "toolUse", content: [
-        { type: "thinking", thinking: "已经确认通信方式", thinkingComplete: true },
-        { type: "toolCall", id: "read-2", name: "read", arguments: { path: "README.md" } },
-      ] } },
-    ];
-    const html = readableMarkup(renderToStaticMarkup(<TranscriptMessage items={items} tools={{
-      "read-1": { name: "read", running: false, result: "ok" },
-      "run-1": { name: "bash", running: false, result: "passed" },
-      "read-2": { name: "read", running: false, result: "done" },
-    }} streaming={false} thinking={false} />));
-    expect(html.match(/class="thinking-summary"/g)?.length).toBe(2);
-    expect(html.match(/class="tool-activity-group"/g)?.length).toBe(1);
-    expect(html).toContain("先检查 Pi 扩展怎么注册工具");
-    expect(html).toContain("已经确认通信方式");
-    expect(html).toContain("读取 2 次 · 运行 1 次");
-  });
-
-  test("preserves every phase in order and collapses only the process after completion", () => {
-    const html = readableMarkup(renderPhases());
-    expect(html).toContain('class="turn-activity" data-open="false"');
-    expect(html).toContain("33秒");
-    const ordered = ["第一轮思考", "先检查实现", "第二轮思考", "src/app.ts", "现在运行验证", "准备总结", "bun test", "最终结果：已完成"];
-    for (let i = 1; i < ordered.length; i++) {
-      expect(html.indexOf(ordered[i])).toBeGreaterThan(html.indexOf(ordered[i - 1]));
-    }
-    const panelEnd = html.indexOf('</section>', html.indexOf('准备总结'));
-    expect(html.indexOf('最终结果：已完成')).toBeGreaterThan(panelEnd);
-    expect(html.match(/class="turn-activity"/g)?.length).toBe(1);
-  });
-
-  test("shows the complete timeline while streaming", () => {
-    const html = readableMarkup(renderPhases(true));
-    expect(html).toContain('class="turn-activity" data-open="true" data-working="true"');
-    expect(html).toContain('最终结果：已完成');
-    expect(html.indexOf('第一轮思考')).toBeLessThan(html.indexOf('第二轮思考'));
-  });
-
-  test("keeps interrupted, failed and tool-only runs expanded", () => {
-    for (const stopReason of ["aborted", "error", "toolUse"]) {
-      const items = [...phases.slice(0, -1), { ...phases[2], message: { ...phases[2].message, stopReason } }];
-      const html = renderPhases(false, items);
-      expect(html).toContain('class="turn-activity" data-open="true"');
-    }
-    expect(renderPhases(false, phases.slice(0, 2))).toContain('class="turn-activity" data-open="true"');
-  });
-
-  test("does not hide a plain final answer in an empty process disclosure", () => {
-    const html = render({ role: "assistant", content: "直接回复", stopReason: "stop" });
-    expect(html).not.toContain('class="turn-activity"');
-    expect(readableMarkup(html)).toContain("直接回复");
-  });
-
-  // 回归：read 读一张 PNG、截图回传的结果里也带 image。只按“结果里有图片”判断
-  // 会把这类工具当成生成图片，导致一轮说完话之后处理过程永远不收起。
-  test("collapses after a finished turn whose tool results merely contain images", () => {
-    const items: DisplayMessage[] = [
-      { id: "shot", message: { role: "assistant", stopReason: "toolUse", content: [
-        { type: "toolCall", id: "read-shot", name: "read", arguments: { path: "/tmp/shot.png" } },
-      ] } },
-      { id: "answer", message: { role: "assistant", stopReason: "stop", content: [
-        { type: "text", text: "看完了，结果是这样" },
-      ] } },
-    ];
-    const html = readableMarkup(renderToStaticMarkup(<TranscriptMessage items={items} tools={{
-      "read-shot": { name: "read", running: false, result: "[图片]", images: [{ data: "AAAA", mimeType: "image/png" }] },
-    }} streaming={false} thinking={false} />));
-    expect(html).toContain('class="turn-activity" data-open="false"');
-    expect(html).toContain("看完了，结果是这样");
-  });
-
-  test("places child-agent activity after the spawn tool and before later parent work", () => {
-    const items: DisplayMessage[] = [
-      { id: "spawn", message: { role: "assistant", stopReason: "toolUse", content: [
-        { type: "text", text: "准备启动子任务" },
-        { type: "toolCall", id: "spawn-agent", name: "spawn_agent", arguments: { task_name: "repo", message: "inspect" } },
-      ] } },
-      { id: "continue", message: { role: "assistant", stopReason: "toolUse", content: [
-        { type: "text", text: "父任务继续读取" },
-        { type: "toolCall", id: "read-after", name: "read", arguments: { path: "README.md" } },
-      ] } },
-    ];
-    const html = readableMarkup(renderToStaticMarkup(<TranscriptMessage items={items} tools={{
-      "spawn-agent": { name: "spawn_agent", running: false, result: "started" },
-      "read-after": { name: "read", running: true },
-    }} streaming thinking={false} activity={<div>子 agent timeline</div>} />));
-
-    expect(html.indexOf("准备启动子任务")).toBeLessThan(html.indexOf("子 agent timeline"));
-    expect(html.indexOf("子 agent timeline")).toBeLessThan(html.indexOf("父任务继续读取"));
+  test("uses a rounded card instead of a pill for multi-line prompts", () => {
+    const html = render([{ id: "u", message: { role: "user", content: "第一行\n第二行" } }]);
+    expect(html).toContain("rounded-xl");
+    expect(html).not.toContain("rounded-full");
   });
 });
 
-describe("turn activity clock", () => {
-  const items: DisplayMessage[] = [{ id: "live", message: { role: "assistant", content: [
-    { type: "toolCall", id: "read", name: "read", arguments: { path: "src/app.ts" } },
-  ] } }];
-  const tools = { read: { name: "read", running: true, result: "" } };
-  const header = (html: string) => html.match(/turn-activity-header[^>]*>([\s\S]*?)<\/button>/)?.[1]?.replace(/<[^>]+>/g, "");
-
-  test("shows a counting duration while the segment owns the live clock", () => {
-    const html = renderToStaticMarkup(<TranscriptMessage items={items} tools={tools} streaming thinking={false} clock="live" />);
-    expect(header(html)).toMatch(/\d+秒/);
+describe("turn projection", () => {
+  test("splits the final prose out as the answer and everything before as work", () => {
+    const turn = projectTurn(phases, phaseTools, false);
+    expect(turn.answer.map((step) => step.text)).toEqual(["最终结果：已完成"]);
+    expect(turn.work.some((step) => step.kind === "tool")).toBe(true);
+    expect(turn.work.some((step) => step.text === "先检查实现")).toBe(true);
   });
 
-  test("never shows 正在处理 on steered segments below the top one", () => {
-    const whileStreaming = renderToStaticMarkup(<TranscriptMessage items={items} tools={tools} streaming thinking={false} clock="hidden" />);
-    const settled = renderToStaticMarkup(<TranscriptMessage items={items} tools={tools} streaming={false} thinking={false} clock="hidden" />);
-    expect(header(whileStreaming)).toBe("处理过程");
-    expect(settled).not.toContain("正在处理");
+  test("a turn that ends on a tool call has no answer to fold behind", () => {
+    const turn = projectTurn(phases.slice(0, 2), phaseTools, false);
+    expect(turn.answer).toEqual([]);
   });
 
-  test("shows the finished duration on the segment that displays it", () => {
-    const html = renderToStaticMarkup(<TranscriptMessage items={items} tools={tools} streaming={false} thinking={false} elapsedMs={52000} />);
-    expect(header(html)).toBe("用时52秒");
+  test("narration starts a new phase and titles it", () => {
+    const turn = projectTurn(phases, phaseTools, false);
+    const built = buildPhases(turn.work, phaseTools);
+    expect(built.map((phase) => phase.headline?.text)).toEqual(["先检查实现", "现在运行验证", undefined]);
+    expect(built[0]?.kind).toBe("research");
+    expect(built[1]?.kind).toBe("run");
+  });
+
+  test("summarises work the way MonoCode does, in Chinese", () => {
+    const turn = projectTurn(phases, phaseTools, false);
+    expect(workSummaryLine(turn.work, phaseTools)).toBe("读取了 1 个文件 · 运行了命令");
+    expect(workSummaryLine([], {}, true)).toBe("正在思考");
+  });
+
+  test("strips markdown from narration summaries", () => {
+    expect(proseSummary("## 计划\n\n先看 `src/app.ts` 的 **入口**")).toBe("计划");
+    expect(proseSummary("先看 `src/app.ts` 的 **入口**")).toBe("先看 src/app.ts 的 入口");
+  });
+
+  test("formats the fold line like MonoCode", () => {
+    expect(formatWorkingDuration(14_000, "GPT-6.1-Sol", true)).toBe("GPT-6.1-Sol worked for 14s");
+    expect(formatWorkingDuration(95_000, undefined, true)).toBe("Worked for 1m 35s");
+    expect(formatWorkingDuration(null, "Pi", false)).toBe("Pi working…");
+  });
+});
+
+describe("assistant turns", () => {
+  test("folds settled work behind the worked-for line and keeps the answer full size", () => {
+    const html = render(phases, phaseTools, false, 14_000);
+    expect(html).toContain("GPT-6.1-Sol worked for 14s");
+    expect(html).toContain('aria-label="展开过程"');
+    // Settled work is folded away entirely; only the line remains.
+    expect(html).not.toContain("zen-fold-rail");
+    expect(html).not.toContain("先检查实现");
+    expect(text(html)).toContain("最终结果：已完成");
+    expect(html).toContain('aria-label="复制回复"');
+    expect(html).toContain('aria-label="分支到新聊天"');
+  });
+
+  test("shows the live work open and shimmering while streaming", () => {
+    const live: DisplayMessage[] = [{ id: "live", message: { role: "assistant", content: [
+      { type: "thinking", thinking: "正在检查" },
+      { type: "toolCall", id: "run", name: "bash", arguments: { command: "bun test" } },
+    ] } }];
+    const html = render(live, { run: { name: "bash", running: true } }, true);
+    expect(html).toContain("shimmer-text");
+    expect(html).toContain("GPT-6.1-Sol working");
+    expect(html).toContain('data-fold-state="open"');
+    expect(html).not.toContain('aria-label="复制回复"');
+  });
+
+  test("a plain reply has no work fold, only the answer and footer", () => {
+    const html = render([{ id: "plain", message: { role: "assistant", stopReason: "stop", content: "直接回复" } }], {}, false, 3_000);
+    expect(text(html)).toContain("直接回复");
+    expect(html).not.toContain("zen-fold-rail");
+    expect(html).toContain("GPT-6.1-Sol worked for 3s");
+  });
+
+  test("marks failed tool rows in red with an error glyph", () => {
+    const items: DisplayMessage[] = [{ id: "failed", message: { role: "assistant", stopReason: "toolUse", content: [
+      { type: "toolCall", id: "run-failed", name: "bash", arguments: { command: "bun test" } },
+    ] } }];
+    const html = render(items, { "run-failed": { name: "bash", running: false, result: "failed", isError: true } }, true);
+    expect(html).toContain("失败的工具调用");
+    expect(html).toContain("text-red-400");
+  });
+
+  test("does not turn transient provider errors into answers", () => {
+    const html = render([{ id: "err", message: { role: "assistant", content: [], errorMessage: "Our servers are currently overloaded." } }], {}, true);
+    expect(html).not.toContain("最终结果");
   });
 });

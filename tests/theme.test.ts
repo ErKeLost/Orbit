@@ -13,7 +13,7 @@ describe("theme synchronization", () => {
     expect(isResolvedTheme("light")).toBe(true);
     expect(isResolvedTheme("dark")).toBe(true);
     expect(isResolvedTheme("system")).toBe(false);
-    expect(themeColor.light).toBe("#ffffff");
-    expect(themeColor.dark).toBe("#252525");
+    expect(themeColor.light).toBe("#f7f7f7");
+    expect(themeColor.dark).toBe("#171717");
   });
 });

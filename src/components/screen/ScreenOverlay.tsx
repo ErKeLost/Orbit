@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { gooeyToast } from "goey-toast"
+import { toast as gooeyToast } from "../../shared/ui/toast";
 import { useWorkspace } from "../../lib/store"
 import { screenChannel, type ScreenChannelSnapshot } from "../../lib/remote-screen"
 import { loadPlacement, savePlacement, type PipPlacement } from "../../lib/screen-pip"

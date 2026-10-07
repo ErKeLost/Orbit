@@ -168,7 +168,13 @@ export function formatTranscriptError(raw: string): string {
   }
   return text
 }
+// 手动停止一轮时，Pi 给 assistant 消息标上 stopReason "aborted" 并附
+// "This operation was aborted"。用户主动暂停不是故障：剥掉这段错误文本，
+// 轮内错误行和 transcript.error 都不会再为它出现（历史重载 hydrate 同样生效）。
+const isAbortedAssistant = (message: PiMessage) =>
+  message.role === 'assistant' && (message.stopReason === 'aborted' || message.errorMessage?.trim().toLowerCase() === 'this operation was aborted')
 export function normalizeMessage(message: PiMessage): PiMessage {
+  if (message.errorMessage && isAbortedAssistant(message)) return { ...message, errorMessage: undefined }
   if(message.content !== undefined)return message
   if(message.role==='bashExecution')return {...message,content:`Bash: ${message.command ?? ''}\n\n${message.output ?? ''}`}
   return {...message,content:message.summary ?? ''}

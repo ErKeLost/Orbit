@@ -1,20 +1,163 @@
-import { Icon as Iconify, addCollection } from '@iconify/react'
-import icons from '../icons.generated.json'
-import fileIcons from '../file-icons.generated.json'
-import skillIcons from '../skill-icons.generated.json'
-import modeIcons from '../mode-icons.generated.json'
-import { coloredDeviconCollection } from '../lib/link-visual'
-// Bundle icon families locally; rendering makes no network requests.
-addCollection(icons)
-addCollection(fileIcons)
-addCollection(skillIcons)
-addCollection(modeIcons)
-addCollection(coloredDeviconCollection())
+import type { IconComponent } from "../shared/ui/icons";
+import {
+  AlertCircle,
+  ArrowDownCircle,
+  ArrowLeft,
+  ArrowUp,
+  Bot,
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  ChevronsUpDown,
+  Copy,
+  CornerDownRight,
+  CursorMagicSelection,
+  DashboardSquare,
+  ExternalLink,
+  File,
+  FileScript,
+  Folder,
+  FolderOpen,
+  FolderTree,
+  GitBranch,
+  GitCompare,
+  GitMerge,
+  Globe,
+  ImagePlus,
+  Inbox,
+  Keyboard,
+  ListBullet,
+  ListFilter,
+  MessageMultiple,
+  MessageSquare,
+  MessageSquarePlus,
+  MoreHorizontal,
+  Palette,
+  PanelLeft,
+  PenLine,
+  Pencil,
+  Play,
+  Plus,
+  RefreshCw,
+  Search,
+  Settings,
+  Share,
+  Shield,
+  SlidersHorizontal,
+  Sparkles,
+  Square,
+  SquarePlus,
+  StickyNote,
+  Terminal,
+  Trash2 as Trash,
+  Ungroup,
+  Wrench,
+  X,
+  Zap,
+} from "../shared/ui/icons";
+import { Icon as Iconify, addCollection } from "@iconify/react";
+import fluentColor from "@iconify-json/fluent-color/icons.json";
+import { FileTypeIcon } from "../features/shell/FileTypeIcon";
 
-export function Icon({ name, className }: { name: string; className?: string }) {
-  const iconName = name.includes(':') ? name : `ph:${name}`
-  return <Iconify icon={iconName} className={className} aria-hidden />
+// Bundled locally so rendering never hits the network.
+addCollection(fluentColor as never);
+
+/**
+ * Orbit's components still ask for icons by their old Phosphor names. Every
+ * name resolves to MonoCode's Hugeicons set, so nothing renders from the
+ * previous icon families anymore.
+ */
+const GLYPHS: Record<string, IconComponent> = {
+  "arrow-bend-up-right": CornerDownRight,
+  "arrow-down": ChevronDown,
+  "arrow-left": ArrowLeft,
+  "arrow-right": ChevronRight,
+  "arrow-up": ArrowUp,
+  "arrow-up-right": ExternalLink,
+  "arrows-clockwise": RefreshCw,
+  "book-open": File,
+  "bookmark-simple": StickyNote,
+  "caret-down": ChevronDown,
+  "caret-left": ChevronLeft,
+  "caret-right": ChevronRight,
+  "caret-up": ChevronUp,
+  "caret-up-down": ChevronsUpDown,
+  "chart-bar": DashboardSquare,
+  "chat-circle": MessageSquare,
+  "chat-circle-text": MessageSquare,
+  "chat-teardrop-text": MessageSquare,
+  chats: MessageMultiple,
+  check: Check,
+  code: FileScript,
+  command: Keyboard,
+  copy: Copy,
+  cpu: CursorMagicSelection,
+  database: Bot,
+  desktop: DashboardSquare,
+  "device-mobile": Share,
+  "dots-three": MoreHorizontal,
+  "dots-three-bold": MoreHorizontal,
+  download: ArrowDownCircle,
+  export: ArrowDownCircle,
+  "file-magnifying-glass": Search,
+  "folder-open": FolderOpen,
+  "folder-simple": Folder,
+  funnel: ListFilter,
+  "gear-six": Settings,
+  "git-commit": GitMerge,
+  "git-fork": GitBranch,
+  globe: Globe,
+  "image-square": ImagePlus,
+  keyboard: Keyboard,
+  list: ListBullet,
+  "magnifying-glass": Search,
+  message: MessageSquare,
+  "note-pencil": MessageSquarePlus,
+  package: Inbox,
+  palette: Palette,
+  "pencil-simple": Pencil,
+  "play-circle": Play,
+  plus: Plus,
+  "plus-circle": SquarePlus,
+  "puzzle-piece": Sparkles,
+  "share-network": Share,
+  "shield-check": Shield,
+  "sidebar-simple": PanelLeft,
+  sparkle: Sparkles,
+  stack: FolderTree,
+  "stop-fill": Square,
+  "terminal-window": Terminal,
+  "text-align-left": ListBullet,
+  "theme-color": Palette,
+  translate: Globe,
+  trash: Trash,
+  "tree-structure": Ungroup,
+  "warning-circle": AlertCircle,
+  wrench: Wrench,
+  x: X,
+  "youtube-logo-fill": Play,
+  "git-compare": GitCompare,
+  "pen-line": PenLine,
+  "sliders-horizontal": SlidersHorizontal,
+  zap: Zap,
+};
+
+export function Icon({ name, className = "size-4" }: { name: string; className?: string }) {
+  const key = name.replace(/^ph:/, "");
+  // Prefixed names are彩色 collections (fluent-color for agent kinds, devicon
+  // for links); the monochrome chrome set below is Hugeicons.
+  if (key.includes(":")) return <Iconify icon={key} className={className} aria-hidden />;
+  const Glyph = GLYPHS[key];
+  if (Glyph) return <Glyph className={className} strokeWidth={1.75} aria-hidden />;
+  // Old colored file-type names (vscode-icons:/catppuccin:) map to Material icons.
+  const fileType = /^(?:vscode-icons:file-type-|catppuccin:)(.+)$/.exec(key)?.[1];
+  if (fileType) return <FileTypeIcon name={`file.${fileType.replace(/2$/, "")}`} isDir={false} size={16} />;
+  return <Sparkles className={className} strokeWidth={1.75} aria-hidden />;
 }
-const byExtension:Record<string,string>={ts:'typescript',mts:'typescript',cts:'typescript',js:'javascript',mjs:'javascript',cjs:'javascript',tsx:'typescript-react',jsx:'javascript-react',json:'json',jsonc:'json',md:'markdown',mdx:'markdown-mdx',html:'html',htm:'html',css:'css',less:'css',scss:'sass',sass:'sass',vue:'vue',rs:'rust',go:'go',py:'python',sh:'bash',bash:'bash',zsh:'bash',fish:'bash',yml:'yaml',yaml:'yaml',toml:'toml',png:'image',jpg:'image',jpeg:'image',gif:'image',webp:'image',svg:'svg',pdf:'pdf',astro:'astro',svelte:'svelte',xml:'xml',graphql:'graphql',gql:'graphql',sql:'database',c:'c',h:'c',cpp:'cpp',cc:'cpp',java:'java',kt:'kotlin',swift:'swift',php:'php',rb:'ruby',pl:'perl',lua:'lua',vim:'vim'}
-function fileType(path:string){const file=path.trim().split(/[\\/]/).at(-1)?.toLowerCase()??'';if(file==='package.json')return 'npm';if(file==='bun.lock')return 'bun-lock';if(file==='.env'||file.startsWith('.env.'))return 'env';if(file==='dockerfile'||file.endsWith('.dockerfile'))return 'docker';if(file.endsWith('.config')||file.endsWith('.conf'))return 'config';if(file.endsWith('.lock'))return 'lock';return byExtension[file.split('.').at(-1)??'']??'file'}
-export function FileIcon({path,className}:{path:string;className?:string}){return <Iconify icon={`catppuccin:${fileType(path)}`} className={className} aria-hidden />}
+
+export function FileIcon({ path, className: _className }: { path: string; className?: string }) {
+  const name = path.trim().split(/[\\/]/).at(-1) ?? path;
+  return <FileTypeIcon name={name} isDir={false} size={14} />;
+}

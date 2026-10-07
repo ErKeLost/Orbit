@@ -7,11 +7,10 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { base64ToBlob } from "../../lib/image-bytes";
 import { desktopRuntime, ensureSessionModes, report, sendPrompt } from "../../lib/rpc";
 import { useWorkspace } from "../../lib/store";
-import { Icon } from "../Icon";
-import { Button } from "../UI";
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "../ui/context-menu";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
-import { Textarea } from "../ui/textarea";
+import { Modal } from "../../shared/ui/Modal";
+import { ImageLightbox } from "../../shared/ui/ImageLightbox";
+import { MenuItem, MenuSeparator, PointMenu, TextArea } from "../../shared/ui/controls";
+import { Copy, FolderOpen, ArrowDownCircle, Sparkles, Loader } from "../../shared/ui/icons";
 
 const EXTENSIONS: Record<string, string> = { jpeg: "jpg", jpg: "jpg", png: "png", webp: "webp", gif: "gif" };
 
@@ -116,42 +115,57 @@ export function ImageActionsMenu({ dataUrl, path, prompt, children }: ImageActio
     });
   }
 
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [zoom, setZoom] = useState(false);
+  const pick = (action: () => void) => { setMenu(null); action(); };
+
   return <>
-    <ContextMenu>
-      <ContextMenuTrigger render={<div className="tool-image-frame" />}>{children}</ContextMenuTrigger>
-      <ContextMenuContent className="w-56">
-        <ContextMenuItem disabled={!path || !desktop} onClick={startEditing}><Icon name="sparkle" />AI 编辑这张图…</ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem disabled={!decoded || busy === "save"} onClick={() => void run("save", async () => {
+    <div
+      className="tool-image-frame cursor-zoom-in"
+      onClick={() => { if (dataUrl) setZoom(true); }}
+      onContextMenu={event => { event.preventDefault(); setMenu({ x: event.clientX, y: event.clientY }); }}
+    >
+      {children}
+    </div>
+    {menu ? (
+      <PointMenu x={menu.x} y={menu.y} label="图片操作" width={232} onClose={() => setMenu(null)}>
+        <MenuItem disabled={!path || !desktop} icon={<Sparkles strokeWidth={1.75} />} onClick={() => pick(startEditing)}>AI 编辑这张图…</MenuItem>
+        <MenuSeparator />
+        <MenuItem disabled={!decoded || busy === "save"} icon={<ArrowDownCircle strokeWidth={1.75} />} onClick={() => pick(() => void run("save", async () => {
           const destination = await saveDialog({ defaultPath: suggestedName(path, decoded?.mimeType ?? "image/png"), title: "保存图片" });
           if (!destination) return;
           await invoke<string>("save_media_file", { data: decoded?.base64 ?? "", destination });
           notify("图片已保存");
-        })}><Icon name="download" />另存为…</ContextMenuItem>
-        <ContextMenuItem disabled={!path || !desktop} onClick={() => void run("reveal", async () => { if (path) await revealItemInDir(path); })}><Icon name="folder-open" />在文件夹中显示</ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem disabled={!decoded || !desktop} onClick={() => void run("copy", async () => {
+        }))}>另存为…</MenuItem>
+        <MenuItem disabled={!path || !desktop} icon={<FolderOpen strokeWidth={1.75} />} onClick={() => pick(() => void run("reveal", async () => { if (path) await revealItemInDir(path); }))}>在文件夹中显示</MenuItem>
+        <MenuSeparator />
+        <MenuItem disabled={!decoded || !desktop} icon={<Copy strokeWidth={1.75} />} onClick={() => pick(() => void run("copy", async () => {
           if (!decoded) return;
           await copyPixels(decoded.base64, decoded.mimeType);
           notify("图片已复制到剪贴板");
-        })}><Icon name="copy" />复制图片</ContextMenuItem>
-        <ContextMenuItem disabled={!path} onClick={() => void run("copy-path", async () => { if (path) await navigator.clipboard.writeText(path); notify("文件路径已复制"); })}><Icon name="copy" />复制文件路径</ContextMenuItem>
-        <ContextMenuItem disabled={!prompt} onClick={() => void run("copy-prompt", async () => { if (prompt) await navigator.clipboard.writeText(prompt); notify("提示词已复制"); })}><Icon name="copy" />复制提示词</ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
-    <Dialog open={editing} onOpenChange={next => { if (!next) setEditing(false); }}>
-      <DialogContent className="image-edit-dialog">
-        <DialogHeader><DialogTitle>AI 编辑这张图</DialogTitle></DialogHeader>
-        <div className="image-edit-body">
-          {dataUrl && <img className="image-edit-thumb" src={dataUrl} alt="参考图" />}
-          <p className="image-edit-hint">把这张图片作为参考图重新生成，可以只改一处（比如「换成夜景」「去掉杯子」），也可以重写整段描述。</p>
-          <Textarea autoFocus rows={6} value={draft} onChange={event => setDraft(event.target.value)} placeholder="描述你想怎么改…" />
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setEditing(false)}>取消</Button>
-          <Button disabled={!draft.trim() || busy === "edit"} onClick={() => void submitEdit()}>{busy === "edit" ? "正在发送…" : "生成"}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        }))}>复制图片</MenuItem>
+        <MenuItem disabled={!path} onClick={() => pick(() => void run("copy-path", async () => { if (path) await navigator.clipboard.writeText(path); notify("文件路径已复制"); }))}>复制文件路径</MenuItem>
+        <MenuItem disabled={!prompt} onClick={() => pick(() => void run("copy-prompt", async () => { if (prompt) await navigator.clipboard.writeText(prompt); notify("提示词已复制"); }))}>复制提示词</MenuItem>
+      </PointMenu>
+    ) : null}
+    {zoom && dataUrl ? <ImageLightbox src={dataUrl} alt={prompt ?? "生成的图片"} onClose={() => setZoom(false)} /> : null}
+    {editing ? (
+      <Modal title="AI 编辑这张图" description="把这张图作为参考图重新生成" size="md" onClose={() => setEditing(false)}>
+        <form className="flex flex-col gap-3.5 p-4 text-[13px]" onSubmit={event => { event.preventDefault(); void submitEdit(); }}>
+          <div className="flex gap-3">
+            {dataUrl ? <img className="size-20 shrink-0 rounded-lg border border-content/10 object-cover" src={dataUrl} alt="参考图" /> : null}
+            <p className="text-[12px] leading-relaxed text-content/55">可以只改一处（比如「换成夜景」「去掉杯子」），也可以重写整段描述。</p>
+          </div>
+          <TextArea autoFocus rows={6} value={draft} onChange={event => setDraft(event.target.value)} placeholder="描述你想怎么改…" />
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setEditing(false)} className="rounded-md px-3 py-1.5 hover:bg-content/8 active:scale-[0.97]">取消</button>
+            <button type="submit" disabled={!draft.trim() || busy === "edit"} className="inline-flex items-center gap-1.5 rounded-md bg-content px-3 py-1.5 font-medium text-background-base hover:bg-content/80 active:scale-[0.97] disabled:opacity-40">
+              {busy === "edit" ? <Loader className="size-3.5 animate-spin" /> : null}
+              生成
+            </button>
+          </div>
+        </form>
+      </Modal>
+    ) : null}
   </>;
 }

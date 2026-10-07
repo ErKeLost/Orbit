@@ -1,8 +1,8 @@
 export type ResolvedTheme = "light" | "dark";
 
 export const themeColor: Record<ResolvedTheme, string> = {
-  light: "#ffffff",
-  dark: "#252525",
+  light: "#f7f7f7",
+  dark: "#171717",
 };
 
 /**

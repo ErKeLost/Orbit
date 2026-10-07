@@ -8,7 +8,6 @@ import { installPerfLog } from './lib/perf-log'
 import './lib/perf-tier'
 import App from './App'
 import './index.css'
-import 'goey-toast/styles.css'
 import {Providers} from './components/Providers'
 document.title = import.meta.env.DEV ? 'Workspace · DEV (HMR)' : 'Workspace'
 installExternalLinkHandler()

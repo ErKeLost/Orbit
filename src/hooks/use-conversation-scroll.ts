@@ -2,9 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { isLowPerf } from "../lib/perf-tier";
 
 /** 距底部多少像素以内算“在底部”。 */
-const BOTTOM_THRESHOLD = 32;
 /** 用户输入（滚轮/触摸/按键）后多久内发生的滚动算“用户滚动”。 */
-const USER_INTENT_MS = 250;
 const SCROLL_UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
 
 /**
@@ -33,11 +31,9 @@ export function useConversationScroll() {
     const element = ref.current;
     if (!element) return;
     let lastScrollTop = element.scrollTop;
-    let userIntentAt = 0;
-    let draggingScrollbar = false;
     let followFrame = 0;
-    const distanceToBottom = () => element.scrollHeight - element.scrollTop - element.clientHeight;
-    const markIntent = () => { userIntentAt = performance.now(); };
+    // Explicit user gestures unpin immediately; programmatic scrolls do not.
+    const markIntent = () => undefined;
 
     const stickToBottom = () => {
       const target = element.scrollHeight - element.clientHeight;
@@ -55,15 +51,14 @@ export function useConversationScroll() {
       });
     };
 
+    // MonoCode's `followsAfterScroll`: following restarts only when genuine
+    // downward movement actually reaches the end. Layout clamping, no movement,
+    // and a small reversal inside the bottom margin all keep the position —
+    // which is what leaves an anchored prompt still.
     const onScroll = () => {
-      const top = element.scrollTop;
-      const movedUp = top < lastScrollTop - 1;
-      lastScrollTop = top;
-      const nearBottom = distanceToBottom() <= BOTTOM_THRESHOLD;
-      const userDriven = draggingScrollbar || performance.now() - userIntentAt < USER_INTENT_MS;
-      if (nearBottom) followingRef.current = true;
-      else if (movedUp && userDriven) followingRef.current = false;
-      setAtBottom(followingRef.current || nearBottom);
+      followingRef.current = followsAfterScroll(element, lastScrollTop, followingRef.current);
+      lastScrollTop = element.scrollTop;
+      setAtBottom(followingRef.current);
     };
 
     const onWheel = (event: WheelEvent) => {
@@ -76,19 +71,16 @@ export function useConversationScroll() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (SCROLL_UP_KEYS.has(event.key) || (event.key === " " && event.shiftKey)) markIntent();
     };
-    // 直接按在滚动容器上（而非其内容）即为拖动滚动条。
     const onPointerDown = (event: PointerEvent) => {
       markIntent();
-      if (event.target === element) draggingScrollbar = true;
+      if (event.target === element) followingRef.current = false;
     };
-    const onPointerUp = () => { draggingScrollbar = false; };
 
     element.addEventListener("scroll", onScroll, { passive: true });
     element.addEventListener("wheel", onWheel, { passive: true });
     element.addEventListener("touchmove", markIntent, { passive: true });
     element.addEventListener("keydown", onKeyDown);
     element.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("pointerup", onPointerUp);
 
     const resizeObserver = new ResizeObserver(onContentChange);
     resizeObserver.observe(element);
@@ -112,11 +104,12 @@ export function useConversationScroll() {
       element.removeEventListener("touchmove", markIntent);
       element.removeEventListener("keydown", onKeyDown);
       element.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("pointerup", onPointerUp);
+
       resizeObserver.disconnect();
       mutationObserver.disconnect();
     };
   }, [setAtBottom]);
+
 
   const settleFrameRef = useRef(0);
   useEffect(() => () => cancelAnimationFrame(settleFrameRef.current), []);
@@ -143,7 +136,26 @@ export function useConversationScroll() {
     settle();
   }, [setAtBottom]);
 
-  return { ref, atBottom, scrollToBottom } as const;
+  /** Stop following without moving: used while a sent prompt is anchored. */
+  const pauseFollow = useCallback(() => {
+    followingRef.current = false;
+    setAtBottom(false);
+    cancelAnimationFrame(settleFrameRef.current);
+  }, [setAtBottom]);
+
+  return { ref, atBottom, scrollToBottom, pauseFollow } as const;
+}
+
+/** MonoCode's rules for whether a scroll event restarts following. */
+function followsAfterScroll(element: HTMLElement, previousTop: number, following: boolean): boolean {
+  const movement = element.scrollTop - previousTop;
+  if (movement === 0 || scrollClampedToBottom(element, previousTop)) return following;
+  return movement > 0 && element.scrollHeight - element.scrollTop - element.clientHeight <= 1;
+}
+
+function scrollClampedToBottom(element: HTMLElement, previousTop: number): boolean {
+  const bottom = Math.max(0, element.scrollHeight - element.clientHeight);
+  return previousTop > bottom && Math.abs(element.scrollTop - bottom) < 1;
 }
 
 /** 滚轮发生在内部可滚动区域（代码块、工具输出）且它还能继续向该方向滚时，外层不会滚动。 */

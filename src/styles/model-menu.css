@@ -1,0 +1,149 @@
+
+
+.composer-model-menu {
+  display: grid;
+  width: min(280px, calc(100vw - 24px));
+  max-height: min(470px, calc(100vh - 96px));
+  grid-template-rows: auto minmax(96px, 300px) auto;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--color-background-base);
+}
+
+.composer-model-menu section { min-width: 0; }
+
+.composer-model-search {
+  display: flex;
+  height: 34px;
+  align-items: center;
+  gap: 7px;
+  margin: 8px 8px 6px;
+  padding: 0 9px;
+  border: 1px solid var(--color-stroke);
+  border-radius: 12px;
+  background: color-mix(in oklch, color-mix(in srgb, var(--color-content) 6%, transparent) 44%, transparent);
+}
+
+.composer-model-search:focus-within { border-color: color-mix(in srgb, var(--color-accent) 60%, transparent); box-shadow: 0 0 0 2px color-mix(in oklch, color-mix(in srgb, var(--color-accent) 60%, transparent) 18%, transparent); }
+
+.composer-model-search svg { width: 14px; height: 14px; color: color-mix(in srgb, var(--color-content) 50%, transparent); }
+
+.composer-model-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--color-content); font-size: 11px; }
+
+.composer-model-search input::placeholder { color: color-mix(in srgb, var(--color-content) 50%, transparent); }
+
+.composer-model-groups { min-height: 0; padding: 1px 6px 6px; overflow-y: auto; overscroll-behavior: contain; border-top: 1px solid var(--color-stroke); scrollbar-width: thin; }
+
+.composer-model-group { padding: 6px 0 1px; }
+
+.composer-model-group h3 { margin: 0 7px 3px; color: color-mix(in srgb, var(--color-content) 50%, transparent); font-size: 9px; font-weight: 550; }
+
+.composer-model-row {
+  display: flex;
+  width: 100%;
+  min-height: 34px;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--color-content);
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-model-row:hover,.composer-model-row.active { background: var(--color-selection); }
+
+.composer-model-row-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 1px; }
+
+.composer-model-row-copy strong { overflow: hidden; color: var(--color-content); font-size: 10.5px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+
+.composer-model-row-copy small { color: color-mix(in srgb, var(--color-content) 50%, transparent); font-size: 8.5px; }
+
+.composer-model-empty { margin: 12px 8px; color: color-mix(in srgb, var(--color-content) 50%, transparent); font-size: 11px; }
+
+.composer-effort-footer { padding: 4px 12px; border-top: 1px solid var(--color-stroke); background: color-mix(in oklch, color-mix(in srgb, var(--color-content) 6%, transparent) 24%, var(--color-background-base)); }
+
+.light .composer-model-search,
+html[data-theme="light"] .composer-model-search {
+  border-color: color-mix(in oklch, var(--color-content) 10%, var(--color-stroke));
+  background: color-mix(in oklch, color-mix(in srgb, var(--color-content) 6%, transparent) 58%, var(--color-background-base));
+  box-shadow: none;
+}
+
+.light .composer-model-search:focus-within,
+html[data-theme="light"] .composer-model-search:focus-within {
+  border-color: color-mix(in oklch, var(--color-content) 20%, var(--color-stroke));
+  box-shadow: 0 0 0 2px color-mix(in oklch, color-mix(in srgb, var(--color-accent) 60%, transparent) 16%, transparent);
+}
+
+.light .composer-model-groups,
+.light .composer-effort-footer,
+html[data-theme="light"] .composer-model-groups,
+html[data-theme="light"] .composer-effort-footer {
+  border-color: color-mix(in oklch, var(--color-content) 11%, var(--color-stroke));
+}
+
+.light .composer-model-row:hover,
+.light .composer-model-row.active,
+html[data-theme="light"] .composer-model-row:hover,
+html[data-theme="light"] .composer-model-row.active {
+  background: color-mix(in oklch, var(--color-content) 6%, var(--color-background-base));
+}
+/* Group header with a count, MonoCode-style row rhythm. */
+.composer-model-group h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 7px 4px;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.composer-model-group-count {
+  border-radius: 999px;
+  padding: 0 5px;
+  background: color-mix(in srgb, var(--color-content) 8%, transparent);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.composer-model-row {
+  height: 40px;
+  gap: 9px;
+  padding: 0 8px;
+  border-radius: 9px;
+}
+
+.composer-model-row-copy strong {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.composer-model-row-copy small {
+  font-size: 10px;
+  color: color-mix(in srgb, var(--color-content) 40%, transparent);
+}
+
+.composer-model-empty {
+  margin: 20px 12px;
+  text-align: center;
+}
+
+.composer-model-groups {
+  padding: 4px 6px 8px;
+}
+
+.composer-model-check {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--color-content) 55%, transparent);
+}

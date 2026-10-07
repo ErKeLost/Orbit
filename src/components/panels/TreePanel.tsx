@@ -5,7 +5,7 @@ import { changeSession, loadMessages, refresh, report, request } from "../../lib
 import { Button } from "../UI";
 import { usePrompt } from "../../lib/prompt";
 import { Icon } from "../Icon";
-import { gooeyToast } from "goey-toast";
+import { toast as gooeyToast } from "../../shared/ui/toast";
 
 function TreeNode({ node, leafId, depth = 0, disabled }: { node: SessionTreeNode; leafId: string | null; depth?: number; disabled: boolean }) {
   const ask = usePrompt();

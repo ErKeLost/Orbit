@@ -1,7 +1,7 @@
 import { useEffect } from "react"
 import { invoke, isTauri } from "@tauri-apps/api/core"
 import { getVersion } from "@tauri-apps/api/app"
-import { gooeyToast } from "goey-toast"
+import { toast as gooeyToast } from "../shared/ui/toast";
 import { useWorkspace } from "../lib/store"
 import { installDesktopUpdate, useDesktopUpdate } from "../lib/desktop-update"
 import { checkMobileUpdate, type MobileUpdate } from "../lib/mobile-update"

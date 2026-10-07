@@ -19,6 +19,13 @@ pub mod disclaim;
 /// report that they are unavailable instead of failing to build.
 mod screen;
 mod bridge;
+mod git;
+mod git_inbox;
+mod media;
+mod pty_term;
+mod search;
+mod notes;
+mod automations;
 mod mobile_update;
 mod remote;
 mod runtime;
@@ -186,6 +193,7 @@ pub fn run() {
         .manage(splash::SplashState::default())
         .manage(bridge::Bridge::default())
         .manage(remote::RemoteHost::default())
+        .manage(pty_term::PtyHost::new())
         .manage(screen::ScreenHost::default())
         .invoke_handler(tauri::generate_handler![
             #[cfg(target_os = "macos")]
@@ -228,6 +236,43 @@ pub fn run() {
             bridge::clear_sessions,
             bridge::session_turn_durations,
             bridge::open_pi_terminal,
+            git::git_diff_stats,
+            git::git_changed_files,
+            git::git_branches,
+            git::git_checkout,
+            git::git_create_branch,
+            git::list_dir,
+            git::read_text_file,
+            git_inbox::github_status,
+            git_inbox::github_inbox,
+            git_inbox::gitlab_status,
+            git_inbox::gitlab_connect,
+            git_inbox::gitlab_disconnect,
+            git_inbox::gitlab_inbox,
+            media::media_meta,
+            pty_term::pty_spawn,
+            pty_term::pty_write,
+            pty_term::pty_resize,
+            pty_term::pty_status,
+            pty_term::pty_kill,
+            pty_term::pty_kill_all,
+            search::search_files,
+            search::search_sessions,
+            notes::notes_list,
+            notes::notes_get,
+            notes::notes_upsert,
+            notes::notes_delete,
+            notes::notes_save_image,
+            notes::notes_save_image_data,
+            notes::notes_image_path,
+            automations::automations_list,
+            automations::automations_upsert,
+            automations::automations_delete,
+            automations::automation_runs_list,
+            automations::automation_runs_recover,
+            automations::automation_run_now,
+            automations::automations_claim_due,
+            automations::automation_run_update,
             mobile_update::mobile_update_install,
             mobile_update::mobile_update_probe,
             remote::remote_host_start,
@@ -243,6 +288,7 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Destroyed = event {
+                window.state::<pty_term::PtyHost>().kill_all();
                 window.state::<bridge::Bridge>().stop();
                 window.state::<remote::RemoteHost>().stop();
             }

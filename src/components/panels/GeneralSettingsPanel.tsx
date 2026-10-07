@@ -3,25 +3,22 @@ import { useQuery } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { getVersion } from "@tauri-apps/api/app";
-import { useTheme } from "next-themes";
-import { gooeyToast } from "goey-toast";
-import { Eye, EyeOff, ScanLine } from "lucide-react";
+import { toast as gooeyToast } from "../../shared/ui/toast";
+import { Eye, X as EyeOff, Share as ScanLine } from "../../shared/ui/icons";
 import QRCode from "antd/es/qr-code";
 import type { RpcCommand, RpcSessionState } from "@earendil-works/pi-coding-agent";
 import { useWorkspace } from "../../lib/store";
 import { useRuntimeDiscovery, type RuntimeDiscovery } from "../../lib/runtime-diagnostics";
-import { clearSessionHistory, connect, deleteMcpServer, desktopRuntime, disconnect, getGuiSettings, getProjectTrustMode, imageConfig, listMcpServers, loadMessages, mcpConfigLocation, native, refresh, refreshCapabilities, report, request, saveImageConfig, saveMcpServer, setGuiSetting, setProjectTrustMode, type ImageConfig, type McpServerView, type ProjectTrustMode } from "../../lib/rpc";
+import { clearSessionHistory, connect, deleteMcpServer, desktopRuntime, disconnect, getGuiSettings, getProjectTrustMode, imageConfig, listMcpServers, loadMessages, mcpConfigLocation, refresh, refreshCapabilities, report, request, saveImageConfig, saveMcpServer, setGuiSetting, setProjectTrustMode, type ImageConfig, type McpServerView, type ProjectTrustMode } from "../../lib/rpc";
 import { CACHE_WARMING_LABELS, CODEMODE_TOOL, MCP_EXPOSURE_LABELS, TOOL_SEARCH_TOOL, inactiveCapabilityTools, parseCapabilities, availableMediaModels } from "../../lib/capabilities";
 import { persistState } from "../../lib/persistent";
 import { getRemoteHost, relaySettingsStatus, rememberRemoteHostEnabled, saveRelaySettings, startRemoteHost, stopRemoteHost, type RelaySettingsStatus, type RemoteHostInfo } from "../../lib/remote-host";
 import { GLOBAL_SHORTCUT, NOTIFY_ON_COMPLETE_KEY, readAutostart, readGlobalShortcut, writeAutostart, writeGlobalShortcut } from "../../lib/desktop-integration";
 import { checkMobileUpdate, mobileUpdateErrorMessage } from "../../lib/mobile-update";
 import { checkForDesktopUpdate, offerMobileUpdate } from "../UpdateChecker";
-import { Button, Input, Select, Switch } from "../UI";
+import { Button, Card, CardContent, Input, Select, Switch } from "../UI";
 import { usePrompt } from "../../lib/prompt";
 import { Icon } from "../Icon";
-import { ModeToggle } from "../mode-toggle";
-import { Card, CardContent } from "../ui/card";
 import "../../styles/remote-access.css";
 
 async function applySetting(command: RpcCommand) {
@@ -183,23 +180,6 @@ export function SettingRow({ title, description, children, className = "" }: { t
     <div className="settings-item-copy"><strong>{title}</strong><p>{description}</p></div>
     <div className="settings-item-control">{children}</div>
   </div>;
-}
-
-function ThemeSettings() {
-  const { theme, setTheme, resolvedTheme } = useTheme();
-  const runtimeTarget = useWorkspace(state => state.runtimeTarget);
-  const remoteTheme = useWorkspace(state => state.remoteTheme);
-  if (runtimeTarget === "mobile") {
-    const current = remoteTheme === "dark" ? "当前为深色" : remoteTheme === "light" ? "当前为浅色" : "等待电脑主题";
-    return <SettingRow title="跟随电脑" description="手机主题由当前连接的电脑控制，电脑切换主题后会自动同步。"><span className="remote-settings-note" aria-live="polite">{current}</span></SettingRow>;
-  }
-  const preference = theme ?? "system";
-  const label = preference === "system" ? "跟随系统" : resolvedTheme === "dark" ? "深色主题" : "浅色主题";
-  return <SettingRow title={label} description="默认跟随系统设置，也可以固定使用浅色或深色主题。"><div className="theme-settings-controls"><Select aria-label="主题" value={preference} onChange={event => setTheme(event.target.value)}><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></Select><ModeToggle /></div></SettingRow>;
-}
-
-function ProjectDirectorySettings({ path, setPath, busy, running, status, onReconnect }: { path: string; setPath: (value: string) => void; busy: boolean; running: boolean; status: string; onReconnect: () => Promise<void> }) {
-  return <SettingRow title="项目目录" description="Pi 以此目录为工作区，并沿用现有的模型与凭据配置。" className="settings-item-directory"><div className="settings-directory-control"><Input value={path} onChange={event => setPath(event.target.value)} aria-label="工作目录" /><div className="settings-directory-actions"><Button variant="default" disabled={busy || running || !native} onClick={() => void onReconnect()}>{busy ? "连接中…" : "连接"}</Button><Button variant="outline" disabled={status !== "online"} onClick={() => void disconnect().catch(report)}>断开</Button></div></div></SettingRow>;
 }
 
 function TrustSettings({ mode, busy, desktop, onChange }: { mode: ProjectTrustMode; busy: boolean; desktop: boolean; onChange: (mode: ProjectTrustMode) => Promise<void> }) {
@@ -472,77 +452,30 @@ export function DesktopHostSettings({ pageMode = false }: { pageMode?: boolean }
     <div className="remote-relay-actions"><Button disabled={Boolean(host) || relaySaving || !relayUrl.trim()} onClick={() => void saveRelay()}>{relaySaving ? "保存中…" : "保存 Relay 配置"}</Button></div>
   </div>;
   if (pageMode) {
-    const clients = host?.connectedClients ?? 0;
     const relayReady = Boolean(relay?.hasHostKey);
-    const modes = [
-      { value: "lan", label: "局域网直连" },
-      { value: "relay", label: "公网中转" },
-      { value: "auto", label: "自动选择" },
-    ] as const;
-    const heading = clients ? "手机已连接" : host ? "等待手机连接" : "连接你的手机";
-    const description = clients
-      ? `${host?.machineName ?? "电脑"} · ${clients} 台设备在线`
-      : host
-        ? connectedLabel
-        : "用手机 Orbit 扫描二维码，在手机上继续当前工作。";
+    return <div className="mobile-access-page">
+      <SettingsGroup title="电脑 Host" icon="desktop" description="开启后，手机 Orbit 可以连接这台电脑查看会话、继续对话。">
+        <SettingRow title={host ? "Host 运行中" : "Host 未开启"} description={host ? connectedLabel || statusLabel : "开启后用手机 Orbit 扫描下方二维码即可配对。"}>
+          <Switch aria-label="电脑 Host" checked={Boolean(host)} disabled={loading || Boolean(busy)} onChange={checked => void (checked ? start() : stop())} />
+        </SettingRow>
+        {transportSetting}
+        <details className="settings-item mobile-access-relay-item">
+          <summary>
+            <div className="settings-item-copy"><strong>公网中转配置</strong><p>{relayReady ? "已配置中转服务器，可从外网（含 5G）连接。" : "配置阿里云 Relay 后可从外网（含 5G）连接，电脑无需开放端口。"}</p></div>
+            <span className="mobile-access-pill"><span className="remote-host-status-dot" data-online={relayReady} />{relayReady ? "已配置" : "未配置"}</span>
+          </summary>
+          {relaySetting}
+        </details>
+      </SettingsGroup>
 
-    return <div className="mobile-access-layout">
-      <div className="mobile-access-main">
-        <header className="mobile-access-connect-heading" data-online={clients > 0}>
-          <span className="mobile-access-connect-icon"><Icon name={clients ? "check" : "device-mobile"} /></span>
-          <div>
-            <p>ORBIT MOBILE</p>
-            <h2>{heading}</h2>
-            <span>{description}</span>
-          </div>
-          <span className="mobile-access-pill" aria-live="polite"><span className="remote-host-status-dot" data-online={Boolean(host)} />{statusLabel}</span>
-        </header>
-
-        <div className="mobile-access-setup">
-          <section className="mobile-access-pairing" aria-label="扫码连接">
-            <header className="mobile-access-section-heading">
-              <h3><Icon name="device-mobile" />扫码连接</h3>
-              {host && <Button variant="ghost" size="icon" title="复制配对链接" aria-label="复制配对链接" onClick={() => void copyPairingUri()}><Icon name="copy" /></Button>}
-            </header>
-            {host ? <>
-              <div className="mobile-access-qr"><QRCode type="svg" errorLevel="M" value={host.pairingUri} size={180} bordered={false} color="#111111" bgColor="#ffffff" /></div>
-              <p className="mobile-access-qr-copy">{host.mode === "relay" ? "任何网络均可连接" : "手机与电脑需连接同一 Wi-Fi"}</p>
-              {connectionFeedback && <p className="remote-host-feedback" role="status">{connectionFeedback}</p>}
-            </> : <div className="mobile-access-qr-empty"><ScanLine /><strong>开启电脑 Host 后显示二维码</strong><span>使用 Orbit 手机端扫描即可连接</span></div>}
-          </section>
-
-          <section className="mobile-access-controls" aria-label="连接设置">
-            <div className="mobile-access-host-row">
-              <span className="mobile-access-control-icon"><Icon name="desktop" /></span>
-              <div className="mobile-access-control-copy">
-                <strong>电脑 Host</strong>
-                <span>{host ? connectedLabel : "开启后允许手机连接这台电脑"}</span>
-              </div>
-              <Switch aria-label="电脑 Host" checked={Boolean(host)} disabled={loading || Boolean(busy)} onChange={checked => void (checked ? start() : stop())} />
-            </div>
-
-            <fieldset className="mobile-access-mode-fieldset" disabled={Boolean(host) || Boolean(busy)}>
-              <legend>连接方式</legend>
-              <div className="mobile-access-mode-control" role="group" aria-label="移动端连接方式">
-                {modes.map(mode => <button key={mode.value} type="button" aria-pressed={transport === mode.value} onClick={() => setTransport(mode.value)}>{mode.label}</button>)}
-              </div>
-              <p>{transport === "lan" ? "同一 Wi-Fi 下直连电脑，连接速度更快。" : transport === "relay" ? "通过你自己的中转服务器，从外网连接电脑。" : "优先局域网直连，网络不可达时自动使用中转。"}</p>
-            </fieldset>
-
-            <details className="mobile-access-relay-settings">
-              <summary><span>公网中转配置</span><span className="mobile-access-pill"><span className="remote-host-status-dot" data-online={relayReady} />{relayReady ? "已配置" : "未配置"}</span></summary>
-              {relaySetting}
-            </details>
-          </section>
-        </div>
-
-        <Button className="mobile-access-complete" onClick={() => useWorkspace.getState().set({ panel: "chat" })}>完成</Button>
-      </div>
-
-      <aside className="mobile-access-product" aria-label="Orbit 手机端界面预览">
-        <img data-theme-image="light" src="/orbit-mobile-product-light.png" alt="Orbit 手机端界面预览" />
-        <img data-theme-image="dark" src="/orbit-mobile-product-dark.png" alt="Orbit 手机端界面预览" />
-      </aside>
+      <SettingsGroup title="扫码连接" icon="device-mobile" description="手机与电脑连接同一 Wi-Fi 后扫码配对。">
+        {host ? <div className="mobile-access-qr-block">
+          <div className="mobile-access-qr"><QRCode type="svg" errorLevel="M" value={host.pairingUri} size={176} bordered={false} color="#111111" bgColor="#ffffff" /></div>
+          <p className="mobile-access-qr-copy">{host.mode === "relay" ? "任何网络均可连接" : "同一 Wi-Fi 下直连电脑，连接速度更快"}</p>
+          <Button variant="ghost" title="复制配对链接" aria-label="复制配对链接" onClick={() => void copyPairingUri()}>复制配对链接</Button>
+          {connectionFeedback && <p className="remote-host-feedback" role="status">{connectionFeedback}</p>}
+        </div> : <div className="mobile-access-qr-block"><div className="mobile-access-qr-empty"><ScanLine /><strong>开启电脑 Host 后显示二维码</strong><span>使用手机 Orbit 扫描即可连接</span></div></div>}
+      </SettingsGroup>
     </div>;
   }
   return <>
@@ -606,8 +539,6 @@ export function GeneralSettingsPanel() {
   const toolStatus = useWorkspace(workspace => workspace.statuses["gui-tools"]);
   const runtimeTarget = useWorkspace(workspace => workspace.runtimeTarget);
   const desktop = runtimeTarget === "desktop";
-  const [path, setPath] = useState(cwd);
-  const [busy, setBusy] = useState(false);
   const [historyBusy, setHistoryBusy] = useState(false);
   const [trustMode, setTrustMode] = useState<ProjectTrustMode>("ask");
   const [trustBusy, setTrustBusy] = useState(false);
@@ -626,12 +557,6 @@ export function GeneralSettingsPanel() {
     const instructions = await ask({ title: "压缩说明（可以留空）", multiline: true });
     if (instructions !== null) await request({ type: "compact", customInstructions: instructions }, 180000).then(() => loadMessages(cwd));
   }
-  async function reconnect() {
-    setBusy(true);
-    try { await connect(path, "project"); gooeyToast.success("项目已连接", { description: path, showTimestamp: false }); }
-    catch (error) { report(error); }
-    finally { setBusy(false); }
-  }
   async function changeTrustMode(mode: ProjectTrustMode) {
     if (!desktopRuntime()) return;
     setTrustBusy(true);
@@ -646,9 +571,8 @@ export function GeneralSettingsPanel() {
 
   return <>
     <div className="panel-heading"><div><h1><Icon name="gear-six" />常规</h1></div></div>
-    <SettingsGroup title="外观" icon="palette"><ThemeSettings /></SettingsGroup>
     <SettingsGroup title="桌面集成" icon="desktop" description="系统通知、全局快捷键与开机自启。"><DesktopIntegrationSettings desktop={desktop} /></SettingsGroup>
-    <SettingsGroup title="工作区" icon="folder-simple"><ProjectDirectorySettings path={path} setPath={setPath} busy={busy} running={running} status={status} onReconnect={reconnect} /><TrustSettings mode={trustMode} busy={trustBusy} desktop={desktop} onChange={changeTrustMode} /></SettingsGroup>
+    <SettingsGroup title="工作区" icon="folder-simple"><TrustSettings mode={trustMode} busy={trustBusy} desktop={desktop} onChange={changeTrustMode} /></SettingsGroup>
     {runtimeTarget === "mobile" && <SettingsGroup title="软件更新" icon="arrows-clockwise" description="主动从 GitHub Release 检查 Android 安装包。"><MobileAppUpdateSettings /></SettingsGroup>}
     <SettingsGroup title="上下文" icon="brain" description="管理当前会话的容量与压缩方式。"><ContextSettings cwd={cwd} status={status} running={running} state={state} onCompact={manualCompact} /></SettingsGroup>
     <SettingsGroup title="消息队列" icon="chats"><QueueSettings status={status} state={state} /></SettingsGroup>
