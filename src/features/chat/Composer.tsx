@@ -8,12 +8,11 @@ import { ensureSessionModes, recallQueue, report, sendPrompt, setComputerUseMode
 import { base64ToBlob } from "../../lib/image-bytes";
 import { encodeBlobToBase64, encodeClipboardImage } from "../../lib/image-encode";
 import { shouldSubmitComposer } from "../../lib/composer";
-import { useGitBranches } from "../../lib/git";
 import { useMetrics } from "../../hooks/use-metrics";
 import { Popover } from "../../shared/ui/Popover";
 import { ImageLightbox } from "../../shared/ui/ImageLightbox";
 import { toast } from "../../shared/ui/toast";
-import { ArrowUp, CursorMagicSelection, Folder, GitBranch, ImagePlus, Square, Ungroup, X, Plus } from "../../shared/ui/icons";
+import { ArrowUp, CursorMagicSelection, ImagePlus, Square, Ungroup, X, Plus } from "../../shared/ui/icons";
 import { FileTypeIcon } from "../shell/FileTypeIcon";
 import { ADD_NOTE_TO_CHAT_EVENT, appendNoteReference, type NoteComposerCard } from "../notes/notes";
 import { ModelPicker } from "./ModelPicker";
@@ -23,7 +22,7 @@ import { ComposerHighlight } from "./ComposerHighlight";
 import { useComposerTokens } from "./composerTokens";
 import { expandMentionLabels, type MentionFile } from "./fileMentions";
 import { ContextMeter } from "./ContextMeter";
-import { BranchPicker } from "./BranchPicker";
+import { WorkspaceRoots } from "./WorkspaceRoots";
 import { ExtensionDialog } from "../../components/panels/ExtensionDialog";
 
 type ImageAttachment = { kind: "image"; id: string; name: string; mimeType: string; blob: Blob };
@@ -270,16 +269,6 @@ const DraftField = memo(
   ),
 );
 
-function CwdLabel({ cwd }: { cwd: string }) {
-  const name = cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? cwd;
-  return (
-    <span title={cwd} className="-ml-1.5 flex h-6 min-w-0 max-w-48 shrink items-center gap-1.5 rounded-md px-1.5 text-[12px] text-content/55">
-      <Folder className="size-3.5 shrink-0" strokeWidth={1.75} />
-      <span className="min-w-0 truncate">{name ? "Current checkout" : "No folder"}</span>
-    </span>
-  );
-}
-
 export const Composer = memo(function Composer({ onSubmitted, centered = false }: { onSubmitted: () => void; centered?: boolean }) {
   const project = useWorkspace((state) => state.cwd);
   const connectionId = useWorkspace((state) => state.connectionId);
@@ -306,7 +295,6 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
   const fileInput = useRef<HTMLInputElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const { stats } = useMetrics();
-  const branches = useGitBranches(project && project !== homeDir ? project : undefined).data;
   const desktopMac = runtimeTarget === "desktop" && runtimePlatform === "macos";
 
   useEffect(() => { lruCache(attachmentCache, composerKey, attachments); }, [attachments, composerKey]);
@@ -511,8 +499,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
             <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-lg bg-accent/8 text-[12px] text-content/70">拖放文件以附加</div>
           ) : null}
           <div className="flex min-w-0 items-center gap-2.5 overflow-hidden px-3 pt-2.5">
-            {projectFolder ? <CwdLabel cwd={projectFolder} /> : null}
-            {projectFolder ? <BranchPicker cwd={projectFolder} current={branches?.current ?? null} disabled={running} /> : null}
+            {projectFolder ? <WorkspaceRoots projectFolder={projectFolder} disabled={running} /> : null}
             <div className="ml-auto flex shrink-0 items-center">
               <ContextMeter usage={context} compacting={compacting} />
             </div>
@@ -660,5 +647,3 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
     </div>
   );
 });
-
-export { GitBranch };
