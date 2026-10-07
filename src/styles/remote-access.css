@@ -66,11 +66,11 @@
 .mobile-access-relay-item .remote-relay-config { border-top: 1px solid color-mix(in srgb, var(--color-content) 5%, transparent); }
 .mobile-access-relay-item .remote-relay-config .settings-item:first-of-type { border-top: 0; }
 
-.mobile-access-qr-block { display: grid; justify-items: center; gap: 8px; padding: 10px 0 4px; }
+.mobile-access-qr-block { display: grid; justify-items: center; gap: 12px; padding: 22px 16px 24px; }
 .mobile-access-qr {
   display: grid;
   place-items: center;
-  padding: 10px;
+  padding: 14px;
   border-radius: 12px;
   background: #fff;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-content) 8%, transparent);
@@ -78,7 +78,7 @@
 .mobile-access-qr svg { display: block; width: 176px; height: 176px; }
 .mobile-access-qr-copy { margin: 0; color: color-mix(in srgb, var(--color-content) 45%, transparent); font-size: 11.5px; line-height: 1.5; text-align: center; }
 
-.mobile-access-qr-empty { display: grid; justify-items: center; gap: 8px; color: color-mix(in srgb, var(--color-content) 50%, transparent); text-align: center; }
+.mobile-access-qr-empty { display: grid; justify-items: center; gap: 8px; padding: 16px 0; color: color-mix(in srgb, var(--color-content) 50%, transparent); text-align: center; }
 .mobile-access-qr-empty svg { width: 28px; height: 28px; opacity: 0.72; }
 .mobile-access-qr-empty strong { color: var(--color-content); font-size: 11.5px; font-weight: 600; }
 .mobile-access-qr-empty span { max-width: 200px; font-size: 10.5px; line-height: 1.5; }
