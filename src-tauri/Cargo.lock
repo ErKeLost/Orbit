@@ -3331,6 +3331,7 @@ dependencies = [
  "tungstenite",
  "uuid",
  "videotoolbox",
+ "windows-sys 0.61.2",
  "xa11y",
 ]
 

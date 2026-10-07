@@ -30,6 +30,8 @@ mod mobile_update;
 mod remote;
 mod runtime;
 mod splash;
+#[cfg(windows)]
+mod windows;
 use tauri::Manager;
 
 /// Finder/Dock-launched apps inherit launchd's minimal PATH, so every shell
@@ -47,6 +49,20 @@ fn normalize_path() {
     }
     std::env::set_var("PATH", entries.join(":"));
 }
+
+/// Hide the console window that Windows allocates for GUI-spawned children.
+#[allow(dead_code)]
+pub(crate) fn hide_window_console(cmd: &mut std::process::Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(WINDOWS_BACKGROUND_CREATION_FLAGS);
+    }
+    let _ = cmd;
+}
+
+#[cfg(windows)]
+const WINDOWS_BACKGROUND_CREATION_FLAGS: u32 = 0x0800_0000; // CREATE_NO_WINDOW
 
 /// Run the user's login shell once and capture the PATH it produces, so
 /// entries from ~/.zshrc & co (nvm, bun, cargo, npm globals…) reach agent

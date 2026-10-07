@@ -64,6 +64,10 @@ image = { version = "=0.25.10", default-features = false, features = ["jpeg"] }
 # connection with a channel instead of letting it poll. `rt`/`net`/`io-util` are
 # for the connection loops, which only exist on desktop.
 tokio = { version = "=1.53.1", features = ["rt", "macros", "sync", "time", "net", "io-util"] }
+uuid = { version = "=1.26.0", features = ["v4"] }
+# Process control for the terminal PTY (kill/setsid/ioctl) on every unix target;
+# the macOS accessibility stack reuses the same pin below.
+libc = "=0.2.189"
 
 # The desktop Host uses a small blocking WebSocket server so mobile clients
 # can connect over a trusted LAN. These are desktop-only; mobile builds use
@@ -95,12 +99,10 @@ futures-util = { version = "=0.3.34", default-features = false, features = ["sin
 # The relay's TLS stays OpenSSL on purpose (see `relay_connect`); this is its
 # async transport, so the handshake fingerprint does not change.
 tokio-openssl = "=0.6.5"
-uuid = { version = "=1.26.0", features = ["v4"] }
 # Native macOS accessibility backend for the desktop AX collector (worker,
 # input synthesis, AppKit activation). Other desktop platforms ship without
 # the engine in this release.
 [target.'cfg(target_os = "macos")'.dependencies]
-libc = "=0.2.189"
 xa11y = "=0.15.0"
 objc2-app-kit = { version = "=0.3.2", features = ["NSRunningApplication", "NSWorkspace"] }
 objc2-foundation = { version = "=0.3.2", features = ["NSURL", "NSString", "NSArray"] }
@@ -128,3 +130,8 @@ dispatch2 = "=0.3.1"
 
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
 tauri-plugin-barcode-scanner = "2.4.6"
+
+[target.'cfg(windows)'.dependencies]
+# ConPTY child management for the terminal: children join a job object so a
+# crashed host never leaves orphaned shells, and console windows stay hidden.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_LibraryLoader", "Win32_System_Diagnostics_ToolHelp"] }
