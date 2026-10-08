@@ -247,7 +247,11 @@ export default function App() {
   const projectRailOpen = useShell((state) => state.projectRailOpen);
   const sessionSidebarOpen = useShell((state) => state.sessionSidebarOpen);
   const panel = useWorkspace((state) => state.panel);
+  const cwd = useWorkspace((state) => state.cwd);
   const chromeless = panel === "settings" || panel === "inbox" || panel === "search" || panel === "automations" || panel === "mobile-access" || panel === "notes";
+  // Without a project the session column has nothing to list, so the shell shows
+  // only the rail and the new-session surface.
+  const withSessions = Boolean(cwd);
   useAutomationScheduler();
   const collapsedRailMode = useShell((state) => state.collapsedRailMode);
   const bootstrap = useWorkspaceBootstrap();
@@ -290,7 +294,9 @@ export default function App() {
         ) : collapsedRailMode === "compact" && !chromeless ? (
           <CompactRail />
         ) : null}
-        <SessionSidebar visible={sessionSidebarOpen && !chromeless} railVisible={projectRailOpen} onSearch={openSearch} />
+        {withSessions ? (
+          <SessionSidebar visible={sessionSidebarOpen && !chromeless} railVisible={projectRailOpen} onSearch={openSearch} />
+        ) : null}
         <WorkArea />
       </div>
       <ScreenOverlay />

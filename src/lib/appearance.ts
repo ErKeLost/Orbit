@@ -72,11 +72,13 @@ function readDiffPalette(): DiffPalette {
   return raw === "colorblind" || raw === "high-contrast" ? raw : "default";
 }
 
-/** Readable text on an accent background. */
-function accentForeground(color: string) {
-  const value = Number.parseInt(color.slice(1), 16);
-  const [r, g, b] = [(value >> 16) & 255, (value >> 8) & 255, value & 255];
-  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.62 ? "#171717" : "#ffffff";
+/**
+ * Text on an accent background. Always white: a surface painted with the
+ * theme's accent color keeps one foreground instead of flipping per hue
+ * (`#f59e0b` used to get a near-black label).
+ */
+function accentForeground() {
+  return "#ffffff";
 }
 
 export const UI_SCALE_PERCENTS = Array.from({ length: 16 }, (_, i) => Math.round((0.5 + i * 0.1) * 100));
@@ -144,11 +146,11 @@ function applyToDocument(state: Pick<AppearanceState, "scheme" | "hue" | "satura
   if (state.accent) {
     root.classList.add("has-user-accent");
     root.style.setProperty("--user-accent-color", state.accent);
-    root.style.setProperty("--user-accent-foreground", accentForeground(state.accent));
+    root.style.setProperty("--user-accent-foreground", accentForeground());
     // 强调色接管 --color-accent：Working 状态、加载图标、焦点环这些原来固定
     // 蓝色的 UI 全部跟着主题强调色走，而不是只有气泡和发送按钮。
     root.style.setProperty("--color-accent", state.accent);
-    root.style.setProperty("--color-accent-foreground", accentForeground(state.accent));
+    root.style.setProperty("--color-accent-foreground", accentForeground());
   } else {
     root.classList.remove("has-user-accent");
     root.style.removeProperty("--user-accent-color");
