@@ -8,10 +8,8 @@ import { Markdown } from "../../components/Markdown";
 import { splitMarkdownFrontmatter } from "../../shared/lib/markdownFrontmatter";
 import { MarkdownViewShell, useMarkdownMode } from "../chat/MarkdownModeToggle";
 import { ChevronDown, ChevronRight, ImagePlus, Loader } from "../../shared/ui/icons";
-import { X } from "../../shared/ui/icons";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
-import { FileTypeIcon } from "./FileTypeIcon";
-import { useShell, type OpenFile } from "./shellStore";
+import { type OpenFile } from "./shellStore";
 
 function MediaView({ file, kind }: { file: OpenFile; kind: MediaKind }) {
   const meta = useMediaMeta(file.path, kind);
@@ -81,8 +79,6 @@ function MarkdownDocumentPreview({ text }: { text: string }) {
 
 /** A read-only file pane in MonoCode's split layout; text renders on shiki. */
 export function FileView({ file, cwd }: { file: OpenFile; cwd: string }) {
-  const closeFile = useShell((state) => state.closeFile);
-  const pinFile = useShell((state) => state.pinFile);
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const kind = mediaKind(file.path);
   const markdown = isMarkdownPath(file.path);
@@ -98,15 +94,8 @@ export function FileView({ file, cwd }: { file: OpenFile; cwd: string }) {
   const relative = cwd && file.path.startsWith(cwd) ? file.path.slice(cwd.length).replace(/^\//, "") : file.path;
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col border-l border-stroke" aria-label={file.name}>
-      <div className="flex h-9 shrink-0 select-none items-center gap-1.5 border-b border-stroke px-2">
-        <div className="flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-md bg-selection px-2" onDoubleClick={() => pinFile(file.path)}>
-          <FileTypeIcon name={file.name} isDir={false} size={14} />
-          <span className={`min-w-0 truncate text-[13px] text-content ${file.preview ? "italic" : ""}`}>{file.name}</span>
-          <button type="button" title="关闭" aria-label={`关闭 ${file.name}`} onClick={() => closeFile(file.path)} className="grid size-5 shrink-0 place-items-center rounded text-content/50 hover:bg-content/10 hover:text-content">
-            <X className="size-3" strokeWidth={1.75} />
-          </button>
-        </div>
-      </div>
+      {/* No pane header: MonoCode keeps the file name only in the tab strip;
+          a second chip here just renders the same title twice. */}
       {kind != null ? (
         <MediaView file={file} kind={kind} />
       ) : markdown && contents.data != null ? (
