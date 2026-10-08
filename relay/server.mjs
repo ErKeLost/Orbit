@@ -68,7 +68,7 @@ const server = Bun.serve({
   hostname,
   port,
   tls,
-  maxRequestBodySize: 1_048_576,
+  maxRequestBodySize: 8_388_608,
   fetch(request, server) {
     const url = new URL(request.url)
     if (url.pathname === "/health") return Response.json({ service: "orbit-relay", hosts: hosts.size, uptime: Math.floor(process.uptime()) })
@@ -88,7 +88,7 @@ const server = Bun.serve({
     return server.upgrade(request, { data: { ...data, authenticated: false } }) ? undefined : new Response("Upgrade required", { status: 426 })
   },
   websocket: {
-    maxPayloadLength: 1_048_576,
+    maxPayloadLength: 8_388_608,
     idleTimeout: 120,
     open(_socket) {
       // Both roles authenticate with their first message; nothing to attach yet.
