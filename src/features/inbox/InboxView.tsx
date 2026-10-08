@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useWorkspace } from "../../lib/store";
@@ -41,7 +41,7 @@ import { mergePrDiff, parsePrPatch } from "../source-control/model/prDiff";
 import { blocksFromLines, type UnifiedLine } from "../source-control/model/unifiedDiff";
 import { UnifiedDiffView, type UnifiedDiffFileModel } from "../source-control/ui/UnifiedDiffView";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
-import { Group, Row, SecondaryButton, TextArea, TextField } from "../../shared/ui/controls";
+import { Group, Notice, PrimaryButton, Row, SecondaryButton, TextArea, TextField } from "../../shared/ui/controls";
 import {
   Check,
   ChevronDown,
@@ -1112,6 +1112,28 @@ export function InboxView() {
   );
 }
 
+/** 设置页小状态胶囊：绿点已连接、琥珀待登录、灰点未配置。 */
+function StatusPill({ tone, children }: { tone: "ok" | "warn" | "off"; children: ReactNode }) {
+  const dot = tone === "ok" ? "bg-emerald-400" : tone === "warn" ? "bg-amber-400" : "bg-content/25";
+  // 文字保持中性：琥珀字在亮色主题下对比度不够，颜色交给圆点。
+  const text = tone === "off" ? "text-content/40" : "text-content/65";
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border border-content/10 bg-content/3 px-2 py-0.5 text-[11px] leading-4 ${text}`}
+    >
+      <span aria-hidden className={`size-1.5 shrink-0 rounded-full ${dot}`} />
+      {children}
+    </span>
+  );
+}
+
+/** 行内命令片段，用于 `gh auth login` 这类要用户照抄的字。 */
+function InlineCode({ children }: { children: ReactNode }) {
+  return (
+    <code className="rounded border border-content/10 bg-content/5 px-1 py-px font-mono text-[11px] text-content/70">{children}</code>
+  );
+}
+
 /** Inbox settings: connection cards for GitHub (gh CLI) and GitLab (PAT). */
 export function InboxSettings() {
   const github = useGithubStatus();
@@ -1156,51 +1178,96 @@ export function InboxSettings() {
     }
   };
 
+  const mobileRuntime = useWorkspace((state) => state.runtimeTarget === "mobile");
+  const githubConnected = Boolean(github.data?.authenticated);
+  const githubTone: "ok" | "warn" | "off" = github.isPending ? "off" : githubConnected ? "ok" : github.data?.installed ? "warn" : "off";
+  const githubLabel = github.isPending ? "检测中…" : githubConnected ? "已登录" : github.data?.installed ? "未登录" : "未安装";
+  const githubDescription = githubConnected ? (
+    "GitHub CLI 已安装并登录，收件箱用它读取 GitHub 条目。"
+  ) : github.data?.installed ? (
+    <>
+      GitHub CLI 已安装但未登录。先在终端执行 <InlineCode>gh auth login</InlineCode>，再重新检查。
+    </>
+  ) : (
+    <>
+      未检测到 GitHub CLI。安装后执行 <InlineCode>gh auth login</InlineCode>，再重新检查。
+    </>
+  );
+
+  // 手机端只是远程客户端，gh 登录态与 GitLab Token 都在电脑上，这里只做说明。
+  const githubAction = mobileRuntime ? <StatusPill tone="off">电脑端</StatusPill> : <StatusPill tone={githubTone}>{githubLabel}</StatusPill>;
+
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-6 py-8 text-content">
-      <Group title={<span className="inline-flex items-center gap-2"><SourceMark source="github" />GitHub</span>} description="通过 GitHub CLI 读取的 Pull Request、评审与 Issue。">
-        {github.data?.connected ? (
-          <Row
-            label="连接"
-            description="GitHub CLI 已安装并登录，收件箱用它读取 GitHub 条目。"
-          >
-            <SecondaryButton onClick={() => void github.refetch()}>重新检查</SecondaryButton>
-          </Row>
+    <div className="flex flex-col">
+      <Group
+        title={
+          <span className="inline-flex items-center gap-2">
+            <SourceMark source="github" />
+            GitHub
+          </span>
+        }
+        description="通过 GitHub CLI 读取的 Pull Request、评审与 Issue。"
+        action={githubAction}
+      >
+        {mobileRuntime ? (
+          <Notice>GitHub 通过电脑端的 gh CLI 读取，请在电脑端设置里连接。</Notice>
         ) : (
-          <Row
-            label="连接"
-            description={
-              github.data?.installed
-                ? "GitHub CLI 已安装但未登录。在终端运行 gh auth login 后点击重新检查。"
-                : "需要安装 GitHub CLI（gh）。在终端运行 gh auth login 完成登录。"
-            }
-          >
-            <SecondaryButton onClick={() => void github.refetch()}>重新检查</SecondaryButton>
+          <Row label="gh CLI" description={githubDescription}>
+            <SecondaryButton disabled={github.isFetching} onClick={() => void github.refetch()}>
+              {github.isFetching ? (
+                <Loader className="size-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="size-3.5" strokeWidth={1.75} />
+              )}
+              重新检查
+            </SecondaryButton>
           </Row>
         )}
       </Group>
 
-      <Group title={<span className="inline-flex items-center gap-2"><SourceMark source="gitlab" />GitLab</span>} description="来自 GitLab.com 或自建实例的合并请求、Issue 与待办。">
-        {gitlab.data?.connected ? (
-          <Row label="连接" description={`已连接 ${gitlab.data.url}。Token 只保存在本机，断开即删除。`}>
-            <SecondaryButton danger onClick={() => void disconnect()}>
+      <Group
+        title={
+          <span className="inline-flex items-center gap-2">
+            <SourceMark source="gitlab" />
+            GitLab
+          </span>
+        }
+        description="来自 GitLab.com 或自建实例的合并请求、Issue 与待办。"
+        action={<StatusPill tone={mobileRuntime ? "off" : gitlab.data?.connected ? "ok" : "off"}>{mobileRuntime ? "电脑端" : gitlab.data?.connected ? "已连接" : "未连接"}</StatusPill>}
+      >
+        {mobileRuntime ? (
+          <Notice>GitLab Token 保存在电脑上，请在电脑端设置里连接或断开。</Notice>
+        ) : gitlab.data?.connected ? (
+          <Row label="实例" description="Token 只保存在本机，点「断开」即从本机删除。">
+            <span className="min-w-0 max-w-full truncate rounded-md border border-content/10 bg-content/5 px-2 py-1 font-mono text-[11px] text-content/70">
+              {gitlab.data.url}
+            </span>
+            <SecondaryButton danger disabled={busy} onClick={() => void disconnect()}>
+              {busy ? <Loader className="size-3.5 animate-spin" /> : null}
               断开
             </SecondaryButton>
           </Row>
         ) : (
-          <Row
-            label="连接"
-            description="连接 GitLab.com 或自建实例。请使用带 read_api 权限的 Personal Access Token（Legacy token）；Token 只保存在本机，断开即删除。"
-          >
-            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+          <>
+            <Row label="实例地址" description="GitLab.com 或自建实例地址；省略协议时按 https 补全。">
               <TextField
+                wide
                 value={url}
-                placeholder="https://gitlab.com 或自建实例地址"
+                placeholder="https://gitlab.com"
                 aria-label="GitLab 地址"
                 autoComplete="url"
                 spellCheck={false}
                 onChange={(event) => setUrl(event.target.value)}
               />
+            </Row>
+            <Row
+              label="Personal Access Token"
+              description={
+                <>
+                  需要 <InlineCode>read_api</InlineCode> 权限（Legacy token）；Token 只保存在本机，断开即删除。
+                </>
+              }
+            >
               <TextField
                 type="password"
                 value={token}
@@ -1210,17 +1277,13 @@ export function InboxSettings() {
                 spellCheck={false}
                 onChange={(event) => setToken(event.target.value)}
               />
-              <button
-                type="button"
-                disabled={busy || !token.trim()}
-                onClick={() => void connect()}
-                className="h-7 shrink-0 rounded-md bg-content px-3 text-[12px] font-medium text-background-base hover:bg-content/80 disabled:opacity-40"
-              >
-                {busy ? <Loader className="size-3.5 animate-spin" /> : "连接"}
-              </button>
-              {error ? <p className="w-full text-[12px] text-red-400">{error}</p> : null}
-            </div>
-          </Row>
+              <PrimaryButton disabled={busy || !token.trim()} onClick={() => void connect()}>
+                {busy ? <Loader className="size-3.5 animate-spin" /> : null}
+                连接
+              </PrimaryButton>
+            </Row>
+            {error ? <p className="border-t border-content/5 px-4 py-2.5 text-[12px] leading-relaxed text-red-400">{error}</p> : null}
+          </>
         )}
       </Group>
     </div>
