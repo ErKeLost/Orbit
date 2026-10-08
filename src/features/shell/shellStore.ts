@@ -18,6 +18,9 @@ const SIDEBAR_TAB_KEY = "orbit.shell.sidebarTab";
 const PROJECT_RAIL_WIDTH_KEY = "orbit.shell.projectRailWidth";
 const SESSION_SIDEBAR_WIDTH_KEY = "orbit.shell.sessionSidebarWidth";
 const PANE_ORDER_KEY = "orbit.shell.paneOrder";
+const SPLIT_RATIO_KEY = "orbit.shell.splitRatio";
+/** MonoCode `layout.ts` MIN_SIZE: no pane may be squeezed below 8% of the split. */
+export const MIN_PANE_SHARE = 0.08;
 
 function readBool(key: string, fallback: boolean) {
   try {
@@ -60,12 +63,15 @@ type ShellState = {
   activeFile: string | null;
   /** Chat pane on the left (default) or on the right of the file pane. */
   paneOrder: PaneOrder;
+  /** Share of the split taken by the first pane (MonoCode's split sizes). */
+  splitRatio: number;
   setProjectRailOpen: (open: boolean) => void;
   setSessionSidebarOpen: (open: boolean) => void;
   setSidebarTab: (tab: SidebarTab) => void;
   setProjectRailWidth: (width: number) => void;
   setSessionSidebarWidth: (width: number) => void;
   setPaneOrder: (order: PaneOrder) => void;
+  setSplitRatio: (ratio: number) => void;
   openFile: (path: string, options?: { pin?: boolean }) => void;
   pinFile: (path: string) => void;
   closeFile: (path: string) => void;
@@ -110,6 +116,17 @@ export const useShell = create<ShellState>((set, get) => ({
     } catch { return "chat-first"; }
   })(),
   setPaneOrder: (paneOrder) => { write(PANE_ORDER_KEY, paneOrder); set({ paneOrder }); },
+  splitRatio: (() => {
+    try {
+      const value = Number(localStorage.getItem(SPLIT_RATIO_KEY));
+      return Number.isFinite(value) && value >= MIN_PANE_SHARE && value <= 1 - MIN_PANE_SHARE ? value : 0.5;
+    } catch { return 0.5; }
+  })(),
+  setSplitRatio: (ratio) => {
+    const next = Math.min(1 - MIN_PANE_SHARE, Math.max(MIN_PANE_SHARE, ratio));
+    write(SPLIT_RATIO_KEY, String(next));
+    set({ splitRatio: next });
+  },
   setProjectRailOpen: (open) => { write(PROJECT_RAIL_KEY, String(open)); set({ projectRailOpen: open }); },
   setSessionSidebarOpen: (open) => { write(SESSION_SIDEBAR_KEY, String(open)); set({ sessionSidebarOpen: open }); },
   setSidebarTab: (tab) => { write(SIDEBAR_TAB_KEY, tab); set({ sidebarTab: tab }); },

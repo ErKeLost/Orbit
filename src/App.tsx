@@ -21,8 +21,7 @@ import { InboxView } from "./features/inbox/InboxView";
 import { SearchView } from "./features/search/SearchView";
 import { AutomationsView } from "./features/automations/AutomationsView";
 import { useAutomationScheduler } from "./features/automations/useAutomationScheduler";
-import { GripVertical, X } from "./shared/ui/icons";
-import { compactTitle } from "./lib/session-visual";
+import { PaneDropHint, PaneSash, SessionPaneHeader } from "./features/shell/PaneChrome";
 
 /** Phone-sized windows and the Android app use the stacked MobileShell. */
 const MOBILE_QUERY = "(max-width: 760px)";
@@ -38,57 +37,6 @@ function useMobileLayout(forced: boolean) {
   return forced || matches;
 }
 
-/** The chat pane's own header when a file splits the view (MonoCode SessionPane `inSplit`). */
-function SplitPaneHeader({ onPaneDragStart }: { onPaneDragStart?: (event: ReactPointerEvent<HTMLElement>) => void }) {
-  const sessionName = useWorkspace((state) => state.state?.sessionName);
-  const activeFile = useShell((state) => state.activeFile);
-  const first = useWorkspace((state) => {
-    const message = state.transcript.messages.find((item) => item.message.role === "user")?.message;
-    if (!message) return "";
-    if (typeof message.content === "string") return message.content;
-    return (message.content ?? []).flatMap((part) => (part.type === "text" && part.text ? [part.text] : [])).join(" ");
-  });
-  const title = compactTitle(sessionName || first, "新会话", 60);
-  return (
-    <div
-      className={`flex h-9 shrink-0 select-none items-center gap-1.5 border-b border-stroke px-2 ${onPaneDragStart ? "cursor-grab touch-none active:cursor-grabbing" : ""}`}
-      onPointerDown={(event) => {
-        if (event.button !== 0 || !onPaneDragStart) return;
-        if ((event.target as HTMLElement | null)?.closest("[data-no-drag]")) return;
-        onPaneDragStart(event);
-      }}
-    >
-      {onPaneDragStart ? <GripVertical className="size-3.5 shrink-0 text-content/35" strokeWidth={1.75} /> : null}
-      <span className={`size-2 shrink-0 rounded-full ${activeFile ? "bg-transparent" : "bg-accent"}`} />
-      <span className="min-w-0 flex-1 truncate text-xs text-content" title={title}>{title}</span>
-      <button
-        type="button"
-        data-no-drag
-        title="关闭文件"
-        aria-label="关闭文件"
-        onClick={() => {
-          const shell = useShell.getState();
-          if (shell.activeFile) shell.closeFile(shell.activeFile);
-        }}
-        className="grid size-5 shrink-0 place-items-center rounded text-content/50 hover:bg-content/10 hover:text-content"
-      >
-        <X className="size-3" strokeWidth={1.75} />
-      </button>
-    </div>
-  );
-}
-
-/** MonoCode's `PaneDropHint`: which side the dragged pane will land on. */
-function PaneDropHint() {
-  return (
-    <div className="pointer-events-none absolute inset-0 z-20 ring-2 ring-inset ring-accent/50">
-      <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent px-2.5 py-1 text-[11px] font-medium text-accent-foreground shadow-lg">
-        移到这一侧
-      </span>
-    </div>
-  );
-}
-
 function WorkArea() {
   const panel = useWorkspace((state) => state.panel);
 
@@ -100,12 +48,20 @@ function WorkArea() {
   const sessionSidebarOpen = useShell((state) => state.sessionSidebarOpen);
   const paneOrder = useShell((state) => state.paneOrder);
   const setPaneOrder = useShell((state) => state.setPaneOrder);
+  const splitRatio = useShell((state) => state.splitRatio);
+  const setSplitRatio = useShell((state) => state.setSplitRatio);
   const file = files.find((item) => item.path === activeFile);
   // MonoCode reorders panes by dragging a pane's grip (`PaneTree` → `paneDrop`).
   // This split has exactly two panes, so dropping on the other side swaps them.
+  const paneContainerRef = useRef<HTMLDivElement | null>(null);
   const chatPaneRef = useRef<HTMLDivElement | null>(null);
   const filePaneRef = useRef<HTMLDivElement | null>(null);
   const [paneDrag, setPaneDrag] = useState<{ from: "chat" | "file"; over: "chat" | "file" } | null>(null);
+  // The sash previews locally, the store is written on release (MonoCode `Sash`).
+  const [previewShare, setPreviewShare] = useState<number | null>(null);
+  const firstShare = previewShare ?? splitRatio;
+  const chatFirst = paneOrder === "chat-first";
+  const chatShare = file ? (chatFirst ? firstShare : 1 - firstShare) : 1;
 
   const paneAt = (x: number, y: number): "chat" | "file" | null => {
     const hits = (element: HTMLElement | null) => {
@@ -157,21 +113,29 @@ function WorkArea() {
       <TitleBar railsHidden={!projectRailOpen && !sessionSidebarOpen} />
       <MetricsSync />
       {panel === "chat" ? (
-        <div className="flex min-h-0 min-w-0 flex-1">
+        <div ref={paneContainerRef} className="relative flex min-h-0 min-w-0 flex-1">
           <div
             ref={chatPaneRef}
-            style={{ order: paneOrder === "file-first" ? 2 : 1 }}
-            className={`chat-pane-background relative isolate flex h-full min-h-0 min-w-0 flex-1 flex-col ${paneDrag?.from === "chat" ? "opacity-60" : ""}`}
+            style={{ order: chatFirst ? 1 : 3, flexBasis: `${chatShare * 100}%`, flexGrow: 0 }}
+            className={`chat-pane-background relative isolate flex h-full min-h-0 min-w-0 flex-col ${paneDrag?.from === "chat" ? "opacity-60" : ""}`}
           >
-            {file ? <SplitPaneHeader onPaneDragStart={paneDragStart("chat")} /> : null}
+            {file ? <SessionPaneHeader onPaneDragStart={paneDragStart("chat")} /> : null}
             <ChatPane key={connectionId || cwd} />
             {paneDrag?.over === "chat" ? <PaneDropHint /> : null}
           </div>
           {file ? (
+            <PaneSash
+              containerRef={paneContainerRef}
+              share={firstShare}
+              onPreview={setPreviewShare}
+              onCommit={setSplitRatio}
+            />
+          ) : null}
+          {file ? (
             <div
               ref={filePaneRef}
-              style={{ order: paneOrder === "file-first" ? 1 : 2 }}
-              className={`relative flex min-h-0 min-w-0 flex-1 ${paneOrder === "file-first" ? "border-r border-stroke" : "border-l border-stroke"} ${paneDrag?.from === "file" ? "opacity-60" : ""}`}
+              style={{ order: chatFirst ? 3 : 1, flexBasis: `${(1 - chatShare) * 100}%`, flexGrow: 0 }}
+              className={`relative flex min-h-0 min-w-0 ${chatFirst ? "border-l border-stroke" : "border-r border-stroke"} ${paneDrag?.from === "file" ? "opacity-60" : ""}`}
             >
               <FileView file={file} cwd={cwd} onPaneDragStart={paneDragStart("file")} />
               {paneDrag?.over === "file" ? <PaneDropHint /> : null}
