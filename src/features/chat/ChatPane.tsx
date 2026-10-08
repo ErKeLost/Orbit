@@ -8,6 +8,7 @@ import { groupDisplayMessages, reuseGroups, type Transcript } from "../../lib/pr
 import { readTurnDurations, saveTurnDurations, turnDurationId } from "../../lib/turn-duration";
 import { useProjects } from "../../lib/projects";
 import { useConversationScroll } from "../../hooks/use-conversation-scroll";
+import { useSelectionHighlight } from "../../hooks/use-selection-highlight";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { ChevronDown } from "../../shared/ui/icons";
 import { AgentActivityFeed } from "../../components/agents/AgentActivityFeed";
@@ -100,6 +101,9 @@ export function ChatPane() {
     holdStickRef.current = true;
   }, []);
   const { ref, atBottom, userUnpinned, scrollToBottom, pauseFollow } = useConversationScroll({ holdStickRef });
+  // WKWebView 会把原生选区的间隙涂满选区色；挂载后聊天区改用 Custom
+  // Highlight API 只重绘文字（样式见 orbit.css 的 custom-selection-highlight）。
+  useSelectionHighlight(ref);
   const sessionFile = useWorkspace((state) => state.state?.sessionFile) ?? persistedSessionFile(project);
   const dockPosition = useShell((state) => state.terminalPosition);
   const dockOpen = useShell((state) => state.terminalOpen);
@@ -297,7 +301,7 @@ export function ChatPane() {
               title="跳到最新"
               aria-label="跳到最新"
               onClick={scrollToBottom}
-              className="pointer-events-auto grid size-6 place-items-center rounded-full border border-content/15 bg-content/10 text-content shadow-md backdrop-blur-md hover:bg-content/5"
+              className="pointer-events-auto grid size-6 place-items-center rounded-full bg-accent text-accent-foreground shadow-lg hover:bg-accent/85"
             >
               <ChevronDown className="size-4" strokeWidth={2} />
             </button>

@@ -133,7 +133,7 @@ function ToastCard({ item }: { item: ToastItem }) {
         <div className="flex gap-2 border-t border-stroke px-3.5 py-2.5">
           <button
             type="button"
-            className="flex-1 rounded-md bg-content px-2.5 py-1 text-[11px] font-medium text-background-base hover:bg-content/80"
+            className="flex-1 rounded-md bg-accent px-2.5 py-1 text-[11px] font-medium text-accent-foreground hover:bg-accent/85"
             onClick={() => {
               item.action?.onClick();
               dismiss(item.id);
@@ -153,7 +153,7 @@ export function Toaster() {
   return (
     <div
       aria-live="polite"
-      className="toast-region pointer-events-none fixed bottom-4 right-4 flex w-[min(360px,calc(100vw-2rem))] flex-col gap-2"
+      className="toast-region pointer-events-none fixed bottom-4 right-4 flex w-[min(320px,calc(100vw-2rem))] flex-col gap-2"
       style={{ zIndex: LAYER.toast }}
     >
       {visible.map((item) => (
