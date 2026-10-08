@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import type { PluggableList } from "unified";
 import { remarkMentions } from "../lib/remark-mentions";
 import { MarkdownLink, Pre } from "./CodeBlock";
+import { PathChip } from "./PathChip";
 import { isLowPerf } from "../lib/perf-tier";
 
 /**
@@ -84,6 +85,16 @@ export function Markdown({ content, animated = false, className = "" }: { conten
     () => ({
       ...textComponents,
       a: MarkdownLink,
+      // A file name in inline code becomes something you can open. Fenced code
+      // arrives here as a `<code>` with a `language-*` class and newlines in
+      // it, so the chip keeps its hands off anything that is not a single
+      // inline token.
+      code: ({ node: _node, className, children, ...props }: ComponentPropsWithoutRef<"code"> & { node?: unknown }) =>
+        className || (typeof children === "string" && children.includes("\n")) ? (
+          <code className={className} {...props}>{children}</code>
+        ) : (
+          <PathChip className={className} {...props}>{children}</PathChip>
+        ),
       pre: (props: Parameters<typeof Pre>[0]) => <Pre {...props} settleDelay={settleDelay} />,
     }),
     [settleDelay],

@@ -260,10 +260,12 @@
   left: calc((100% - var(--ds-effort-thumb-w) - (var(--ds-effort-thumb-inset) * 2)) * var(--ds-effort-progress) + var(--ds-effort-thumb-inset));
   width: var(--ds-effort-thumb-w);
   height: var(--ds-effort-thumb-h);
-  border: 1px solid rgba(76, 70, 65, 0.15);
-  border-radius: 0.5rem;
-  background: linear-gradient(180deg, #fff, color-mix(in srgb, var(--ds-effort-level-soft) 22%, #fff) 52%, color-mix(in srgb, var(--ds-effort-level-soft) 42%, #f5f4f2));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 1px rgba(76, 70, 65, 0.05), 0 1px 2px rgba(62, 56, 50, 0.1), 0 4px 10px rgba(62, 56, 50, 0.06);
+  border: 1px solid color-mix(in srgb, var(--ds-effort-level-deep) 26%, rgba(76, 70, 65, 0.12));
+  /* Square-ish, like everything else in the field; a pill read as a different control. */
+  border-radius: 0.25rem;
+  background: radial-gradient(circle at 50% 46%, color-mix(in srgb, var(--ds-effort-level-color) 26%, transparent) 0%, transparent 74%),
+    linear-gradient(180deg, #fff, color-mix(in srgb, var(--ds-effort-level-soft) 26%, #fff) 52%, color-mix(in srgb, var(--ds-effort-level-soft) 54%, #f4f2f0));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 1px color-mix(in srgb, var(--ds-effort-level-deep) 9%, transparent), 0 1px 2px rgba(62, 56, 50, 0.12), 0 4px 10px rgba(62, 56, 50, 0.07);
   pointer-events: none;
   transform: translateY(-50%);
   transition-property: transform, box-shadow, background, border-color;
@@ -271,31 +273,41 @@
   transition-timing-function: ease-out;
 }
 
-.effort-slider-thumb::before,
-.effort-slider-thumb::after {
+/*
+ * The grip is three dots on the field's own 6px pitch, one pseudo-element and a
+ * repeating radial gradient. The two bars this replaced read as a pause button,
+ * the single line that replaced those read as a divider; a column of dots is the
+ * one thing that reads as something you grab.
+ */
+.effort-slider-thumb::before {
   position: absolute;
   top: 50%;
-  width: 1px;
-  height: 38%;
-  border-radius: 999px;
-  background: rgba(76, 70, 65, 0.2);
-  opacity: 0;
-  transform: translateY(-50%);
+  left: 50%;
+  width: 2px;
+  height: 14px;
+  background: radial-gradient(circle at 50% 1px, color-mix(in srgb, var(--ds-effort-level-deep) 52%, transparent) 1px, transparent 1.35px) 0 0 / 2px 6px repeat-y;
+  opacity: 0.42;
+  transform: translate(-50%, -50%);
   transition: opacity 140ms ease-out;
   content: "";
 }
 
-.effort-slider-thumb::before { left: 42%; }
-.effort-slider-thumb::after { right: 42%; }
 .effort-slider:hover .effort-slider-thumb::before,
-.effort-slider:hover .effort-slider-thumb::after,
 .effort-slider:focus-within .effort-slider-thumb::before,
-.effort-slider:focus-within .effort-slider-thumb::after,
-.effort-slider[data-dragging] .effort-slider-thumb::before,
-.effort-slider[data-dragging] .effort-slider-thumb::after { opacity: 1; }
-.effort-slider[data-dragging] .effort-slider-thumb { transform: translateY(-50%) scale(0.96); transition-property: none; }
-.effort-slider:focus-within .effort-slider-thumb { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 1px rgba(76, 70, 65, 0.05), 0 0 0 3px color-mix(in srgb, var(--ds-effort-accent) 30%, transparent), 0 1px 2px rgba(62, 56, 50, 0.1), 0 4px 10px rgba(62, 56, 50, 0.06); }
-.effort-slider[data-glow] .effort-slider-thumb { border-color: color-mix(in srgb, var(--ds-effort-level-color) 50%, transparent); background: linear-gradient(180deg, #fff, color-mix(in srgb, var(--ds-effort-level-soft) 34%, #fff) 55%, color-mix(in srgb, var(--ds-effort-level-soft) 58%, #f0eeec)); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 1px color-mix(in srgb, var(--ds-effort-level-deep) 10%, transparent), 0 1px 2px rgba(62, 56, 50, 0.1), 0 4px 10px rgba(62, 56, 50, 0.06); }
+.effort-slider[data-dragging] .effort-slider-thumb::before { opacity: 0.92; }
+.effort-slider[data-dragging] .effort-slider-thumb {
+  border-color: color-mix(in srgb, var(--ds-effort-level-color) 56%, transparent);
+  transform: translateY(-50%) scale(0.97);
+  transition-property: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 1px color-mix(in srgb, var(--ds-effort-level-deep) 12%, transparent), 0 0 0 4px color-mix(in srgb, var(--ds-effort-level-color) 16%, transparent), 0 2px 4px rgba(62, 56, 50, 0.16);
+}
+.effort-slider:focus-within .effort-slider-thumb {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 1px color-mix(in srgb, var(--ds-effort-level-deep) 9%, transparent), 0 0 0 3px color-mix(in srgb, var(--ds-effort-accent) 30%, transparent), 0 1px 2px rgba(62, 56, 50, 0.12), 0 4px 10px rgba(62, 56, 50, 0.07);
+}
+.effort-slider[data-glow] .effort-slider-thumb {
+  background: radial-gradient(circle at 50% 46%, color-mix(in srgb, var(--ds-effort-level-color) 32%, transparent) 0%, transparent 74%),
+    linear-gradient(180deg, #fff, color-mix(in srgb, var(--ds-effort-level-soft) 40%, #fff) 55%, color-mix(in srgb, var(--ds-effort-level-soft) 66%, #f0eeec));
+}
 .effort-slider[data-disabled] .effort-slider-shell > input { cursor: not-allowed; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -310,26 +322,7 @@
   .effort-slider-pixels { display: none; }
 }
 
-/* The thumb's grip: one soft line instead of two bars that read as "pause". */
-.effort-slider-thumb::before,
-.effort-slider-thumb::after {
-  width: 12px;
-  height: 2px;
-  border-radius: 999px;
-  background: rgba(76, 70, 65, 0.16);
-}
-
-.effort-slider-thumb::before {
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  box-shadow: none;
-}
-
-.effort-slider-thumb::after {
-  display: none;
-}
-
+/* Retired grip: the column of dots is now the only pseudo-element the thumb has. */
 .dark .effort-slider-thumb::before {
-  background: rgba(255, 255, 255, 0.18);
+  background: radial-gradient(circle at 50% 1px, rgba(38, 34, 30, 0.46) 1px, transparent 1.35px) 0 0 / 2px 6px repeat-y;
 }
