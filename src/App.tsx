@@ -14,7 +14,7 @@ import { SessionSidebar } from "./features/shell/SessionSidebar";
 import { TitleBar } from "./features/shell/TitleBar";
 import { FileView } from "./features/shell/FileView";
 import { MobileShell } from "./features/shell/MobileShell";
-import { CHAT_PANE_ID, useShell } from "./features/shell/shellStore";
+import { CHAT_PANE_ID, useActiveWorkspace, useShell } from "./features/shell/shellStore";
 import { ChatPane } from "./features/chat/ChatPane";
 import { SettingsView } from "./features/settings/SettingsView";
 import { InboxView } from "./features/inbox/InboxView";
@@ -24,6 +24,7 @@ import { useAutomationScheduler } from "./features/automations/useAutomationSche
 import { PaneDropHint, PaneSash, SessionPaneHeader } from "./features/shell/PaneChrome";
 import { layoutLeaves, layoutSashes, setSplitRatio as setSplitRatioLayout, type LayoutNode } from "./features/shell/paneLayout";
 import { paneDropFromPoint, useTabDrop, type PaneDrop } from "./features/shell/paneDrop";
+import { useWorkspaceTabs } from "./features/shell/use-workspace-tabs";
 import { setGrabbing, suppressTextSelection } from "./shared/lib/drag";
 
 /** Phone-sized windows and the Android app use the stacked MobileShell. */
@@ -47,15 +48,17 @@ function WorkArea() {
   const connectionId = useWorkspace((state) => state.connectionId);
   const projectRailOpen = useShell((state) => state.projectRailOpen);
   const sessionSidebarOpen = useShell((state) => state.sessionSidebarOpen);
-  const layout = useShell((state) => state.layout);
-  const panes = useShell((state) => state.panes);
+  const layout = useActiveWorkspace((workspace) => workspace.layout);
+  const panes = useActiveWorkspace((workspace) => workspace.panes);
   const focusPane = useShell((state) => state.focusPane);
   const movePane = useShell((state) => state.movePane);
   const setSplitRatio = useShell((state) => state.setSplitRatio);
-  const focusedPane = useShell((state) => state.activePane);
+  const focusedPane = useActiveWorkspace((workspace) => workspace.activePane);
+  const tabs = useWorkspaceTabs();
   // A sash drag previews through a local tree and only writes on release.
   const [previewLayout, setPreviewLayout] = useState<LayoutNode | null>(null);
   const [paneDrag, setPaneDrag] = useState<PaneDrop | null>(null);
+  const [detaching, setDetaching] = useState<string | null>(null);
   const tabDrop = useTabDrop();
   const paneContainerRef = useRef<HTMLDivElement | null>(null);
   const tree = previewLayout ?? layout;
@@ -86,6 +89,13 @@ function WorkArea() {
     const move = (ev: globalThis.PointerEvent) => {
       lastX = ev.clientX;
       lastY = ev.clientY;
+      const element = document.elementFromPoint(lastX, lastY);
+      if (element?.closest("[data-title-tab-strip]")) {
+        setDetaching(fromId);
+        setPaneDrag(null);
+        return;
+      }
+      setDetaching(null);
       const over = paneDropFromPoint(lastX, lastY);
       setPaneDrag(over && over.id !== fromId ? { fromId, overId: over.id, edge: over.edge } : null);
     };
@@ -97,8 +107,17 @@ function WorkArea() {
       restoreSelection();
       setGrabbing(false);
       setPaneDrag(null);
+      setDetaching(null);
       if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
       if (!commit) return;
+      // MonoCode's `onDetachPane`: a pane dropped on the title strip becomes a
+      // workspace tab of its own.
+      const element = document.elementFromPoint(lastX, lastY);
+      if (element?.closest("[data-title-tab-strip]")) {
+        const workspace = useShell.getState().detachPaneToWorkspace(fromId);
+        if (workspace) void tabs.open(workspace.id, { fresh: true });
+        return;
+      }
       const over = paneDropFromPoint(lastX, lastY);
       if (over && over.id !== fromId) movePane(fromId, over.id, over.edge);
     };
@@ -150,7 +169,7 @@ function WorkArea() {
                   event.currentTarget.scrollLeft = 0;
                   event.currentTarget.scrollTop = 0;
                 }}
-                className={`absolute flex min-h-0 min-w-0 flex-col overflow-hidden ${dragging ? "opacity-60" : ""}`}
+                className={`absolute flex min-h-0 min-w-0 flex-col overflow-hidden ${dragging ? "opacity-60" : ""} ${detaching === entry.id ? "ring-2 ring-inset ring-accent/60" : ""}`}
                 style={{
                   left: `${entry.rect.x * 100}%`,
                   top: `${entry.rect.y * 100}%`,

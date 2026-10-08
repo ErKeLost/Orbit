@@ -11,7 +11,7 @@ import { MarkdownViewShell, useMarkdownMode } from "../chat/MarkdownModeToggle";
 import { ChevronDown, ChevronRight, ImagePlus, Loader } from "../../shared/ui/icons";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { SurfaceTabs } from "./SurfaceTabs";
-import { useShell } from "./shellStore";
+import { useActiveWorkspace } from "./shellStore";
 
 function MediaView({ file, kind }: { file: { path: string; name: string }; kind: MediaKind }) {
   const meta = useMediaMeta(file.path, kind);
@@ -91,7 +91,7 @@ export function FileView({
   showGrip: boolean;
   onPaneDragStart?: (event: ReactPointerEvent<HTMLElement>) => void;
 }) {
-  const pane = useShell((state) => state.panes[paneId]);
+  const pane = useActiveWorkspace((workspace) => workspace.panes[paneId]);
   const file = pane?.files.find((item) => item.path === pane.activeFile) ?? pane?.files[0] ?? null;
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const kind = file ? mediaKind(file.path) : null;

@@ -534,3 +534,26 @@ export async function branchFromMessage(message: PiMessage) {
  }
 }
 export async function answerDialog(request:UiRequest,answer:{value?:string;confirmed?:boolean;cancelled?:boolean}){const id=useWorkspace.getState().connectionId||route();await sendCommand(id,{type:'extension_ui_response',id:request.id,...answer});patch(id,{dialogs:current(id).dialogs.filter(item=>item.id!==request.id)})}
+
+/* ------------------------------------------------------------------ *
+ * Workspace tabs (MonoCode `workspaceTabGroups`): each workspace owns one
+ * pi RPC process and its own pane tree. These wrappers keep the connection
+ * table private to this module.
+ * ------------------------------------------------------------------ */
+export function hasWorkspaceConnection(id: string) { return Boolean(id) && connections.has(id) }
+export function workspaceConnectionIds() { return [...connections.keys()] }
+/** Start a workspace's pi process without stealing the project's route. */
+export async function openWorkspaceConnection(cwd: string, id: string, options?: { sessionPath?: string; restoreLast?: boolean }) {
+ await startConnection(cwd, id, options)
+}
+/** Make an existing connection the active projection again. */
+export function focusWorkspaceConnection(id: string, cwd: string) {
+ if (!id) return
+ if (connections.has(id)) { activateConnection(id, cwd); return }
+ projectActive.set(cwd, id)
+}
+/** Keep a background workspace's process from owning the project route. */
+export function restoreProjectRoute(cwd: string, id: string) { if (connections.has(id)) projectActive.set(cwd, id) }
+export async function closeWorkspaceConnection(id: string, message = '工作区已关闭') {
+ if (id && connections.has(id)) await closeConnection(id, message)
+}

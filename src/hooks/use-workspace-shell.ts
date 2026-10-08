@@ -190,16 +190,17 @@ export function useWorkspaceShortcuts(
       if (event.key.toLowerCase() === "w") {
         // MonoCode's ⌘W closes the focused pane (⌘⇧W closes every editor pane).
         const shell = useShell.getState();
-        const editors = Object.keys(shell.panes);
+        const workspace = shell.workspaces.find((item) => item.id === shell.activeWorkspaceId) ?? shell.workspaces[0];
+        const editors = Object.keys(workspace.panes);
         if (event.shiftKey) {
           if (editors.length === 0) return;
           event.preventDefault();
           for (const id of editors) shell.closePane(id);
           return;
         }
-        if (shell.activePane === CHAT_PANE_ID || !shell.panes[shell.activePane]) return;
+        if (workspace.activePane === CHAT_PANE_ID || !workspace.panes[workspace.activePane]) return;
         event.preventDefault();
-        shell.closePane(shell.activePane);
+        shell.closePane(workspace.activePane);
       }
       if (event.key.toLowerCase() === "k") {
         // Search everything, like MonoCode's ⌘K.

@@ -13,7 +13,7 @@ import { TabWidthMotion } from "./ClosingTab";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { IS_MAC } from "./chrome";
 import { setTabDrop, tabDropFromPoint } from "./paneDrop";
-import { useShell, type OpenFile } from "./shellStore";
+import { useActiveWorkspace, useShell, type OpenFile } from "./shellStore";
 
 type TabMenu = { x: number; y: number; path: string };
 
@@ -39,7 +39,7 @@ export function SurfaceTabs({
   onPaneDragStart?: (event: ReactPointerEvent<HTMLElement>) => void;
   trailing?: ReactNode;
 }) {
-  const pane = useShell((state) => state.panes[paneId]);
+  const pane = useActiveWorkspace((workspace) => workspace.panes[paneId]);
   const focusPane = useShell((state) => state.focusPane);
   const focusFile = useShell((state) => state.focusFile);
   const pinFile = useShell((state) => state.pinFile);
