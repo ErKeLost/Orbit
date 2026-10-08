@@ -285,8 +285,10 @@ export const useShell = create<ShellState>((set, get) => {
       } catch { return "changes"; }
     })(),
     terminalPosition: (() => {
-      const raw = localStorage.getItem("orbit.terminal.position");
-      return raw === "top" || raw === "left" || raw === "right" ? raw : "bottom";
+      try {
+        const raw = localStorage.getItem("orbit.terminal.position");
+        return raw === "top" || raw === "left" || raw === "right" ? raw : "bottom";
+      } catch { return "bottom"; }
     })() as DockPosition,
     setTerminalPosition: (position) => {
       write("orbit.terminal.position", position);
@@ -296,7 +298,7 @@ export const useShell = create<ShellState>((set, get) => {
     terminalOpen: (() => { try { return localStorage.getItem("orbit.terminal.open") === "true"; } catch { return false; } })(),
     setTerminalSize: (terminalSize) => { write("orbit.terminal.size", String(terminalSize)); set({ terminalSize }); },
     setTerminalOpen: (terminalOpen) => { write("orbit.terminal.open", String(terminalOpen)); set({ terminalOpen }); },
-    collapsedRailMode: (localStorage.getItem("orbit.shell.collapsedRail") === "hidden" ? "hidden" : "compact") as CollapsedRailMode,
+    collapsedRailMode: (() => { try { return localStorage.getItem("orbit.shell.collapsedRail") === "hidden" ? "hidden" : "compact"; } catch { return "compact"; } })() as CollapsedRailMode,
     setCollapsedRailMode: (mode) => { write("orbit.shell.collapsedRail", mode); set({ collapsedRailMode: mode }); },
     projectRailWidth: readNumber(PROJECT_RAIL_WIDTH_KEY, 240),
     sessionSidebarWidth: readNumber(SESSION_SIDEBAR_WIDTH_KEY, 272),
