@@ -137,7 +137,9 @@ function TitleTabItem({
         {tab.kind === "session" ? (
           tab.busy ? <TerminalSpinner className="inline-block w-3.5 select-none text-center text-[11px] leading-none text-accent" /> : null
         ) : (
-          <span className={!active ? "opacity-55" : undefined}>
+          // 图标包在 grid 里居中：直接当 span 内容会被行盒的基线对齐带偏，
+          // 14px 图标实测比 tab 中心低 1.78px（0.16px 的文件树因为 leading-none 才侥幸对齐）。
+          <span className={`grid shrink-0 place-items-center ${!active ? "opacity-55" : ""}`}>
             <FileTypeIcon name={tab.fileName} isDir={false} size={14} />
           </span>
         )}
