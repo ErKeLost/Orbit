@@ -87,7 +87,7 @@
  */
 .custom-selection-highlight ::selection,
 .custom-selection-highlight::selection {
-  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 3%, transparent);
   color: inherit;
 }
 

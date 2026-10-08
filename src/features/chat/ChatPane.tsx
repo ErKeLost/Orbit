@@ -9,6 +9,8 @@ import { readTurnDurations, saveTurnDurations, turnDurationId } from "../../lib/
 import { useProjects } from "../../lib/projects";
 import { useConversationScroll } from "../../hooks/use-conversation-scroll";
 import { useSelectionHighlight } from "../../hooks/use-selection-highlight";
+import { useTranscriptSelection } from "./useTranscriptSelection";
+import { TranscriptSelectionMenu } from "./TranscriptSelectionMenu";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { ChevronDown } from "../../shared/ui/icons";
 import { AgentActivityFeed } from "../../components/agents/AgentActivityFeed";
@@ -104,6 +106,8 @@ export function ChatPane() {
   // WKWebView 会把原生选区的间隙涂满选区色；挂载后聊天区改用 Custom
   // Highlight API 只重绘文字（样式见 orbit.css 的 custom-selection-highlight）。
   useSelectionHighlight(ref);
+  // 选中回答文字后弹出浮动复制条（MonoCode 同款交互）。
+  const { selection: textSelection, dismissSelection: dismissTextSelection } = useTranscriptSelection(ref.current, true);
   const sessionFile = useWorkspace((state) => state.state?.sessionFile) ?? persistedSessionFile(project);
   const dockPosition = useShell((state) => state.terminalPosition);
   const dockOpen = useShell((state) => state.terminalOpen);
@@ -307,6 +311,7 @@ export function ChatPane() {
             </button>
           </div>
         ) : null}
+        <TranscriptSelectionMenu selection={textSelection} onDismiss={dismissTextSelection} />
       </div>
       {Object.entries(statuses).flatMap(([key, value]) => (!key.startsWith("gui-") && value ? [<div key={key} className="extension-status">{key}: {value}</div>] : []))}
       {/* Sending anchors the turn to the top instead of pinning to the bottom. */}
