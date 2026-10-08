@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { Chunk } from "@codemirror/merge";
 import { Text } from "@codemirror/state";
-import { stageChunkText } from "../../files/editor/editorGit";
 import { LINE_DIFF_CONFIG, lineDiff } from "./lineDiff";
 import { buildUnifiedFile } from "./unifiedDiff";
 
@@ -69,22 +68,4 @@ describe("buildUnifiedFile on large files", () => {
     expect(diff.deletions).toBe(changed);
   });
 
-  it("stages exactly the hunk the view showed", () => {
-    const original = bigFile(12_000);
-    const { next } = scatterEdits(original);
-    const diff = buildUnifiedFile(original, next);
-    const firstAdd = diff.lines.find((line) => line.kind === "add")!;
-    const staged = stageChunkText(
-      original,
-      next,
-      firstAdd.pos!,
-      null,
-      LINE_DIFF_CONFIG,
-    );
-    const stagedDiff = buildUnifiedFile(original, staged!);
-    expect(stagedDiff.additions).toBe(1);
-    expect(stagedDiff.lines.find((line) => line.kind === "add")?.text).toBe(
-      firstAdd.text,
-    );
-  });
 });

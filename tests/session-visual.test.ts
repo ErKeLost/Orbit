@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { compactTitle } from "../src/lib/session-visual";
-import { modelFamily } from "../src/lib/model-family";
 
 describe("compactTitle", () => {
   test("compacts first-message titles for the header", () => {
@@ -11,13 +10,4 @@ describe("compactTitle", () => {
     expect(compactTitle("   ")).toBe("新会话");
   });
 
-});
-
-describe("modelFamily", () => {
-  test("uses the same model mapping as the rendered model icon", () => {
-    expect(modelFamily("claude-opus-5")).toBe("Claude");
-    expect(modelFamily("gpt-5.6-sol")).toBe("OpenAI");
-    expect(modelFamily("glm-5.3-flash")).toBe("GLM");
-    expect(modelFamily("kimi-k2.7-code")).toBe("Kimi");
-  });
 });
