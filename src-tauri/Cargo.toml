@@ -58,7 +58,12 @@ reqwest = { version = "=0.13.4", default-features = false, features = ["json", "
 # GitLab inbox: small blocking HTTP client for the REST API (same choice as the
 # MonoCode inbox this module was ported from). `tls` covers the ring rustls
 # stack already in the tree; `gzip` matches GitLab's compressed responses.
-ureq = { version = "=2.12.1", default-features = false, features = ["tls", "gzip"] }
+# `native-certs` is required: with `tls` alone ureq verifies against the bundled
+# Mozilla root set (webpki-roots), so any self-hosted GitLab behind an internal
+# CA (e.g. gitlab.howone.dev) fails with an opaque "Could not reach GitLab"
+# (UnknownIssuer). It makes rustls read the OS trust store instead, matching
+# curl/SecureTransport and reqwest's rustls-platform-verifier.
+ureq = { version = "=2.12.1", default-features = false, features = ["tls", "native-certs", "gzip"] }
 # Preview encoder for the screen channel (docs/SCREEN.md). JPEG keeps the P0
 # path free of native dependencies and fast enough at preview resolution; the
 # encoder sits behind screen::encode::Encoder so the VideoToolbox H.264

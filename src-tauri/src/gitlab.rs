@@ -868,7 +868,10 @@ fn read_gitlab_response(
             let body = response.into_string().unwrap_or_default();
             return Err(gitlab_http_error(status, &body));
         }
-        Err(_) => return Err("Could not reach GitLab".into()),
+        // Transport failure: DNS, refused connection, TLS (internal CA missing
+        // from the trust store), timeout... Keep the cause so the failure is not
+        // an opaque "could not reach" when the server is in fact reachable.
+        Err(error) => return Err(format!("Could not reach GitLab: {error}")),
     };
     let status = response.status();
     let has_next_page = response
