@@ -80,18 +80,19 @@
 /*
  * Chat selection: WKWebView paints native selection "gaps" (end-of-line to
  * container edge, between paragraphs, around table cells) in the selection
- * color, so dragging over a message floods whole blocks. The native selection
- * goes transparent inside the chat area and useSelectionHighlight repaints the
- * same ranges text-only via the Custom Highlight API.
+ * color, so dragging over a message floods whole blocks. A fully transparent
+ * ::selection is dropped by WebKit (falls back to the system color), so keep
+ * an imperceptible tint on the native paint and let useSelectionHighlight
+ * repaint the same ranges text-only via the Custom Highlight API.
  */
 .custom-selection-highlight ::selection,
 .custom-selection-highlight::selection {
-  background: transparent;
+  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
   color: inherit;
 }
 
 .custom-selection-highlight ::highlight(chat-selection) {
-  background-color: var(--color-selection-strong);
+  background-color: color-mix(in srgb, var(--color-accent) 24%, transparent);
 }
 
 /* ---- Markdown (shiki highlighting stays Orbit's own) --------------------- */
