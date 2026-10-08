@@ -1,7 +1,0 @@
-[submodule "references/jev-ultrafast"]
-	path = references/jev-ultrafast
-	url = https://github.com/browser-use/jev-ultrafast
-[submodule "references/monocode"]
-	path = references/monocode
-	url = https://github.com/hardbeat920/monocode
-	shallow = true
