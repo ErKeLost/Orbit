@@ -105,6 +105,8 @@ function readWorkspace(): Workspace {
 }
 
 type ShellState = Workspace & {
+  /** Panes that just appeared from a split, keyed by pane id (transient). */
+  entering: Record<string, PaneEdge>;
   projectRailOpen: boolean;
   sessionSidebarOpen: boolean;
   sidebarTab: SidebarTab;
@@ -137,6 +139,7 @@ type ShellState = Workspace & {
   /** Drag a file tab onto a pane edge: open it in a brand new pane there. */
   openFileInNewPane: (path: string, targetPane: string, edge: PaneEdge) => void;
   closePane: (paneId: string) => void;
+  clearEntering: (paneId: string) => void;
   setSplitRatio: (splitId: string, index: number, ratio: number) => void;
 };
 
@@ -181,6 +184,7 @@ function detachFile(state: Workspace, path: string): Workspace | null {
 
 export const useShell = create<ShellState>((set, get) => ({
   ...stored,
+  entering: {},
   projectRailOpen: readBool(PROJECT_RAIL_KEY, true),
   sessionSidebarOpen: readBool(SESSION_SIDEBAR_KEY, true),
   sidebarTab: (() => {
@@ -242,10 +246,11 @@ export const useShell = create<ShellState>((set, get) => ({
     }
     // No editor pane yet: MonoCode opens one beside the focused pane.
     const paneId = nextEditorPaneId(state.panes);
-    const next: Workspace = {
+    const next = {
       layout: placeNewPane(state.layout, state.activePane, paneId, "right"),
       panes: { ...state.panes, [paneId]: { files: [entry], activeFile: path } },
       activePane: paneId,
+      entering: { ...state.entering, [paneId]: "right" as PaneEdge },
     };
     set(next);
     persist(next);
@@ -360,7 +365,7 @@ export const useShell = create<ShellState>((set, get) => ({
     const entry = state.panes[findFile(state, path)?.paneId ?? ""]?.files.find((item) => item.path === path);
     const detached = detachFile(state, path) ?? state;
     const paneId = nextEditorPaneId(detached.panes);
-    const next: Workspace = {
+    const next = {
       layout: placeNewPane(detached.layout, targetPane, paneId, edge),
       panes: {
         ...detached.panes,
@@ -370,9 +375,18 @@ export const useShell = create<ShellState>((set, get) => ({
         },
       },
       activePane: paneId,
+      entering: { ...state.entering, [paneId]: edge },
     };
     set(next);
     persist(next);
+  },
+
+  clearEntering: (paneId) => {
+    const state = get();
+    if (!(paneId in state.entering)) return;
+    const entering = { ...state.entering };
+    delete entering[paneId];
+    set({ entering });
   },
 
   closePane: (paneId) => {

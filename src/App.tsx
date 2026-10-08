@@ -52,6 +52,7 @@ function WorkArea() {
   const focusPane = useShell((state) => state.focusPane);
   const movePane = useShell((state) => state.movePane);
   const setSplitRatio = useShell((state) => state.setSplitRatio);
+  const focusedPane = useShell((state) => state.activePane);
   // A sash drag previews through a local tree and only writes on release.
   const [previewLayout, setPreviewLayout] = useState<LayoutNode | null>(null);
   const [paneDrag, setPaneDrag] = useState<PaneDrop | null>(null);
@@ -61,6 +62,14 @@ function WorkArea() {
   const leaves = useMemo(() => layoutLeaves(tree), [tree]);
   const sashes = useMemo(() => layoutSashes(tree), [tree]);
   const split = leaves.length > 1;
+  // A pane split into an existing layout slides in from the edge it was added
+  // on. Panes present when the tree mounts, or swapped in place, just appear.
+  // (MonoCode `PaneTree` enteringPanes.)
+  // MonoCode marks a pane that a split just created and slides it in from the
+  // edge it took (`PaneTree` enteringPanes); the store records the edge where
+  // the split happens, so the attribute is there on the pane's first paint.
+  const entering = useShell((state) => state.entering);
+  const clearEntering = useShell((state) => state.clearEntering);
 
   // MonoCode's `PaneTree` drag: track the pointer, hit-test the live panes and
   // resolve the target edge when the pointer is released.
@@ -130,6 +139,17 @@ function WorkArea() {
                 key={entry.id}
                 data-pane-id={entry.id}
                 onMouseDown={() => focusPane(entry.id)}
+                data-pane-enter={entering[entry.id]}
+                onAnimationEnd={(event) => {
+                  if (event.animationName !== "pane-enter") return;
+                  clearEntering(entry.id);
+                }}
+                onScroll={(event) => {
+                  // Focus scrolls the clip box while the pane is still offscreen.
+                  if (!(entry.id in entering)) return;
+                  event.currentTarget.scrollLeft = 0;
+                  event.currentTarget.scrollTop = 0;
+                }}
                 className={`absolute flex min-h-0 min-w-0 flex-col overflow-hidden ${dragging ? "opacity-60" : ""}`}
                 style={{
                   left: `${entry.rect.x * 100}%`,
@@ -140,7 +160,13 @@ function WorkArea() {
               >
                 {entry.id === CHAT_PANE_ID ? (
                   <div className="chat-pane-background relative isolate flex h-full min-h-0 min-w-0 flex-1 flex-col">
-                    {split ? <SessionPaneHeader showGrip onPaneDragStart={paneDragStart(CHAT_PANE_ID)} /> : null}
+                    {split ? (
+                      <SessionPaneHeader
+                        showGrip
+                        focused={focusedPane === CHAT_PANE_ID}
+                        onPaneDragStart={paneDragStart(CHAT_PANE_ID)}
+                      />
+                    ) : null}
                     <ChatPane key={connectionId || cwd} />
                   </div>
                 ) : panes[entry.id] ? (

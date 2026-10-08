@@ -9,7 +9,7 @@ import { restorePersistentState } from "../lib/persistent";
 import { toast as gooeyToast } from "../shared/ui/toast";
 import type { RemoteConnection, RemoteHostSnapshot } from "../lib/remote-protocol";
 import { useWorkspace } from "../lib/store";
-import { useShell } from "../features/shell/shellStore";
+import { CHAT_PANE_ID, useShell } from "../features/shell/shellStore";
 
 let runtimeStarted = false;
 
@@ -186,6 +186,20 @@ export function useWorkspaceShortcuts(
       if (event.key === "n") {
         event.preventDefault();
         if (online) void changeSession({ type: "new_session" }).catch(report);
+      }
+      if (event.key.toLowerCase() === "w") {
+        // MonoCode's ⌘W closes the focused pane (⌘⇧W closes every editor pane).
+        const shell = useShell.getState();
+        const editors = Object.keys(shell.panes);
+        if (event.shiftKey) {
+          if (editors.length === 0) return;
+          event.preventDefault();
+          for (const id of editors) shell.closePane(id);
+          return;
+        }
+        if (shell.activePane === CHAT_PANE_ID || !shell.panes[shell.activePane]) return;
+        event.preventDefault();
+        shell.closePane(shell.activePane);
       }
       if (event.key.toLowerCase() === "k") {
         // Search everything, like MonoCode's ⌘K.

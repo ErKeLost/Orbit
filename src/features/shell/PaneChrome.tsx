@@ -175,9 +175,12 @@ export function PaneDropHint({ edge }: { edge: PaneEdge }) {
  */
 export function SessionPaneHeader({
   showGrip,
+  focused,
   onPaneDragStart,
 }: {
   showGrip: boolean;
+  /** MonoCode paints the pane's focus dot accent while the pane has focus. */
+  focused: boolean;
   onPaneDragStart?: (event: ReactPointerEvent<HTMLElement>) => void;
 }) {
   const cwd = useWorkspace((state) => state.cwd);
@@ -213,7 +216,7 @@ export function SessionPaneHeader({
       }}
     >
       {showGrip ? <GripVertical className="size-3.5 shrink-0 text-content/35" strokeWidth={1.75} /> : null}
-      <span className={`size-2 shrink-0 rounded-full ${running ? "bg-accent" : "bg-content/20"}`} />
+      <span className={`size-2 shrink-0 rounded-full ${focused ? "bg-accent" : "bg-content/20"}`} />
       <span className="min-w-0 flex-1 truncate text-xs text-content" title={title}>{title}</span>
       {running ? <TerminalSpinner className="shrink-0 select-none text-[11px] leading-none text-accent" /> : null}
       <button
