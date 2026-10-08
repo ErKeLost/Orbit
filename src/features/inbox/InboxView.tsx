@@ -989,7 +989,7 @@ export function InboxView() {
 
   return (
     <div role="region" aria-label="Inbox" className="flex min-h-0 min-w-0 flex-1 flex-col text-content">
-      <div className="flex h-10 shrink-0 select-none items-center gap-2 border-b border-stroke px-3" data-tauri-drag-region>
+      <div className="flex h-10 shrink-0 select-none items-center gap-2 border-b border-stroke px-3" data-tauri-drag-region="deep">
         <InboxIcon className="size-4 shrink-0 text-content/60" strokeWidth={1.75} />
         <span className="text-[13px] font-medium">收件箱</span>
       </div>

@@ -271,13 +271,13 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
   return (
     <aside ref={resize.setPaneRef} className={`body-glass relative h-full min-h-0 shrink-0 flex-col border-r border-stroke ${visible ? "flex" : "hidden"}`}>
       {!railVisible ? (
-        <div className="flex h-10 shrink-0 select-none items-center border-b border-stroke pr-1.5" data-tauri-drag-region>
+        <div className="flex h-10 shrink-0 select-none items-center border-b border-stroke pr-1.5" data-tauri-drag-region="deep">
           {IS_MAC ? <div className="w-[78px] shrink-0" /> : null}
           <DevModeSlot />
           <TabVisitNav onTogglePanel={() => setProjectRailOpen(true)} />
         </div>
       ) : null}
-      <div className="flex h-10 shrink-0 select-none items-center gap-1 border-b border-stroke pl-3 pr-1.5" data-tauri-drag-region>
+      <div className="flex h-10 shrink-0 select-none items-center gap-1 border-b border-stroke pl-3 pr-1.5" data-tauri-drag-region="deep">
         <div className="flex min-w-0 flex-1 items-center">
           <span className="min-w-0 truncate text-sm font-medium leading-tight">工作区</span>
         </div>

@@ -344,7 +344,7 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
       aria-label="项目"
       className={`sidebar-glass relative shrink-0 flex-col border-r border-stroke ${visible ? "flex" : "hidden"}`}
     >
-      <div className="flex h-10 shrink-0 select-none items-center pr-1.5" data-tauri-drag-region>
+      <div className="flex h-10 shrink-0 select-none items-center pr-1.5" data-tauri-drag-region="deep">
         {IS_MAC ? <div className="w-[78px] shrink-0" /> : null}
         <DevModeSlot />
         <TabVisitNav onTogglePanel={settingsOpen ? undefined : () => setProjectRailOpen(false)} panelActive />

@@ -109,3 +109,24 @@ describe("async transport", () => {
     expect(remote).toMatch(/clients\.work\.notified\(\)/)
   })
 })
+
+describe("window drag regions", () => {
+  test("chrome headers use the subtree form, never a bare drag region", () => {
+    // Tauri 2.11's injected drag script treats a bare `data-tauri-drag-region`
+    // as "this element only": the walk returns false unless the attribute owner
+    // is the click target itself, and any clickable child blocks the drag. Every
+    // app header is filled edge to edge by non-clickable wrappers, so a bare
+    // attribute leaves zero draggable pixels and the window cannot be moved at
+    // all. `"deep"` starts a drag from anywhere in the subtree except on
+    // clickable elements, which is what a title bar has to do.
+    const bare: string[] = []
+    for (const file of COMPONENTS) {
+      const source = readFileSync(file, "utf8")
+      for (const match of source.matchAll(/data-tauri-drag-region(?![\w-])(?!\s*=\s*["'])/g)) {
+        const line = source.slice(0, match.index).split("\n").length
+        bare.push(`${file}:${line}`)
+      }
+    }
+    expect(bare).toEqual([])
+  })
+})

@@ -23,7 +23,7 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
   const tabs = useWorkspaceTabs();
 
   return (
-    <header className="flex h-10 shrink-0 select-none items-stretch border-b border-stroke" data-tauri-drag-region>
+    <header className="flex h-10 shrink-0 select-none items-stretch border-b border-stroke" data-tauri-drag-region="deep">
       {railsHidden ? (
         <>
           {IS_MAC ? <div className="w-[78px] shrink-0" /> : null}

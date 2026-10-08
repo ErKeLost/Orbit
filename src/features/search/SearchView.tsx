@@ -88,7 +88,7 @@ export function SearchView() {
 
   return (
     <div role="region" aria-label="搜索" className="flex min-h-0 min-w-0 flex-1 flex-col text-content">
-      <div className="flex h-10 shrink-0 select-none items-center border-b border-stroke" data-tauri-drag-region>
+      <div className="flex h-10 shrink-0 select-none items-center border-b border-stroke" data-tauri-drag-region="deep">
         <label className="flex min-w-0 flex-1 items-center gap-2 px-3 text-content/50">
           <SearchIcon className="size-3.5 shrink-0" strokeWidth={1.75} />
           <input
