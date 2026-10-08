@@ -1,4 +1,5 @@
 {$ORBIT_RELAY_DOMAIN} {
   encode zstd gzip
+  header_up X-Real-IP {remote_host}
   reverse_proxy 127.0.0.1:8787
 }

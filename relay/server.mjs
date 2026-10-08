@@ -23,14 +23,17 @@ function safeEqual(left, right) {
 }
 
 function clientIp(request, server) {
-  return request.headers.get("x-real-ip") || request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || server.requestIP(request)?.address || "unknown"
+  // Only trust the header the reverse proxy (Caddy) sets authoritatively.
+  // X-Forwarded-For and any client-supplied header are spoofable, so they are
+  // deliberately ignored.
+  return request.headers.get("x-real-ip")?.trim() || server.requestIP(request)?.address || "unknown"
 }
 
 function route(request, server) {
   const url = new URL(request.url)
   const match = url.pathname.match(/^\/relay\/(host|client)\/([A-Za-z0-9-]{8,80})$/)
   if (!match) return null
-  return { role: match[1], hostId: match[2], token: url.searchParams.get("token") || "", ip: clientIp(request, server) }
+  return { role: match[1], hostId: match[2], ip: clientIp(request, server) }
 }
 
 function rateLimited(ip) {
@@ -73,56 +76,73 @@ const server = Bun.serve({
     if (!data) return new Response("Not found", { status: 404 })
     if (rateLimited(data.ip)) return new Response("Too many attempts", { status: 429 })
     if (data.role === "client") {
+      // Token authentication happens on the first WebSocket frame, not in the
+      // URL, so the token never lands in access logs. Only the cheap checks run
+      // here.
       const host = hosts.get(data.hostId)
-      if (!host || !safeEqual(host.clientToken, data.token)) {
-        recordFailure(data.ip)
-        log(`client rejected for ${data.hostId} from ${data.ip} (host ${host ? "token mismatch" : "not registered"})`)
-        return new Response("Orbit Host unavailable", { status: 404 })
-      }
+      if (!host) return new Response("Orbit Host unavailable", { status: 404 })
       if (host.clients.size >= maxClientsPerHost) return new Response("Too many clients", { status: 429 })
     } else if ((hostCountsByIp.get(data.ip) || 0) >= maxHostsPerIp && !hosts.has(data.hostId)) {
       return new Response("Too many hosts", { status: 429 })
     }
-    return server.upgrade(request, { data: { ...data, authenticated: data.role === "client" } }) ? undefined : new Response("Upgrade required", { status: 426 })
+    return server.upgrade(request, { data: { ...data, authenticated: false } }) ? undefined : new Response("Upgrade required", { status: 426 })
   },
   websocket: {
     maxPayloadLength: 1_048_576,
     idleTimeout: 120,
-    open(socket) {
-      if (socket.data.role !== "client") return
-      const host = hosts.get(socket.data.hostId)
-      if (!host || !safeEqual(host.clientToken, socket.data.token)) return socket.close(1008, "Orbit Host unavailable")
-      const clientId = crypto.randomUUID()
-      socket.data.clientId = clientId
-      host.clients.set(clientId, socket)
-      log(`client ${clientId} attached to ${socket.data.hostId} from ${socket.data.ip}`)
-      host.socket.send(JSON.stringify({ relay: "connect", clientId }))
+    open(_socket) {
+      // Both roles authenticate with their first message; nothing to attach yet.
     },
     message(socket, message) {
-      const { role, hostId, clientId, ip } = socket.data
-      if (role === "host" && !socket.data.authenticated) {
+      const { role, hostId, ip } = socket.data
+      if (!socket.data.authenticated) {
         let frame
         try { frame = JSON.parse(String(message)) } catch { frame = null }
-        if (frame?.relay !== "register" || !safeEqual(String(frame.hostKey || ""), configuredHostKey) || !/^[A-Za-z0-9_-]{32,256}$/.test(String(frame.clientToken || ""))) {
+
+        if (role === "host") {
+          if (frame?.relay !== "register" || !safeEqual(String(frame.hostKey || ""), configuredHostKey) || !/^[A-Za-z0-9_-]{32,256}$/.test(String(frame.clientToken || ""))) {
+            recordFailure(ip)
+            log(`host registration DENIED for ${hostId} from ${ip}`)
+            return socket.close(1008, "Invalid host credentials")
+          }
+          const previous = hosts.get(hostId)
+          if (previous) {
+            // Remove the old registration before installing the replacement. Its
+            // close callback may run later and must not tear down the new host.
+            closeHost(hostId, previous)
+            previous.socket.close(1012, "Orbit Host replaced")
+          }
+          socket.data.authenticated = true
+          const host = { socket, ip, clientToken: String(frame.clientToken), clients: new Map() }
+          hosts.set(hostId, host)
+          hostCountsByIp.set(ip, (hostCountsByIp.get(ip) || 0) + 1)
+          log(`host ${hostId} registered from ${ip}`)
+          socket.send(JSON.stringify({ relay: "registered" }))
+          return
+        }
+
+        // client
+        if (frame?.relay !== "auth" || typeof frame.token !== "string") {
           recordFailure(ip)
-          log(`host registration DENIED for ${hostId} from ${ip}`)
-          return socket.close(1008, "Invalid host credentials")
+          return socket.close(1008, "Orbit Host unavailable")
         }
-        const previous = hosts.get(hostId)
-        if (previous) {
-          // Remove the old registration before installing the replacement. Its
-          // close callback may run later and must not tear down the new host.
-          closeHost(hostId, previous)
-          previous.socket.close(1012, "Orbit Host replaced")
+        const host = hosts.get(hostId)
+        if (!host || !safeEqual(host.clientToken, frame.token)) {
+          recordFailure(ip)
+          log(`client rejected for ${hostId} from ${ip} (host ${host ? "token mismatch" : "not registered"})`)
+          return socket.close(1008, "Orbit Host unavailable")
         }
+        if (host.clients.size >= maxClientsPerHost) return socket.close(1008, "Too many clients")
+        const clientId = crypto.randomUUID()
         socket.data.authenticated = true
-        const host = { socket, ip, clientToken: frame.clientToken, clients: new Map() }
-        hosts.set(hostId, host)
-        hostCountsByIp.set(ip, (hostCountsByIp.get(ip) || 0) + 1)
-        log(`host ${hostId} registered from ${ip}`)
-        socket.send(JSON.stringify({ relay: "registered" }))
+        socket.data.clientId = clientId
+        host.clients.set(clientId, socket)
+        log(`client ${clientId} attached to ${hostId} from ${ip}`)
+        host.socket.send(JSON.stringify({ relay: "connect", clientId }))
         return
       }
+
+      const { clientId } = socket.data
       const host = hosts.get(hostId)
       if (!host || host.socket !== (role === "host" ? socket : host.socket)) return socket.close(1012, "Orbit Host unavailable")
       if (role === "client") {
@@ -146,7 +166,7 @@ const server = Bun.serve({
         if (host.socket !== socket) return
         return closeHost(hostId, host)
       }
-      if (host.clients.get(clientId) !== socket) return
+      if (!clientId || host.clients.get(clientId) !== socket) return
       host.clients.delete(clientId)
       log(`client ${clientId} detached from ${hostId}`)
       host.socket.send(JSON.stringify({ relay: "disconnect", clientId }))

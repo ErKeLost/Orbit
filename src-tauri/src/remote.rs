@@ -68,7 +68,7 @@ mod desktop {
     use crate::bridge::Bridge;
     use crate::screen::{ScreenHost, ScreenSubscription};
     use aes_gcm::{
-        aead::{rand_core::RngCore, Aead, OsRng},
+        aead::{rand_core::RngCore, Aead, OsRng, Payload},
         Aes256Gcm, KeyInit, Nonce,
     };
     use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
@@ -108,6 +108,13 @@ mod desktop {
     /// Not a data path: reads, writes and frame wakeups are all events. This
     /// only bounds how long a shutdown takes to be noticed.
     const SHUTDOWN_CHECK_INTERVAL: Duration = Duration::from_millis(250);
+    /// How long the Host waits for the client's encrypted auth frame after the
+    /// WebSocket upgrade completes.
+    const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
+
+    const SESSION_ID_LEN: usize = 16;
+    const SEQ_LEN: usize = 8;
+    const NONCE_LEN: usize = 12;
 
     #[derive(Clone, Deserialize, Serialize)]
     #[serde(rename_all = "camelCase")]
@@ -185,6 +192,7 @@ mod desktop {
         attached: Arc<Mutex<HashSet<String>>>,
         incoming: tokio::sync::mpsc::Receiver<String>,
         screen: Arc<ScreenSubscription>,
+        cipher: FrameCipher,
     }
 
     pub struct RemoteHost {
@@ -540,7 +548,7 @@ mod desktop {
     async fn send_screen_frame<S>(
         socket: &mut WebSocketStream<S>,
         subscription: &ScreenSubscription,
-        key: Option<&[u8; 32]>,
+        cipher: &mut FrameCipher,
     ) -> bool
     where
         S: AsyncRead + AsyncWrite + Unpin,
@@ -548,12 +556,8 @@ mod desktop {
         let Some(frame) = subscription.poll() else {
             return true;
         };
-        let payload = match key {
-            Some(key) => match encrypt_relay_frame(&frame.envelope, key) {
-                Ok(payload) => payload,
-                Err(_) => return false,
-            },
-            None => frame.envelope.to_string(),
+        let Ok(payload) = cipher.encrypt(&frame.envelope) else {
+            return false;
         };
         socket.send(Message::text(payload)).await.is_ok()
     }
@@ -636,21 +640,8 @@ mod desktop {
         }
     }
 
-    fn authorized(uri: &tungstenite::http::Uri, expected_token: &str) -> bool {
-        if uri.path() != "/ws" {
-            return false;
-        }
-        uri.query().is_some_and(|query| {
-            query.split('&').any(|field| {
-                field
-                    .strip_prefix("token=")
-                    .is_some_and(|token| token == expected_token)
-            })
-        })
-    }
-
-    fn e2ee_requested(uri: &tungstenite::http::Uri) -> bool {
-        uri.query().is_some_and(|query| query.split('&').any(|field| field == "e2ee=1"))
+    fn websocket_path(uri: &tungstenite::http::Uri) -> bool {
+        uri.path() == "/ws"
     }
 
     fn rejected() -> ErrorResponse {
@@ -868,19 +859,14 @@ mod desktop {
             Err(_) => return,
         }
 
-        let expected = token;
-        let encrypted_request = Arc::new(AtomicBool::new(false));
-        let encrypted_request_for_handshake = encrypted_request.clone();
-        // The large `Err` is the handshake rejection response, whose type the
-        // library fixes; there is nothing to box.
+        // The token no longer rides in the URL: it is carried inside the
+        // client's encrypted auth frame, so it never lands in access logs.
         #[allow(clippy::result_large_err, reason = "signature fixed by tokio-tungstenite")]
-        let Ok(socket) = accept_hdr_async(
+        let Ok(mut socket) = accept_hdr_async(
             stream,
             move |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
                   response| {
-                if authorized(request.uri(), &expected) {
-                    encrypted_request_for_handshake
-                        .store(e2ee_requested(request.uri()), Ordering::Release);
+                if websocket_path(request.uri()) {
                     Ok(response)
                 } else {
                     Err(rejected())
@@ -891,11 +877,42 @@ mod desktop {
         else {
             return;
         };
-        let mut socket = socket;
-        let encrypted = encrypted_request.load(Ordering::Acquire);
+
+        // The auth frame is the first thing on the socket. Decrypting it proves
+        // the client holds the application key; the token inside authorizes it,
+        // and the client-chosen session id binds every later frame to this
+        // connection.
+        let auth = match tokio::time::timeout(AUTH_TIMEOUT, socket.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => text.to_string(),
+            _ => return,
+        };
+        let (auth_plain, session_id, auth_seq) = match decrypt_relay_frame(&auth, &encryption_key) {
+            Ok(frame) => frame,
+            Err(_) => return,
+        };
+        let authorized = serde_json::from_str::<Value>(&auth_plain)
+            .ok()
+            .is_some_and(|value| {
+                value.get("type").and_then(Value::as_str) == Some("auth")
+                    && value.get("token").and_then(Value::as_str) == Some(&token)
+                    && value.get("protocol").and_then(Value::as_str) == Some(PROTOCOL)
+            });
+        if !authorized {
+            return;
+        }
+        let mut cipher = FrameCipher::new(encryption_key);
+        if cipher.accept_auth(session_id, auth_seq).is_err() {
+            return;
+        }
+
         let hello = json!({"type":"host.hello","protocol":PROTOCOL,"hostId":host_id,"serverTime":unix_millis(),"theme":app.state::<RemoteHost>().theme(),"machineName":app.state::<RemoteHost>().info().map(|info| info.machine_name).unwrap_or_else(|| "Orbit Desktop".into())}).to_string();
-        let hello = if encrypted { encrypt_relay_frame(&hello, &encryption_key).unwrap_or(hello) } else { hello };
-        let _ = socket.send(Message::text(hello)).await;
+        let hello = match cipher.encrypt_hello(&hello) {
+            Ok(frame) => frame,
+            Err(_) => return,
+        };
+        if socket.send(Message::text(hello)).await.is_err() {
+            return;
+        }
 
         let client_id = Uuid::new_v4();
         let (outbound, mut incoming) = tokio::sync::mpsc::channel::<String>(CLIENT_QUEUE_CAPACITY);
@@ -914,7 +931,6 @@ mod desktop {
             );
         }
 
-        let screen_key = encrypted.then_some(&*encryption_key);
         // The receiver is owned here, and the bus signals it on every publish,
         // so a frame never waits for a timer to be noticed.
         let mut screen_wake = session.screen.take_wake();
@@ -927,7 +943,10 @@ mod desktop {
                 // screen frame that is still going out.
                 biased;
                 Some(frame) = incoming.recv() => {
-                    let frame = if encrypted { encrypt_relay_frame(&frame, &encryption_key).unwrap_or(frame) } else { frame };
+                    let frame = match cipher.encrypt(&frame) {
+                        Ok(frame) => frame,
+                        Err(_) => break,
+                    };
                     if socket.send(Message::text(frame)).await.is_err() {
                         break;
                     }
@@ -935,18 +954,17 @@ mod desktop {
                 Some(message) = socket.next() => {
                     match message {
                         Ok(Message::Text(text)) => {
-                            let text = if encrypted {
-                                match decrypt_relay_frame(&text, &encryption_key) {
-                                    Ok(plain) => plain,
-                                    Err(_) => break,
-                                }
-                            } else {
-                                text.to_string()
+                            let text = match cipher.decrypt(&text) {
+                                Ok(plain) => plain,
+                                Err(_) => break,
                             };
                             let Some(response) = handle_request(&app, &text, &session).await else {
                                 continue;
                             };
-                            let response = if encrypted { encrypt_relay_frame(&response, &encryption_key).unwrap_or(response) } else { response };
+                            let response = match cipher.encrypt(&response) {
+                                Ok(frame) => frame,
+                                Err(_) => break,
+                            };
                             if socket.send(Message::text(response)).await.is_err() {
                                 break;
                             }
@@ -957,7 +975,7 @@ mod desktop {
                     }
                 }
                 Some(()) = wake(&mut screen_wake) => {
-                    if !send_screen_frame(&mut socket, &session.screen, screen_key).await {
+                    if !send_screen_frame(&mut socket, &session.screen, &mut cipher).await {
                         break;
                     }
                 }
@@ -1002,7 +1020,6 @@ mod desktop {
     async fn relay_connect(
         relay_url: &str,
         host_id: &str,
-        token: &str,
     ) -> Result<WebSocketStream<tokio_openssl::SslStream<TcpStream>>, String> {
         use openssl::ssl::{SslConnector, SslMethod};
         let uri = tokio_tungstenite::tungstenite::http::Uri::try_from(relay_url)
@@ -1013,7 +1030,7 @@ mod desktop {
             .to_owned();
         let port = uri.port_u16().unwrap_or(443);
         let path = format!(
-            "{}/relay/host/{host_id}?token={token}",
+            "{}/relay/host/{host_id}",
             uri.path().trim_end_matches('/')
         );
         let tcp = TcpStream::connect((host.as_str(), port))
@@ -1057,56 +1074,183 @@ mod desktop {
         Message::text(json!({"relay":"frame","clientId":client_id,"data":data}).to_string())
     }
 
-    fn encrypt_relay_frame(value: &str, key: &[u8; 32]) -> Result<String, String> {
+    fn frame_aad(session_id: &[u8; SESSION_ID_LEN], seq: u64) -> Vec<u8> {
+        let mut value = Vec::with_capacity(SESSION_ID_LEN + SEQ_LEN);
+        value.extend_from_slice(session_id);
+        value.extend_from_slice(&seq.to_be_bytes());
+        value
+    }
+
+    fn encrypt_relay_frame(
+        value: &str,
+        key: &[u8; 32],
+        session_id: &[u8; SESSION_ID_LEN],
+        seq: u64,
+    ) -> Result<String, String> {
         let cipher = Aes256Gcm::new_from_slice(key).map_err(|error| error.to_string())?;
-        let mut nonce = [0_u8; 12];
+        let mut nonce = [0_u8; NONCE_LEN];
         OsRng.fill_bytes(&mut nonce);
+        let aad = frame_aad(session_id, seq);
         let ciphertext = cipher
-            .encrypt(Nonce::from_slice(&nonce), value.as_bytes())
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: value.as_bytes(),
+                    aad: aad.as_slice(),
+                },
+            )
             .map_err(|_| "Relay 加密失败".to_string())?;
-        let mut frame = Vec::with_capacity(nonce.len() + ciphertext.len());
+        let mut frame =
+            Vec::with_capacity(SESSION_ID_LEN + SEQ_LEN + NONCE_LEN + ciphertext.len());
+        frame.extend_from_slice(session_id);
+        frame.extend_from_slice(&seq.to_be_bytes());
         frame.extend_from_slice(&nonce);
         frame.extend_from_slice(&ciphertext);
         Ok(URL_SAFE_NO_PAD.encode(frame))
     }
 
-    fn decrypt_relay_frame(value: &str, key: &[u8; 32]) -> Result<String, String> {
+    fn decrypt_relay_frame(
+        value: &str,
+        key: &[u8; 32],
+    ) -> Result<(String, [u8; SESSION_ID_LEN], u64), String> {
         let frame = URL_SAFE_NO_PAD
             .decode(value)
             .map_err(|_| "Relay 加密帧无效".to_string())?;
-        if frame.len() < 29 {
+        if frame.len() < SESSION_ID_LEN + SEQ_LEN + NONCE_LEN + 16 {
             return Err("Relay 加密帧无效".into());
         }
+        let session_id: [u8; SESSION_ID_LEN] = frame[..SESSION_ID_LEN]
+            .try_into()
+            .map_err(|_| "Relay 加密帧无效".to_string())?;
+        let seq = u64::from_be_bytes(
+            frame[SESSION_ID_LEN..SESSION_ID_LEN + SEQ_LEN]
+                .try_into()
+                .map_err(|_| "Relay 加密帧无效".to_string())?,
+        );
         let cipher = Aes256Gcm::new_from_slice(key).map_err(|error| error.to_string())?;
+        let aad = frame_aad(&session_id, seq);
         let plaintext = cipher
-            .decrypt(Nonce::from_slice(&frame[..12]), &frame[12..])
+            .decrypt(
+                Nonce::from_slice(
+                    &frame[SESSION_ID_LEN + SEQ_LEN..SESSION_ID_LEN + SEQ_LEN + NONCE_LEN],
+                ),
+                Payload {
+                    msg: &frame[SESSION_ID_LEN + SEQ_LEN + NONCE_LEN..],
+                    aad: aad.as_slice(),
+                },
+            )
             .map_err(|_| "Relay 加密帧认证失败".to_string())?;
-        String::from_utf8(plaintext).map_err(|_| "Relay 明文不是有效 UTF-8".into())
+        Ok((
+            String::from_utf8(plaintext).map_err(|_| "Relay 明文不是有效 UTF-8".to_string())?,
+            session_id,
+            seq,
+        ))
     }
 
-    fn add_relay_client(
+    /// Per-connection crypto state: the client-chosen session id, the last
+    /// sequence accepted, and the next sequence to send. The session id and
+    /// sequence are authenticated as AES-GCM AAD, so a frame captured on one
+    /// connection can neither be replayed on another nor replayed/out-of-order
+    /// within the same one.
+    struct FrameCipher {
+        key: Arc<[u8; 32]>,
+        session_id: Option<[u8; SESSION_ID_LEN]>,
+        in_seq: u64,
+        out_seq: u64,
+    }
+
+    impl FrameCipher {
+        fn new(key: Arc<[u8; 32]>) -> Self {
+            Self {
+                key,
+                session_id: None,
+                in_seq: 0,
+                out_seq: 0,
+            }
+        }
+
+        fn authenticated(&self) -> bool {
+            self.session_id.is_some()
+        }
+
+        /// Establish the session from the client's encrypted auth frame. The
+        /// auth frame itself is seq 0 and is never replayed through `decrypt`.
+        fn accept_auth(
+            &mut self,
+            session_id: [u8; SESSION_ID_LEN],
+            seq: u64,
+        ) -> Result<(), String> {
+            if seq != 0 {
+                return Err("认证帧序列号必须为 0".into());
+            }
+            if self.session_id.is_some() {
+                return Err("连接已经认证".into());
+            }
+            self.session_id = Some(session_id);
+            self.in_seq = 0;
+            self.out_seq = 0;
+            Ok(())
+        }
+
+        fn encrypt_hello(&self, plain: &str) -> Result<String, String> {
+            let session_id = self
+                .session_id
+                .ok_or_else(|| "连接尚未认证".to_string())?;
+            encrypt_relay_frame(plain, self.key.as_ref(), &session_id, 0)
+        }
+
+        fn decrypt(&mut self, value: &str) -> Result<String, String> {
+            let (plain, session_id, seq) = decrypt_relay_frame(value, self.key.as_ref())?;
+            let expected = self
+                .session_id
+                .ok_or_else(|| "连接尚未认证".to_string())?;
+            if session_id != expected {
+                return Err("会话标识不匹配".into());
+            }
+            if seq <= self.in_seq {
+                return Err("消息重放或乱序".into());
+            }
+            self.in_seq = seq;
+            Ok(plain)
+        }
+
+        fn encrypt(&mut self, plain: &str) -> Result<String, String> {
+            let session_id = self
+                .session_id
+                .ok_or_else(|| "连接尚未认证".to_string())?;
+            let seq = self.out_seq + 1;
+            let frame = encrypt_relay_frame(plain, self.key.as_ref(), &session_id, seq)?;
+            self.out_seq = seq;
+            Ok(frame)
+        }
+    }
+
+    fn ensure_relay_client(
         app: &AppHandle,
         client_id: &str,
-        host_id: &str,
         clients: &Clients,
         relay_clients: &mut HashMap<String, RelayClient>,
-        encryption_key: &[u8; 32],
-    ) -> Option<Message> {
+        encryption_key: Arc<[u8; 32]>,
+    ) {
         if let Some(previous) = relay_clients.remove(client_id) {
-            clients.map.lock().ok()?.remove(&previous.local_id);
+            if let Ok(mut connected) = clients.map.lock() {
+                connected.remove(&previous.local_id);
+            }
         }
         let (outbound, incoming) = tokio::sync::mpsc::channel::<String>(CLIENT_QUEUE_CAPACITY);
         let attached = Arc::new(Mutex::new(HashSet::new()));
         let local_id = Uuid::new_v4();
         let screen = ScreenSubscription::new(app.state::<ScreenHost>().bus());
-        clients.map.lock().ok()?.insert(
-            local_id,
-            Client {
-                sender: outbound,
-                projects: attached.clone(),
-                screen: screen.clone(),
-            },
-        );
+        if let Ok(mut connected) = clients.map.lock() {
+            connected.insert(
+                local_id,
+                Client {
+                    sender: outbound,
+                    projects: attached.clone(),
+                    screen: screen.clone(),
+                },
+            );
+        }
         relay_clients.insert(
             client_id.to_owned(),
             RelayClient {
@@ -1114,20 +1258,9 @@ mod desktop {
                 attached,
                 incoming,
                 screen,
+                cipher: FrameCipher::new(encryption_key),
             },
         );
-        let hello = json!({
-            "type":"host.hello",
-            "protocol":PROTOCOL,
-            "hostId":host_id,
-            "serverTime":unix_millis(),
-            "theme":app.state::<RemoteHost>().theme(),
-            "machineName":app.state::<RemoteHost>().info().map(|info| info.machine_name).unwrap_or_else(|| "Orbit Desktop".into())
-        }).to_string();
-        Some(relay_envelope(
-            client_id,
-            encrypt_relay_frame(&hello, encryption_key).ok()?,
-        ))
     }
 
     fn clear_relay_clients(clients: &Clients, relay_clients: &mut HashMap<String, RelayClient>) {
@@ -1156,7 +1289,7 @@ mod desktop {
         stop: Arc<AtomicBool>,
     ) {
         while !stop.load(Ordering::Acquire) {
-            let mut socket = match relay_connect(&relay_url, &host_id, &client_token).await {
+            let mut socket = match relay_connect(&relay_url, &host_id).await {
                 Ok(socket) => socket,
                 Err(error) => {
                     log::warn!("Relay 连接失败：{error}");
@@ -1194,18 +1327,23 @@ mod desktop {
                 // client that appeared mid-iteration is not skipped.
                 let mut outbound: Vec<(String, String)> = Vec::new();
                 for (client_id, client) in relay_clients.iter_mut() {
+                    if !client.cipher.authenticated() {
+                        continue;
+                    }
                     while let Ok(data) = client.incoming.try_recv() {
-                        outbound.push((client_id.clone(), data));
+                        match client.cipher.encrypt(&data) {
+                            Ok(frame) => outbound.push((client_id.clone(), frame)),
+                            Err(_) => continue,
+                        }
                     }
                     if let Some(frame) = client.screen.poll() {
-                        outbound.push((client_id.clone(), frame.envelope.to_string()));
+                        match client.cipher.encrypt(&frame.envelope) {
+                            Ok(frame) => outbound.push((client_id.clone(), frame)),
+                            Err(_) => continue,
+                        }
                     }
                 }
-                for (client_id, data) in outbound {
-                    let frame = match encrypt_relay_frame(&data, &encryption_key) {
-                        Ok(frame) => frame,
-                        Err(_) => break 'connection,
-                    };
+                for (client_id, frame) in outbound {
                     if socket.send(relay_envelope(&client_id, frame)).await.is_err() {
                         break 'connection;
                     }
@@ -1238,18 +1376,13 @@ mod desktop {
                                 };
                                 match frame.get("relay").and_then(Value::as_str) {
                                     Some("connect") => {
-                                        if let Some(hello) = add_relay_client(
+                                        ensure_relay_client(
                                             &app,
                                             client_id,
-                                            &host_id,
                                             &clients,
                                             &mut relay_clients,
-                                            &encryption_key,
-                                        ) {
-                                            if socket.send(hello).await.is_err() {
-                                                break 'connection;
-                                            }
-                                        }
+                                            encryption_key.clone(),
+                                        );
                                     }
                                     Some("disconnect") => {
                                         if let Some(client) = relay_clients.remove(client_id) {
@@ -1262,26 +1395,63 @@ mod desktop {
                                     }
                                     Some("frame") => {
                                         if !relay_clients.contains_key(client_id) {
-                                            if let Some(hello) = add_relay_client(
+                                            ensure_relay_client(
                                                 &app,
                                                 client_id,
-                                                &host_id,
                                                 &clients,
                                                 &mut relay_clients,
-                                                &encryption_key,
-                                            ) {
-                                                if socket.send(hello).await.is_err() {
-                                                    break 'connection;
-                                                }
-                                            }
+                                                encryption_key.clone(),
+                                            );
                                         }
                                         let Some(data) = frame.get("data").and_then(Value::as_str) else {
                                             continue;
                                         };
-                                        let Some(client) = relay_clients.get(client_id) else {
+                                        let Some(client) = relay_clients.get_mut(client_id) else {
                                             continue;
                                         };
-                                        let plain = match decrypt_relay_frame(data, &encryption_key) {
+                                        // The first frame from a new relay client is its
+                                        // encrypted auth frame, which establishes the
+                                        // per-connection session and authorizes it.
+                                        if !client.cipher.authenticated() {
+                                            let (auth_plain, session_id, auth_seq) =
+                                                match decrypt_relay_frame(data, &encryption_key) {
+                                                    Ok(frame) => frame,
+                                                    Err(_) => continue,
+                                                };
+                                            let authorized = serde_json::from_str::<Value>(&auth_plain)
+                                                .ok()
+                                                .is_some_and(|value| {
+                                                    value.get("type").and_then(Value::as_str)
+                                                        == Some("auth")
+                                                        && value.get("token").and_then(Value::as_str)
+                                                            == Some(&client_token)
+                                                        && value.get("protocol").and_then(Value::as_str)
+                                                            == Some(PROTOCOL)
+                                                });
+                                            if !authorized {
+                                                continue;
+                                            }
+                                            if client.cipher.accept_auth(session_id, auth_seq).is_err() {
+                                                continue;
+                                            }
+                                            let hello = json!({
+                                                "type":"host.hello",
+                                                "protocol":PROTOCOL,
+                                                "hostId":host_id,
+                                                "serverTime":unix_millis(),
+                                                "theme":app.state::<RemoteHost>().theme(),
+                                                "machineName":app.state::<RemoteHost>().info().map(|info| info.machine_name).unwrap_or_else(|| "Orbit Desktop".into())
+                                            }).to_string();
+                                            let hello = match client.cipher.encrypt_hello(&hello) {
+                                                Ok(hello) => hello,
+                                                Err(_) => break 'connection,
+                                            };
+                                            if socket.send(relay_envelope(client_id, hello)).await.is_err() {
+                                                break 'connection;
+                                            }
+                                            continue;
+                                        }
+                                        let plain = match client.cipher.decrypt(data) {
                                             Ok(plain) => plain,
                                             Err(_) => continue,
                                         };
@@ -1292,11 +1462,10 @@ mod desktop {
                                         let Some(response) = handle_request(&app, &plain, &session).await else {
                                             continue;
                                         };
-                                        let encrypted =
-                                            match encrypt_relay_frame(&response, &encryption_key) {
-                                                Ok(encrypted) => encrypted,
-                                                Err(_) => break 'connection,
-                                            };
+                                        let encrypted = match client.cipher.encrypt(&response) {
+                                            Ok(encrypted) => encrypted,
+                                            Err(_) => break 'connection,
+                                        };
                                         if socket.send(relay_envelope(client_id, encrypted)).await.is_err() {
                                             break 'connection;
                                         }
@@ -1665,13 +1834,11 @@ mod desktop {
         use std::str::FromStr;
 
         #[test]
-        fn accepts_only_the_websocket_path_and_exact_token() {
-            let valid = tungstenite::http::Uri::from_str("/ws?token=secret").unwrap();
-            let invalid_path = tungstenite::http::Uri::from_str("/other?token=secret").unwrap();
-            let invalid_token = tungstenite::http::Uri::from_str("/ws?token=other").unwrap();
-            assert!(authorized(&valid, "secret"));
-            assert!(!authorized(&invalid_path, "secret"));
-            assert!(!authorized(&invalid_token, "secret"));
+        fn accepts_only_the_websocket_path() {
+            let valid = tungstenite::http::Uri::from_str("/ws").unwrap();
+            let invalid = tungstenite::http::Uri::from_str("/other").unwrap();
+            assert!(websocket_path(&valid));
+            assert!(!websocket_path(&invalid));
         }
 
         #[test]
@@ -1687,11 +1854,31 @@ mod desktop {
             let key_value = random_secret(32);
             let mut key = [0_u8; 32];
             key.copy_from_slice(&URL_SAFE_NO_PAD.decode(&key_value).unwrap());
+            let session_id = [7_u8; SESSION_ID_LEN];
             let plain = json!({"type":"pi.command","project":"p"}).to_string();
-            let encrypted = encrypt_relay_frame(&plain, &key).unwrap();
+            let encrypted = encrypt_relay_frame(&plain, &key, &session_id, 1).unwrap();
             assert_ne!(encrypted, plain);
-            assert_eq!(decrypt_relay_frame(&encrypted, &key).unwrap(), plain);
-            assert!(decrypt_relay_frame(&encrypted, &[7_u8; 32]).is_err());
+            let (round, got_session, seq) = decrypt_relay_frame(&encrypted, &key).unwrap();
+            assert_eq!(round, plain);
+            assert_eq!(got_session, session_id);
+            assert_eq!(seq, 1);
+            assert!(decrypt_relay_frame(&encrypted, &[9_u8; 32]).is_err());
+        }
+
+        #[test]
+        fn frame_cipher_rejects_replays_and_out_of_order() {
+            let key = Arc::new([3_u8; 32]);
+            let mut cipher = FrameCipher::new(key.clone());
+            let session_id = [1_u8; SESSION_ID_LEN];
+            cipher.accept_auth(session_id, 0).unwrap();
+            assert!(cipher.authenticated());
+            let first = encrypt_relay_frame("one", key.as_ref(), &session_id, 1).unwrap();
+            let second = encrypt_relay_frame("two", key.as_ref(), &session_id, 2).unwrap();
+            assert_eq!(cipher.decrypt(&second).unwrap(), "two");
+            // Replaying `second` (seq 2) after seq already advanced is rejected.
+            assert!(cipher.decrypt(&second).is_err());
+            // `first` is now out of order and is rejected too.
+            assert!(cipher.decrypt(&first).is_err());
         }
 
         #[test]

@@ -13,7 +13,7 @@ import {
   type RemoteJson,
   type RemoteRequest,
 } from "./remote-protocol"
-import { decryptRemoteFrame, encryptRemoteFrame } from "./remote-crypto"
+import { decryptRemoteFrame, encryptRemoteFrame, equalBytes, newSessionId } from "./remote-crypto"
 
 export type RemoteClientState = "offline" | "connecting" | "online"
 export type RemoteForegroundReason = "app-resume" | "network-change" | "focus"
@@ -61,6 +61,9 @@ type PhysicalConnection = {
   connectTimer: ReturnType<typeof setTimeout> | null
   handshakeTimer: ReturnType<typeof setTimeout> | null
   inboundTail: Promise<void>
+  sessionId: Uint8Array | null
+  inSeq: number
+  outSeq: number
 }
 
 /** A stable logical client backed by replaceable authenticated WebSockets. */
@@ -128,6 +131,8 @@ export class OrbitRemoteClient {
   private openSocket(mode: SocketMode): Promise<void> {
     const endpoint = this.endpoint
     if (!endpoint) return Promise.reject(new Error("Orbit Host 地址不可用"))
+    const { token, encryptionKey } = endpoint
+    if (!encryptionKey) return Promise.reject(new Error("Orbit Host 缺少加密密钥"))
     return new Promise((resolve, reject) => {
       let socket: WebSocket
       try {
@@ -157,6 +162,9 @@ export class OrbitRemoteClient {
         connectTimer: null,
         handshakeTimer: null,
         inboundTail: Promise.resolve(),
+        sessionId: null,
+        inSeq: -1,
+        outSeq: 0,
       }
       if (mode === "replacement") this.replacement = connection
       else this.active = connection
@@ -165,6 +173,24 @@ export class OrbitRemoteClient {
       socket.onopen = () => {
         if (!this.isCurrent(connection)) return
         this.clearConnectTimer(connection)
+        // On the relay path the client authenticates to the relay with a
+        // plaintext token first (over wss); the relay then forwards the
+        // encrypted application frames to the host unchanged.
+        if (endpoint.mode === "relay") {
+          socket.send(JSON.stringify({ relay: "auth", token }))
+        }
+        const sessionId = newSessionId()
+        connection.sessionId = sessionId
+        connection.inSeq = -1
+        connection.outSeq = 0
+        const auth = JSON.stringify({ type: "auth", protocol: REMOTE_PROTOCOL, token })
+        void encryptRemoteFrame(auth, encryptionKey, sessionId, 0)
+          .then(payload => {
+            if (this.isCurrent(connection) && connection.socket.readyState === WebSocket.OPEN) {
+              connection.socket.send(payload)
+            }
+          })
+          .catch(error => this.failSocket(connection, error instanceof Error ? error : new Error(String(error))))
         connection.handshakeTimer = setTimeout(() => {
           if (this.isCurrent(connection) && !connection.authenticated) {
             this.failSocket(connection, new Error("Orbit Host 认证握手超时"))
@@ -189,7 +215,7 @@ export class OrbitRemoteClient {
 
   private async handleIncoming(connection: PhysicalConnection, raw: unknown): Promise<void> {
     if (!this.isCurrent(connection) || typeof raw !== "string") return
-    const message = await this.decodeFrame(raw)
+    const message = await this.decodeFrame(connection, raw)
     this.lastInboundAt = Date.now()
     if (!isRemoteEvent(message)) throw new Error("Orbit Host 返回了无效的远程消息")
     if (!connection.authenticated) {
@@ -296,16 +322,14 @@ export class OrbitRemoteClient {
       throw new Error("Orbit Host 未连接")
     }
     const raw = encodeRemoteMessage(request)
-    const endpoint = this.endpoint
-    if (!endpoint || !("encryptionKey" in endpoint) || !endpoint.encryptionKey) {
-      connection.socket.send(raw)
-      return
-    }
-    const encryptionKey = endpoint.encryptionKey
+    const encryptionKey = this.endpoint?.encryptionKey
+    const sessionId = connection.sessionId
+    if (!encryptionKey || !sessionId) throw new Error("Orbit Host 未认证")
+    const seq = ++connection.outSeq
     this.outboundTail = this.outboundTail
       .catch(() => undefined)
       .then(async () => {
-        const frame = await encryptRemoteFrame(raw, encryptionKey)
+        const frame = await encryptRemoteFrame(raw, encryptionKey, sessionId, seq)
         if (this.active === connection && connection.socket.readyState === WebSocket.OPEN) {
           connection.socket.send(frame)
         }
@@ -313,12 +337,15 @@ export class OrbitRemoteClient {
       .catch(error => this.handlers.onError?.(error instanceof Error ? error : new Error(String(error))))
   }
 
-  private async decodeFrame(raw: string): Promise<RemoteEvent | RemoteRequest | null> {
-    const endpoint = this.endpoint
-    const value = endpoint && "encryptionKey" in endpoint && endpoint.encryptionKey
-      ? await decryptRemoteFrame(raw, endpoint.encryptionKey)
-      : raw
-    return decodeRemoteMessage(value)
+  private async decodeFrame(connection: PhysicalConnection, raw: string): Promise<RemoteEvent | RemoteRequest | null> {
+    const encryptionKey = this.endpoint?.encryptionKey
+    if (!encryptionKey) throw new Error("Orbit Host 缺少加密密钥")
+    const frame = await decryptRemoteFrame(raw, encryptionKey)
+    const sessionId = connection.sessionId
+    if (!sessionId || !equalBytes(frame.sessionId, sessionId)) throw new Error("Orbit Host 会话标识不匹配")
+    if (frame.seq <= connection.inSeq) throw new Error("Orbit Host 消息重放或乱序")
+    connection.inSeq = frame.seq
+    return decodeRemoteMessage(frame.plaintext)
   }
 
   /**

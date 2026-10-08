@@ -294,14 +294,11 @@ export function remoteWebSocketUrl(endpoint: RemoteEndpoint): string {
     const url = new URL(endpoint.relayUrl)
     url.pathname = `${url.pathname.replace(/\/$/, "")}/relay/client/${encodeURIComponent(endpoint.hostId)}`
     url.search = ""
-    url.searchParams.set("token", endpoint.token)
     return url.toString()
   }
   const scheme = endpoint.secure ? "wss" : "ws"
-  const token = encodeURIComponent(endpoint.token)
   const host = endpoint.host.includes(":") && !endpoint.host.startsWith("[") ? `[${endpoint.host}]` : endpoint.host
-  const e2ee = endpoint.encryptionKey ? "&e2ee=1" : ""
-  return `${scheme}://${host}:${endpoint.port}/ws?token=${token}${e2ee}`
+  return `${scheme}://${host}:${endpoint.port}/ws`
 }
 
 export function parsePairingUri(value: string): RemoteEndpoint {
@@ -329,8 +326,8 @@ export function parsePairingEndpoints(value: string): RemoteEndpoint[] {
   if (host && Number.isInteger(port) && port >= 1 && port <= 65_535) {
     try {
       new URL(`ws://${host.includes(":") ? `[${host}]` : host}:${port}`)
-      if (encryptionKey && !/^[A-Za-z0-9_-]{43}$/.test(encryptionKey)) throw new Error("Orbit LAN 加密密钥无效")
-      endpoints.push({ mode: "direct", host, port, token, ...(hostId ? { hostId } : {}), ...(encryptionKey ? { encryptionKey } : {}) })
+      if (!/^[A-Za-z0-9_-]{43}$/.test(encryptionKey)) throw new Error("Orbit LAN 加密密钥无效")
+      endpoints.push({ mode: "direct", host, port, token, ...(hostId ? { hostId } : {}), encryptionKey })
     } catch (error) {
       if (error instanceof Error && error.message.includes("加密密钥")) throw error
     }
