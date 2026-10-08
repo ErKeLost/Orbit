@@ -76,6 +76,25 @@ describe("turn projection", () => {
     expect(turn.work.some((step) => step.text === "第二段小结，还在流式输出")).toBe(true);
   });
 
+  test("successful image generations lift out of the work fold as content", () => {
+    const messages: DisplayMessage[] = [
+      { id: "img1", message: { role: "assistant", stopReason: "toolUse", content: [
+        { type: "text", text: "给你生成" },
+        { type: "toolCall", id: "img", name: "generate_image", arguments: { prompt: "猫" } },
+      ] } },
+      { id: "img2", message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "图片好了" }] } },
+    ];
+    const ok: Record<string, Tool> = { img: { name: "generate_image", running: false, images: [{ data: "x", mimeType: "image/png" }] } };
+    const turn = projectTurn(messages, ok, false);
+    expect(turn.images).toHaveLength(1);
+    expect(turn.work.some((step) => step.part?.id === "img")).toBe(false);
+
+    const failed: Record<string, Tool> = { img: { name: "generate_image", running: false, isError: true } };
+    const broken = projectTurn(messages, failed, false);
+    expect(broken.images).toHaveLength(0);
+    expect(broken.work.some((step) => step.part?.id === "img")).toBe(true);
+  });
+
   test("narration starts a new phase and titles it", () => {
     const turn = projectTurn(phases, phaseTools, false);
     const built = buildPhases(turn.work, phaseTools);

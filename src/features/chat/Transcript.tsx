@@ -654,6 +654,13 @@ const AssistantTurn = memo(
             )}
           </TurnRow>
         ) : null}
+        {turn.images.length ? (
+          <div className="flex min-w-0 flex-col px-4 pb-1">
+            {turn.images.map((step) => (
+              <GeneratedImageStep key={step.key} part={step.part!} tools={tools} />
+            ))}
+          </div>
+        ) : null}
         {turn.answer.map((step, index) =>
           step.kind === "note" ? (
             <div

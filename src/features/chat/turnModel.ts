@@ -46,6 +46,8 @@ export type ProjectedTurn = {
   items: DisplayMessage[];
   /** Work that folds behind the fold line. */
   work: TurnStep[];
+  /** Generated images, always visible outside the fold (MonoCode's image blocks). */
+  images: TurnStep[];
   /** The final answer's prose (and images), shown outside the fold. */
   answer: TurnStep[];
   /** Special rows (bash executions, compaction summaries) that stand alone. */
@@ -133,7 +135,7 @@ export function projectTurn(
 ): ProjectedTurn {
   const first = items[0];
   if (first?.message.role === "user") {
-    return { user: first, items: [], work: [], answer: [], specials: [] };
+    return { user: first, items: [], work: [], images: [], answer: [], specials: [] };
   }
   const specials = items.filter((item) => SPECIAL_ROLES.has(item.message.role));
   const assistant = items.filter((item) => !SPECIAL_ROLES.has(item.message.role));
@@ -148,10 +150,18 @@ export function projectTurn(
   // long as no tool call follows them. The prose is promoted only once the
   // turn has settled: while streaming, every narration stays inside the work
   // fold, so intermediate summaries never flash through the answer renderer.
-  let split = steps.length;
+  // Successful image generations are content, not process (MonoCode appends
+  // them as first-class image blocks): lift them out of the work steps so they
+  // render outside the fold. Failed calls stay behind as ordinary tool rows.
+  const imageSteps = steps.filter(
+    (step) => step.kind === "image" && step.part?.type === "toolCall" && !tools[step.part.id ?? ""]?.isError,
+  );
+  const imageKeys = new Set(imageSteps.map((step) => step.key));
+  const workRest = steps.filter((step) => !imageKeys.has(step.key));
+  let split = workRest.length;
   if (!streaming && stoppedCleanly && !lastHasTool) {
     while (split > 0) {
-      const step = steps[split - 1];
+      const step = workRest[split - 1];
       if (step.messageIndex !== lastIndex) break;
       if (step.kind === "note" || (step.kind === "image" && step.part?.type === "image")) split -= 1;
       else break;
@@ -159,8 +169,9 @@ export function projectTurn(
   }
   return {
     items,
-    work: steps.slice(0, split),
-    answer: steps.slice(split),
+    work: workRest.slice(0, split),
+    images: imageSteps,
+    answer: workRest.slice(split),
     specials,
     last,
   };

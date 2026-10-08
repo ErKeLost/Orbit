@@ -41,7 +41,7 @@ import { mergePrDiff, parsePrPatch } from "../source-control/model/prDiff";
 import { blocksFromLines, type UnifiedLine } from "../source-control/model/unifiedDiff";
 import { UnifiedDiffView, type UnifiedDiffFileModel } from "../source-control/ui/UnifiedDiffView";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
-import { Group, PageHeader, Row, SecondaryButton, TextArea, TextField } from "../../shared/ui/controls";
+import { Group, Row, SecondaryButton, TextArea, TextField } from "../../shared/ui/controls";
 import {
   Check,
   ChevronDown,
@@ -1122,6 +1122,11 @@ export function InboxSettings() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (gitlab.data?.url && !url) setUrl(gitlab.data.url);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gitlab.data?.url]);
+
   const connect = async () => {
     setBusy(true);
     setError(null);
@@ -1153,8 +1158,6 @@ export function InboxSettings() {
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-6 py-8 text-content">
-      <PageHeader title="Inbox" description="管理各项项目的收件箱来源与通知。" />
-
       <Group title={<span className="inline-flex items-center gap-2"><SourceMark source="github" />GitHub</span>} description="通过 GitHub CLI 读取的 Pull Request、评审与 Issue。">
         {github.data?.connected ? (
           <Row
@@ -1185,13 +1188,28 @@ export function InboxSettings() {
             </SecondaryButton>
           </Row>
         ) : (
-          <div className="flex min-w-0 flex-1 flex-col gap-2 px-4 py-3.5">
-            <p className="text-[12px] leading-relaxed text-content/55">
-              连接 GitLab.com 或自建实例。请使用带 read_api 权限的 Personal Access Token；Token 只保存在本机，断开即删除。
-            </p>
-            <div className="flex items-center gap-2">
-              <TextField wide value={url} placeholder="https://gitlab.com 或自建实例地址" aria-label="GitLab 地址" onChange={(event) => setUrl(event.target.value)} />
-              <TextField wide value={token} placeholder="glpat-…" aria-label="GitLab Access Token" onChange={(event) => setToken(event.target.value)} />
+          <Row
+            label="连接"
+            description="连接 GitLab.com 或自建实例。请使用带 read_api 权限的 Personal Access Token（Legacy token）；Token 只保存在本机，断开即删除。"
+          >
+            <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
+              <TextField
+                value={url}
+                placeholder="https://gitlab.com 或自建实例地址"
+                aria-label="GitLab 地址"
+                autoComplete="url"
+                spellCheck={false}
+                onChange={(event) => setUrl(event.target.value)}
+              />
+              <TextField
+                type="password"
+                value={token}
+                placeholder="glpat-…"
+                aria-label="GitLab Access Token"
+                autoComplete="off"
+                spellCheck={false}
+                onChange={(event) => setToken(event.target.value)}
+              />
               <button
                 type="button"
                 disabled={busy || !token.trim()}
@@ -1200,9 +1218,9 @@ export function InboxSettings() {
               >
                 {busy ? <Loader className="size-3.5 animate-spin" /> : "连接"}
               </button>
+              {error ? <p className="w-full text-[12px] text-red-400">{error}</p> : null}
             </div>
-            {error ? <p className="text-[12px] text-red-400">{error}</p> : null}
-          </div>
+          </Row>
         )}
       </Group>
     </div>

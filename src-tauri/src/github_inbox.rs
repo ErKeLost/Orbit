@@ -5,7 +5,7 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -196,7 +196,14 @@ pub async fn git_github_status() -> Result<GitHubStatus, String> {
 }
 
 fn git_github_status_for() -> GitHubStatus {
-    let mut cmd = Command::new("gh");
+    let Some(program) = resolve_gui_binary("gh") else {
+        return GitHubStatus {
+            connected: false,
+            installed: false,
+            authenticated: false,
+        };
+    };
+    let mut cmd = Command::new(&program);
     cmd.args(["auth", "status", "--active", "--hostname", "github.com"])
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GH_PROMPT_DISABLED", "1")
@@ -1883,6 +1890,121 @@ fn gh_checked(root: &Path, args: &[&str]) -> Result<String, String> {
     gh_run(root, args, false)
 }
 
+/// Cached login-shell PATH. A Finder/Dock launch only gets launchd's bare
+/// PATH, so Homebrew/mise-managed tools like `gh` would look uninstalled.
+/// MonoCode resolves GUI binaries the same way: login-shell PATH first, then
+/// the inherited PATH, then the common fixed dirs.
+static LOGIN_SHELL_PATH: Mutex<Option<Option<String>>> = Mutex::new(None);
+
+fn login_shell_path() -> Option<String> {
+    let mut cache = LOGIN_SHELL_PATH.lock().ok()?;
+    if cache.is_none() {
+        *cache = Some(load_login_shell_path());
+    }
+    cache.as_ref().and_then(|value| value.clone())
+}
+
+#[cfg(not(windows))]
+fn load_login_shell_path() -> Option<String> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| {
+        if cfg!(target_os = "macos") {
+            "/bin/zsh".into()
+        } else {
+            "/bin/bash".into()
+        }
+    });
+    // `-lic`, not `-lc`: zsh reads `.zshrc` only for interactive shells, and
+    // version managers initialize from there.
+    let mut cmd = Command::new(&shell);
+    cmd.args(["-lic", "printenv PATH"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    crate::hide_window_console(&mut cmd);
+    let output = cmd.output().ok()?;
+    let value = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?
+        .to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+#[cfg(windows)]
+fn load_login_shell_path() -> Option<String> {
+    std::env::var("PATH").ok().filter(|value| !value.is_empty())
+}
+
+fn gui_search_path() -> String {
+    let mut parts: Vec<PathBuf> = Vec::new();
+    if let Some(path) = login_shell_path() {
+        parts.extend(std::env::split_paths(std::ffi::OsStr::new(&path)));
+    }
+    if let Ok(existing) = std::env::var("PATH") {
+        parts.extend(std::env::split_paths(std::ffi::OsStr::new(&existing)));
+    }
+    let home = dirs_home();
+    let fixed = [
+        "/opt/homebrew/bin",
+        "/opt/local/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+    ];
+    for dir in fixed {
+        parts.push(PathBuf::from(dir));
+    }
+    if let Some(home) = home {
+        parts.push(PathBuf::from(home).join(".local/bin"));
+    }
+    std::env::join_paths(parts.iter().filter(|dir| !dir.as_os_str().is_empty()))
+        .map(|joined| joined.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.is_file()
+        && std::fs::metadata(path)
+            .map(|metadata| metadata.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
+}
+
+fn which_in_path(path: &str, name: &str) -> Option<PathBuf> {
+    std::env::split_paths(std::ffi::OsStr::new(path)).find_map(|dir| {
+        if dir.as_os_str().is_empty() {
+            return None;
+        }
+        #[cfg(windows)]
+        let candidates: Vec<PathBuf> = if name.contains('.') {
+            vec![dir.join(name)]
+        } else {
+            ["exe", "cmd", "bat", "com"]
+                .iter()
+                .map(|ext| dir.join(format!("{name}.{ext}")))
+                .collect()
+        };
+        #[cfg(not(windows))]
+        let candidates = vec![dir.join(name)];
+        candidates
+            .into_iter()
+            .find(|candidate| is_executable_file(candidate))
+    })
+}
+
+fn resolve_gui_binary(name: &str) -> Option<PathBuf> {
+    which_in_path(&gui_search_path(), name)
+}
+
 struct GitHubRateLimitBackoff {
     until: SystemTime,
     error: String,
@@ -1948,7 +2070,9 @@ fn gh_with_backoff(
 }
 
 fn gh_run_raw(root: &Path, args: &[&str], allow_empty: bool) -> Result<String, String> {
-    let mut cmd = Command::new("gh");
+    let program = resolve_gui_binary("gh")
+        .ok_or_else(|| "GitHub CLI (`gh`) is not installed.".to_string())?;
+    let mut cmd = Command::new(&program);
     cmd.current_dir(root)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
