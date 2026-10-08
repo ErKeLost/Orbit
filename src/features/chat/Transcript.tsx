@@ -13,10 +13,10 @@ import {
   Bot,
   Check,
   ChevronRight,
-  CircleDashed,
   Copy,
   CursorMagicSelection,
   GitBranch,
+  Loader,
   Minus,
   PenLine,
   RefreshCw,
@@ -220,7 +220,7 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
       >
         <span className="grid size-3.5 shrink-0 place-items-center">
           {running ? (
-            <CircleDashed className="zen-tool-spin size-3.5 text-content/40" strokeWidth={1.75} />
+            <Loader className="size-3.5 shrink-0 animate-spin text-content/40" strokeWidth={1.75} />
           ) : (
             <PhaseIcon kind={workCategory(name)} className={failed ? "text-red-400/70" : ""} />
           )}
