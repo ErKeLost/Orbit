@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { MetricsSync } from "./lib/metrics";
 import { useWorkspace } from "./lib/store";
@@ -14,7 +14,7 @@ import { SessionSidebar } from "./features/shell/SessionSidebar";
 import { TitleBar } from "./features/shell/TitleBar";
 import { FileView } from "./features/shell/FileView";
 import { MobileShell } from "./features/shell/MobileShell";
-import { useShell } from "./features/shell/shellStore";
+import { CHAT_PANE_ID, useShell } from "./features/shell/shellStore";
 import { ChatPane } from "./features/chat/ChatPane";
 import { SettingsView } from "./features/settings/SettingsView";
 import { InboxView } from "./features/inbox/InboxView";
@@ -22,6 +22,9 @@ import { SearchView } from "./features/search/SearchView";
 import { AutomationsView } from "./features/automations/AutomationsView";
 import { useAutomationScheduler } from "./features/automations/useAutomationScheduler";
 import { PaneDropHint, PaneSash, SessionPaneHeader } from "./features/shell/PaneChrome";
+import { layoutLeaves, layoutSashes, setSplitRatio as setSplitRatioLayout, type LayoutNode } from "./features/shell/paneLayout";
+import { paneDropFromPoint, useTabDrop, type PaneDrop } from "./features/shell/paneDrop";
+import { setGrabbing, suppressTextSelection } from "./shared/lib/drag";
 
 /** Phone-sized windows and the Android app use the stacked MobileShell. */
 const MOBILE_QUERY = "(max-width: 760px)";
@@ -42,62 +45,66 @@ function WorkArea() {
 
   const cwd = useWorkspace((state) => state.cwd);
   const connectionId = useWorkspace((state) => state.connectionId);
-  const files = useShell((state) => state.files);
-  const activeFile = useShell((state) => state.activeFile);
   const projectRailOpen = useShell((state) => state.projectRailOpen);
   const sessionSidebarOpen = useShell((state) => state.sessionSidebarOpen);
-  const paneOrder = useShell((state) => state.paneOrder);
-  const setPaneOrder = useShell((state) => state.setPaneOrder);
-  const splitRatio = useShell((state) => state.splitRatio);
+  const layout = useShell((state) => state.layout);
+  const panes = useShell((state) => state.panes);
+  const focusPane = useShell((state) => state.focusPane);
+  const movePane = useShell((state) => state.movePane);
   const setSplitRatio = useShell((state) => state.setSplitRatio);
-  const file = files.find((item) => item.path === activeFile);
-  // MonoCode reorders panes by dragging a pane's grip (`PaneTree` → `paneDrop`).
-  // This split has exactly two panes, so dropping on the other side swaps them.
+  // A sash drag previews through a local tree and only writes on release.
+  const [previewLayout, setPreviewLayout] = useState<LayoutNode | null>(null);
+  const [paneDrag, setPaneDrag] = useState<PaneDrop | null>(null);
+  const tabDrop = useTabDrop();
   const paneContainerRef = useRef<HTMLDivElement | null>(null);
-  const chatPaneRef = useRef<HTMLDivElement | null>(null);
-  const filePaneRef = useRef<HTMLDivElement | null>(null);
-  const [paneDrag, setPaneDrag] = useState<{ from: "chat" | "file"; over: "chat" | "file" } | null>(null);
-  // The sash previews locally, the store is written on release (MonoCode `Sash`).
-  const [previewShare, setPreviewShare] = useState<number | null>(null);
-  const firstShare = previewShare ?? splitRatio;
-  const chatFirst = paneOrder === "chat-first";
-  const chatShare = file ? (chatFirst ? firstShare : 1 - firstShare) : 1;
+  const tree = previewLayout ?? layout;
+  const leaves = useMemo(() => layoutLeaves(tree), [tree]);
+  const sashes = useMemo(() => layoutSashes(tree), [tree]);
+  const split = leaves.length > 1;
 
-  const paneAt = (x: number, y: number): "chat" | "file" | null => {
-    const hits = (element: HTMLElement | null) => {
-      if (!element) return false;
-      const rect = element.getBoundingClientRect();
-      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  // MonoCode's `PaneTree` drag: track the pointer, hit-test the live panes and
+  // resolve the target edge when the pointer is released.
+  const paneDragStart = (fromId: string) => (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || !split) return;
+    event.preventDefault();
+    const pointerId = event.pointerId;
+    const handle = event.currentTarget;
+    handle.setPointerCapture(pointerId);
+    const restoreSelection = suppressTextSelection();
+    setGrabbing(true);
+    let lastX = event.clientX;
+    let lastY = event.clientY;
+    const move = (ev: globalThis.PointerEvent) => {
+      lastX = ev.clientX;
+      lastY = ev.clientY;
+      const over = paneDropFromPoint(lastX, lastY);
+      setPaneDrag(over && over.id !== fromId ? { fromId, overId: over.id, edge: over.edge } : null);
     };
-    if (hits(filePaneRef.current)) return "file";
-    if (hits(chatPaneRef.current)) return "chat";
-    return null;
+    const finish = (commit: boolean) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", onKey);
+      restoreSelection();
+      setGrabbing(false);
+      setPaneDrag(null);
+      if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
+      if (!commit) return;
+      const over = paneDropFromPoint(lastX, lastY);
+      if (over && over.id !== fromId) movePane(fromId, over.id, over.edge);
+    };
+    const up = () => finish(true);
+    const cancel = () => finish(false);
+    const onKey = (ev: KeyboardEvent) => {
+      if (ev.key !== "Escape") return;
+      ev.preventDefault();
+      finish(false);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", onKey);
   };
-
-  const paneDragStart =
-    (from: "chat" | "file") => (event: ReactPointerEvent<HTMLElement>) => {
-      if (!file || event.button !== 0) return;
-      setPaneDrag({ from, over: from });
-      const move = (ev: globalThis.PointerEvent) => {
-        const over = paneAt(ev.clientX, ev.clientY);
-        setPaneDrag((current) => (current && over && current.over !== over ? { ...current, over } : current));
-      };
-      const finish = (ev: globalThis.PointerEvent | null) => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", finish as EventListener);
-        window.removeEventListener("pointercancel", cancel);
-        const over = ev ? paneAt(ev.clientX, ev.clientY) : null;
-        setPaneDrag(null);
-        // With two panes, dropping one onto the other's side is a swap.
-        if (over && over !== from) {
-          setPaneOrder(useShell.getState().paneOrder === "chat-first" ? "file-first" : "chat-first");
-        }
-      };
-      const cancel = () => finish(null);
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", finish as EventListener);
-      window.addEventListener("pointercancel", cancel);
-    };
 
   // Switching connections catches the newly visible stream up at once.
   useEffect(() => {
@@ -113,34 +120,60 @@ function WorkArea() {
       <TitleBar railsHidden={!projectRailOpen && !sessionSidebarOpen} />
       <MetricsSync />
       {panel === "chat" ? (
-        <div ref={paneContainerRef} className="relative flex min-h-0 min-w-0 flex-1">
-          <div
-            ref={chatPaneRef}
-            style={{ order: chatFirst ? 1 : 3, flexBasis: `${chatShare * 100}%`, flexGrow: 0 }}
-            className={`chat-pane-background relative isolate flex h-full min-h-0 min-w-0 flex-col ${paneDrag?.from === "chat" ? "opacity-60" : ""}`}
-          >
-            {file ? <SessionPaneHeader onPaneDragStart={paneDragStart("chat")} /> : null}
-            <ChatPane key={connectionId || cwd} />
-            {paneDrag?.over === "chat" ? <PaneDropHint /> : null}
-          </div>
-          {file ? (
+        <div ref={paneContainerRef} className="relative min-h-0 min-w-0 flex-1">
+          {leaves.map((entry) => {
+            const dragging = paneDrag?.fromId === entry.id;
+            const hint = paneDrag?.overId === entry.id ? paneDrag.edge : null;
+            const drop = tabDrop?.toPane === entry.id ? tabDrop : null;
+            return (
+              <div
+                key={entry.id}
+                data-pane-id={entry.id}
+                onMouseDown={() => focusPane(entry.id)}
+                className={`absolute flex min-h-0 min-w-0 flex-col overflow-hidden ${dragging ? "opacity-60" : ""}`}
+                style={{
+                  left: `${entry.rect.x * 100}%`,
+                  top: `${entry.rect.y * 100}%`,
+                  width: `${entry.rect.w * 100}%`,
+                  height: `${entry.rect.h * 100}%`,
+                }}
+              >
+                {entry.id === CHAT_PANE_ID ? (
+                  <div className="chat-pane-background relative isolate flex h-full min-h-0 min-w-0 flex-1 flex-col">
+                    {split ? <SessionPaneHeader showGrip onPaneDragStart={paneDragStart(CHAT_PANE_ID)} /> : null}
+                    <ChatPane key={connectionId || cwd} />
+                  </div>
+                ) : panes[entry.id] ? (
+                  <FileView
+                    paneId={entry.id}
+                    cwd={cwd}
+                    showGrip={split}
+                    onPaneDragStart={paneDragStart(entry.id)}
+                  />
+                ) : null}
+                {hint ? <PaneDropHint edge={hint} /> : null}
+                {drop?.edge ? <PaneDropHint edge={drop.edge} /> : null}
+                {drop && !drop.edge ? (
+                  <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-9 ring-2 ring-inset ring-accent/60" />
+                ) : null}
+              </div>
+            );
+          })}
+          {sashes.map((sash) => (
             <PaneSash
+              key={`${sash.splitId}:${sash.index}`}
+              sash={sash}
               containerRef={paneContainerRef}
-              share={firstShare}
-              onPreview={setPreviewShare}
-              onCommit={setSplitRatio}
+              onPreview={(boundary) =>
+                setPreviewLayout(setSplitRatioLayout(layout, sash.splitId, sash.index, boundary))
+              }
+              onCommit={(boundary) => {
+                setPreviewLayout(null);
+                setSplitRatio(sash.splitId, sash.index, boundary);
+              }}
+              onCancel={() => setPreviewLayout(null)}
             />
-          ) : null}
-          {file ? (
-            <div
-              ref={filePaneRef}
-              style={{ order: chatFirst ? 3 : 1, flexBasis: `${(1 - chatShare) * 100}%`, flexGrow: 0 }}
-              className={`relative flex min-h-0 min-w-0 ${chatFirst ? "border-l border-stroke" : "border-r border-stroke"} ${paneDrag?.from === "file" ? "opacity-60" : ""}`}
-            >
-              <FileView file={file} cwd={cwd} onPaneDragStart={paneDragStart("file")} />
-              {paneDrag?.over === "file" ? <PaneDropHint /> : null}
-            </div>
-          ) : null}
+          ))}
         </div>
       ) : (
         <Panel />

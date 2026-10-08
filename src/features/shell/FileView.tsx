@@ -11,9 +11,9 @@ import { MarkdownViewShell, useMarkdownMode } from "../chat/MarkdownModeToggle";
 import { ChevronDown, ChevronRight, ImagePlus, Loader } from "../../shared/ui/icons";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { SurfaceTabs } from "./SurfaceTabs";
-import { type OpenFile } from "./shellStore";
+import { useShell } from "./shellStore";
 
-function MediaView({ file, kind }: { file: OpenFile; kind: MediaKind }) {
+function MediaView({ file, kind }: { file: { path: string; name: string }; kind: MediaKind }) {
   const meta = useMediaMeta(file.path, kind);
   // The asset protocol streams the bytes; nothing is base64'd over IPC.
   const src = convertFileSrc(file.path);
@@ -79,34 +79,39 @@ function MarkdownDocumentPreview({ text }: { text: string }) {
   );
 }
 
-/** A file pane in MonoCode's split layout; its tab strip sits above the text. */
+/** One editor pane: its tab strip (`SurfaceTabs`) above the focused file. */
 export function FileView({
-  file,
+  paneId,
   cwd,
+  showGrip,
   onPaneDragStart,
 }: {
-  file: OpenFile;
+  paneId: string;
   cwd: string;
+  showGrip: boolean;
   onPaneDragStart?: (event: ReactPointerEvent<HTMLElement>) => void;
 }) {
+  const pane = useShell((state) => state.panes[paneId]);
+  const file = pane?.files.find((item) => item.path === pane.activeFile) ?? pane?.files[0] ?? null;
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
-  const kind = mediaKind(file.path);
-  const markdown = isMarkdownPath(file.path);
+  const kind = file ? mediaKind(file.path) : null;
+  const markdown = file ? isMarkdownPath(file.path) : false;
   // Like MonoCode, markdown documents open as preview and remember the mode per file.
-  const [mode, setMode] = useMarkdownMode(file.path, "preview");
+  const [mode, setMode] = useMarkdownMode(file?.path ?? "", "preview");
   const contents = useQuery({
-    queryKey: ["file", file.path],
-    queryFn: () => readTextFile(file.path),
-    enabled: kind == null,
+    queryKey: ["file", file?.path ?? ""],
+    queryFn: () => readTextFile(file?.path ?? ""),
+    enabled: file != null && kind == null,
     staleTime: 2000,
     refetchOnWindowFocus: true,
   });
+  if (!file) return null;
   const relative = cwd && file.path.startsWith(cwd) ? file.path.slice(cwd.length).replace(/^\//, "") : file.path;
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={file.name}>
       {/* MonoCode keeps a pane's tabs inside the pane (`FilePane` → `SurfaceTabs`),
           so the file name sits above the content it belongs to. */}
-      <SurfaceTabs onPaneDragStart={onPaneDragStart} />
+      <SurfaceTabs paneId={paneId} showGrip={showGrip} onPaneDragStart={onPaneDragStart} />
       {kind != null ? (
         <MediaView file={file} kind={kind} />
       ) : markdown && contents.data != null ? (

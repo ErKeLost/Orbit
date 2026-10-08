@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import { report } from "../../lib/rpc";
@@ -12,46 +12,85 @@ import { GripVertical, X } from "../../shared/ui/icons";
 import { TabWidthMotion } from "./ClosingTab";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { IS_MAC } from "./chrome";
-import { useShell } from "./shellStore";
+import { setTabDrop, tabDropFromPoint } from "./paneDrop";
+import { useShell, type OpenFile } from "./shellStore";
 
 type TabMenu = { x: number; y: number; path: string };
 
+/** Stable identity so a pane with no state yet does not invalidate memos. */
+const NO_FILES: OpenFile[] = [];
+
 /**
- * The file pane's own tab strip, ported from MonoCode's
- * `features/workspace/ui/SurfaceTabs.tsx`: MonoCode keeps open files in a strip
- * *inside* the editor pane (not in the window title bar), with the pane's drag
- * handle on the left, `w-56` tabs that reorder by dragging their body, and a
- * close button per tab.
+ * One editor pane's tab strip, ported from MonoCode's
+ * `features/workspace/ui/SurfaceTabs.tsx`. Every pane owns its tabs: the strip
+ * holds the pane's drag handle, `w-56` tabs that reorder by dragging their
+ * body, and a close button per tab. Dragging a tab onto another pane's strip
+ * moves it there; onto a pane edge it opens in a new pane.
  */
 export function SurfaceTabs({
+  paneId,
+  showGrip,
   onPaneDragStart,
   trailing,
 }: {
-  /** MonoCode's pane grip: dragging it moves this pane across the split. */
+  paneId: string;
+  showGrip: boolean;
+  /** MonoCode's pane grip: dragging it moves this pane onto another pane's edge. */
   onPaneDragStart?: (event: ReactPointerEvent<HTMLElement>) => void;
   trailing?: ReactNode;
 }) {
-  const files = useShell((state) => state.files);
-  const activeFile = useShell((state) => state.activeFile);
+  const pane = useShell((state) => state.panes[paneId]);
+  const focusPane = useShell((state) => state.focusPane);
   const focusFile = useShell((state) => state.focusFile);
   const pinFile = useShell((state) => state.pinFile);
   const closeFile = useShell((state) => state.closeFile);
   const reorderFiles = useShell((state) => state.reorderFiles);
+  const moveFileToPane = useShell((state) => state.moveFileToPane);
+  const openFileInNewPane = useShell((state) => state.openFileInNewPane);
   const cwd = useWorkspace((state) => state.cwd);
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const activeTabRef = useRef<HTMLDivElement | null>(null);
   const [menu, setMenu] = useState<TabMenu | null>(null);
+  const files = pane?.files ?? NO_FILES;
 
   const paths = useMemo(() => files.map((file) => file.path), [files]);
   const items = useMemo(() => files.map((file) => ({ id: file.path, file })), [files]);
-  const sortable = useAnimatedReorder(paths, (ids) => reorderFiles(ids), "x");
+  const externalDrop = useMemo(
+    () => ({
+      onMove: (path: string, event: globalThis.PointerEvent) => {
+        // The dragged tab rides under the pointer; ignore it when hit-testing.
+        const skip = (element: Element) => Boolean(element.closest('[data-tab-dragging="true"]'));
+        const target = tabDropFromPoint(event.clientX, event.clientY, skip);
+        if (!target || target.toPane === paneId) {
+          setTabDrop(null);
+          return false;
+        }
+        setTabDrop({ path, fromPane: paneId, toPane: target.toPane, edge: target.edge });
+        return true;
+      },
+      onDrop: (path: string, event: globalThis.PointerEvent) => {
+        const skip = (element: Element) => Boolean(element.closest('[data-tab-dragging="true"]'));
+        const target = tabDropFromPoint(event.clientX, event.clientY, skip);
+        setTabDrop(null);
+        if (!target || target.toPane === paneId) return false;
+        if (target.edge) openFileInNewPane(path, target.toPane, target.edge);
+        else moveFileToPane(path, paneId, target.toPane);
+        return true;
+      },
+      onEnd: () => setTabDrop(null),
+    }),
+    [moveFileToPane, openFileInNewPane, paneId],
+  );
+  const sortable = useAnimatedReorder(paths, (ids) => reorderFiles(paneId, ids), "x", externalDrop);
   const { displayed, setTabNode, finishMotion } = useTabCloseMotion(items);
   const menuFile = menu ? files.find((file) => file.path === menu.path) : undefined;
+
+  const leaveStrip = useCallback(() => setTabDrop(null), []);
 
   useLayoutEffect(() => {
     if (sortable.draggingId) return;
     activeTabRef.current?.scrollIntoView({ inline: "nearest", block: "nearest" });
-  }, [activeFile, sortable.draggingId]);
+  }, [pane?.activeFile, sortable.draggingId]);
 
   const copy = (text: string) => {
     void navigator.clipboard.writeText(text).catch(report);
@@ -64,13 +103,13 @@ export function SurfaceTabs({
     setMenu(null);
     switch (action) {
       case "close":
-        closeFile(menuFile.path);
+        closeFile(menuFile.path, paneId);
         return;
       case "close-others":
         for (const file of files) {
-          if (file.path !== menuFile.path) closeFile(file.path);
+          if (file.path !== menuFile.path) closeFile(file.path, paneId);
         }
-        focusFile(menuFile.path);
+        focusFile(menuFile.path, paneId);
         return;
       case "open-default":
         void openPath(menuFile.path).catch(report);
@@ -98,9 +137,11 @@ export function SurfaceTabs({
         ref={lockOverscroll}
         role="tablist"
         aria-label="打开的文件"
+        data-tab-strip={paneId}
+        onPointerLeave={leaveStrip}
         className="scrollbar-none flex h-full min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overscroll-none pl-1.5 pr-2.5"
       >
-        {onPaneDragStart ? (
+        {showGrip && onPaneDragStart ? (
           <div
             role="button"
             tabIndex={-1}
@@ -121,37 +162,39 @@ export function SurfaceTabs({
           const file = entry.item.file;
           const closing = entry.closing;
           const opening = entry.opening;
-          const active = !closing && file.path === activeFile;
+          const active = !closing && file.path === pane?.activeFile;
           const tab = (
             <div
               ref={(el) => {
                 if (closing) return;
                 setTabNode(file.path, el);
                 sortable.setItemRef(file.path, el);
-                if (el && file.path === activeFile) activeTabRef.current = el;
+                if (el && file.path === pane?.activeFile) activeTabRef.current = el;
               }}
               className={
                 closing || opening
                   ? "tab-motion group relative flex h-full w-full min-w-0 items-center overflow-hidden"
                   : "reorder-item tab-motion group relative flex h-full w-56 min-w-28 shrink touch-none items-center"
               }
+              data-tab-dragging={!closing && sortable.draggingId === file.path ? "true" : undefined}
               onPointerDown={(event) => {
                 if (closing || event.button !== 0) return;
                 if ((event.target as HTMLElement | null)?.closest("[data-no-drag]")) return;
-                focusFile(file.path);
+                focusPane(paneId);
+                focusFile(file.path, paneId);
                 sortable.onItemPointerDown(file.path, event);
               }}
               onAuxClick={(event) => {
                 if (closing || event.button !== 1) return;
                 event.preventDefault();
                 event.stopPropagation();
-                closeFile(file.path);
+                closeFile(file.path, paneId);
               }}
               onContextMenu={(event) => {
                 if (closing) return;
                 event.preventDefault();
                 event.stopPropagation();
-                focusFile(file.path);
+                focusFile(file.path, paneId);
                 setMenu({ x: event.clientX, y: event.clientY, path: file.path });
               }}
             >
@@ -162,9 +205,9 @@ export function SurfaceTabs({
                 title={file.path}
                 onClick={() => {
                   if (sortable.consumeClick()) return;
-                  focusFile(file.path);
+                  focusFile(file.path, paneId);
                 }}
-                onDoubleClick={() => pinFile(file.path)}
+                onDoubleClick={() => pinFile(file.path, paneId)}
                 className={`relative flex h-7.5 min-w-0 flex-1 cursor-default items-center gap-1.5 self-center rounded-md px-2 pr-7 text-left text-[13px] ${
                   active ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
                 }`}
@@ -183,7 +226,7 @@ export function SurfaceTabs({
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={(event) => {
                   event.stopPropagation();
-                  closeFile(file.path);
+                  closeFile(file.path, paneId);
                 }}
                 className={`absolute right-1 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-content/50 hover:bg-content/10 hover:text-content ${
                   active ? "opacity-100" : "opacity-0 group-hover:opacity-100"
@@ -211,7 +254,7 @@ export function SurfaceTabs({
             </div>
           );
         })}
-        {onPaneDragStart ? (
+        {showGrip && onPaneDragStart ? (
           // MonoCode makes the empty area to the right of the tabs a pane drag
           // handle too, so the whole strip moves the pane.
           <div

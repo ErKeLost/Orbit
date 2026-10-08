@@ -52,7 +52,9 @@ export function useAnimatedReorder<T extends string>(
       suppressClickUntil.current = 0;
       const items = latest.current.ids;
       const from = items.indexOf(id);
-      if (items.length < 2 || from < 0) return;
+      // A single tab can still be dragged when there is an external drop target
+      // (Orbit moves tabs between panes; MonoCode only reorders within one).
+      if (from < 0 || (items.length < 2 && !latest.current.externalDrop)) return;
       const elements = items.map((item) => nodes.current.get(item));
       if (elements.some((element) => !element)) return;
       const tabs = elements as HTMLElement[];

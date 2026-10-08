@@ -8,73 +8,101 @@ import { setGrabbing, suppressTextSelection } from "../../shared/lib/drag";
 import { toast } from "../../shared/ui/toast";
 import { GripVertical, X } from "../../shared/ui/icons";
 import { TerminalSpinner } from "./TerminalSpinner";
-import { MIN_PANE_SHARE } from "./shellStore";
+import type { LayoutRect, LayoutSash, PaneEdge } from "./paneLayout";
 
 /**
  * MonoCode's pane chrome, ported from `features/workspace/ui/PaneTree.tsx`:
- * the draggable sash between panes (`Sash` + `layout.ts setSplitRatio`), the
- * drop hint shown while a pane is being dragged, and the session pane's own
+ * the sash between panes (`Sash` + `layout.ts setSplitRatio`), the edge hint
+ * shown while a pane is dragged (`PaneDropHint`), and the session pane's own
  * header (`features/sessions/ui/SessionPane.tsx` `inSplit` branch).
  */
 
-/** MonoCode `setSplitRatio` clamps both sides of a sash to `MIN_SIZE`. */
-function clampPaneShare(share: number) {
-  return Math.min(1 - MIN_PANE_SHARE, Math.max(MIN_PANE_SHARE, share));
+function sashStyle(sash: LayoutSash, boundary: number) {
+  const row = sash.dir === "right";
+  const group: LayoutRect = sash.group;
+  return row
+    ? {
+        left: `${(group.x + boundary * group.w) * 100}%`,
+        top: `${group.y * 100}%`,
+        height: `${group.h * 100}%`,
+      }
+    : {
+        left: `${group.x * 100}%`,
+        top: `${(group.y + boundary * group.h) * 100}%`,
+        width: `${group.w * 100}%`,
+      };
 }
 
 /**
  * MonoCode's `Sash`: a 1px rule with a ±6px grab area. The drag previews
- * through `onPreview` (rAF-throttled) and only commits on release, so the
- * layout is written once per drag.
+ * through `onPreview` (rAF-throttled) and only commits on release.
  */
 export function PaneSash({
+  sash,
   containerRef,
-  share,
   onPreview,
   onCommit,
+  onCancel,
 }: {
+  sash: LayoutSash;
   containerRef: RefObject<HTMLDivElement | null>;
-  share: number;
-  onPreview: (share: number | null) => void;
-  onCommit: (share: number) => void;
+  onPreview: (boundary: number) => void;
+  onCommit: (boundary: number) => void;
+  onCancel: () => void;
 }) {
+  const row = sash.dir === "right";
+  const boundary = sash.sizes
+    .slice(0, sash.index + 1)
+    .reduce((sum, size) => sum + size, 0);
+
   return (
     <div
       role="separator"
-      aria-orientation="vertical"
+      aria-orientation={row ? "vertical" : "horizontal"}
       aria-valuemin={0}
       aria-valuemax={100}
-      aria-valuenow={Math.round(share * 100)}
-      style={{ order: 2 }}
-      className="relative z-10 w-px shrink-0 bg-stroke"
+      aria-valuenow={Math.round(boundary * 100)}
+      className={row ? "absolute z-10 w-px bg-stroke" : "absolute z-10 h-px bg-stroke"}
+      style={sashStyle(sash, boundary)}
     >
       <div
-        className="absolute inset-y-0 -left-1.5 -right-1.5 cursor-col-resize touch-none"
+        className={
+          row
+            ? "absolute inset-y-0 -left-1.5 -right-1.5 cursor-col-resize touch-none"
+            : "absolute inset-x-0 -top-1.5 -bottom-1.5 cursor-row-resize touch-none"
+        }
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           event.preventDefault();
           event.stopPropagation();
+          const handle = event.currentTarget;
           const parent = containerRef.current;
           if (!parent) return;
-          const handle = event.currentTarget;
           const pointerId = event.pointerId;
           handle.setPointerCapture(pointerId);
           const restoreSelection = suppressTextSelection();
           setGrabbing(true);
           const previousCursor = document.body.style.cursor;
-          document.body.style.cursor = "col-resize";
+          document.body.style.cursor = row ? "col-resize" : "row-resize";
+
+          const rect = parent.getBoundingClientRect();
+          const origin = row
+            ? rect.left + sash.group.x * rect.width
+            : rect.top + sash.group.y * rect.height;
+          const span = row
+            ? sash.group.w * rect.width
+            : sash.group.h * rect.height;
+          let nextBoundary = boundary;
           let frame: number | null = null;
-          let next = share;
 
           const move = (ev: globalThis.PointerEvent) => {
-            if (ev.pointerId !== pointerId) return;
-            const rect = parent.getBoundingClientRect();
-            if (rect.width <= 0) return;
-            next = clampPaneShare((ev.clientX - rect.left) / rect.width);
+            if (ev.pointerId !== pointerId || span <= 0) return;
+            const position = row ? ev.clientX : ev.clientY;
+            nextBoundary = (position - origin) / span;
             if (frame != null) return;
             frame = requestAnimationFrame(() => {
               frame = null;
-              onPreview(next);
+              onPreview(nextBoundary);
             });
           };
           const finish = (commit: boolean) => {
@@ -90,8 +118,8 @@ export function PaneSash({
             restoreSelection();
             setGrabbing(false);
             document.body.style.cursor = previousCursor;
-            if (commit) onCommit(next);
-            else onPreview(null);
+            if (commit) onCommit(nextBoundary);
+            else onCancel();
           };
           const up = (ev: globalThis.PointerEvent) => {
             if (ev.pointerId !== pointerId) return;
@@ -114,25 +142,42 @@ export function PaneSash({
   );
 }
 
-/** MonoCode's `PaneDropHint`: which side the dragged pane lands on. */
-export function PaneDropHint() {
+/** MonoCode's `PaneDropHint`: the half of the target pane the drop lands in. */
+export function PaneDropHint({ edge }: { edge: PaneEdge }) {
+  const wash =
+    edge === "left"
+      ? "absolute inset-y-0 left-0 w-1/2 bg-accent/15"
+      : edge === "right"
+        ? "absolute inset-y-0 right-0 w-1/2 bg-accent/15"
+        : edge === "top"
+          ? "absolute inset-x-0 top-0 h-1/2 bg-accent/15"
+          : "absolute inset-x-0 bottom-0 h-1/2 bg-accent/15";
+  const line =
+    edge === "left"
+      ? "absolute inset-y-0 left-0 w-0.5 bg-accent"
+      : edge === "right"
+        ? "absolute inset-y-0 right-0 w-0.5 bg-accent"
+        : edge === "top"
+          ? "absolute inset-x-0 top-0 h-0.5 bg-accent"
+          : "absolute inset-x-0 bottom-0 h-0.5 bg-accent";
   return (
-    <div className="pointer-events-none absolute inset-0 z-20 ring-2 ring-inset ring-accent/50">
-      <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent px-2.5 py-1 text-[11px] font-medium text-accent-foreground shadow-lg">
-        移到这一侧
-      </span>
+    <div className="pointer-events-none absolute inset-0 z-20">
+      <div className={wash} />
+      <div className={line} />
     </div>
   );
 }
 
 /**
- * The session pane's own header. MonoCode only renders it while the pane is in
- * a split (`SessionPane.tsx` `inSplit`), and its buttons close the pane — for
+ * The session pane's own header, shown while the pane shares the workspace with
+ * another pane (`SessionPane.tsx` `inSplit`). Its buttons close the pane — for
  * Orbit's chat pane that is the session itself.
  */
 export function SessionPaneHeader({
+  showGrip,
   onPaneDragStart,
 }: {
+  showGrip: boolean;
   onPaneDragStart?: (event: ReactPointerEvent<HTMLElement>) => void;
 }) {
   const cwd = useWorkspace((state) => state.cwd);
@@ -167,7 +212,7 @@ export function SessionPaneHeader({
         onPaneDragStart(event);
       }}
     >
-      {onPaneDragStart ? <GripVertical className="size-3.5 shrink-0 text-content/35" strokeWidth={1.75} /> : null}
+      {showGrip ? <GripVertical className="size-3.5 shrink-0 text-content/35" strokeWidth={1.75} /> : null}
       <span className={`size-2 shrink-0 rounded-full ${running ? "bg-accent" : "bg-content/20"}`} />
       <span className="min-w-0 flex-1 truncate text-xs text-content" title={title}>{title}</span>
       {running ? <TerminalSpinner className="shrink-0 select-none text-[11px] leading-none text-accent" /> : null}
