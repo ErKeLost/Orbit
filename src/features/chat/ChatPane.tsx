@@ -1,7 +1,7 @@
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useWorkspace } from "../../lib/store";
+import { useWorkspace, useWorkspaceStore } from "../../lib/store";
 import { changeSession, getSessionTurnDurations, persistedSessionFile, report } from "../../lib/rpc";
 import type { AgentNode } from "../../lib/agents";
 import { groupDisplayMessages, reuseGroups, type Transcript } from "../../lib/protocol";
@@ -29,16 +29,19 @@ const groupCache = new WeakMap<object, ReturnType<typeof groupDisplayMessages>>(
  * turn runs (MonoCode's foreground cadence), and synchronously when idle.
  */
 function useFrameStream() {
-  const read = () => useWorkspace.getState().transcript;
-  const [view, setView] = useState<Transcript>(read);
+  // Per-frame streaming: read the store this pane is scoped to, so a background
+  // session pane keeps streaming its own transcript.
+  const store = useWorkspaceStore();
+  const [view, setView] = useState<Transcript>(() => store.getState().transcript);
   useEffect(() => {
+    const read = () => store.getState().transcript;
     let frame = 0;
     const commit = () => {
       frame = 0;
       const next = read();
       setView((current) => (current === next ? current : next));
     };
-    const unsubscribe = useWorkspace.subscribe((state, previous) => {
+    const unsubscribe = store.subscribe((state, previous) => {
       if (state.transcript === previous.transcript) return;
       if (!state.transcript.running) {
         if (frame) cancelAnimationFrame(frame);
@@ -53,7 +56,7 @@ function useFrameStream() {
       unsubscribe();
       if (frame) cancelAnimationFrame(frame);
     };
-  }, []);
+  }, [store]);
   return view;
 }
 

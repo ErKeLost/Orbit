@@ -5,6 +5,7 @@ import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo,
 import { useWorkspace } from "../../lib/store";
 import { perfMarkSend } from "../../lib/perf-log";
 import { ensureSessionModes, recallQueue, report, sendPrompt, setComputerUseMode, setMultiAgentMode, steerFollowUp, stop } from "../../lib/rpc";
+import { useSessionTarget } from "../shell/use-session-target";
 import { base64ToBlob } from "../../lib/image-bytes";
 import { encodeBlobToBase64, encodeClipboardImage } from "../../lib/image-encode";
 import { shouldSubmitComposer } from "../../lib/composer";
@@ -271,6 +272,8 @@ const DraftField = memo(
 
 export const Composer = memo(function Composer({ onSubmitted, centered = false }: { onSubmitted: () => void; centered?: boolean }) {
   const project = useWorkspace((state) => state.cwd);
+  // Sends go to this pane's pi connection, not the shell's projected one.
+  const target = useSessionTarget();
   const connectionId = useWorkspace((state) => state.connectionId);
   const running = useWorkspace((state) => state.transcript.running);
   const compacting = useWorkspace((state) => state.transcript.compacting);
@@ -433,8 +436,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
       }
       try {
         const payload = Promise.all(images.map(async (item) => ({ type: "image" as const, data: await encodeBlobToBase64(item.blob), mimeType: item.mimeType })));
-        if (!running) await ensureSessionModes(project);
-        await sendPrompt({ type: "prompt", message, images: await payload, ...(running ? { streamingBehavior } : {}) }, project, running);
+        if (!running) await ensureSessionModes(target);
+        await sendPrompt({ type: "prompt", message, images: await payload, ...(running ? { streamingBehavior } : {}) }, target, running);
         onSubmitted();
         window.setTimeout(() => previewUrls.forEach((url) => URL.revokeObjectURL(url)), 15000);
       } catch (error) {
@@ -454,7 +457,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
         report(error);
       }
     },
-    [attachments, composerKey, mentionLabels, onSubmitted, project, running],
+    [attachments, composerKey, mentionLabels, onSubmitted, project, running, target],
   );
 
   const onKeyDown = useCallback(
@@ -480,8 +483,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
         <MessageQueueView
           steering={queue.steering}
           followUp={queue.followUp}
-          onSteer={(text) => void steerFollowUp(text).catch(report)}
-          onClear={() => void recallQueue().catch(report)}
+          onSteer={(text) => void steerFollowUp(text, target).catch(report)}
+          onClear={() => void recallQueue(target).catch(report)}
         />
       ) : null}
       <div className="relative overflow-visible">
@@ -638,7 +641,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
                 disabled={!online}
                 hasValue={hasValue || attachments.length > 0}
                 onSend={() => void submit("steer")}
-                onStop={() => void stop().catch(report)}
+                onStop={() => void stop(target).catch(report)}
               />
             </div>
           </div>

@@ -10,6 +10,7 @@ import { toast as gooeyToast } from "../shared/ui/toast";
 import type { RemoteConnection, RemoteHostSnapshot } from "../lib/remote-protocol";
 import { useWorkspace } from "../lib/store";
 import { CHAT_PANE_ID, useShell } from "../features/shell/shellStore";
+import { useWorkspaceTabs } from "../features/shell/use-workspace-tabs";
 
 let runtimeStarted = false;
 
@@ -174,6 +175,9 @@ export function useWorkspaceShortcuts(
   online: boolean,
   setSidebarOpen: Dispatch<SetStateAction<boolean>>,
 ) {
+  const { splitSession } = useWorkspaceTabs();
+  const splitSessionRef = useRef(splitSession);
+  splitSessionRef.current = splitSession;
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey)) return;
@@ -201,6 +205,15 @@ export function useWorkspaceShortcuts(
         if (workspace.activePane === CHAT_PANE_ID || !workspace.panes[workspace.activePane]) return;
         event.preventDefault();
         shell.closePane(workspace.activePane);
+      }
+      if (event.key.toLowerCase() === "d") {
+        // MonoCode's split-right / split-down: a new session beside this one.
+        const shell = useShell.getState();
+        const workspace = shell.workspaces.find((item) => item.id === shell.activeWorkspaceId) ?? shell.workspaces[0];
+        if (splitSessionRef.current && workspace?.sessions[workspace.activePane]) {
+          event.preventDefault();
+          void splitSessionRef.current(workspace.activePane, event.shiftKey ? "down" : "right");
+        }
       }
       if (event.key.toLowerCase() === "k") {
         // Search everything, like MonoCode's ⌘K.

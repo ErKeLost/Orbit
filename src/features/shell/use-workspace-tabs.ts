@@ -72,7 +72,20 @@ export function useWorkspaceTabs() {
     await closeWorkspaceConnection(workspace.connectionId, "工作区已关闭");
   }, [open]);
 
-  return { open, create, close };
+  /** ⌘D / ⌘⇧D: split a session pane and open a new session in it. */
+  const splitSession = useCallback(async (paneId: string, dir: "right" | "down") => {
+    const shell = useShell.getState();
+    const workspace = shell.workspaces.find((item) => item.id === shell.activeWorkspaceId);
+    if (!workspace) return;
+    const newPaneId = shell.splitSessionPane(paneId, dir);
+    if (!newPaneId) return;
+    const connectionId = `${workspace.cwd}#${crypto.randomUUID()}`;
+    useShell.getState().bindSessionConnection(newPaneId, connectionId);
+    await openWorkspaceConnection(workspace.cwd, connectionId);
+    focusWorkspaceConnection(connectionId, workspace.cwd);
+  }, []);
+
+  return { open, create, close, splitSession };
 }
 
 export type { WorkspaceTab };

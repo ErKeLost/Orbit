@@ -176,11 +176,14 @@ export function PaneDropHint({ edge }: { edge: PaneEdge }) {
 export function SessionPaneHeader({
   showGrip,
   focused,
+  onClosePane,
   onPaneDragStart,
 }: {
   showGrip: boolean;
   /** MonoCode paints the pane's focus dot accent while the pane has focus. */
   focused: boolean;
+  /** With several session panes the button closes the pane, not the session. */
+  onClosePane?: () => void;
   onPaneDragStart?: (event: ReactPointerEvent<HTMLElement>) => void;
 }) {
   const cwd = useWorkspace((state) => state.cwd);
@@ -222,10 +225,10 @@ export function SessionPaneHeader({
       <button
         type="button"
         data-no-drag
-        title="关闭会话"
-        aria-label="关闭会话"
-        disabled={!session}
-        onClick={() => void closeSession()}
+        title={onClosePane ? "关闭面板" : "关闭会话"}
+        aria-label={onClosePane ? "关闭面板" : "关闭会话"}
+        disabled={!onClosePane && !session}
+        onClick={() => (onClosePane ? onClosePane() : void closeSession())}
         className="grid size-5 shrink-0 place-items-center rounded text-content/50 hover:bg-content/10 hover:text-content disabled:opacity-40"
       >
         <X className="size-3" strokeWidth={1.75} />

@@ -89,10 +89,12 @@ async function ensureSessionMetadata(id:string){
  }catch{/* Metadata is optional; the default title and icon remain usable. */}
  finally{sessionMetadataPending.delete(id)}
 }
+const snapshotListeners=new Map<string,Set<()=>void>>()
+function notifySnapshot(id:string){const set=snapshotListeners.get(id);if(!set)return;for(const listener of[...set])listener()}
 function patch(id:string,value:Partial<Snapshot>){
  const previous=current(id),next={...previous,...value}
  if(previous.state?.sessionFile&&previous.state.sessionFile!==next.state?.sessionFile&&sessionOwners.get(previous.state.sessionFile)===id)sessionOwners.delete(previous.state.sessionFile)
- snapshots.set(id,next);if(next.state?.sessionFile)sessionOwners.set(next.state.sessionFile,id);if(useWorkspace.getState().connectionId===id)useWorkspace.getState().set(value)
+ snapshots.set(id,next);if(next.state?.sessionFile)sessionOwners.set(next.state.sessionFile,id);if(useWorkspace.getState().connectionId===id)useWorkspace.getState().set(value);notifySnapshot(id)
  const activityChanged=previous.transcript.running!==next.transcript.running||previous.transcript.compacting!==next.transcript.compacting||previous.state?.sessionFile!==next.state?.sessionFile||firstUserTitle(previous.transcript)!==firstUserTitle(next.transcript)
  if(activityChanged)syncLiveSessions()
  if(previous.state?.sessionFile!==next.state?.sessionFile&&next.state?.sessionFile)invalidateSessionList(id)
@@ -442,10 +444,10 @@ export async function forgetProject(project:string){
  if(useWorkspace.getState().cwd===project)useWorkspace.getState().set({...fresh(),cwd:'',connectionId:''})
 }
 /** Pull every queued message back into the draft without stopping the turn. */
-export async function recallQueue(){const id=route(),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id);const s=current(id);patch(id,{draft:[s.draft,...cleared.steering,...cleared.followUp].filter(Boolean).join('\n'),transcript:reduceEvent(s.transcript,{type:'queued_preview_clear'})})}
+export async function recallQueue(target=useWorkspace.getState().cwd){const id=route(target),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id);const s=current(id);patch(id,{draft:[s.draft,...cleared.steering,...cleared.followUp].filter(Boolean).join('\n'),transcript:reduceEvent(s.transcript,{type:'queued_preview_clear'})})}
 /** Promote one queued follow-up into the running turn as a steer (MonoCode's "Steer"). */
-export async function steerFollowUp(text:string){
- const id=route(),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id)
+export async function steerFollowUp(text:string,target=useWorkspace.getState().cwd){
+ const id=route(target),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id)
  let promoted=false
  for(const message of cleared.steering)await request({type:'steer',message},30000,id)
  for(const message of cleared.followUp){
@@ -453,7 +455,7 @@ export async function steerFollowUp(text:string){
   else await request({type:'follow_up',message},30000,id)
  }
 }
-export async function stop(){const id=route(),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id);await request({type:'abort'},60000,id);const s=current(id);patch(id,{draft:[s.draft,...cleared.steering,...cleared.followUp].filter(Boolean).join('\n'),transcript:reduceEvent(s.transcript,{type:'queued_preview_clear'})});await refresh(id)}
+export async function stop(target=useWorkspace.getState().cwd){const id=route(target),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id);await request({type:'abort'},60000,id);const s=current(id);patch(id,{draft:[s.draft,...cleared.steering,...cleared.followUp].filter(Boolean).join('\n'),transcript:reduceEvent(s.transcript,{type:'queued_preview_clear'})});await refresh(id)}
 export async function changeSession(command:RpcCommand){
  try {
   return await changeSessionOnce(command)
@@ -533,7 +535,7 @@ export async function branchFromMessage(message: PiMessage) {
   } finally { branchingConnections.delete(id) }
  }
 }
-export async function answerDialog(request:UiRequest,answer:{value?:string;confirmed?:boolean;cancelled?:boolean}){const id=useWorkspace.getState().connectionId||route();await sendCommand(id,{type:'extension_ui_response',id:request.id,...answer});patch(id,{dialogs:current(id).dialogs.filter(item=>item.id!==request.id)})}
+export async function answerDialog(request:UiRequest,answer:{value?:string;confirmed?:boolean;cancelled?:boolean},target?:string){const id=(target&&connections.has(target)?target:useWorkspace.getState().connectionId)||route();await sendCommand(id,{type:'extension_ui_response',id:request.id,...answer});patch(id,{dialogs:current(id).dialogs.filter(item=>item.id!==request.id)})}
 
 /* ------------------------------------------------------------------ *
  * Workspace tabs (MonoCode `workspaceTabGroups`): each workspace owns one
@@ -557,3 +559,20 @@ export function restoreProjectRoute(cwd: string, id: string) { if (connections.h
 export async function closeWorkspaceConnection(id: string, message = '工作区已关闭') {
  if (id && connections.has(id)) await closeConnection(id, message)
 }
+
+/* ------------------------------------------------------------------ *
+ * Session panes: a pane can show any connection, not just the projected one.
+ * `snapshots` already holds a full projection per connection; these expose it.
+ * ------------------------------------------------------------------ */
+export function subscribeSnapshot(id: string, listener: () => void) {
+ if (!id) return () => {}
+ let set = snapshotListeners.get(id)
+ if (!set) { set = new Set(); snapshotListeners.set(id, set) }
+ set.add(listener)
+ return () => { const current = snapshotListeners.get(id); if (!current) return; current.delete(listener); if (current.size === 0) snapshotListeners.delete(id) }
+}
+export function connectionSnapshot(id: string): Snapshot | null { return id ? snapshots.get(id) ?? null : null }
+export function connectionCwd(id: string): string | null { return connections.get(id)?.cwd ?? null }
+/** Writes from a pane that is showing a background connection. */
+export function patchConnectionSnapshot(id: string, value: Partial<Snapshot>) { if (id) patch(id, value) }
+export function primeConnectionSnapshot(id: string) { if (id && !snapshots.has(id)) snapshots.set(id, fresh()) }

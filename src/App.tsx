@@ -14,7 +14,7 @@ import { SessionSidebar } from "./features/shell/SessionSidebar";
 import { TitleBar } from "./features/shell/TitleBar";
 import { FileView } from "./features/shell/FileView";
 import { MobileShell } from "./features/shell/MobileShell";
-import { CHAT_PANE_ID, useActiveWorkspace, useShell } from "./features/shell/shellStore";
+import { useActiveWorkspace, useShell } from "./features/shell/shellStore";
 import { ChatPane } from "./features/chat/ChatPane";
 import { SettingsView } from "./features/settings/SettingsView";
 import { InboxView } from "./features/inbox/InboxView";
@@ -25,6 +25,8 @@ import { PaneDropHint, PaneSash, SessionPaneHeader } from "./features/shell/Pane
 import { layoutLeaves, layoutSashes, setSplitRatio as setSplitRatioLayout, type LayoutNode } from "./features/shell/paneLayout";
 import { paneDropFromPoint, useTabDrop, type PaneDrop } from "./features/shell/paneDrop";
 import { useWorkspaceTabs } from "./features/shell/use-workspace-tabs";
+import { SessionScope } from "./features/shell/session-scope";
+import { closeWorkspaceConnection } from "./lib/rpc";
 import { setGrabbing, suppressTextSelection } from "./shared/lib/drag";
 
 /** Phone-sized windows and the Android app use the stacked MobileShell. */
@@ -54,6 +56,8 @@ function WorkArea() {
   const movePane = useShell((state) => state.movePane);
   const setSplitRatio = useShell((state) => state.setSplitRatio);
   const focusedPane = useActiveWorkspace((workspace) => workspace.activePane);
+  const sessions = useActiveWorkspace((workspace) => workspace.sessions);
+  const closePane = useShell((state) => state.closePane);
   const tabs = useWorkspaceTabs();
   // A sash drag previews through a local tree and only writes on release.
   const [previewLayout, setPreviewLayout] = useState<LayoutNode | null>(null);
@@ -177,17 +181,29 @@ function WorkArea() {
                   height: `${entry.rect.h * 100}%`,
                 }}
               >
-                {entry.id === CHAT_PANE_ID ? (
-                  <div className="chat-pane-background relative isolate flex h-full min-h-0 min-w-0 flex-1 flex-col">
-                    {split ? (
-                      <SessionPaneHeader
-                        showGrip
-                        focused={focusedPane === CHAT_PANE_ID}
-                        onPaneDragStart={paneDragStart(CHAT_PANE_ID)}
-                      />
-                    ) : null}
-                    <ChatPane key={connectionId || cwd} />
-                  </div>
+                {sessions[entry.id] ? (
+                  // Every session pane is scoped to its own pi connection, so any
+                  // number of them can stream at once (MonoCode's session panes).
+                  <SessionScope connectionId={sessions[entry.id].connectionId || connectionId}>
+                    <div className="chat-pane-background relative isolate flex h-full min-h-0 min-w-0 flex-1 flex-col">
+                      {split ? (
+                        <SessionPaneHeader
+                          showGrip
+                          focused={focusedPane === entry.id}
+                          onClosePane={
+                            Object.keys(sessions).length > 1
+                              ? () => {
+                                  closePane(entry.id);
+                                  void closeWorkspaceConnection(sessions[entry.id].connectionId);
+                                }
+                              : undefined
+                          }
+                          onPaneDragStart={paneDragStart(entry.id)}
+                        />
+                      ) : null}
+                      <ChatPane key={sessions[entry.id].connectionId || connectionId || cwd} />
+                    </div>
+                  </SessionScope>
                 ) : panes[entry.id] ? (
                   <FileView
                     paneId={entry.id}

@@ -38,6 +38,8 @@ export type WorkspaceTab = {
   connectionId: string;
   layout: LayoutNode;
   panes: Record<string, PaneState>;
+  /** Session panes: leaf id → the connection that pane shows (MonoCode leaves). */
+  sessions: Record<string, { connectionId: string }>;
   activePane: string;
 };
 
@@ -85,8 +87,16 @@ export function newWorkspaceTab(cwd: string): WorkspaceTab {
     connectionId: "",
     layout: leaf(CHAT_PANE_ID),
     panes: {},
+    sessions: { [CHAT_PANE_ID]: { connectionId: "" } },
     activePane: CHAT_PANE_ID,
   };
+}
+
+/** Next free session pane id; the first one is always `chat`. */
+function nextSessionPaneId(sessions: Record<string, { connectionId: string }>) {
+  let n = Object.keys(sessions).length;
+  while (sessions[`session:${n}`]) n += 1;
+  return `session:${n}`;
 }
 
 type Persisted = { workspaces: WorkspaceTab[]; activeWorkspaceId: string };
@@ -108,7 +118,14 @@ function readWorkspaces(cwd: string): Persisted {
       const panes = entry.panes && typeof entry.panes === "object" ? entry.panes : {};
       const layout = entry.layout;
       if (!layout || typeof layout !== "object") continue;
-      const valid = new Set<string>([CHAT_PANE_ID, ...Object.keys(panes)]);
+      const sessions: Record<string, { connectionId: string }> = { [CHAT_PANE_ID]: { connectionId: "" } };
+      if (entry.sessions && typeof entry.sessions === "object") {
+        for (const id of Object.keys(entry.sessions)) {
+          if (id === CHAT_PANE_ID) continue;
+          sessions[id] = { connectionId: "" };
+        }
+      }
+      const valid = new Set<string>([...Object.keys(sessions), ...Object.keys(panes)]);
       const seen: string[] = [];
       const walk = (node: LayoutNode): boolean => {
         if (node.type === "leaf") {
@@ -127,6 +144,7 @@ function readWorkspaces(cwd: string): Persisted {
         connectionId: "",
         layout,
         panes,
+        sessions,
         activePane: typeof entry.activePane === "string" && seen.includes(entry.activePane)
           ? entry.activePane
           : firstLeafId(layout),
@@ -167,6 +185,9 @@ type ShellState = Persisted & {
   activateWorkspace: (id: string) => void;
   newWorkspace: (cwd?: string) => WorkspaceTab;
   closeWorkspace: (id: string) => void;
+  /** Split a session pane and open a new session in it (MonoCode ⌘D / ⌘⇧D). */
+  splitSessionPane: (paneId: string, dir: "right" | "down") => string | null;
+  bindSessionConnection: (paneId: string, connectionId: string) => void;
   /** Move a pane out into a workspace of its own (MonoCode `onDetachPane`). */
   detachPaneToWorkspace: (paneId: string) => WorkspaceTab | null;
   bindWorkspaceConnection: (id: string, connectionId: string) => void;
@@ -197,7 +218,7 @@ if (!initial.activeWorkspaceId) initial.activeWorkspaceId = initial.workspaces[0
 function persist(state: Persisted) {
   write(WORKSPACES_KEY, JSON.stringify({
     activeWorkspaceId: state.activeWorkspaceId,
-    workspaces: state.workspaces.map(({ id, cwd, layout, panes, activePane }) => ({ id, cwd, layout, panes, activePane })),
+    workspaces: state.workspaces.map(({ id, cwd, layout, panes, sessions, activePane }) => ({ id, cwd, layout, panes, sessions, activePane })),
   }));
 }
 
@@ -339,6 +360,7 @@ export const useShell = create<ShellState>((set, get) => {
         connectionId: "",
         layout: leaf(paneId),
         panes: { [paneId]: pane },
+        sessions: {} as Record<string, { connectionId: string }>,
         activePane: paneId,
       };
       const workspaces = [...state.workspaces];
@@ -347,6 +369,26 @@ export const useShell = create<ShellState>((set, get) => {
       set({ workspaces, activeWorkspaceId: workspace.id });
       persist({ workspaces, activeWorkspaceId: workspace.id });
       return workspace;
+    },
+
+    splitSessionPane: (paneId, dir) => {
+      const state = get();
+      const workspace = state.workspaces[activeIndex(state)];
+      if (!workspace.sessions[paneId]) return null;
+      const newPaneId = nextSessionPaneId(workspace.sessions);
+      patchActive((current) => ({
+        ...current,
+        layout: placeNewPane(current.layout, paneId, newPaneId, dir === "right" ? "right" : "bottom"),
+        sessions: { ...current.sessions, [newPaneId]: { connectionId: "" } },
+        activePane: newPaneId,
+      }), { entering: { ...state.entering, [newPaneId]: dir === "right" ? "right" as PaneEdge : "bottom" as PaneEdge } });
+      return newPaneId;
+    },
+
+    bindSessionConnection: (paneId, connectionId) => {
+      patchActive((current) => (current.sessions[paneId]
+        ? { ...current, sessions: { ...current.sessions, [paneId]: { connectionId } } }
+        : current));
     },
 
     bindWorkspaceConnection: (id, connectionId) => {
@@ -533,15 +575,20 @@ export const useShell = create<ShellState>((set, get) => {
 
     closePane: (paneId) => {
       const workspace = get().workspaces[activeIndex(get())];
-      if (paneId === CHAT_PANE_ID || !workspace.panes[paneId]) return;
+      const session = Boolean(workspace.sessions[paneId]);
+      if (session && Object.keys(workspace.sessions).length < 2) return;
+      if (!session && !workspace.panes[paneId]) return;
       patchActive((current) => {
         const panes = { ...current.panes };
         delete panes[paneId];
+        const sessions = { ...current.sessions };
+        delete sessions[paneId];
         const layout = removePane(current.layout, paneId) ?? current.layout;
         return {
           ...current,
           layout,
           panes,
+          sessions,
           activePane: current.activePane === paneId
             ? (siblingLeafId(current.layout, paneId) ?? firstLeafId(layout))
             : current.activePane,
