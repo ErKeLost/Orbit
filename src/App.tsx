@@ -248,10 +248,13 @@ export default function App() {
   const sessionSidebarOpen = useShell((state) => state.sessionSidebarOpen);
   const panel = useWorkspace((state) => state.panel);
   const cwd = useWorkspace((state) => state.cwd);
+  const homeDir = useWorkspace((state) => state.homeDir);
+  const workspaceMode = useWorkspace((state) => state.workspaceMode);
   const chromeless = panel === "settings" || panel === "inbox" || panel === "search" || panel === "automations" || panel === "mobile-access" || panel === "notes";
-  // Without a project the session column has nothing to list, so the shell shows
+  // Without a project folder the session column has nothing to list (home mode
+  // and the empty state both render only "没有项目文件夹"), so the shell shows
   // only the rail and the new-session surface.
-  const withSessions = Boolean(cwd);
+  const withSessions = workspaceMode === "project" && Boolean(cwd) && cwd !== homeDir;
   useAutomationScheduler();
   const collapsedRailMode = useShell((state) => state.collapsedRailMode);
   const bootstrap = useWorkspaceBootstrap();
