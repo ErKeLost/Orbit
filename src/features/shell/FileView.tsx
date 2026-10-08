@@ -1,6 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { readTextFile } from "../../lib/git";
 import { formatBytes, mediaKind, useMediaMeta, type MediaKind } from "../../lib/media";
 import { FileHighlighter } from "../../components/FileHighlighter";
@@ -9,6 +10,7 @@ import { splitMarkdownFrontmatter } from "../../shared/lib/markdownFrontmatter";
 import { MarkdownViewShell, useMarkdownMode } from "../chat/MarkdownModeToggle";
 import { ChevronDown, ChevronRight, ImagePlus, Loader } from "../../shared/ui/icons";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
+import { SurfaceTabs } from "./SurfaceTabs";
 import { type OpenFile } from "./shellStore";
 
 function MediaView({ file, kind }: { file: OpenFile; kind: MediaKind }) {
@@ -77,8 +79,16 @@ function MarkdownDocumentPreview({ text }: { text: string }) {
   );
 }
 
-/** A read-only file pane in MonoCode's split layout; text renders on shiki. */
-export function FileView({ file, cwd }: { file: OpenFile; cwd: string }) {
+/** A file pane in MonoCode's split layout; its tab strip sits above the text. */
+export function FileView({
+  file,
+  cwd,
+  onPaneDragStart,
+}: {
+  file: OpenFile;
+  cwd: string;
+  onPaneDragStart?: (event: ReactPointerEvent<HTMLElement>) => void;
+}) {
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const kind = mediaKind(file.path);
   const markdown = isMarkdownPath(file.path);
@@ -93,9 +103,10 @@ export function FileView({ file, cwd }: { file: OpenFile; cwd: string }) {
   });
   const relative = cwd && file.path.startsWith(cwd) ? file.path.slice(cwd.length).replace(/^\//, "") : file.path;
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col border-l border-stroke" aria-label={file.name}>
-      {/* No pane header: MonoCode keeps the file name only in the tab strip;
-          a second chip here just renders the same title twice. */}
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={file.name}>
+      {/* MonoCode keeps a pane's tabs inside the pane (`FilePane` → `SurfaceTabs`),
+          so the file name sits above the content it belongs to. */}
+      <SurfaceTabs onPaneDragStart={onPaneDragStart} />
       {kind != null ? (
         <MediaView file={file} kind={kind} />
       ) : markdown && contents.data != null ? (

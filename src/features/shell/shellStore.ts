@@ -8,6 +8,8 @@ import { create } from "zustand";
 export type SidebarTab = "sessions" | "files" | "changes";
 export type CollapsedRailMode = "compact" | "hidden";
 export type DockPosition = "bottom" | "top" | "left" | "right";
+/** Which side of the split the chat pane sits on (MonoCode's pane reorder). */
+export type PaneOrder = "chat-first" | "file-first";
 export type OpenFile = { path: string; name: string; preview: boolean };
 
 const PROJECT_RAIL_KEY = "orbit.shell.projectRail";
@@ -15,6 +17,7 @@ const SESSION_SIDEBAR_KEY = "orbit.shell.sessionSidebar";
 const SIDEBAR_TAB_KEY = "orbit.shell.sidebarTab";
 const PROJECT_RAIL_WIDTH_KEY = "orbit.shell.projectRailWidth";
 const SESSION_SIDEBAR_WIDTH_KEY = "orbit.shell.sessionSidebarWidth";
+const PANE_ORDER_KEY = "orbit.shell.paneOrder";
 
 function readBool(key: string, fallback: boolean) {
   try {
@@ -55,18 +58,19 @@ type ShellState = {
   /** File tabs open beside the chat; at most one preview (italic) tab. */
   files: OpenFile[];
   activeFile: string | null;
-  /** Where the session tab sits in the strip; files fill the rest in order. */
-  sessionSlot: number;
+  /** Chat pane on the left (default) or on the right of the file pane. */
+  paneOrder: PaneOrder;
   setProjectRailOpen: (open: boolean) => void;
   setSessionSidebarOpen: (open: boolean) => void;
   setSidebarTab: (tab: SidebarTab) => void;
   setProjectRailWidth: (width: number) => void;
   setSessionSidebarWidth: (width: number) => void;
+  setPaneOrder: (order: PaneOrder) => void;
   openFile: (path: string, options?: { pin?: boolean }) => void;
   pinFile: (path: string) => void;
   closeFile: (path: string) => void;
   focusFile: (path: string | null) => void;
-  reorderTabs: (ids: string[]) => void;
+  reorderFiles: (ids: string[]) => void;
 };
 
 function fileName(path: string) {
@@ -100,7 +104,12 @@ export const useShell = create<ShellState>((set, get) => ({
   sessionSidebarWidth: readNumber(SESSION_SIDEBAR_WIDTH_KEY, 272),
   files: [],
   activeFile: null,
-  sessionSlot: 0,
+  paneOrder: ((): PaneOrder => {
+    try {
+      return localStorage.getItem(PANE_ORDER_KEY) === "file-first" ? "file-first" : "chat-first";
+    } catch { return "chat-first"; }
+  })(),
+  setPaneOrder: (paneOrder) => { write(PANE_ORDER_KEY, paneOrder); set({ paneOrder }); },
   setProjectRailOpen: (open) => { write(PROJECT_RAIL_KEY, String(open)); set({ projectRailOpen: open }); },
   setSessionSidebarOpen: (open) => { write(SESSION_SIDEBAR_KEY, String(open)); set({ sessionSidebarOpen: open }); },
   setSidebarTab: (tab) => { write(SIDEBAR_TAB_KEY, tab); set({ sidebarTab: tab }); },
@@ -119,28 +128,23 @@ export const useShell = create<ShellState>((set, get) => ({
     // Like MonoCode, a single click replaces the current preview tab.
     const kept = options?.pin ? files : files.filter((file) => !file.preview);
     const next = [...kept, { path, name: fileName(path), preview: !options?.pin }];
-    set({ files: next, activeFile: path, sessionSlot: Math.min(get().sessionSlot, next.length) });
+    set({ files: next, activeFile: path });
   },
   pinFile: (path) => set((state) => ({ files: state.files.map((file) => (file.path === path ? { ...file, preview: false } : file)) })),
   closeFile: (path) =>
     set((state) => {
       const files = state.files.filter((file) => file.path !== path);
-      return { files, activeFile: state.activeFile === path ? (files.at(-1)?.path ?? null) : state.activeFile, sessionSlot: Math.min(state.sessionSlot, files.length) };
+      return { files, activeFile: state.activeFile === path ? (files.at(-1)?.path ?? null) : state.activeFile };
     }),
   focusFile: (path) => set({ activeFile: path }),
-  // One strip: the session tab and open files share one drag order. "session"
-  // marks the chat's slot; files keep their relative order around it.
-  reorderTabs: (ids) =>
+  // File tabs are one strip inside the file pane (MonoCode `SurfaceTabs`), so
+  // the order is just the pane's own tab order.
+  reorderFiles: (ids) =>
     set((state) => {
       const byPath = new Map(state.files.map((file) => [file.path, file]));
       const next: OpenFile[] = [];
       const seen = new Set<string>();
-      let slot = 0;
       for (const id of ids) {
-        if (id === "session") {
-          slot = next.length;
-          continue;
-        }
         const file = byPath.get(id);
         if (!file || seen.has(id)) continue;
         seen.add(id);
@@ -149,6 +153,6 @@ export const useShell = create<ShellState>((set, get) => ({
       for (const file of state.files) {
         if (!seen.has(file.path)) next.push(file);
       }
-      return { files: next, sessionSlot: Math.min(slot, next.length) };
+      return { files: next };
     }),
 }));

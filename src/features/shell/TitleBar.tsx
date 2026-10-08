@@ -1,26 +1,20 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
 import { useWorkspace } from "../../lib/store";
 import { mergeProjectSessions, useProjectSessions } from "../../hooks/use-project-sessions";
 import { queryClient, report, retireSession } from "../../lib/rpc";
 import { toast } from "../../shared/ui/toast";
 import { compactTitle } from "../../lib/session-visual";
 import { TabLabel } from "../../shared/ui/TabLabel";
-import { useAnimatedReorder } from "../../shared/hooks/useAnimatedReorder";
 import { useTabCloseMotion } from "../../shared/hooks/useTabCloseMotion";
 import { TabWidthMotion } from "./ClosingTab";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
-import { ChevronLeft, ChevronRight, GripVertical, PanelLeft, Settings, Terminal, X } from "../../shared/ui/icons";
-import { FileTypeIcon } from "./FileTypeIcon";
+import { ChevronLeft, ChevronRight, PanelLeft, Settings, Terminal, X } from "../../shared/ui/icons";
 import { IS_MAC, MOD, TitleIconButton } from "./chrome";
 import { TerminalSpinner } from "./TerminalSpinner";
-import { useShell, type OpenFile } from "./shellStore";
+import { useShell } from "./shellStore";
 
-type SortableApi = ReturnType<typeof useAnimatedReorder>;
-
-type Tab =
-  | { id: "session"; kind: "session"; headline: string; busy?: boolean }
-  | { id: string; kind: "file"; headline: string; preview?: boolean; fileName: string };
+/** The strip holds the session only; every file tab lives in its own pane (`SurfaceTabs`). */
+type Tab = { id: "session"; kind: "session"; headline: string; busy?: boolean };
 
 function tabStripOverflow(
   scrollLeft: number,
@@ -61,32 +55,22 @@ function TitleTabItem({
   tab,
   active,
   closable,
-  canDrag,
-  sortable,
   onSelect,
   onClose,
-  onPin,
   onContextMenu,
   itemRef,
 }: {
   tab: Tab;
   active: boolean;
   closable: boolean;
-  canDrag: boolean;
-  sortable: SortableApi;
   onSelect: () => void;
   onClose?: () => void;
-  onPin?: () => void;
   onContextMenu?: (event: React.MouseEvent<HTMLDivElement>) => void;
   itemRef?: (el: HTMLDivElement | null) => void;
 }) {
-  const dragging = sortable.draggingId === tab.id;
   return (
     <div
-      ref={(el) => {
-        sortable.setItemRef(tab.id, el);
-        itemRef?.(el);
-      }}
+      ref={itemRef}
       className="reorder-item tab-motion group @container relative flex h-full min-w-0 w-full cursor-default touch-none items-center self-stretch"
       data-tauri-drag-region="false"
       onContextMenu={(event) => {
@@ -103,11 +87,6 @@ function TitleTabItem({
         event.stopPropagation();
         onClose();
       }}
-      onPointerDown={(event: ReactPointerEvent<HTMLDivElement>) => {
-        if (event.button !== 0) return;
-        if ((event.target as HTMLElement | null)?.closest("[data-no-drag]")) return;
-        if (canDrag) sortable.onItemPointerDown(tab.id, event);
-      }}
     >
       <button
         type="button"
@@ -115,38 +94,18 @@ function TitleTabItem({
         aria-label={tab.headline}
         aria-current={active ? "true" : undefined}
         data-tauri-drag-region="false"
-        onClick={() => {
-          if (sortable.consumeClick()) return;
-          onSelect();
-        }}
-        onDoubleClick={() => {
-          if (tab.kind === "file" && tab.preview) onPin?.();
-        }}
+        onClick={onSelect}
         className={`relative flex h-7.5 min-w-0 flex-1 cursor-default items-center gap-1.5 self-center rounded-md px-2 text-left ${onClose ? "pr-7" : "pr-2.5"} ${
           active ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
         }`}
       >
-        {canDrag ? (
-          <span
-            aria-hidden
-            className={`mr-0.5 flex shrink-0 items-center text-content/30 transition-opacity ${dragging ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
-          >
-            <GripVertical className="size-3" strokeWidth={2} />
-          </span>
+        {tab.busy ? (
+          <TerminalSpinner className="inline-block w-3.5 select-none text-center text-[11px] leading-none text-accent" />
         ) : null}
-        {tab.kind === "session" ? (
-          tab.busy ? <TerminalSpinner className="inline-block w-3.5 select-none text-center text-[11px] leading-none text-accent" /> : null
-        ) : (
-          // 图标包在 grid 里居中：直接当 span 内容会被行盒的基线对齐带偏，
-          // 14px 图标实测比 tab 中心低 1.78px（0.16px 的文件树因为 leading-none 才侥幸对齐）。
-          <span className={`grid shrink-0 place-items-center ${!active ? "opacity-55" : ""}`}>
-            <FileTypeIcon name={tab.fileName} isDir={false} size={14} />
-          </span>
-        )}
         {/* Keep two-line tabs compact while leaving room for descenders. */}
         <span className="flex min-w-0 flex-1 flex-col justify-center">
           <span className="flex min-w-0 items-center gap-1">
-            <TabLabel className={`leading-tight ${tab.kind === "file" && tab.preview ? "italic" : ""} text-[13px]`}>{tab.headline}</TabLabel>
+            <TabLabel className="text-[13px] leading-tight">{tab.headline}</TabLabel>
           </span>
         </span>
       </button>
@@ -172,24 +131,16 @@ function TitleTabItem({
 }
 
 /**
- * MonoCode's title bar for the work area: the active Pi session is the
- * first tab; open files sit beside it and drag to reorder. Tabs open and
- * close with a width motion, the strip scrolls horizontally (wheel and
- * edge chevrons), and the active tab scrolls itself into view.
+ * MonoCode's title bar for the work area: the window title, the settings search
+ * and the session itself. Open files live in their own pane's strip
+ * (`SurfaceTabs`), not here — MonoCode keeps a pane's tabs inside the pane.
  */
 export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
   const cwd = useWorkspace((state) => state.cwd);
   const sessionFile = useWorkspace((state) => state.state?.sessionFile);
   const running = useWorkspace((state) => state.transcript.running);
   const liveSessions = useWorkspace((state) => state.liveSessions);
-  const files = useShell((state) => state.files);
-  const activeFile = useShell((state) => state.activeFile);
   const terminalOpen = useShell((state) => state.terminalOpen);
-  const focusFile = useShell((state) => state.focusFile);
-  const closeFile = useShell((state) => state.closeFile);
-  const pinFile = useShell((state) => state.pinFile);
-  const reorderTabs = useShell((state) => state.reorderTabs);
-  const sessionSlot = useShell((state) => state.sessionSlot);
   const sessions = useProjectSessions(cwd);
   const merged = useMemo(() => mergeProjectSessions(cwd, sessions.data ?? [], liveSessions), [cwd, sessions.data, liveSessions]);
   const session = merged.sessions.find((item) => item.path === sessionFile);
@@ -206,15 +157,13 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
     }
   }
 
-  const sessionTab: Tab = { id: "session", kind: "session", headline: sessionTitle, busy: running };
-  const fileTab = (file: OpenFile): Tab => ({ id: file.path, kind: "file", headline: file.name, preview: file.preview, fileName: file.name });
-  const tabs = useMemo(() => [...files.slice(0, sessionSlot).map(fileTab), sessionTab, ...files.slice(sessionSlot).map(fileTab)], [files, sessionSlot, sessionTab]);
+  const sessionTab: Tab = useMemo(
+    () => ({ id: "session", kind: "session", headline: sessionTitle, busy: running }),
+    [sessionTitle, running],
+  );
+  const tabs = useMemo(() => [sessionTab], [sessionTab]);
 
   const { displayed, setTabNode, finishMotion } = useTabCloseMotion(tabs);
-
-  const liveIds = useMemo(() => tabs.map((tab) => tab.id), [tabs]);
-  const sortable = useAnimatedReorder(liveIds, (ids) => reorderTabs(ids), "x");
-  const canDrag = liveIds.length > 1;
 
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const tabStripRef = useRef<HTMLDivElement | null>(null);
@@ -245,12 +194,11 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
   const activeTabRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (sortable.draggingId) return;
     activeTabRef.current?.scrollIntoView({
       inline: "nearest",
       block: "nearest",
     });
-  }, [activeFile, sortable.draggingId]);
+  }, [sessionTab]);
 
   useLayoutEffect(() => {
     const el = tabStripRef.current;
@@ -267,7 +215,7 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
 
   useLayoutEffect(() => {
     syncTabOverflow();
-  }, [syncTabOverflow, activeFile, tabs]);
+  }, [syncTabOverflow, sessionTab]);
 
   useEffect(() => {
     if (!tabMenu) return;
@@ -281,23 +229,8 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
   }, [tabMenu]);
 
   const menuTab = tabMenu ? tabs.find((tab) => tab.id === tabMenu.tabId) ?? null : null;
-  const menuIndex = menuTab ? tabs.findIndex((tab) => tab.id === menuTab.id) : -1;
-  const runMenuAction = (action: "close" | "others" | "right") => {
-    if (!menuTab) return;
-    const store = useShell.getState();
-    const fileTabs = tabs.filter((tab): tab is Extract<Tab, { kind: "file" }> => tab.kind === "file");
-    if (action === "close") {
-      if (menuTab.kind === "session") void closeSession();
-      else store.closeFile(menuTab.id);
-    } else if (menuTab.kind === "file") {
-      const keep = action === "others"
-        ? fileTabs.filter((tab) => tab.id === menuTab.id)
-        : fileTabs.filter((tab) => tabs.indexOf(tab) <= menuIndex);
-      for (const tab of fileTabs) {
-        if (!keep.some((candidate) => candidate.id === tab.id)) store.closeFile(tab.id);
-      }
-      if (!keep.some((candidate) => candidate.id === activeFile)) store.focusFile(null);
-    }
+  const closeTabMenu = () => {
+    void closeSession();
     setTabMenu(null);
   };
 
@@ -334,7 +267,7 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
           >
             {displayed.map((entry) => {
               const tab = entry.item;
-              const closable = !entry.closing && (tab.kind === "session" ? Boolean(session) : true);
+              const closable = !entry.closing && Boolean(session);
               const shell = (
                 <div
                   ref={(el) => {
@@ -349,27 +282,15 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
                 >
                   <TitleTabItem
                     tab={tab}
-                    active={!entry.closing && (tab.kind === "session" ? !activeFile : activeFile === tab.id)}
+                    active={!entry.closing}
                     closable={closable}
-                    canDrag={!entry.closing && canDrag}
-                    sortable={sortable}
-                    onSelect={() => {
-                      if (tab.kind === "session") focusFile(null);
-                      else focusFile(tab.id);
-                    }}
-                    onClose={
-                      tab.kind === "session"
-                        ? session
-                          ? () => { void closeSession(); }
-                          : undefined
-                        : () => closeFile(tab.id)
-                    }
-                    onPin={tab.kind === "file" ? () => pinFile(tab.id) : undefined}
+                    onSelect={() => useShell.getState().focusFile(null)}
+                    onClose={session ? () => { void closeSession(); } : undefined}
                     onContextMenu={(event) =>
                       setTabMenu({ tabId: tab.id, x: event.clientX, y: event.clientY })
                     }
                     itemRef={
-                      !entry.closing && (tab.kind === "session" ? !activeFile : activeFile === tab.id)
+                      !entry.closing
                         ? (el) => {
                             activeTabRef.current = el;
                           }
@@ -419,31 +340,11 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
           <button
             type="button"
             role="menuitem"
-            onClick={() => runMenuAction("close")}
+            onClick={closeTabMenu}
             className="flex h-7 w-full items-center rounded-md px-2.5 text-left text-[12px] text-content hover:bg-content/8"
           >
-            {menuTab.kind === "session" ? "关闭会话" : "关闭标签"}
+            关闭会话
           </button>
-          {menuTab.kind === "file" ? (
-            <>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => runMenuAction("others")}
-                className="flex h-7 w-full items-center rounded-md px-2.5 text-left text-[12px] text-content hover:bg-content/8"
-              >
-                关闭其他标签
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => runMenuAction("right")}
-                className="flex h-7 w-full items-center rounded-md px-2.5 text-left text-[12px] text-content hover:bg-content/8"
-              >
-                关闭右侧标签
-              </button>
-            </>
-          ) : null}
         </div>
       ) : null}
     </header>

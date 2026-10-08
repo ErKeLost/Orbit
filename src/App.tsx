@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { MetricsSync } from "./lib/metrics";
 import { useWorkspace } from "./lib/store";
 import { useWorkspaceBootstrap, useWorkspaceShortcuts } from "./hooks/use-workspace-shell";
@@ -38,8 +39,9 @@ function useMobileLayout(forced: boolean) {
 }
 
 /** The chat pane's own header when a file splits the view (MonoCode SessionPane `inSplit`). */
-function SplitPaneHeader() {
+function SplitPaneHeader({ onPaneDragStart }: { onPaneDragStart?: (event: ReactPointerEvent<HTMLElement>) => void }) {
   const sessionName = useWorkspace((state) => state.state?.sessionName);
+  const activeFile = useShell((state) => state.activeFile);
   const first = useWorkspace((state) => {
     const message = state.transcript.messages.find((item) => item.message.role === "user")?.message;
     if (!message) return "";
@@ -48,12 +50,20 @@ function SplitPaneHeader() {
   });
   const title = compactTitle(sessionName || first, "新会话", 60);
   return (
-    <div className="flex h-9 shrink-0 select-none items-center gap-1.5 border-b border-stroke px-2">
-      <GripVertical className="size-3.5 shrink-0 text-content/35" strokeWidth={1.75} />
-      <span className="size-2 shrink-0 rounded-full bg-transparent" />
+    <div
+      className={`flex h-9 shrink-0 select-none items-center gap-1.5 border-b border-stroke px-2 ${onPaneDragStart ? "cursor-grab touch-none active:cursor-grabbing" : ""}`}
+      onPointerDown={(event) => {
+        if (event.button !== 0 || !onPaneDragStart) return;
+        if ((event.target as HTMLElement | null)?.closest("[data-no-drag]")) return;
+        onPaneDragStart(event);
+      }}
+    >
+      {onPaneDragStart ? <GripVertical className="size-3.5 shrink-0 text-content/35" strokeWidth={1.75} /> : null}
+      <span className={`size-2 shrink-0 rounded-full ${activeFile ? "bg-transparent" : "bg-accent"}`} />
       <span className="min-w-0 flex-1 truncate text-xs text-content" title={title}>{title}</span>
       <button
         type="button"
+        data-no-drag
         title="关闭文件"
         aria-label="关闭文件"
         onClick={() => {
@@ -68,6 +78,17 @@ function SplitPaneHeader() {
   );
 }
 
+/** MonoCode's `PaneDropHint`: which side the dragged pane will land on. */
+function PaneDropHint() {
+  return (
+    <div className="pointer-events-none absolute inset-0 z-20 ring-2 ring-inset ring-accent/50">
+      <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent px-2.5 py-1 text-[11px] font-medium text-accent-foreground shadow-lg">
+        移到这一侧
+      </span>
+    </div>
+  );
+}
+
 function WorkArea() {
   const panel = useWorkspace((state) => state.panel);
 
@@ -77,7 +98,50 @@ function WorkArea() {
   const activeFile = useShell((state) => state.activeFile);
   const projectRailOpen = useShell((state) => state.projectRailOpen);
   const sessionSidebarOpen = useShell((state) => state.sessionSidebarOpen);
+  const paneOrder = useShell((state) => state.paneOrder);
+  const setPaneOrder = useShell((state) => state.setPaneOrder);
   const file = files.find((item) => item.path === activeFile);
+  // MonoCode reorders panes by dragging a pane's grip (`PaneTree` → `paneDrop`).
+  // This split has exactly two panes, so dropping on the other side swaps them.
+  const chatPaneRef = useRef<HTMLDivElement | null>(null);
+  const filePaneRef = useRef<HTMLDivElement | null>(null);
+  const [paneDrag, setPaneDrag] = useState<{ from: "chat" | "file"; over: "chat" | "file" } | null>(null);
+
+  const paneAt = (x: number, y: number): "chat" | "file" | null => {
+    const hits = (element: HTMLElement | null) => {
+      if (!element) return false;
+      const rect = element.getBoundingClientRect();
+      return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    };
+    if (hits(filePaneRef.current)) return "file";
+    if (hits(chatPaneRef.current)) return "chat";
+    return null;
+  };
+
+  const paneDragStart =
+    (from: "chat" | "file") => (event: ReactPointerEvent<HTMLElement>) => {
+      if (!file || event.button !== 0) return;
+      setPaneDrag({ from, over: from });
+      const move = (ev: globalThis.PointerEvent) => {
+        const over = paneAt(ev.clientX, ev.clientY);
+        setPaneDrag((current) => (current && over && current.over !== over ? { ...current, over } : current));
+      };
+      const finish = (ev: globalThis.PointerEvent | null) => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", finish as EventListener);
+        window.removeEventListener("pointercancel", cancel);
+        const over = ev ? paneAt(ev.clientX, ev.clientY) : null;
+        setPaneDrag(null);
+        // With two panes, dropping one onto the other's side is a swap.
+        if (over && over !== from) {
+          setPaneOrder(useShell.getState().paneOrder === "chat-first" ? "file-first" : "chat-first");
+        }
+      };
+      const cancel = () => finish(null);
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", finish as EventListener);
+      window.addEventListener("pointercancel", cancel);
+    };
 
   // Switching connections catches the newly visible stream up at once.
   useEffect(() => {
@@ -94,11 +158,25 @@ function WorkArea() {
       <MetricsSync />
       {panel === "chat" ? (
         <div className="flex min-h-0 min-w-0 flex-1">
-          <div className="chat-pane-background relative isolate flex h-full min-h-0 min-w-0 flex-1 flex-col">
-            {file ? <SplitPaneHeader /> : null}
+          <div
+            ref={chatPaneRef}
+            style={{ order: paneOrder === "file-first" ? 2 : 1 }}
+            className={`chat-pane-background relative isolate flex h-full min-h-0 min-w-0 flex-1 flex-col ${paneDrag?.from === "chat" ? "opacity-60" : ""}`}
+          >
+            {file ? <SplitPaneHeader onPaneDragStart={paneDragStart("chat")} /> : null}
             <ChatPane key={connectionId || cwd} />
+            {paneDrag?.over === "chat" ? <PaneDropHint /> : null}
           </div>
-          {file ? <FileView file={file} cwd={cwd} /> : null}
+          {file ? (
+            <div
+              ref={filePaneRef}
+              style={{ order: paneOrder === "file-first" ? 1 : 2 }}
+              className={`relative flex min-h-0 min-w-0 flex-1 ${paneOrder === "file-first" ? "border-r border-stroke" : "border-l border-stroke"} ${paneDrag?.from === "file" ? "opacity-60" : ""}`}
+            >
+              <FileView file={file} cwd={cwd} onPaneDragStart={paneDragStart("file")} />
+              {paneDrag?.over === "file" ? <PaneDropHint /> : null}
+            </div>
+          ) : null}
         </div>
       ) : (
         <Panel />
