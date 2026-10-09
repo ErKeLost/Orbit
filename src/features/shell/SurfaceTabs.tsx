@@ -51,6 +51,14 @@ export function SurfaceTabs({
   const cwd = useWorkspace((state) => state.cwd);
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const activeTabRef = useRef<HTMLDivElement | null>(null);
+  const stripRef = useRef<HTMLDivElement | null>(null);
+  const attachStrip = useCallback(
+    (el: HTMLDivElement | null) => {
+      lockOverscroll(el);
+      stripRef.current = el;
+    },
+    [lockOverscroll],
+  );
   const [menu, setMenu] = useState<TabMenu | null>(null);
   const files = pane?.files ?? NO_FILES;
   // Which open tabs have unsaved text (`lib/drafts`), so a dot can stand where
@@ -91,9 +99,22 @@ export function SurfaceTabs({
 
   const leaveStrip = useCallback(() => setTabDrop(null), []);
 
+  // Keep the active tab in view by nudging this strip's own `scrollLeft` —
+  // never `scrollIntoView`, which also scrolls every scrollable ancestor (the
+  // pane included) and would fight a pane that is still sliding in from a
+  // split. Rects differ from the strip by the same transform on both ends, so
+  // the math holds while the pane animates.
   useLayoutEffect(() => {
     if (sortable.draggingId) return;
-    activeTabRef.current?.scrollIntoView({ inline: "nearest", block: "nearest" });
+    const tab = activeTabRef.current;
+    const strip = stripRef.current;
+    if (!tab || !strip) return;
+    const tabRect = tab.getBoundingClientRect();
+    const stripRect = strip.getBoundingClientRect();
+    const overflowLeft = tabRect.left - stripRect.left;
+    const overflowRight = tabRect.right - stripRect.right;
+    if (overflowLeft < 0) strip.scrollLeft += overflowLeft;
+    else if (overflowRight > 0) strip.scrollLeft += overflowRight;
   }, [pane?.activeFile, sortable.draggingId]);
 
   const copy = (text: string) => {
@@ -138,7 +159,7 @@ export function SurfaceTabs({
   return (
     <div className="flex h-9 min-w-0 shrink-0 items-center border-b border-stroke">
       <div
-        ref={lockOverscroll}
+        ref={attachStrip}
         role="tablist"
         aria-label="打开的文件"
         data-tab-strip={paneId}

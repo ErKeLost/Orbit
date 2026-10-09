@@ -70,14 +70,27 @@ function WorkArea() {
   const leaves = useMemo(() => layoutLeaves(tree), [tree]);
   const sashes = useMemo(() => layoutSashes(tree), [tree]);
   const split = leaves.length > 1;
-  // A pane split into an existing layout slides in from the edge it was added
-  // on. Panes present when the tree mounts, or swapped in place, just appear.
-  // (Orbit `PaneTree` enteringPanes.)
-  // Orbit marks a pane that a split just created and slides it in from the
-  // edge it took (`PaneTree` enteringPanes); the store records the edge where
-  // the split happens, so the attribute is there on the pane's first paint.
+  // A pane a split just created slides in from the edge it took. The store
+  // records that edge, so `data-pane-enter` is on the pane's first paint and
+  // the animation starts from the offscreen keyframe (never a final-position
+  // flash). Panes present when the tree mounts, or swapped in place, just
+  // appear. The pane is a clip box (`overflow-clip`), not a scroll container,
+  // so focus/`scrollIntoView` inside it cannot drag it mid-slide.
   const entering = useShell((state) => state.entering);
   const clearEntering = useShell((state) => state.clearEntering);
+
+  // `animationend` is the normal clear path, but under reduced motion the
+  // animation is disabled and that event never fires — which would leave
+  // `data-pane-enter` (and any animation) on the pane forever. Clear any pane
+  // that outlives the enter animation.
+  useEffect(() => {
+    const ids = Object.keys(entering);
+    if (ids.length === 0) return;
+    const timer = window.setTimeout(() => {
+      for (const id of ids) clearEntering(id);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [entering, clearEntering]);
 
   // Orbit's `PaneTree` drag: track the pointer, hit-test the live panes and
   // resolve the target edge when the pointer is released.
@@ -168,13 +181,7 @@ function WorkArea() {
                   if (event.animationName !== "pane-enter") return;
                   clearEntering(entry.id);
                 }}
-                onScroll={(event) => {
-                  // Focus scrolls the clip box while the pane is still offscreen.
-                  if (!(entry.id in entering)) return;
-                  event.currentTarget.scrollLeft = 0;
-                  event.currentTarget.scrollTop = 0;
-                }}
-                className={`absolute flex min-h-0 min-w-0 flex-col overflow-hidden ${dragging ? "opacity-60" : ""} ${detaching === entry.id ? "ring-2 ring-inset ring-accent/60" : ""}`}
+                className={`absolute flex min-h-0 min-w-0 flex-col overflow-clip ${dragging ? "opacity-60" : ""} ${detaching === entry.id ? "ring-2 ring-inset ring-accent/60" : ""}`}
                 style={{
                   left: `${entry.rect.x * 100}%`,
                   top: `${entry.rect.y * 100}%`,

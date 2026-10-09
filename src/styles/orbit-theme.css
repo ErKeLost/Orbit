@@ -2184,7 +2184,12 @@ header[data-tauri-drag-region] button {
 }
 
 [data-pane-enter] {
-  animation: pane-enter 260ms cubic-bezier(0.22, 1, 0.36, 1);
+  /* `both` holds the offscreen `from` frame from the element's very first
+     style resolution, so a pane can never flash at its final spot before the
+     slide starts. Transform slides are composited on their own; no
+     `will-change` is needed (it would linger under reduced motion, where the
+     animation is disabled and `animationend` never clears the attribute). */
+  animation: pane-enter 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 [data-pane-enter="right"] {
