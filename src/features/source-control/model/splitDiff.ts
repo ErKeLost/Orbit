@@ -1,8 +1,4 @@
-import {
-  revealedFold,
-  type FoldReveal,
-  type UnifiedLine,
-} from "./unifiedDiff";
+import type { UnifiedLine } from "./unifiedDiff";
 import {
   UNIFIED_FOLD_PX,
   UNIFIED_LINE_PX,
