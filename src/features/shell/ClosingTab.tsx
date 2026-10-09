@@ -15,7 +15,7 @@ type Props = {
 
 type TabStyle = CSSProperties & { "--tab-slot-width"?: string };
 
-/** MonoCode's `TabWidthMotion`: animates a tab slot's width open or shut. */
+/** Orbit's `TabWidthMotion`: animates a tab slot's width open or shut. */
 export function TabWidthMotion({
   phase,
   width = 0,

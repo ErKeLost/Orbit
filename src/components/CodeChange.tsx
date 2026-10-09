@@ -14,7 +14,7 @@ class DiffBoundary extends Component<{ children: ReactNode; fallback: string }, 
   }
 }
 
-/** Diff / file rendering stays on @pierre/diffs; only the chrome follows MonoCode. */
+/** Diff / file rendering stays on @pierre/diffs; only the chrome follows Orbit. */
 export function CodeChange({ change, compact = false, wrap = false }: { change: Change; compact?: boolean; wrap?: boolean }) {
   const [style, setStyle] = useState<"unified" | "split">("unified");
   const [highlightResult, setHighlightResult] = useState<{ key: string; state: "ready" | "fallback" }>({ key: "", state: "fallback" });

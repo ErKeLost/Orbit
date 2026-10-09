@@ -2,7 +2,7 @@ import { useSyncExternalStore, type ComponentType } from "react";
 
 /**
  * `@lobehub/icons` is ~2.3 MB — the largest thing that used to sit in the boot
- * chunk, for 14px model marks. Like MonoCode's Material icon pack, it loads
+ * chunk, for 14px model marks. Like Orbit's Material icon pack, it loads
  * after first paint and a same-sized blank holds the slot until it lands.
  */
 type ModelIconComponent = ComponentType<{ model: string; type?: "color" | "mono"; size?: number }>;

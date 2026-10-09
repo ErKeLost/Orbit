@@ -58,13 +58,13 @@ function MediaView({ file, kind }: { file: { path: string; name: string }; kind:
   );
 }
 
-/** MonoCode's `isMarkdownPath`: the extensions that open in preview mode. */
+/** Orbit's `isMarkdownPath`: the extensions that open in preview mode. */
 function isMarkdownPath(path: string): boolean {
   const extension = (path.split(".").pop() ?? "").toLowerCase();
   return extension === "md" || extension === "mdx" || extension === "markdown";
 }
 
-/** MonoCode's `MarkdownDocumentPreview`: rendered body with folded frontmatter. */
+/** Orbit's `MarkdownDocumentPreview`: rendered body with folded frontmatter. */
 function MarkdownDocumentPreview({ text }: { text: string }) {
   const { metadata, body } = useMemo(() => splitMarkdownFrontmatter(text), [text]);
   return (
@@ -101,7 +101,7 @@ export function FileView({
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const kind = file ? mediaKind(file.path) : null;
   const markdown = file ? isMarkdownPath(file.path) : false;
-  // Like MonoCode, markdown documents open as preview and remember the mode per file.
+  // Like Orbit, markdown documents open as preview and remember the mode per file.
   const [mode, setMode] = useMarkdownMode(file?.path ?? "", "preview");
   const [saving, setSaving] = useState(false);
   // The mobile shell has no ⌘S, so its save affordance lives in the footer and
@@ -154,7 +154,7 @@ export function FileView({
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={file.name}>
-      {/* MonoCode keeps a pane's tabs inside the pane (`FilePane` → `SurfaceTabs`),
+      {/* Orbit keeps a pane's tabs inside the pane (`FilePane` → `SurfaceTabs`),
           so the file name sits above the content it belongs to. */}
       <SurfaceTabs paneId={paneId} showGrip={showGrip} onPaneDragStart={onPaneDragStart} />
       {kind != null ? (

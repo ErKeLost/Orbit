@@ -16,7 +16,7 @@ import { compactTitle } from "../../lib/session-visual";
 import { mergeProjectSessions, useProjectSessions } from "../../hooks/use-project-sessions";
 
 /**
- * Android / narrow layout. The same MonoCode surfaces, stacked: a 44px title
+ * Android / narrow layout. The same Orbit surfaces, stacked: a 44px title
  * bar with the drawer toggle, the chat full-bleed, and the two rails sliding
  * in from the left as one drawer (projects on top, sessions below).
  */

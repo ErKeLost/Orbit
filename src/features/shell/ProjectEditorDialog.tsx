@@ -8,7 +8,7 @@ import { TextField } from "../../shared/ui/controls";
 import { Folder, FolderOpen, Loader, Plus, X } from "../../shared/ui/icons";
 
 /**
- * MonoCode `ProjectEditorDialog`, on Orbit's tokens.
+ * Orbit `ProjectEditorDialog`, on Orbit's tokens.
  *
  * The roots list is the point of this dialog: every row is a small card (icon
  * tile, name over a mono path) instead of a bare line, the home root wears a

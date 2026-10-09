@@ -9,7 +9,7 @@ const FENCE = "```";
  * + `<pre><code>` 一体。回归点：
  *  - 内容只渲染一次，且在 .markdown-code-shell 框内（曾出现过内容落到框外的报告）；
  *  - `<pre>` 带 stream-block 类（Streamdown 的透明度动画目标），保证
- *    monocode.css 里 `.markdown-static .stream-block` 的可见性覆盖命得中。
+ *    orbit-theme.css 里 `.markdown-static .stream-block` 的可见性覆盖命得中。
  */
 test("language-less fence keeps content inside the frame, exactly once", () => {
   const html = renderToStaticMarkup(

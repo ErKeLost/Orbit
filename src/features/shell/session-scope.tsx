@@ -9,7 +9,7 @@ import {
 } from "../../lib/rpc";
 
 /**
- * A pane that shows a connection the shell is *not* projecting (MonoCode's
+ * A pane that shows a connection the shell is *not* projecting (Orbit's
  * `TranscriptPool`: every session pane stays live). The facade merges that
  * connection's snapshot over the app state, so the whole chat stack
  * (`useWorkspace(...)`) reads the pane's own session with no call-site changes.

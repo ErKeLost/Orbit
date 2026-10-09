@@ -7,12 +7,12 @@ import { UI_SCALE_PERCENTS, useAppearance, type DiffPalette, type ThemePreferenc
 import { useShell } from "../shell/shellStore";
 import { Group, Row, Segmented, Select, Slider, Toggle } from "../../shared/ui/controls";
 
-/** MonoCode ACCENT_COLOR_PRESETS. */
+/** Orbit ACCENT_COLOR_PRESETS. */
 const ACCENT_PRESETS = ["#4da3f5", "#8b5cf6", "#ec4899", "#ef4444", "#f59e0b", "#10b981"] as const;
 
 function AccentSwatch({ color, active, onSelect, label }: { color: string | null; active: boolean; onSelect: () => void; label: string }) {
   if (color == null) {
-    // The "default" swatch: the theme accent with a subtle ring, like MonoCode's.
+    // The "default" swatch: the theme accent with a subtle ring, like Orbit's.
     return (
       <button
         type="button"
@@ -59,7 +59,7 @@ function AccentSwatch({ color, active, onSelect, label }: { color: string | null
   );
 }
 
-/** MonoCode's Appearance page: theme + accent + diff colors, then the tint sliders. */
+/** Orbit's Appearance page: theme + accent + diff colors, then the tint sliders. */
 export function AppearancePage() {
   const appearance = useAppearance();
   const glassDisabled = appearance.scheme === "light";

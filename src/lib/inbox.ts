@@ -4,7 +4,7 @@ import { useWorkspace } from "./store";
 
 /**
  * Inbox model layer for GitHub (via `gh` CLI) and GitLab (via REST + PAT),
- * ported from MonoCode's `githubTasks.ts` / `gitlab.ts`. Both providers share
+ * ported from Orbit's `githubTasks.ts` / `gitlab.ts`. Both providers share
  * the same work-item shape so the UI stays provider-agnostic.
  */
 
@@ -121,7 +121,7 @@ export function clearInboxCaches() {
 
 const relativeFormatter = new Intl.RelativeTimeFormat("zh-CN", { numeric: "auto" });
 
-/** MonoCode's `formatRelativeTime`, verbatim. */
+/** Orbit's `formatRelativeTime`, verbatim. */
 export function formatRelativeTime(iso: string, now = Date.now()): string {
   const then = Date.parse(iso);
   if (!Number.isFinite(then)) return "";

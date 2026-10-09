@@ -5,7 +5,7 @@ import { Check, MessageSquare } from "../../shared/ui/icons";
 
 /**
  * Pi extension UI requests (`select`, `confirm`, `input`, `editor`) in
- * MonoCode's QuestionForm card, docked above the composer.
+ * Orbit's QuestionForm card, docked above the composer.
  */
 export function ExtensionDialog({ dialog }: { dialog: UiRequest }) {
   const [value, setValue] = useState(dialog.method === "editor" ? (dialog as { prefill?: string }).prefill ?? "" : "");

@@ -11,8 +11,8 @@ import { Popover } from "./Popover";
 import { Check, ChevronDown } from "./icons";
 
 /**
- * MonoCode's control vocabulary, lifted verbatim from its Settings and
- * composer surfaces so every Orbit form reads the same as MonoCode's.
+ * Orbit's control vocabulary, lifted verbatim from its Settings and
+ * composer surfaces so every Orbit form reads the same as Orbit's.
  */
 
 export function Toggle({
@@ -52,7 +52,7 @@ type ButtonProps = Omit<ComponentPropsWithRef<"button">, "className"> & {
   className?: string;
 };
 
-/** MonoCode `SecondaryButton`. */
+/** Orbit `SecondaryButton`. */
 export function SecondaryButton({ danger = false, type = "button", className = "", children, ...props }: ButtonProps) {
   return (
     <button
@@ -69,7 +69,7 @@ export function SecondaryButton({ danger = false, type = "button", className = "
   );
 }
 
-/** The filled action MonoCode uses for a primary choice in a card. */
+/** The filled action Orbit uses for a primary choice in a card. */
 export function PrimaryButton({ type = "button", className = "", danger = false, children, ...props }: ButtonProps) {
   return (
     <button
@@ -124,7 +124,7 @@ export function IconButton({
   );
 }
 
-/** Bordered text field used across MonoCode Settings. */
+/** Bordered text field used across Orbit Settings. */
 export function TextField({
   className = "",
   wide = false,
@@ -231,7 +231,7 @@ export function Slider({
 
 export type SelectOption = { value: string; label: ReactNode; icon?: ReactNode };
 
-/** MonoCode Settings `Select`: a trigger plus a Popover listbox. */
+/** Orbit Settings `Select`: a trigger plus a Popover listbox. */
 export function Select({
   label,
   value,
@@ -344,7 +344,7 @@ export function Select({
   );
 }
 
-/** A menu row inside a Popover (MonoCode's project/plus menus). */
+/** A menu row inside a Popover (Orbit's project/plus menus). */
 export function MenuItem({
   icon,
   children,
@@ -410,7 +410,7 @@ export function PointMenu({
   );
 }
 
-/** Settings page header (MonoCode `PageHeader`). */
+/** Settings page header (Orbit `PageHeader`). */
 export function PageHeader({ title, description }: { title: string; description?: string }) {
   return (
     <header className="pb-4">
@@ -420,7 +420,7 @@ export function PageHeader({ title, description }: { title: string; description?
   );
 }
 
-/** A titled card of settings rows (MonoCode `Group`). */
+/** A titled card of settings rows (Orbit `Group`). */
 export function Group({
   title,
   description,
@@ -446,7 +446,7 @@ export function Group({
   );
 }
 
-/** One settings row (MonoCode `Row`). */
+/** One settings row (Orbit `Row`). */
 export function Row({ label, description, children }: { label: ReactNode; description?: ReactNode; children?: ReactNode }) {
   return (
     <div className="flex items-start gap-6 border-b border-content/5 px-4 py-3.5 last:border-b-0">

@@ -1,7 +1,7 @@
 //! Notes: a small markdown notebook stored beside the app's data. One JSON
 //! document per note under `app_data/notes`, image assets under
 //! `app_data/note-assets/<note id>`. The command surface and data model match
-//! the MonoCode notes feature so the UI code is shared verbatim.
+//! the Orbit notes feature so the UI code is shared verbatim.
 
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};

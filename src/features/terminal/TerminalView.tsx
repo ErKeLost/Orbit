@@ -11,7 +11,7 @@ type PtyExit = { id: string; code: number | null };
 
 const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
-/** MonoCode's palettes (`features/terminal/ui/TerminalView.tsx`). */
+/** Orbit's palettes (`features/terminal/ui/TerminalView.tsx`). */
 const ANSI_DARK = {
   black: "#1d2428",
   red: "#f87171",
@@ -79,7 +79,7 @@ function terminalTheme(light: boolean) {
 
 /**
  * One xterm.js surface bound to one Rust PTY, configured exactly like
- * MonoCode's: transparent canvas, resolved Nerd Font stack, bar cursor, and
+ * Orbit's: transparent canvas, resolved Nerd Font stack, bar cursor, and
  * base64 chunks from `pty-data` decoded before they reach the parser.
  */
 export function TerminalView({ id, cwd, active }: { id: string; cwd: string; active: boolean }) {
@@ -204,5 +204,5 @@ export function TerminalView({ id, cwd, active }: { id: string; cwd: string; act
     return () => cancelAnimationFrame(frame);
   }, [active]);
 
-  return <div ref={host} className="monocode-terminal h-full w-full min-w-0" />;
+  return <div ref={host} className="orbit-terminal h-full w-full min-w-0" />;
 }

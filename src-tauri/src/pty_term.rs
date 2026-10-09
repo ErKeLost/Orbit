@@ -283,7 +283,7 @@ fn spawn_unix(
         .env("TERM", "xterm-256color")
         .env("COLORTERM", "truecolor")
         .env("COLORFGBG", "15;0")
-        .env("TERM_PROGRAM", "MonoCode")
+        .env("TERM_PROGRAM", "Orbit")
         .env("PATH", std::env::var("PATH").unwrap_or_default());
     if let Some(home) = dirs_home() {
         cmd.env("HOME", &home);
@@ -413,7 +413,7 @@ fn spawn_windows(
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("COLORFGBG", "15;0");
-    cmd.env("TERM_PROGRAM", "MonoCode");
+    cmd.env("TERM_PROGRAM", "Orbit");
     cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
     if let Some(home) = dirs_home() {
         cmd.env("HOME", &home);

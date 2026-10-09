@@ -7,7 +7,7 @@ import { IS_MAC } from "./chrome";
 import { useShell } from "./shellStore";
 import { toast } from "../../shared/ui/toast";
 
-/** MonoCode's compact icon rail: projects only, one click back to the full rail. */
+/** Orbit's compact icon rail: projects only, one click back to the full rail. */
 export function CompactRail() {
   const cwd = useWorkspace((state) => state.cwd);
   const workspaceMode = useWorkspace((state) => state.workspaceMode);

@@ -10,7 +10,7 @@ import {
 import { useShell, type WorkspaceTab } from "./shellStore";
 
 /**
- * Binds the shell's workspace tabs to pi connections (MonoCode's workspace tab
+ * Binds the shell's workspace tabs to pi connections (Orbit's workspace tab
  * strip). One workspace = one pi RPC process; `lib/rpc.ts` already keeps a full
  * projection per connection, so switching a workspace is a snapshot swap.
  */

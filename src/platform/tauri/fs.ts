@@ -1,6 +1,6 @@
 import { invoke } from "../../lib/native";
 
-/** Git data layer for the source-control surface (MonoCode's platform git API). */
+/** Git data layer for the source-control surface (Orbit's platform git API). */
 
 export type GitDiffStats = {
   files: number;
@@ -251,7 +251,7 @@ export function isCheckoutBlockedByChanges(message: string): boolean {
   );
 }
 
-const GIT_CHANGED = "monocode-git-changed";
+const GIT_CHANGED = "orbit-git-changed";
 
 /** Tell git UIs (diff pane, branch picker) to reload after a local git mutation. */
 export function notifyGitChanged() {

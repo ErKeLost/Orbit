@@ -123,7 +123,7 @@ export function formatClock(value: string): string {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
-/** MonoCode's `nextAutomationRunAt`, verbatim. */
+/** Orbit's `nextAutomationRunAt`, verbatim. */
 export function nextAutomationRunAt(
   schedule: Pick<Automation, "scheduleKind" | "minute" | "time" | "dayOfWeek">,
   after = Date.now(),

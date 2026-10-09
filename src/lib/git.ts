@@ -38,7 +38,7 @@ export const createDir = (path: string) => invoke<void>("create_dir", { path });
 export const renamePath = (from: string, to: string) => invoke<void>("rename_path", { from, to });
 export const deletePath = (path: string) => invoke<void>("delete_path", { path });
 
-/** Uncommitted +/- for a folder, refreshed like MonoCode's project cards. */
+/** Uncommitted +/- for a folder, refreshed like Orbit's project cards. */
 export function useGitDiffStats(cwd: string | undefined, enabled = true) {
   const visible = usePageVisible();
   return useQuery({

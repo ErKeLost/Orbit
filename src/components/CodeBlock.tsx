@@ -276,7 +276,7 @@ function CodeCopyButton({ code }: { code: string }) {
   );
 }
 
-/** MonoCode's code-fence chrome (`.markdown-code-shell`) around Orbit's shiki block. */
+/** Orbit's code-fence chrome (`.markdown-code-shell`) around Orbit's shiki block. */
 function CodeFrame({ language, code, children }: { language?: string; code: string; children: ReactNode }) {
   return (
     <div className="markdown-code-shell" dir="ltr">

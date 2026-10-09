@@ -1,7 +1,7 @@
 import { CornerDownRight, ListEnd, Trash2 } from "../../shared/ui/icons";
 
 /**
- * MonoCode's queued-message card, fed by Pi's own queue (`queue_update`):
+ * Orbit's queued-message card, fed by Pi's own queue (`queue_update`):
  * follow-ups wait for the turn to end, steering messages are already on their
  * way into the running turn. "Steer" promotes a follow-up; the trash removes
  * the whole queue back into the draft (Pi has no per-item delete).

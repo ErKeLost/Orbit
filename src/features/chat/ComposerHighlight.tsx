@@ -4,7 +4,7 @@ import { fileMentionParts, type MentionFile } from "./fileMentions";
 import { skillTextParts } from "./skillTokens";
 
 /**
- * MonoCode `ComposerHighlight`: the coloured copy of the draft that sits behind
+ * Orbit `ComposerHighlight`: the coloured copy of the draft that sits behind
  * the transparent `.composer-field` textarea. Tokens the user picked from the
  * `/` and `@` palettes keep their styling once they land in the text.
  */

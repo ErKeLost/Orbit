@@ -140,7 +140,7 @@ function applyEvent(event:Event,project:string){
  }
 }
 const burstEvents=new Set(['message_update','tool_execution_update'])
-// MonoCode's harness cadence (app/model/harnessFlush.ts): the visible
+// Orbit's harness cadence (app/model/harnessFlush.ts): the visible
 // connection flushes once per animation frame; hidden connections and a
 // backgrounded window advance on a slower 100ms timer so background streams
 // never drive the whole UI at display refresh rate.
@@ -464,7 +464,7 @@ export async function forgetProject(project:string){
 }
 /** Pull every queued message back into the draft without stopping the turn. */
 export async function recallQueue(target=useWorkspace.getState().cwd){const id=route(target),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id);const s=current(id);patch(id,{draft:[s.draft,...cleared.steering,...cleared.followUp].filter(Boolean).join('\n'),transcript:reduceEvent(s.transcript,{type:'queued_preview_clear'})})}
-/** Promote one queued follow-up into the running turn as a steer (MonoCode's "Steer"). */
+/** Promote one queued follow-up into the running turn as a steer (Orbit's "Steer"). */
 export async function steerFollowUp(text:string,target=useWorkspace.getState().cwd){
  const id=route(target),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id)
  let promoted=false
@@ -557,7 +557,7 @@ export async function branchFromMessage(message: PiMessage) {
 export async function answerDialog(request:UiRequest,answer:{value?:string;confirmed?:boolean;cancelled?:boolean},target?:string){const id=(target&&connections.has(target)?target:useWorkspace.getState().connectionId)||route();await sendCommand(id,{type:'extension_ui_response',id:request.id,...answer});patch(id,{dialogs:current(id).dialogs.filter(item=>item.id!==request.id)})}
 
 /* ------------------------------------------------------------------ *
- * Workspace tabs (MonoCode `workspaceTabGroups`): each workspace owns one
+ * Workspace tabs (Orbit `workspaceTabGroups`): each workspace owns one
  * pi RPC process and its own pane tree. These wrappers keep the connection
  * table private to this module.
  * ------------------------------------------------------------------ */

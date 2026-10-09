@@ -72,14 +72,14 @@ function WorkArea() {
   const split = leaves.length > 1;
   // A pane split into an existing layout slides in from the edge it was added
   // on. Panes present when the tree mounts, or swapped in place, just appear.
-  // (MonoCode `PaneTree` enteringPanes.)
-  // MonoCode marks a pane that a split just created and slides it in from the
+  // (Orbit `PaneTree` enteringPanes.)
+  // Orbit marks a pane that a split just created and slides it in from the
   // edge it took (`PaneTree` enteringPanes); the store records the edge where
   // the split happens, so the attribute is there on the pane's first paint.
   const entering = useShell((state) => state.entering);
   const clearEntering = useShell((state) => state.clearEntering);
 
-  // MonoCode's `PaneTree` drag: track the pointer, hit-test the live panes and
+  // Orbit's `PaneTree` drag: track the pointer, hit-test the live panes and
   // resolve the target edge when the pointer is released.
   const paneDragStart = (fromId: string) => (event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0 || !split) return;
@@ -115,7 +115,7 @@ function WorkArea() {
       setDetaching(null);
       if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
       if (!commit) return;
-      // MonoCode's `onDetachPane`: a pane dropped on the title strip becomes a
+      // Orbit's `onDetachPane`: a pane dropped on the title strip becomes a
       // workspace tab of its own.
       const element = document.elementFromPoint(lastX, lastY);
       if (element?.closest("[data-title-tab-strip]")) {
@@ -184,7 +184,7 @@ function WorkArea() {
               >
                 {sessions[entry.id] ? (
                   // Every session pane is scoped to its own pi connection, so any
-                  // number of them can stream at once (MonoCode's session panes).
+                  // number of them can stream at once (Orbit's session panes).
                   <SessionScope connectionId={sessions[entry.id].connectionId || connectionId}>
                     <div className="chat-pane-background relative isolate flex h-full min-h-0 min-w-0 flex-1 flex-col">
                       {split ? (

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Modal } from "../../shared/ui/Modal";
 import { Loader } from "../../shared/ui/icons";
 
-/** MonoCode's small confirmation dialog (DeleteWorktreeDialog's frame and buttons). */
+/** Orbit's small confirmation dialog (DeleteWorktreeDialog's frame and buttons). */
 export function ConfirmDialog({
   title,
   confirmLabel = "确认",

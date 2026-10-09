@@ -6,7 +6,7 @@ import { ChevronRight } from "../shared/ui/icons";
 
 /**
  * Compatibility layer for Orbit's settings/tool panels. The API is the one
- * those panels already call; every visual comes from MonoCode's vocabulary
+ * those panels already call; every visual comes from Orbit's vocabulary
  * (SecondaryButton, Settings Select/Toggle, Modal). No shadcn underneath.
  */
 
@@ -223,7 +223,7 @@ export function Modal({
   );
 }
 
-/** Tooltips are native titles in MonoCode; these keep the old call shape. */
+/** Tooltips are native titles in Orbit; these keep the old call shape. */
 export function Tooltip({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
@@ -236,7 +236,7 @@ export function TooltipContent(_props: { children?: ReactNode }) {
   return null;
 }
 
-/** Old `Card` wrapper → MonoCode's settings card surface. */
+/** Old `Card` wrapper → Orbit's settings card surface. */
 export function Card({ className = "", children, ...props }: ComponentProps<"div">) {
   return (
     <div {...props} className={`overflow-hidden rounded-xl border border-content/10 bg-content/3 ${className}`}>

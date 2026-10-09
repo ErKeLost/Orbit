@@ -1,7 +1,7 @@
 //! Automations: user-defined recurring agent runs.
 //!
 //! The data model, validation rules, claim semantics and run ledger follow
-//! MonoCode's `src-tauri/src/automations.rs`; only storage differs — MonoCode
+//! Orbit's `src-tauri/src/automations.rs`; only storage differs — Orbit
 //! keeps automations in its SQLite session store, Orbit writes two JSON files
 //! in the app-data directory (same JSON shape, so the UI is a direct port).
 

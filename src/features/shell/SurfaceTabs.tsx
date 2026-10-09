@@ -22,7 +22,7 @@ type TabMenu = { x: number; y: number; path: string };
 const NO_FILES: OpenFile[] = [];
 
 /**
- * One editor pane's tab strip, ported from MonoCode's
+ * One editor pane's tab strip, ported from Orbit's
  * `features/workspace/ui/SurfaceTabs.tsx`. Every pane owns its tabs: the strip
  * holds the pane's drag handle, `w-56` tabs that reorder by dragging their
  * body, and a close button per tab. Dragging a tab onto another pane's strip
@@ -36,7 +36,7 @@ export function SurfaceTabs({
 }: {
   paneId: string;
   showGrip: boolean;
-  /** MonoCode's pane grip: dragging it moves this pane onto another pane's edge. */
+  /** Orbit's pane grip: dragging it moves this pane onto another pane's edge. */
   onPaneDragStart?: (event: ReactPointerEvent<HTMLElement>) => void;
   trailing?: ReactNode;
 }) {
@@ -261,7 +261,7 @@ export function SurfaceTabs({
           );
         })}
         {showGrip && onPaneDragStart ? (
-          // MonoCode makes the empty area to the right of the tabs a pane drag
+          // Orbit makes the empty area to the right of the tabs a pane drag
           // handle too, so the whole strip moves the pane.
           <div
             className="h-full min-w-4 flex-1 cursor-grab active:cursor-grabbing"

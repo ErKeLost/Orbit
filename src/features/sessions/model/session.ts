@@ -1,4 +1,4 @@
-/** Harness ids the source-control surface can reference (MonoCode's union). */
+/** Harness ids the source-control surface can reference (Orbit's union). */
 export type HarnessId =
   | "claude"
   | "codex"

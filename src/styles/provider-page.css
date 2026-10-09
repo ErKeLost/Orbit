@@ -1,5 +1,5 @@
-/* Provider settings in MonoCode's layout: a 264px list pane, a detail pane
-   with the MonoCode card vocabulary. Colors come only from MonoCode tokens. */
+/* Provider settings in Orbit's layout: a 264px list pane, a detail pane
+   with the Orbit card vocabulary. Colors come only from Orbit tokens. */
 
 .provider-settings {
   display: flex;
@@ -215,7 +215,7 @@
   padding-top: 14px;
 }
 
-/* Connection block: a MonoCode Row inside a card. */
+/* Connection block: a Orbit Row inside a card. */
 .provider-connection {
   display: flex;
   align-items: flex-start;
@@ -601,7 +601,7 @@
   border-radius: 0;
 }
 
-/* MonoCode shows no "no data" modality chips. */
+/* Orbit shows no "no data" modality chips. */
 .model-modalities-empty {
   display: none;
 }
@@ -705,7 +705,7 @@
   margin-top: 2px;
 }
 
-/* "接口未返回" chips are noise: MonoCode shows no empty-modality chip. */
+/* "接口未返回" chips are noise: Orbit shows no empty-modality chip. */
 .model-modalities-empty,
 .model-modalities.model-modalities-empty {
   display: none !important;

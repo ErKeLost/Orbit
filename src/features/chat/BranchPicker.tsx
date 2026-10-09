@@ -5,7 +5,7 @@ import { Popover } from "../../shared/ui/Popover";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { Check, GitBranch, Loader, Plus, Search } from "../../shared/ui/icons";
 
-/** MonoCode's `GitPickerTrigger` + `BranchPicker`, on Orbit's git commands. */
+/** Orbit's `GitPickerTrigger` + `BranchPicker`, on Orbit's git commands. */
 export function BranchPicker({ cwd, current, disabled = false }: { cwd: string; current: string | null; disabled?: boolean }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");

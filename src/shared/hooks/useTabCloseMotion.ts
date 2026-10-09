@@ -1,9 +1,9 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
 /**
- * MonoCode's `useTabCloseMotion`: keeps closing tabs in the strip while their
+ * Orbit's `useTabCloseMotion`: keeps closing tabs in the strip while their
  * slot animates shut, and marks newly opened tabs so their slot animates open.
- * Tab width motion is opt-in (MonoCode ships it off by default); the flag
+ * Tab width motion is opt-in (Orbit ships it off by default); the flag
  * lives in localStorage under `orbit.tab-animations`.
  */
 export type TabMotionEntry<T extends { id: string }> = {

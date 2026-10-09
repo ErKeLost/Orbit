@@ -3,8 +3,8 @@ import { setTheme as setNativeTheme } from "@tauri-apps/api/app";
 import { nativeThemePreference, themeColor, type ResolvedTheme } from "./theme";
 
 /**
- * MonoCode's appearance model, ported: one hue, one saturation, one dark
- * lightness, and a light class. Every surface color in `styles/monocode.css`
+ * Orbit's appearance model, ported: one hue, one saturation, one dark
+ * lightness, and a light class. Every surface color in `styles/orbit-theme.css`
  * derives from these, so a theme change is four variables, not a stylesheet.
  */
 export type ThemePreference = "system" | "light" | "dark";
@@ -98,7 +98,7 @@ type AppearanceState = {
   saturation: number;
   darkLightness: number;
   sidebarOpacity: number;
-  /** Null = the theme's own accent (MonoCode's first swatch). */
+  /** Null = the theme's own accent (Orbit's first swatch). */
   accent: string | null;
   diffPalette: DiffPalette;
   blur: number;
@@ -118,7 +118,7 @@ type AppearanceState = {
   restoreDefaults: () => void;
 };
 
-/** macOS native vibrancy, the same path MonoCode uses (has-native-glass). */
+/** macOS native vibrancy, the same path Orbit uses (has-native-glass). */
 async function applyNativeGlass(state: Pick<AppearanceState, "scheme" | "blur" | "bodyGlass" | "sidebarOpacity">) {
   const root = document.documentElement;
   const eligible = state.scheme === "dark" && IS_MAC_RUNTIME;

@@ -157,7 +157,7 @@ function statusMaps(root: string, files: GitChangedFile[] | undefined) {
   for (const file of files ?? []) {
     const absolute = `${base}/${file.path}`;
     statuses.set(absolute, file.status);
-    // Folders take the color of what changed inside, like MonoCode/VS Code.
+    // Folders take the color of what changed inside, like Orbit/VS Code.
     let dir = absolute.slice(0, absolute.lastIndexOf("/"));
     while (dir.length > base.length) {
       if (!dirtyDirs.has(dir) || file.status === "M") dirtyDirs.set(dir, file.status === "D" ? "M" : file.status);

@@ -5,7 +5,7 @@ import { gitRangeContext, gitStagedContext } from "../platform/tauri/fs";
 export type PrContent = { title: string; body: string };
 
 /**
- * Text generation through Orbit's own Pi runtime (MonoCode routes these through
+ * Text generation through Orbit's own Pi runtime (Orbit routes these through
  * its harness registry). Each call runs the project's Pi CLI once, headlessly:
  * no session is created and no tools are exposed.
  */

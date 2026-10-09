@@ -7,7 +7,7 @@ import { Folder } from "../../shared/ui/icons";
 import { BranchPicker } from "./BranchPicker";
 
 /**
- * Composer 顶部的 workspace 列表（MonoCode `CwdLabel` + `GitPickerTrigger` 的
+ * Composer 顶部的 workspace 列表（Orbit `CwdLabel` + `GitPickerTrigger` 的
  * 多 root 版）。
  *
  * 主 checkout 沿用原来的形态（"Current checkout" + 分支选择器）；每个附加

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 /**
- * MonoCode 的 `useTranscriptSelection`：监听聊天区文字选区，要求起止都在
+ * Orbit 的 `useTranscriptSelection`：监听聊天区文字选区，要求起止都在
  * 同一个回答块（`data-selectable-agent-response`）内，返回选区文本与
  * 视口矩形（供浮动菜单定位）。跨块/标题区的选择不产生菜单。
  */

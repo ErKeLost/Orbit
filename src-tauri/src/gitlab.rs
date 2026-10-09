@@ -1,5 +1,5 @@
 //! GitLab merge requests and issues through the REST API with a personal
-//! access token. Ported from MonoCode's `gitlab.rs`; keeps the same command
+//! access token. Ported from Orbit's `gitlab.rs`; keeps the same command
 //! surface so the inbox model layer maps one to one.
 
 use std::fs;

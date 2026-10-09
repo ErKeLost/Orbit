@@ -1,5 +1,5 @@
 /**
- * Orbit's pane tree, ported from MonoCode's
+ * Orbit's pane tree, ported from Orbit's
  * `features/workspace/model/layout.ts` (the parts a single workspace needs).
  *
  * A workspace is one tree: `split` nodes divide space along `right` (columns)
@@ -34,7 +34,7 @@ export type LayoutSash = {
   sizes: number[];
 };
 
-/** MonoCode `layout.ts` MIN_SIZE: no pane may be squeezed below 8% of its split. */
+/** Orbit `layout.ts` MIN_SIZE: no pane may be squeezed below 8% of its split. */
 export const MIN_PANE_SHARE = 0.08;
 
 export function leaf(id: string): LayoutNode {
@@ -234,7 +234,7 @@ function splitPaneRelative(
   };
 }
 
-/** Open a new pane on `targetId`'s edge (MonoCode `splitPaneRelative`). */
+/** Open a new pane on `targetId`'s edge (Orbit `splitPaneRelative`). */
 export function placeNewPane(
   node: LayoutNode,
   targetId: string,

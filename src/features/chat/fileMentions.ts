@@ -1,7 +1,7 @@
 import { scorePath } from "../../shared/lib/fuzzy";
 
 /**
- * MonoCode `features/files/model/fileMentions.ts`, minus notes, MCP tags and
+ * Orbit `features/files/model/fileMentions.ts`, minus notes, MCP tags and
  * the "Referenced with @ above" legend: `list_project_files` hands us plain
  * relative paths, and Pi resolves a project-relative `@path` on its own, so we
  * expand the label back to the path at send time instead.

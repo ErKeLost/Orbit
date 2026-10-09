@@ -19,7 +19,7 @@ import {
 import { useShell, type DockPosition } from "../shell/shellStore";
 import { TerminalView } from "./TerminalView";
 
-/** MonoCode's dock sizes (`projects/model/projectTerminal.ts`). */
+/** Orbit's dock sizes (`projects/model/projectTerminal.ts`). */
 const DOCK_SIZE_DEFAULT: Record<DockPosition, number> = { top: 220, bottom: 220, left: 360, right: 360 };
 const VERTICAL_MIN = 88;
 const HORIZONTAL_MIN = 180;
@@ -61,7 +61,7 @@ function hideIcon(side: DockPosition) {
 type Tab = { id: string; label: string; cwd: string };
 
 /**
- * MonoCode's `ProjectTerminalDock`: a resizable pane on any side of the chat,
+ * Orbit's `ProjectTerminalDock`: a resizable pane on any side of the chat,
  * a tab strip whose trailing controls are new-terminal / move / hide, and every
  * terminal kept mounted (only the active one visible).
  */

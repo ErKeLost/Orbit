@@ -4,7 +4,7 @@ import { request, report } from "../../lib/rpc";
 import { Group, Row, Select, Toggle } from "../../shared/ui/controls";
 import { toast } from "../../shared/ui/toast";
 
-/** MonoCode's Chat section, backed by Pi's session RPCs. */
+/** Orbit's Chat section, backed by Pi's session RPCs. */
 export function ChatPage() {
   const online = useWorkspace((state) => state.connection === "online");
   const running = useWorkspace((state) => state.transcript.running);

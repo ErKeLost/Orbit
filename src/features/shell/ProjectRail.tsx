@@ -52,7 +52,7 @@ type RailActionProps = {
   ariaLabel?: string;
 };
 
-/** MonoCode `RailAction`. */
+/** Orbit `RailAction`. */
 export function RailAction({ label, icon: Icon, onClick, active = false, shortcut, ariaLabel }: RailActionProps) {
   return (
     <button
@@ -71,7 +71,7 @@ export function RailAction({ label, icon: Icon, onClick, active = false, shortcu
   );
 }
 
-/** MonoCode `RailSearch`. */
+/** Orbit `RailSearch`. */
 function RailSearch({ onClick, active }: { onClick?: () => void; active?: boolean }) {
   return (
     <button

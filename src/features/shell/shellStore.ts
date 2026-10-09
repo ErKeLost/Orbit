@@ -13,13 +13,13 @@ import {
 } from "./paneLayout";
 
 /**
- * Layout state for the MonoCode-style shell. Pi state (connections,
+ * Layout state for the Orbit-style shell. Pi state (connections,
  * transcripts, sessions) stays in `lib/store`; this owns the workspace tabs,
  * each with its own pane tree and its own file tabs.
  *
- * The tree is MonoCode's (`features/workspace/model/layout.ts`): leaves are
+ * The tree is Orbit's (`features/workspace/model/layout.ts`): leaves are
  * "chat" (a session pane) or editor panes ("editor:1", …). A workspace is
- * MonoCode's `WorkspaceTab` minus the tab strip's own persistence concerns:
+ * Orbit's `WorkspaceTab` minus the tab strip's own persistence concerns:
  * one pi connection, one tree.
  */
 export type SidebarTab = "sessions" | "files" | "changes";
@@ -38,7 +38,7 @@ export type WorkspaceTab = {
   connectionId: string;
   layout: LayoutNode;
   panes: Record<string, PaneState>;
-  /** Session panes: leaf id → the connection that pane shows (MonoCode leaves). */
+  /** Session panes: leaf id → the connection that pane shows (Orbit leaves). */
   sessions: Record<string, { connectionId: string }>;
   activePane: string;
 };
@@ -185,10 +185,10 @@ type ShellState = Persisted & {
   activateWorkspace: (id: string) => void;
   newWorkspace: (cwd?: string) => WorkspaceTab;
   closeWorkspace: (id: string) => void;
-  /** Split a session pane and open a new session in it (MonoCode ⌘D / ⌘⇧D). */
+  /** Split a session pane and open a new session in it (Orbit ⌘D / ⌘⇧D). */
   splitSessionPane: (paneId: string, dir: "right" | "down") => string | null;
   bindSessionConnection: (paneId: string, connectionId: string) => void;
-  /** Move a pane out into a workspace of its own (MonoCode `onDetachPane`). */
+  /** Move a pane out into a workspace of its own (Orbit `onDetachPane`). */
   detachPaneToWorkspace: (paneId: string) => WorkspaceTab | null;
   bindWorkspaceConnection: (id: string, connectionId: string) => void;
   setWorkspaceCwd: (id: string, cwd: string) => void;
@@ -199,7 +199,7 @@ type ShellState = Persisted & {
   closeFile: (path: string, pane?: string) => void;
   focusFile: (path: string | null, pane?: string) => void;
   reorderFiles: (paneId: string, ids: string[]) => void;
-  /** MonoCode `movePane`: drag a pane onto another pane's edge. */
+  /** Orbit `movePane`: drag a pane onto another pane's edge. */
   movePane: (fromId: string, toId: string, edge: PaneEdge) => void;
   /** Drag a file tab into another pane. */
   moveFileToPane: (path: string, fromPane: string, toPane: string, index?: number) => void;
@@ -442,7 +442,7 @@ export const useShell = create<ShellState>((set, get) => {
         });
         return;
       }
-      // No editor pane yet: MonoCode opens one beside the focused pane.
+      // No editor pane yet: Orbit opens one beside the focused pane.
       const paneId = nextEditorPaneId(workspace.panes);
       patchActive(
         (current) => ({
@@ -478,7 +478,7 @@ export const useShell = create<ShellState>((set, get) => {
             panes: { ...current.panes, [target]: { files, activeFile: pane.activeFile === path ? (files.at(-1)?.path ?? null) : pane.activeFile } },
           };
         }
-        // Last tab of an editor pane: the pane itself goes away (MonoCode `closeLeaf`).
+        // Last tab of an editor pane: the pane itself goes away (Orbit `closeLeaf`).
         const panes = { ...current.panes };
         delete panes[target];
         const layout = removePane(current.layout, target) ?? current.layout;

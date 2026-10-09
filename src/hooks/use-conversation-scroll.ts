@@ -72,7 +72,7 @@ export function useConversationScroll(options: { /** 置 true 时贴底逻辑整
       });
     };
 
-    // MonoCode's `followsAfterScroll`: following restarts only when genuine
+    // Orbit's `followsAfterScroll`: following restarts only when genuine
     // downward movement actually reaches the end. Layout clamping, no movement,
     // and a small reversal inside the bottom margin all keep the position —
     // which is what leaves an anchored prompt still.
@@ -190,7 +190,7 @@ export function useConversationScroll(options: { /** 置 true 时贴底逻辑整
   return { ref, atBottom, userUnpinned, scrollToBottom, pauseFollow } as const;
 }
 
-/** MonoCode's rules for whether a scroll event restarts following. */
+/** Orbit's rules for whether a scroll event restarts following. */
 function followsAfterScroll(element: HTMLElement, previousTop: number, following: boolean): boolean {
   const movement = element.scrollTop - previousTop;
   if (movement === 0 || scrollClampedToBottom(element, previousTop)) return following;

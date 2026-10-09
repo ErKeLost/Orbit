@@ -93,7 +93,7 @@ html[data-theme="light"] .composer-model-row:hover,
 html[data-theme="light"] .composer-model-row.active {
   background: color-mix(in oklch, var(--color-content) 6%, var(--color-background-base));
 }
-/* Group header with a count, MonoCode-style row rhythm. */
+/* Group header with a count, Orbit-style row rhythm. */
 .composer-model-group h3 {
   display: flex;
   align-items: center;

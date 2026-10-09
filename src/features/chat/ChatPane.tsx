@@ -26,7 +26,7 @@ const groupCache = new WeakMap<object, ReturnType<typeof groupDisplayMessages>>(
 
 /**
  * Commits the streaming transcript to React once per animation frame while a
- * turn runs (MonoCode's foreground cadence), and synchronously when idle.
+ * turn runs (Orbit's foreground cadence), and synchronously when idle.
  */
 function useFrameStream() {
   // Per-frame streaming: read the store this pane is scoped to, so a background
@@ -60,7 +60,7 @@ function useFrameStream() {
   return view;
 }
 
-/** MonoCode's `EmptySession`: the galaxy backdrop with the composer centered on it. */
+/** Orbit's `EmptySession`: the galaxy backdrop with the composer centered on it. */
 function EmptySession({ cwd, onSubmitted }: { cwd: string; onSubmitted: () => void }) {
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const projects = useProjects((state) => state.projects);
@@ -82,7 +82,7 @@ function EmptySession({ cwd, onSubmitted }: { cwd: string; onSubmitted: () => vo
   );
 }
 
-/** MonoCode's chat background: a fixed image behind the transcript and composer. */
+/** Orbit's chat background: a fixed image behind the transcript and composer. */
 function ChatBackground() {
   const path = useAppearance((state) => state.chatBackground);
   if (!path) return null;
@@ -109,7 +109,7 @@ export function ChatPane() {
   // WKWebView 会把原生选区的间隙涂满选区色；挂载后聊天区改用 Custom
   // Highlight API 只重绘文字（样式见 orbit.css 的 custom-selection-highlight）。
   useSelectionHighlight(ref);
-  // 选中回答文字后弹出浮动复制条（MonoCode 同款交互）。
+  // 选中回答文字后弹出浮动复制条（Orbit 同款交互）。
   const { selection: textSelection, dismissSelection: dismissTextSelection } = useTranscriptSelection(ref.current, true);
   const sessionFile = useWorkspace((state) => state.state?.sessionFile) ?? persistedSessionFile(project);
   const dockPosition = useShell((state) => state.terminalPosition);
@@ -160,7 +160,7 @@ export function ChatPane() {
     saveTurnDurations(sessionFile, completed);
   }, [groups, sessionFile, transcript.running]);
 
-  // MonoCode's `syncTranscriptViewport`: publish the usable pane height, which
+  // Orbit's `syncTranscriptViewport`: publish the usable pane height, which
   // `.transcript-turn-anchor` consumes as its minimum height.
   useEffect(() => {
     const scroller = ref.current;
@@ -198,7 +198,7 @@ export function ChatPane() {
   const anchorFrom = transcript.running
     ? groups.reduce((found, group, index) => (group.items[0]?.message.role === "user" ? index : found), -1)
     : -1;
-  // MonoCode's `useTurnScrollAnchor` equivalent: when the anchored turn stops
+  // Orbit's `useTurnScrollAnchor` equivalent: when the anchored turn stops
   // stretching, its height collapses — put the difference back into scrollTop
   // so the reader's view does not jump.
   const lastUserMessage = [...transcript.messages].reverse().find((item) => item.message.role === "user");
@@ -279,7 +279,7 @@ export function ChatPane() {
       <ChatBackground />
       <div className="@container relative min-h-0 flex-1 transcript-composer-fade">
         <div ref={ref} className="agent-transcript h-full overflow-y-auto overscroll-none font-mono text-[13px] leading-5 [overflow-anchor:none]">
-          {/* MonoCode's chat transcript: top-aligned content whose newest turn
+          {/* Orbit's chat transcript: top-aligned content whose newest turn
               reserves a pane of height (`transcript-turn-anchor`), so a prompt
               sent with the transcript pinned to the bottom sits at the top. */}
           <div data-transcript-content className="mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-1 pb-8">
@@ -294,7 +294,7 @@ export function ChatPane() {
                 {/* The running turn holds its prompt, answer and status line, and
                     is stretched to a pane (`.transcript-turn-anchor`). Pinned to
                     the bottom, that pane-tall turn shows the prompt at its top
-                    with the rest of the pane free — MonoCode's stretched turn. */}
+                    with the rest of the pane free — Orbit's stretched turn. */}
                 <div data-transcript-anchor className="transcript-turn transcript-turn-anchor flex min-w-0 flex-col">
                   {groups.slice(anchorFrom).map((group, offset) => renderGroup(group, anchorFrom + offset))}
                   {waiting ? <InitialWorking label={runningLabel} startedAt={transcript.turnStartedAt} /> : null}

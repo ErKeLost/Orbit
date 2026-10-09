@@ -116,7 +116,7 @@ function emptyDraft(cwd: string): Draft {
   };
 }
 
-/** MonoCode's Automations screen: list, template gallery, and the editor. */
+/** Orbit's Automations screen: list, template gallery, and the editor. */
 export function AutomationsView() {
   const cwd = useWorkspace((state) => state.cwd);
   const homeDir = useWorkspace((state) => state.homeDir);
@@ -328,7 +328,7 @@ export function AutomationsView() {
                   ))}
                 </div>
                 <div className="mt-4 grid gap-3 @min-[42rem]:grid-cols-2">
-                  {/* MonoCode's cards: icon left, copy right, trigger pinned bottom. */}
+                  {/* Orbit's cards: icon left, copy right, trigger pinned bottom. */}
                   <button
                     type="button"
                     onClick={() => setDraft(emptyDraft(project))}

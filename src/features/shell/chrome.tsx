@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, PanelLeft } from "../../shared/ui/icons";
 export const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 export const MOD = IS_MAC ? "⌘" : "Ctrl+";
 
-/** MonoCode's tab-group palette, hashed per project path. */
+/** Orbit's tab-group palette, hashed per project path. */
 const PROJECT_COLORS = [
   "hsl(210 8% 58%)",
   "hsl(211 92% 62%)",
@@ -23,7 +23,7 @@ export function projectColor(project: string): string {
   return PROJECT_COLORS[(hash % (PROJECT_COLORS.length - 1)) + 1];
 }
 
-/** The Pi harness mark from MonoCode's HarnessIcon, drawn in currentColor. */
+/** The Pi harness mark from Orbit's HarnessIcon, drawn in currentColor. */
 export function PiMark({ className = "size-3.5" }: { className?: string }) {
   return (
     <svg viewBox="-4 -4 37 37" fill="currentColor" aria-hidden className={`block ${className}`}>
@@ -37,7 +37,7 @@ export function formatInteger(value: number) {
   return value.toLocaleString("en-US");
 }
 
-/** `+12 -3` in the diff palette, as on MonoCode's project cards. */
+/** `+12 -3` in the diff palette, as on Orbit's project cards. */
 export function DiffStat({ additions, deletions, className = "" }: { additions: number; deletions: number; className?: string }) {
   if (additions <= 0 && deletions <= 0) return null;
   return (
@@ -85,7 +85,7 @@ export function TitleIconButton({
   );
 }
 
-/** Back / forward / panel toggle (MonoCode `TabVisitNav`). */
+/** Back / forward / panel toggle (Orbit `TabVisitNav`). */
 export function TabVisitNav({
   canGoBack = false,
   canGoForward = false,
@@ -135,7 +135,7 @@ export function DevModeSlot() {
   );
 }
 
-/** Shared drag-to-resize handle for a side pane (MonoCode's separators). */
+/** Shared drag-to-resize handle for a side pane (Orbit's separators). */
 export function ResizeHandle({
   label,
   dragging,

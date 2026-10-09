@@ -8,7 +8,7 @@ type Props = {
   onDismiss: () => void;
 };
 
-/** 选中回答文字后的浮动操作条：复制到剪贴板（MonoCode `TranscriptSelectionMenu`）。 */
+/** 选中回答文字后的浮动操作条：复制到剪贴板（Orbit `TranscriptSelectionMenu`）。 */
 export function TranscriptSelectionMenu({ selection, onDismiss }: Props) {
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;

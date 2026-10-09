@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import { paneEdgeFromPoint, type PaneEdge } from "./paneLayout";
 
 /**
- * Drag targets for the pane tree, ported from MonoCode's
+ * Drag targets for the pane tree, ported from Orbit's
  * `features/workspace/model/paneDrop.ts`: hit-test the live DOM so the drop
  * targets stay correct while panes are absolutely positioned and resized.
  */

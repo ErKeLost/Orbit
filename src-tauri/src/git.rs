@@ -1,4 +1,4 @@
-//! Workspace Git and file-tree backend for the MonoCode-style shell.
+//! Workspace Git and file-tree backend for the Orbit-style shell.
 //!
 //! Adapted from MonoCode's `src-tauri/src/fs.rs` (MIT, Copyright (c) 2026
 //! Nick): uncommitted diff stats, branch listing/switching and a gitignore
@@ -565,7 +565,7 @@ mod tests {
     }
 }
 
-// ── Source-control surface (MonoCode's git API surface, Orbit's git plumbing) ──
+// ── Source-control surface (Orbit's git API surface, Orbit's git plumbing) ──
 
 #[derive(Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -636,7 +636,7 @@ pub struct GitHistory {
 }
 
 /// Per-file staged/unstaged bookkeeping, so the panel can split rows like
-/// MonoCode's Changes list does.
+/// Orbit's Changes list does.
 fn index_files(root: &Path) -> Vec<SourceControlFile> {
     let mut staged_map: HashMap<String, FileAcc> = HashMap::new();
     if let Some(text) = git_run(root, &["diff", "--relative", "--no-ext-diff", "--cached", "--numstat", "--", "."]) {

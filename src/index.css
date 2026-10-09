@@ -1,10 +1,10 @@
 /*
- * Orbit's whole stylesheet is MonoCode's (`styles/monocode.css`, copied
- * verbatim from references/monocode). Everything below is either an Orbit
- * surface MonoCode has no equivalent for, or an alias that lets a third-party
- * widget read MonoCode's tokens.
+ * Orbit's whole stylesheet is Orbit's (`styles/orbit-theme.css`, copied
+ * verbatim from references/orbit). Everything below is either an Orbit
+ * surface Orbit has no equivalent for, or an alias that lets a third-party
+ * widget read Orbit's tokens.
  */
-@import "./styles/monocode.css";
+@import "./styles/orbit-theme.css";
 @import "./styles/model-picker.css";
 @import "./styles/orbit.css";
 @import "./styles/model-menu.css";

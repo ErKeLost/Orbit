@@ -2,7 +2,7 @@
 
 Source: https://crates.io/crates/portable-pty/0.9.0
 
-Archive SHA-256 (verified against MonoCode's original Cargo.lock):
+Archive SHA-256 (verified against Orbit's original Cargo.lock):
 `b4a596a2b3d2752d94f51fac2d4a96737b8705dddd311a32b9af47211f08671e`
 
 Upstream commit: `f8921727a11b9f8b073e8c24821d72fd41283500` in

@@ -576,7 +576,7 @@ canvas.screen-frame {
   cursor: default;
 }
 
-/* ── display picker (MonoCode popover menu) ────────────────────────── */
+/* ── display picker (Orbit popover menu) ────────────────────────── */
 
 .screen-picker-trigger {
   display: inline-flex;

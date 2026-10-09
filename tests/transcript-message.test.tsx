@@ -34,7 +34,7 @@ const phaseTools: Record<string, Tool> = {
 };
 
 describe("user messages", () => {
-  test("renders a MonoCode chat bubble with copy and time below it", () => {
+  test("renders a Orbit chat bubble with copy and time below it", () => {
     const html = render([{ id: "u", message: { role: "user", content: "你好", timestamp: Date.UTC(2026, 8, 17, 6, 0) } }]);
     expect(html).toContain("user-message-bubble");
     expect(html).toContain("rounded-full");
@@ -103,7 +103,7 @@ describe("turn projection", () => {
     expect(built[1]?.kind).toBe("run");
   });
 
-  test("summarises work the way MonoCode does, in Chinese", () => {
+  test("summarises work the way Orbit does, in Chinese", () => {
     const turn = projectTurn(phases, phaseTools, false);
     expect(workSummaryLine(turn.work, phaseTools)).toBe("读取了 1 个文件 · 运行了命令");
     expect(workSummaryLine([], {}, true)).toBe("正在思考");
@@ -114,7 +114,7 @@ describe("turn projection", () => {
     expect(proseSummary("先看 `src/app.ts` 的 **入口**")).toBe("先看 src/app.ts 的 入口");
   });
 
-  test("formats the fold line like MonoCode", () => {
+  test("formats the fold line like Orbit", () => {
     expect(formatWorkingDuration(14_000, "GPT-6.1-Sol", true)).toBe("GPT-6.1-Sol worked for 14s");
     expect(formatWorkingDuration(95_000, undefined, true)).toBe("Worked for 1m 35s");
     expect(formatWorkingDuration(null, "Pi", false)).toBe("Pi working…");

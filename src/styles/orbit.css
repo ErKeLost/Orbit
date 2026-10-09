@@ -1,7 +1,7 @@
 /*
- * Orbit-only surfaces, written strictly in MonoCode's tokens
+ * Orbit-only surfaces, written strictly in Orbit's tokens
  * (--color-content, --color-background-base, --color-stroke, selection
- * strengths). Nothing here introduces a color MonoCode does not already use.
+ * strengths). Nothing here introduces a color Orbit does not already use.
  */
 
 :root {
@@ -195,7 +195,7 @@
   overflow-y: hidden;
 }
 
-/* Code fence frame: MonoCode's `.markdown-code-shell` look around Orbit's shiki block. */
+/* Code fence frame: Orbit's `.markdown-code-shell` look around Orbit's shiki block. */
 .agent-markdown .code-block {
   position: relative;
   margin-block: 14px;
@@ -265,7 +265,7 @@ html:not(.theme-light) .agent-markdown .shiki span {
   overflow-x: auto;
 }
 
-/* Streaming reveal: the newest words fade in, like MonoCode's word-fade. */
+/* Streaming reveal: the newest words fade in, like Orbit's word-fade. */
 .agent-markdown.is-streaming .md-selectable-text:last-child {
   animation: orbit-word-fade 320ms ease-out;
 }
@@ -401,8 +401,8 @@ html[data-page-visible="false"] * {
   max-height: none;
 }
 
-/* ---- Orbit panels rendered inside MonoCode's settings frame -------------- */
-/* SettingsGroup/SettingRow (GeneralSettingsPanel) → MonoCode Group/Row. */
+/* ---- Orbit panels rendered inside Orbit's settings frame -------------- */
+/* SettingsGroup/SettingRow (GeneralSettingsPanel) → Orbit Group/Row. */
 
 .settings-page .settings-group,
 .panel-surface .settings-group {
@@ -428,7 +428,7 @@ html[data-page-visible="false"] * {
   color: var(--color-content);
 }
 
-/* MonoCode's General/Appearance group titles carry no icons. */
+/* Orbit's General/Appearance group titles carry no icons. */
 .settings-group-heading h2 svg {
   display: none;
 }
@@ -795,7 +795,7 @@ html[data-page-visible="false"] * {
   background: transparent;
 }
 
-/* 项目目录控件：输入框与按钮同一行，右对齐（MonoCode Row 的控件区）。 */
+/* 项目目录控件：输入框与按钮同一行，右对齐（Orbit Row 的控件区）。 */
 .settings-directory-control {
   display: flex;
   align-items: center;
@@ -824,37 +824,37 @@ html[data-page-visible="false"] * {
     Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
-.monocode-terminal {
+.orbit-terminal {
   overflow: hidden;
   background: transparent;
 }
 
-.monocode-terminal .xterm,
-.monocode-terminal .xterm-screen,
-.monocode-terminal .xterm-screen canvas,
-.monocode-terminal .xterm-viewport {
+.orbit-terminal .xterm,
+.orbit-terminal .xterm-screen,
+.orbit-terminal .xterm-screen canvas,
+.orbit-terminal .xterm-viewport {
   background: transparent !important;
 }
 
-.monocode-terminal .xterm {
+.orbit-terminal .xterm {
   height: 100%;
   padding: 2px 4px;
 }
 
-.monocode-terminal .xterm-viewport {
+.orbit-terminal .xterm-viewport {
   background: transparent !important;
   scrollbar-width: none;
 }
 
-.monocode-terminal .xterm-screen {
+.orbit-terminal .xterm-screen {
   user-select: text;
 }
 
-.monocode-terminal .xterm .xterm-scrollable-element > .shadow {
+.orbit-terminal .xterm .xterm-scrollable-element > .shadow {
   display: none !important;
 }
 
-.monocode-terminal .xterm-viewport::-webkit-scrollbar {
+.orbit-terminal .xterm-viewport::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
@@ -865,7 +865,7 @@ html[data-page-visible="false"] * {
 }
 
 /* Quieter chrome: the rail rows sit flat, and the composer's light-mode
-   shadow is dialled well back from MonoCode's 24px ambient blur. */
+   shadow is dialled well back from Orbit's 24px ambient blur. */
 nav[aria-label="Projects"] button {
   box-shadow: none !important;
 }
@@ -880,7 +880,7 @@ html.theme-light [data-composer-box] {
     0 1px 3px color-mix(in srgb, var(--color-content) 4%, transparent);
 }
 
-/* ---- 移动端页面：套用 MonoCode 的卡片体系 -------------------------------- */
+/* ---- 移动端页面：套用 Orbit 的卡片体系 -------------------------------- */
 
 .mobile-access-panel {
   display: flex;

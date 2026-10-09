@@ -1,5 +1,5 @@
 /**
- * Appearance prefs the source-control surface reads (MonoCode's
+ * Appearance prefs the source-control surface reads (Orbit's
  * settings/model/appearance, trimmed to what is ported so far).
  */
 

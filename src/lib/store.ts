@@ -31,7 +31,7 @@ export const workspaceStore=create<Workspace>((set)=>({
 }))
 
 /**
- * Session panes (MonoCode's `TranscriptPool` spirit): a pane can show any pi
+ * Session panes (Orbit's `TranscriptPool` spirit): a pane can show any pi
  * connection, not just the one the shell projects. `lib/rpc.ts` already keeps a
  * full projection per connection, so a pane that is scoped to a connection
  * reads that snapshot merged over the app-level state, and its writes go back

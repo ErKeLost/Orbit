@@ -4,7 +4,7 @@ import { toolKind } from "../../lib/tool-activity";
 import { withoutRuntimeImageNotes } from "../../lib/image-note";
 
 /**
- * Projects Pi's message stream onto MonoCode's turn grammar:
+ * Projects Pi's message stream onto Orbit's turn grammar:
  *
  *   user bubble
  *   [fold line: "worked for 14s"]   ← the work, folded once answered
@@ -46,7 +46,7 @@ export type ProjectedTurn = {
   items: DisplayMessage[];
   /** Work that folds behind the fold line. */
   work: TurnStep[];
-  /** Generated images, always visible outside the fold (MonoCode's image blocks). */
+  /** Generated images, always visible outside the fold (Orbit's image blocks). */
   images: TurnStep[];
   /** The final answer's prose (and images), shown outside the fold. */
   answer: TurnStep[];
@@ -150,7 +150,7 @@ export function projectTurn(
   // long as no tool call follows them. The prose is promoted only once the
   // turn has settled: while streaming, every narration stays inside the work
   // fold, so intermediate summaries never flash through the answer renderer.
-  // Successful image generations are content, not process (MonoCode appends
+  // Successful image generations are content, not process (Orbit appends
   // them as first-class image blocks): lift them out of the work steps so they
   // render outside the fold. Failed calls stay behind as ordinary tool rows.
   const imageSteps = steps.filter(
@@ -178,7 +178,7 @@ export function projectTurn(
 }
 
 /**
- * Groups work into phases the way MonoCode does: a line the agent wrote starts
+ * Groups work into phases the way Orbit does: a line the agent wrote starts
  * a new phase and titles it; thinking sits inside the current phase.
  */
 export function buildPhases(steps: TurnStep[], tools: Record<string, Tool>): Phase[] {
@@ -269,7 +269,7 @@ function categorySummary(kind: WorkCategory, t: Tally, live: boolean) {
   }
 }
 
-/** MonoCode's `workSummaryLine`, in Chinese. */
+/** Orbit's `workSummaryLine`, in Chinese. */
 export function workSummaryLine(steps: TurnStep[], tools: Record<string, Tool>, live = false) {
   const t = tally(steps, tools);
   if (t.order.length === 0) return live ? "正在思考" : "已思考";
@@ -277,7 +277,7 @@ export function workSummaryLine(steps: TurnStep[], tools: Record<string, Tool>, 
   return t.order.map((kind) => categorySummary(kind, t, kind === running)).join(" · ");
 }
 
-/** First readable paragraph of prose, stripped of markdown (MonoCode `proseSummary`). */
+/** First readable paragraph of prose, stripped of markdown (Orbit `proseSummary`). */
 export function proseSummary(text: string) {
   const body = text.replace(/```[\s\S]*?(?:```|$)/g, " ");
   const paragraph = body.split(/\n\s*\n/).map((part) => part.trim()).find(Boolean) ?? "";
@@ -308,7 +308,7 @@ export function formatElapsed(elapsedMs: number | null | undefined) {
   return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
-/** MonoCode `formatWorkingDuration`, without the model prefix: "worked for 14s". */
+/** Orbit `formatWorkingDuration`, without the model prefix: "worked for 14s". */
 export function formatWorkingDuration(elapsedMs: number | null | undefined, modelName?: string, done = false) {
   const who = modelName?.trim();
   const elapsed = formatElapsed(elapsedMs);
@@ -317,7 +317,7 @@ export function formatWorkingDuration(elapsedMs: number | null | undefined, mode
   return who ? `${who} ${verb} for ${elapsed}` : `${verb} for ${elapsed}`;
 }
 
-/** Tool row label: MonoCode's "<Verb> <target>" grammar. */
+/** Tool row label: Orbit's "<Verb> <target>" grammar. */
 export function toolLabel(part: Part, tools: Record<string, Tool>) {
   const name = toolName(part, tools);
   const args = part.arguments ?? {};

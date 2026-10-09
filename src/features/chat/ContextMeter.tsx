@@ -35,7 +35,7 @@ function MeterRing({ ratio, spinning }: { ratio: number; spinning?: boolean }) {
   );
 }
 
-/** MonoCode's context ring; its action is Pi's `compact`. */
+/** Orbit's context ring; its action is Pi's `compact`. */
 export function ContextMeter({ usage, compacting }: { usage?: { used: number; window: number }; compacting: boolean }) {
   const [hovered, setHovered] = useState(false);
   const [open, setOpen] = useState(false);

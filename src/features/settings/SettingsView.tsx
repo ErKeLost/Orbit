@@ -27,7 +27,7 @@ function DesktopOnly({ what }: { what: string }) {
   );
 }
 
-/** MonoCode `SettingsSearch`: jumps to any section by name. */
+/** Orbit `SettingsSearch`: jumps to any section by name. */
 function SettingsSearch() {
   const [query, setQuery] = useState("");
   const anchor = useRef<HTMLLabelElement>(null);
@@ -69,7 +69,7 @@ function SettingsSearch() {
   );
 }
 
-/** MonoCode `SettingsView` frame: breadcrumb bar, page header, card groups. */
+/** Orbit `SettingsView` frame: breadcrumb bar, page header, card groups. */
 export function SettingsView() {
   const page = useWorkspace((state) => state.settingsPage);
   const desktop = useWorkspace((state) => state.runtimeTarget === "desktop");

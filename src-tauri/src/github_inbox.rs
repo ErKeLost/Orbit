@@ -1,4 +1,4 @@
-//! GitHub inbox through the GitHub CLI (`gh`). Ported from MonoCode's `fs.rs`
+//! GitHub inbox through the GitHub CLI (`gh`). Ported from Orbit's `fs.rs`
 //! inbox section: work items, details, conversation threads, comments, PR
 //! actions, diffs (with a large-context git fallback), and CI checks.
 
@@ -1892,7 +1892,7 @@ fn gh_checked(root: &Path, args: &[&str]) -> Result<String, String> {
 
 /// Cached login-shell PATH. A Finder/Dock launch only gets launchd's bare
 /// PATH, so Homebrew/mise-managed tools like `gh` would look uninstalled.
-/// MonoCode resolves GUI binaries the same way: login-shell PATH first, then
+/// Orbit resolves GUI binaries the same way: login-shell PATH first, then
 /// the inherited PATH, then the common fixed dirs.
 static LOGIN_SHELL_PATH: Mutex<Option<Option<String>>> = Mutex::new(None);
 
@@ -2054,7 +2054,7 @@ fn gh_with_backoff(
     if !primary && !secondary {
         return result;
     }
-    // Port note: MonoCode resolves the exact reset instant via a GraphQL
+    // Port note: Orbit resolves the exact reset instant via a GraphQL
     // rateLimit query. Without the `time` crate pinned here we fall back to a
     // one-minute cooldown, which still stops request storms.
     if let Ok(mut slot) = backoff.lock() {

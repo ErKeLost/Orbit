@@ -52,7 +52,7 @@ function messageTime(message?: PiMessage) {
 
 /* ---------------------------------------------------------------- fold rows */
 
-/** MonoCode `TurnRow`: animates a row into and out of the fold. */
+/** Orbit `TurnRow`: animates a row into and out of the fold. */
 function TurnRow({ folded, children }: { folded: boolean; children: ReactNode | (() => ReactNode) }) {
   const [state, setState] = useState<"open" | "opening" | "closing" | "closed">(folded ? "closed" : "open");
   useLayoutEffect(() => {
@@ -94,7 +94,7 @@ function useElapsed(startedAt: number | undefined, running: boolean) {
   return startedAt == null ? null : Math.max(0, now - startedAt);
 }
 
-/** The line a turn's work folds behind (MonoCode `WorkFoldLine`). */
+/** The line a turn's work folds behind (Orbit `WorkFoldLine`). */
 function WorkFoldLine({
   title,
   live,
@@ -189,7 +189,7 @@ function NoteRow({ step }: { step: TurnStep }) {
   );
 }
 
-/** A tool call in MonoCode's "<Verb> <file chip>" form; opens onto its result. */
+/** A tool call in Orbit's "<Verb> <file chip>" form; opens onto its result. */
 function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
   const [open, setOpen] = useState(false);
   const tool = tools[part.id ?? ""];
@@ -321,7 +321,7 @@ function StepRow({ step, tools }: { step: TurnStep; tools: Record<string, Tool> 
 }
 
 /**
- * MonoCode `ActivityPhaseGroup`. Phases stay folded by default — the headline
+ * Orbit `ActivityPhaseGroup`. Phases stay folded by default — the headline
  * line (the agent's own narration) is the summary; steps only appear when the
  * line is opened, even while the phase is still streaming.
  */
@@ -456,7 +456,7 @@ function BranchButton({ message }: { message: PiMessage }) {
   );
 }
 
-/** MonoCode `TurnDuration`: copy · branch · • model worked for · • time. */
+/** Orbit `TurnDuration`: copy · branch · • model worked for · • time. */
 function TurnFooter({
   copyText,
   last,
@@ -495,7 +495,7 @@ function TurnFooter({
 
 /* ---------------------------------------------------------------- messages */
 
-/** MonoCode `UserMessageBlock` in its chat layout. */
+/** Orbit `UserMessageBlock` in its chat layout. */
 const UserMessage = memo(function UserMessage({ item }: { item: DisplayMessage }) {
   const text = userText(item.message);
   const photos = userImages(item.message);
@@ -602,7 +602,7 @@ type AssistantTurnProps = {
   activity?: ReactNode;
 };
 
-/** One answered turn in MonoCode's layout: fold line, work, answer, footer. */
+/** One answered turn in Orbit's layout: fold line, work, answer, footer. */
 const AssistantTurn = memo(
   function AssistantTurn({ items, tools, streaming, startedAt, elapsedMs, activity }: AssistantTurnProps) {
     const turn = useMemo(() => projectTurn(items, tools, streaming), [items, tools, streaming]);
@@ -611,7 +611,7 @@ const AssistantTurn = memo(
     const hasWork = turn.work.length > 0 || Boolean(activity);
     const answered = turn.answer.length > 0;
     // Work stays open while the agent is still working; once it has answered,
-    // it folds behind the "worked for" line (MonoCode `foldableWork`).
+    // it folds behind the "worked for" line (Orbit `foldableWork`).
     const workOpen = workOverride ?? (streaming && !answered);
     const duration = elapsedMs ?? (streaming ? liveElapsed : null);
     const foldTitle = streaming ? (
@@ -736,7 +736,7 @@ export function TranscriptGroupView({
   const first = group.items[0];
   if (first?.message.role === "user") {
     // The turn that owns the newest prompt reserves a pane of height, so the
-    // prompt sits at the top with room for the answer below it (MonoCode keeps
+    // prompt sits at the top with room for the answer below it (Orbit keeps
     // prompt and answer in one turn; our groups are per message).
     return (
       <div className="transcript-turn flex min-w-0 flex-col">
@@ -759,7 +759,7 @@ export function TranscriptGroupView({
   );
 }
 
-/** "Working…" before the first token arrives (MonoCode `InitialThinking`). */
+/** "Working…" before the first token arrives (Orbit `InitialThinking`). */
 export function InitialWorking({ label, startedAt }: { label: string; startedAt?: number | null }) {
   const elapsed = useElapsed(startedAt ?? undefined, true);
   return (

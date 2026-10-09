@@ -145,7 +145,7 @@ function ScreenMetrics({ snapshot }: { snapshot: ScreenChannelSnapshot }) {
   </dl>
 }
 
-/** MonoCode's popover menu, on the composer-model-row vocabulary. */
+/** Orbit's popover menu, on the composer-model-row vocabulary. */
 function DisplayPicker({ displays, current, onPick }: { displays: RemoteDisplay[]; current: RemoteDisplay | null; onPick: (id: number) => void }) {
   const trigger = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)

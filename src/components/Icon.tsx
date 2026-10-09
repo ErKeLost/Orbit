@@ -67,7 +67,7 @@ addCollection(fluentColor as never);
 
 /**
  * Orbit's components still ask for icons by their old Phosphor names. Every
- * name resolves to MonoCode's Hugeicons set, so nothing renders from the
+ * name resolves to Orbit's Hugeicons set, so nothing renders from the
  * previous icon families anymore.
  */
 const GLYPHS: Record<string, IconComponent> = {

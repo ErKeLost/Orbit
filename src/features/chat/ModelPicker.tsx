@@ -39,7 +39,7 @@ function ModelRow({ model, active, onSelect }: { model: Model; active: boolean; 
 /**
  * The model / provider / effort menu keeps Orbit's own dropdown: the grouped
  * model list with search and the styled EffortSlider footer. Only the trigger
- * and the popover frame follow MonoCode.
+ * and the popover frame follow Orbit.
  */
 function ModelPickerImpl() {
   const project = useWorkspace((state) => state.cwd);

@@ -3,7 +3,7 @@ import { Popover } from "../../shared/ui/Popover";
 import type { DisplayMessage } from "../../lib/protocol";
 
 /**
- * MonoCode's `PromptOutline`: one short bar per prompt down the right edge of
+ * Orbit's `PromptOutline`: one short bar per prompt down the right edge of
  * the transcript. Hovering widens the bar and previews the prompt; clicking
  * scrolls that turn back into view. The rail fades in only while it is useful
  * (two or more prompts) and hides on narrow panes, like the original.

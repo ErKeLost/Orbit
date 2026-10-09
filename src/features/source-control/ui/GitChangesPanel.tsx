@@ -88,7 +88,7 @@ const GIT_POLL_MS = 2000;
 
 function confirmNative(message: string, okLabel?: string): Promise<boolean> {
   return ask(message, {
-    title: "MonoCode",
+    title: "Orbit",
     kind: "warning",
     ...(okLabel ? { okLabel } : {}),
   });

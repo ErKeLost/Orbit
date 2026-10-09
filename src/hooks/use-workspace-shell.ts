@@ -242,7 +242,7 @@ export function useWorkspaceShortcuts(
         if (online) void changeSession({ type: "new_session" }).catch(report);
       }
       if (event.key.toLowerCase() === "w") {
-        // MonoCode's ⌘W closes the focused pane (⌘⇧W closes every editor pane).
+        // Orbit's ⌘W closes the focused pane (⌘⇧W closes every editor pane).
         const shell = useShell.getState();
         const workspace = shell.workspaces.find((item) => item.id === shell.activeWorkspaceId) ?? shell.workspaces[0];
         const editors = Object.keys(workspace.panes);
@@ -257,7 +257,7 @@ export function useWorkspaceShortcuts(
         shell.closePane(workspace.activePane);
       }
       if (event.key.toLowerCase() === "d") {
-        // MonoCode's split-right / split-down: a new session beside this one.
+        // Orbit's split-right / split-down: a new session beside this one.
         const shell = useShell.getState();
         const workspace = shell.workspaces.find((item) => item.id === shell.activeWorkspaceId) ?? shell.workspaces[0];
         if (splitSessionRef.current && workspace?.sessions[workspace.activePane]) {
@@ -266,7 +266,7 @@ export function useWorkspaceShortcuts(
         }
       }
       if (event.key.toLowerCase() === "k") {
-        // Search everything, like MonoCode's ⌘K.
+        // Search everything, like Orbit's ⌘K.
         event.preventDefault();
         useWorkspace.getState().set({ panel: "search" });
       }
@@ -291,7 +291,7 @@ export function useWorkspaceShortcuts(
         return;
       }
       if (event.key.toLowerCase() === "j") {
-        // Toggle the built-in terminal dock (MonoCode's ⌘J).
+        // Toggle the built-in terminal dock (Orbit's ⌘J).
         event.preventDefault();
         const shell = useShell.getState();
         shell.setTerminalOpen(!shell.terminalOpen);

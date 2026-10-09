@@ -4,7 +4,7 @@ import { LAYER } from "../lib/layers";
 import { AlertCircle, CheckCircle, CircleHelp, Loader, X } from "./icons";
 
 /**
- * MonoCode-styled toasts: the same bordered glass card its approval and
+ * Orbit-styled toasts: the same bordered glass card its approval and
  * file-action notices use, stacked bottom-right. The call surface matches the
  * one the app already used (`toast.success(title, { description, action })`),
  * so callers only change their import.

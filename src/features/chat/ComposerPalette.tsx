@@ -37,7 +37,7 @@ type Row = {
 };
 
 /**
- * MonoCode's composer palettes: `/` lists the harness commands, `@` lists
+ * Orbit's composer palettes: `/` lists the harness commands, `@` lists
  * project files and folders. Rows are keyboard-navigable; choosing one writes
  * the token into the draft.
  */

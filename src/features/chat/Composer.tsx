@@ -65,7 +65,7 @@ async function nativeClipboardImage() {
   }
 }
 
-/** MonoCode `AttachmentChip`. */
+/** Orbit `AttachmentChip`. */
 function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRemove: () => void }) {
   const url = useMemo(() => (attachment.kind === "image" ? URL.createObjectURL(attachment.blob) : ""), [attachment]);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
@@ -106,7 +106,7 @@ function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRe
   );
 }
 
-/** MonoCode `ToolButton` — the square `+` in the composer row. */
+/** Orbit `ToolButton` — the square `+` in the composer row. */
 function ToolButton({ active, disabled, label, onClick, children }: { active?: boolean; disabled?: boolean; label: string; onClick?: () => void; children: ReactNode }) {
   return (
     <button
@@ -124,8 +124,8 @@ function ToolButton({ active, disabled, label, onClick, children }: { active?: b
   );
 }
 
-/** MonoCode `AccessPicker`-shaped pills for Pi's session modes. */
-/** MonoCode `ComposerAction`: white square send / stop. */
+/** Orbit `AccessPicker`-shaped pills for Pi's session modes. */
+/** Orbit `ComposerAction`: white square send / stop. */
 function ComposerAction({ busy, disabled, hasValue, onSend, onStop }: { busy: boolean; disabled: boolean; hasValue: boolean; onSend: () => void; onStop: () => void }) {
   if (disabled) {
     return (
@@ -302,7 +302,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
 
   useEffect(() => { lruCache(attachmentCache, composerKey, attachments); }, [attachments, composerKey]);
 
-  // Notes 的「Add to chat」：把笔记正文前置进当前草稿（MonoCode 同名事件）。
+  // Notes 的「Add to chat」：把笔记正文前置进当前草稿（Orbit 同名事件）。
   useEffect(() => {
     const onAdd = (event: Event) => {
       const card = (event as CustomEvent<NoteComposerCard>).detail;
@@ -381,7 +381,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
       const start = palette?.start ?? current.length;
       const end = palette ? (pick.file ? palette.end : field?.caret() ?? current.length) : current.length;
       const rest = current.slice(end);
-      // `@label` stays glued to whatever follows, exactly like MonoCode's
+      // `@label` stays glued to whatever follows, exactly like Orbit's
       // `replaceMentionToken`, so the highlight can still find the token.
       const spacer = pick.file && !rest.startsWith(" ") ? " " : "";
       const next = `${current.slice(0, start)}${pick.text}${spacer}${rest}`;

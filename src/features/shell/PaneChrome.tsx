@@ -11,7 +11,7 @@ import { TerminalSpinner } from "./TerminalSpinner";
 import type { LayoutRect, LayoutSash, PaneEdge } from "./paneLayout";
 
 /**
- * MonoCode's pane chrome, ported from `features/workspace/ui/PaneTree.tsx`:
+ * Orbit's pane chrome, ported from `features/workspace/ui/PaneTree.tsx`:
  * the sash between panes (`Sash` + `layout.ts setSplitRatio`), the edge hint
  * shown while a pane is dragged (`PaneDropHint`), and the session pane's own
  * header (`features/sessions/ui/SessionPane.tsx` `inSplit` branch).
@@ -34,7 +34,7 @@ function sashStyle(sash: LayoutSash, boundary: number) {
 }
 
 /**
- * MonoCode's `Sash`: a 1px rule with a ±6px grab area. The drag previews
+ * Orbit's `Sash`: a 1px rule with a ±6px grab area. The drag previews
  * through `onPreview` (rAF-throttled) and only commits on release.
  */
 export function PaneSash({
@@ -142,7 +142,7 @@ export function PaneSash({
   );
 }
 
-/** MonoCode's `PaneDropHint`: the half of the target pane the drop lands in. */
+/** Orbit's `PaneDropHint`: the half of the target pane the drop lands in. */
 export function PaneDropHint({ edge }: { edge: PaneEdge }) {
   const wash =
     edge === "left"
@@ -180,7 +180,7 @@ export function SessionPaneHeader({
   onPaneDragStart,
 }: {
   showGrip: boolean;
-  /** MonoCode paints the pane's focus dot accent while the pane has focus. */
+  /** Orbit paints the pane's focus dot accent while the pane has focus. */
   focused: boolean;
   /** With several session panes the button closes the pane, not the session. */
   onClosePane?: () => void;

@@ -17,7 +17,7 @@ function badge(command: Command): string {
   return "模板";
 }
 
-/** MonoCode's Skills page: count + filter + refresh + add, then one card of rows. */
+/** Orbit's Skills page: count + filter + refresh + add, then one card of rows. */
 export function SkillsPage() {
   const cwd = useWorkspace((state) => state.cwd);
   const online = useWorkspace((state) => state.connection === "online");

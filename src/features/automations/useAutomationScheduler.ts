@@ -30,7 +30,7 @@ async function launch(automation: Automation, run: AutomationRun) {
 }
 
 /**
- * MonoCode's automation loop: every 30 seconds look for due time triggers,
+ * Orbit's automation loop: every 30 seconds look for due time triggers,
  * claim each one with the host (a compare-and-set so two windows cannot both
  * run it), then start the session. The run's outcome is written back once the
  * turn settles.

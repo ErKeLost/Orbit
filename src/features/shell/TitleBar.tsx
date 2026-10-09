@@ -4,15 +4,15 @@ import { IS_MAC, MOD, TitleIconButton } from "./chrome";
 import { useWorkspaceTabs } from "./use-workspace-tabs";
 import { useShell } from "./shellStore";
 
-/** Tab label: the project's folder name, like MonoCode's workspace tabs. */
+/** Tab label: the project's folder name, like Orbit's workspace tabs. */
 function workspaceLabel(cwd: string) {
   if (!cwd) return "工作区";
   return cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? cwd;
 }
 
 /**
- * MonoCode's window title bar (`app/shell/TitleBar.tsx`): the workspace title,
- * the settings search and the title-bar actions. It holds **no tabs** — MonoCode
+ * Orbit's window title bar (`app/shell/TitleBar.tsx`): the workspace title,
+ * the settings search and the title-bar actions. It holds **no tabs** — Orbit
  * keeps every tab inside its own pane (`SurfaceTabs`), and the session's own
  * header lives in the session pane (`PaneChrome.SessionPaneHeader`).
  */
@@ -40,7 +40,7 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
           </div>
         </>
       ) : null}
-      {/* Workspace tabs: MonoCode's title strip. Each tab is a whole pane tree
+      {/* Workspace tabs: Orbit's title strip. Each tab is a whole pane tree
           with its own pi process; dragging a pane's grip onto the strip detaches
           it into a workspace of its own (`onDetachPane`). */}
       <div

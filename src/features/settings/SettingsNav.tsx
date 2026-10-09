@@ -68,7 +68,7 @@ function NavRow({ label, icon: Icon, active = false, disabled = false, onClick }
   );
 }
 
-/** Body of the project rail while settings are open (MonoCode `SettingsNav`). */
+/** Body of the project rail while settings are open (Orbit `SettingsNav`). */
 export function SettingsNav() {
   const page = useWorkspace((state) => state.settingsPage);
   // A phone reaches these pages over the paired socket, so only the browser

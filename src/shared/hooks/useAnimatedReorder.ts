@@ -18,7 +18,7 @@ export type ReorderExternalDrop<T extends string> = {
   onEnd?: (id: T) => void;
 };
 
-/** Direct manipulation for a row or column of equal-sized items. Ported from MonoCode. */
+/** Direct manipulation for a row or column of equal-sized items. Ported from Orbit. */
 export function useAnimatedReorder<T extends string>(
   ids: T[],
   onReorder: (ids: T[], movedId: T) => void,
@@ -53,7 +53,7 @@ export function useAnimatedReorder<T extends string>(
       const items = latest.current.ids;
       const from = items.indexOf(id);
       // A single tab can still be dragged when there is an external drop target
-      // (Orbit moves tabs between panes; MonoCode only reorders within one).
+      // (Orbit moves tabs between panes; Orbit only reorders within one).
       if (from < 0 || (items.length < 2 && !latest.current.externalDrop)) return;
       const elements = items.map((item) => nodes.current.get(item));
       if (elements.some((element) => !element)) return;

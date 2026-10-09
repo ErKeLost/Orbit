@@ -9,7 +9,7 @@ import { isLowPerf } from "../lib/perf-tier";
 
 /**
  * KaTeX (~950 KB with its CSS and mhchem) loads the first time a reply
- * actually contains math, the same "after first paint" rule MonoCode applies
+ * actually contains math, the same "after first paint" rule Orbit applies
  * to its heavy assets. Plain replies never pay for it.
  */
 type MathPlugins = { remark: PluggableList; rehype: PluggableList };
@@ -72,7 +72,7 @@ const textComponents = {
 
 /**
  * Markdown keeps Orbit's renderer (LobeHub Streamdown + remark + the Shiki
- * `Pre` block) and takes MonoCode's typography through `.agent-markdown`.
+ * `Pre` block) and takes Orbit's typography through `.agent-markdown`.
  */
 export function Markdown({ content, animated = false, className = "" }: { content: string; animated?: boolean; className?: string }) {
   const settleDelay = animated ? 180 : 0;

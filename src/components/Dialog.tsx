@@ -2,7 +2,7 @@ import { Children, isValidElement, type ReactElement, type ReactNode } from "rea
 import { Modal } from "../shared/ui/Modal";
 
 /**
- * Same call shape as the old shadcn dialog, rendered through MonoCode's
+ * Same call shape as the old shadcn dialog, rendered through Orbit's
  * Modal. The title/description children are lifted into the Modal header.
  */
 export function Dialog({ open, onOpenChange, children }: { open: boolean; onOpenChange: (open: boolean) => void; children: ReactNode }) {

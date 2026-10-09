@@ -1,4 +1,4 @@
-export const ADD_TO_CHAT_EVENT = "monocode:add-to-chat";
+export const ADD_TO_CHAT_EVENT = "orbit:add-to-chat";
 
 export type AddToChatMode = "quote" | "plain";
 

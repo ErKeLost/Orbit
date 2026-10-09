@@ -1,4 +1,4 @@
-/** `/(^|\s)\/name(?=\s|$)` — mirror of MonoCode's `SKILL_TOKEN_RE`. */
+/** `/(^|\s)\/name(?=\s|$)` — mirror of Orbit's `SKILL_TOKEN_RE`. */
 const SKILL_TOKEN_RE = /(^|\s)\/([a-z0-9]+(?:-[a-z0-9]+)*(?::[a-z0-9]+(?:-[a-z0-9]+)*)?)(?=\s|$)/g;
 
 export type SkillTextPart = { text: string; skill: boolean };

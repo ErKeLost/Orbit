@@ -1,5 +1,5 @@
 /**
- * Path helpers shared by the notes feature (MonoCode's shared/lib/paths).
+ * Path helpers shared by the notes feature (Orbit's shared/lib/paths).
  * Only the pieces the notes surface needs are kept here.
  */
 

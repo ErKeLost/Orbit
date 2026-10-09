@@ -6,7 +6,7 @@ import { Check, ChevronDown, Search } from "../../../shared/ui/icons";
 import { Popover } from "../../../shared/ui/Popover";
 
 /**
- * Orbit's note-project picker: same props as MonoCode's searchable picker,
+ * Orbit's note-project picker: same props as Orbit's searchable picker,
  * backed by the workspace project list instead of the tab-group rail.
  */
 export function SearchableProjectPicker({

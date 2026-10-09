@@ -40,7 +40,7 @@ function Row({ icon, title, meta, onClick }: { icon: React.ReactNode; title: Rea
   );
 }
 
-/** MonoCode's Search view: one query box, four filters, grouped results. */
+/** Orbit's Search view: one query box, four filters, grouped results. */
 export function SearchView() {
   const cwd = useWorkspace((state) => state.cwd);
   const homeDir = useWorkspace((state) => state.homeDir);
@@ -184,7 +184,7 @@ export function SearchView() {
   );
 }
 
-/** MonoCode's empty state: a dotted grid behind a rounded search glyph. */
+/** Orbit's empty state: a dotted grid behind a rounded search glyph. */
 function EmptyState() {
   const cells = Array.from({ length: 17 * 11 }, (_, index) => index);
   return (
