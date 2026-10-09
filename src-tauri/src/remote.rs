@@ -621,6 +621,37 @@ mod desktop {
         socket.send(Message::text(payload)).await.is_ok()
     }
 
+    /// 单条事件的上限。超过它投给手机只会把慢上行堵死几秒到几分钟，桌面端
+    /// 会话不受影响；真实场景里只有巨型工具输出才会触发。
+    const MAX_EVENT_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
+    /// 单帧批次的字节预算。超过就拆成多帧，保证任何一帧都不会卡住 relay。
+    const MAX_EVENT_BATCH_BYTES: usize = 768 * 1024;
+
+    fn chunk_payloads(payloads: Vec<Value>) -> Vec<Vec<Value>> {
+        let mut chunks: Vec<Vec<Value>> = Vec::new();
+        let mut current: Vec<Value> = Vec::new();
+        let mut current_bytes = 0usize;
+        for payload in payloads {
+            let bytes = serde_json::to_vec(&payload)
+                .map(|encoded| encoded.len())
+                .unwrap_or(usize::MAX);
+            if bytes > MAX_EVENT_PAYLOAD_BYTES {
+                log::warn!("丢弃超大的 Pi 事件（{bytes} 字节）：手机链路无法承载");
+                continue;
+            }
+            if current_bytes + bytes > MAX_EVENT_BATCH_BYTES && !current.is_empty() {
+                chunks.push(std::mem::take(&mut current));
+                current_bytes = 0;
+            }
+            current_bytes += bytes;
+            current.push(payload);
+        }
+        if !current.is_empty() {
+            chunks.push(current);
+        }
+        chunks
+    }
+
     fn broadcast(clients: &Clients, project: &str, frame: String) {
         let Ok(mut map) = clients.map.lock() else {
             return;
@@ -692,9 +723,11 @@ mod desktop {
                 }
             }
             for (project, payloads) in projects {
-                let frame =
-                    json!({"type":"pi.events","project":&project,"payloads":payloads}).to_string();
-                broadcast(&clients, &project, frame);
+                for chunk in chunk_payloads(payloads) {
+                    let frame =
+                        json!({"type":"pi.events","project":&project,"payloads":chunk}).to_string();
+                    broadcast(&clients, &project, frame);
+                }
             }
         }
     }
@@ -788,6 +821,23 @@ mod desktop {
         )
         .map_err(|error| error.to_string())?;
         Ok(json!({"action": action, "path": resolved}))
+    }
+
+    /// 可能长时间占用 relay 任务的请求。
+    ///
+    /// `host.operation` 里最重的 `session.list` 要把项目的全部会话 JSONL 过一
+    /// 遍，跑了几天的项目上这是几十 MB 的磁盘读取；内联等待会把屏幕帧、心跳
+    /// 和其他客户端一起卡住，所以这类请求交给后台任务处理。
+    fn is_slow_request(raw: &str) -> bool {
+        serde_json::from_str::<Value>(raw)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .map(|kind| kind == "host.operation")
+            })
+            .unwrap_or(false)
     }
 
     /// Handle one client message.
@@ -1019,6 +1069,7 @@ mod desktop {
 
         let client_id = Uuid::new_v4();
         let (outbound, mut incoming) = tokio::sync::mpsc::channel::<String>(CLIENT_QUEUE_CAPACITY);
+        let response_sender = outbound.clone();
         let session = Session {
             attached: Arc::new(Mutex::new(HashSet::new())),
             screen: ScreenSubscription::new(app.state::<ScreenHost>().bus()),
@@ -1061,6 +1112,22 @@ mod desktop {
                                 Ok(plain) => plain,
                                 Err(_) => break,
                             };
+                            // 慢操作后台化：同 relay 路径的理由。该连接的屏幕帧
+                            // 依赖这个循环发送，内联等待会让画面一起停摆。
+                            if is_slow_request(&text) {
+                                let app = app.clone();
+                                let sender = response_sender.clone();
+                                let detached = Session {
+                                    attached: session.attached.clone(),
+                                    screen: session.screen.clone(),
+                                };
+                                tauri::async_runtime::spawn(async move {
+                                    if let Some(response) = handle_request(&app, &text, &detached).await {
+                                        let _ = sender.send(response).await;
+                                    }
+                                });
+                                continue;
+                            }
                             let Some(response) = handle_request(&app, &text, &session).await else {
                                 continue;
                             };
@@ -1562,6 +1629,29 @@ mod desktop {
                                             attached: client.attached.clone(),
                                             screen: client.screen.clone(),
                                         };
+                                        // session.list 一类的慢操作要把全部会话 JSONL
+                                        // 过一遍，可能耗时数十秒。内联 await 会把整个
+                                        // relay 任务卡住——屏幕帧、心跳、其他客户端全部
+                                        // 停摆。慢操作放后台跑，完成后把明文响应塞回该
+                                        // 客户端的出站队列，由统一的 drain 加密发送。
+                                        if is_slow_request(&plain) {
+                                            let sender = clients.map.lock().ok().and_then(|connected| {
+                                                connected.get(&client.local_id).map(|entry| entry.sender.clone())
+                                            });
+                                            if let Some(sender) = sender {
+                                                let app = app.clone();
+                                                let work = clients.work.clone();
+                                                tauri::async_runtime::spawn(async move {
+                                                    let Some(response) = handle_request(&app, &plain, &session).await else {
+                                                        return;
+                                                    };
+                                                    if sender.send(response).await.is_ok() {
+                                                        work.notify_one();
+                                                    }
+                                                });
+                                                continue;
+                                            }
+                                        }
                                         let Some(response) = handle_request(&app, &plain, &session).await else {
                                             continue;
                                         };
