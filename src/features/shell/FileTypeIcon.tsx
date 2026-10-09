@@ -55,7 +55,15 @@ export const FileTypeIcon = memo(function FileTypeIcon({
       ? icons.getFolderIcon({ folderName: name, isOpen, isRoot })
       : resolveFileIcon(icons, name)
     : "";
-  const svg = icons?.getIconSvg(iconName) ?? "";
+  let svg = icons?.getIconSvg(iconName) ?? "";
+  // The theme advertises a few specialized folder icons without shipping
+  // their SVG — a folder named "skills" or "features" resolves to
+  // `folder-skills-open` / `folder-features-open`, whose body is empty, and
+  // the row grows a 16px hole. The plain folder glyph always exists, so an
+  // empty answer falls back to it.
+  if (!svg) {
+    svg = icons?.getIconSvg(isDir ? (isOpen ? "folder-open" : "folder") : "file") ?? "";
+  }
   // React compares this prop by identity. A fresh object replaces the SVG
   // subtree even when the glyph is unchanged (for example, on resize).
   const markup = useMemo(() => ({ __html: svg }), [svg]);
