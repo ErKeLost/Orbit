@@ -40,6 +40,11 @@ const DURABLE_KEYS = [
   // the pairing — which is mirrored — survives, which is an odd half-state.
   "pi-gui.cwd",
   "pi-gui.workspaceMode",
+  // Where a launch lands, and whether Orbit holds the machine awake while it
+  // runs. Both are deliberate preferences; losing them changes the daily
+  // behaviour of the app rather than costing one click.
+  "orbit.startup.panel",
+  "orbit.keepAwake",
   "pi-gui.sidebarOpen",
   "pi-gui.sidebarOpen.narrow",
 ] as const

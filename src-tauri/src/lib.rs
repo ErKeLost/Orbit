@@ -28,7 +28,9 @@ mod search;
 mod notes;
 mod automations;
 mod mobile_update;
+mod power;
 mod remote;
+mod remote_ops;
 mod runtime;
 mod splash;
 #[cfg(windows)]
@@ -210,12 +212,14 @@ pub fn run() {
         .manage(splash::SplashState::default())
         .manage(bridge::Bridge::default())
         .manage(remote::RemoteHost::default())
+        .manage(power::KeepAwake::new())
         .manage(pty_term::PtyHost::new())
         .manage(screen::ScreenHost::default())
         .invoke_handler(tauri::generate_handler![
             #[cfg(target_os = "macos")]
             ax::ax_observe,
             runtime::runtime_environment,
+            power::set_keep_awake,
             splash::splash_ready,
             bridge::discover,
             bridge::list_provider_models,
@@ -283,6 +287,10 @@ pub fn run() {
             git::git_create_branch,
             git::list_dir,
             git::read_text_file,
+            git::write_text_file,
+            git::create_dir,
+            git::rename_path,
+            git::delete_path,
             github_inbox::git_github_status,
             github_inbox::git_github_repo,
             github_inbox::git_github_repositories,
@@ -331,6 +339,7 @@ pub fn run() {
             mobile_update::mobile_update_install,
             mobile_update::mobile_update_probe,
             remote::remote_host_start,
+            remote::publish_projects,
             remote::relay_settings_status,
             remote::save_relay_settings,
             remote::remote_host_status,
@@ -342,12 +351,79 @@ pub fn run() {
             screen::screen_stop
         ])
         .on_window_event(|window, event| {
+            if hid_the_window_instead_of_closing(window, event) {
+                return;
+            }
             if let tauri::WindowEvent::Destroyed = event {
+                // Only the main window's destruction is teardown. The splash
+                // window closes as part of a *normal* startup — a second or
+                // two after bootstrap has restored the Host — and stopping the
+                // Host there would kill the mobile access this launch had just
+                // brought back, which looks on the phone like the Mac going
+                // away. The bridge and PTYs belong to the main window's
+                // lifetime in the same way.
+                if window.label() != "main" {
+                    return;
+                }
                 window.state::<pty_term::PtyHost>().kill_all();
                 window.state::<bridge::Bridge>().stop();
                 window.state::<remote::RemoteHost>().stop();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Orbit");
+        .build(tauri::generate_context!())
+        .expect("error while building Orbit")
+        .run(|_app, _event| {
+            #[cfg(target_os = "macos")]
+            reopen_main_window(_app, _event);
+        });
+}
+
+/// Closing the main window hides it instead of quitting — as long as the Host
+/// is running.
+///
+/// The mobile Host lives in this process, so a closed window takes every
+/// attached phone with it, and from the phone "the Mac stopped answering" is
+/// indistinguishable from the Mac being off. Hiding keeps the Host serving and
+/// the window comes back from the Dock, the show/hide hotkey, or a second
+/// launch; `⌘Q` still quits. With mobile access off, closing the window means
+/// what it has always meant.
+///
+/// macOS only, deliberately: the Dock icon and `⌘Q` are always there to bring
+/// the window back or quit, while a Windows/Linux window that hides itself has
+/// no tray and no menu behind it — it would leave a process the user cannot
+/// find, let alone quit.
+///
+/// Returns whether the close request was consumed.
+#[cfg(target_os = "macos")]
+fn hid_the_window_instead_of_closing(window: &tauri::Window, event: &tauri::WindowEvent) -> bool {
+    let tauri::WindowEvent::CloseRequested { api, .. } = event else {
+        return false;
+    };
+    if window.label() != "main" {
+        return false;
+    }
+    if !window.state::<remote::RemoteHost>().is_running() {
+        return false;
+    }
+    api.prevent_close();
+    let _ = window.hide();
+    true
+}
+
+#[cfg(not(target_os = "macos"))]
+fn hid_the_window_instead_of_closing(_window: &tauri::Window, _event: &tauri::WindowEvent) -> bool {
+    false
+}
+
+/// Clicking the Dock icon while no window is visible asks the app to reopen,
+/// not to launch. That is the way back from close-to-hide, whose whole point is
+/// that the process — and the mobile Host inside it — outlives the window.
+#[cfg(target_os = "macos")]
+fn reopen_main_window(app: &tauri::AppHandle, event: tauri::RunEvent) {
+    if let tauri::RunEvent::Reopen { .. } = event {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
+    }
 }

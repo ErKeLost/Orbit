@@ -1185,3 +1185,120 @@ html.theme-light [data-composer-box] {
   line-height: 1.55;
   background: transparent !important;
 }
+
+
+/* ---- Find widget (⌘F) -----------------------------------------------------
+ * `@codemirror/search` is the engine; the panel is Orbit's (`editor-find.ts`)
+ * because the library's own panel has no match count. Positioning follows VS
+ * Code: a floating card at the top-right of the editor, over the text. */
+/* The editor fills its pane: it is always the child of a flex column, and it
+ * owns its own scroller (`.cm-scroller`) rather than scrolling the pane. */
+.orbit-editor {
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.orbit-editor .cm-editor {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.orbit-editor .cm-editor.cm-focused {
+  outline: none;
+}
+
+/* Panels are sticky and full width by default; this one floats. */
+.orbit-editor .cm-panels.cm-panels-top {
+  position: absolute;
+  inset: 0 0 auto 0;
+  display: flex;
+  justify-content: flex-end;
+  border: none;
+  background: transparent;
+  padding: 6px 10px 0;
+  pointer-events: none;
+}
+
+.orbit-find {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px 3px 8px;
+  border: 1px solid var(--color-stroke);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-background-base) 92%, var(--color-content));
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+  pointer-events: auto;
+}
+
+.orbit-find-input {
+  width: 190px;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-content);
+  font-size: 12px;
+  outline: none;
+}
+
+.orbit-find-input::placeholder {
+  color: color-mix(in srgb, var(--color-content) 38%, transparent);
+}
+
+.orbit-find-count {
+  min-width: 44px;
+  padding: 0 4px;
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.orbit-find-count[data-state="empty"],
+.orbit-find-count[data-state="invalid"] {
+  color: color-mix(in srgb, var(--color-content) 55%, transparent);
+  min-width: 56px;
+}
+
+.orbit-find-toggle,
+.orbit-find-button {
+  display: grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 3px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: color-mix(in srgb, var(--color-content) 55%, transparent);
+  font-size: 11px;
+  line-height: 1;
+  cursor: default;
+}
+
+.orbit-find-button {
+  font-size: 12px;
+}
+
+.orbit-find-toggle:hover:not(:disabled),
+.orbit-find-button:hover:not(:disabled) {
+  background: var(--color-selection);
+  color: var(--color-content);
+}
+
+.orbit-find-toggle[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+  color: var(--color-content);
+}
+
+.orbit-find-button:disabled {
+  opacity: 0.35;
+}
+
+.orbit-find-separator {
+  width: 1px;
+  height: 14px;
+  margin: 0 2px;
+  background: var(--color-stroke);
+}

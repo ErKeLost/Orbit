@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/native";
 import { projectName } from "../../shared/lib/paths";
 import { looksLikeProject } from "../projects/model/recents";
 

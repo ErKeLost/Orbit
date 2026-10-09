@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./native";
 import { listen } from "@tauri-apps/api/event";
 
 /** Automation types and commands. The JSON shape matches the Rust store. */

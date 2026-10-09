@@ -35,7 +35,10 @@ function formatAnswer(answer: Record<string, unknown> | null): string {
 }
 
 export function ComputerUsePanel() {
-  const desktop = useWorkspace(state => state.runtimeTarget === "desktop");
+  const target = useWorkspace(state => state.runtimeTarget);
+  // The config belongs to the machine running the agent, so the panel is usable
+  // from a phone too: those commands are mirrored (`native.ts`).
+  const desktop = target === "desktop" || target === "mobile";
   const platform = useWorkspace(state => state.runtimePlatform);
   const online = useWorkspace(state => state.connection === "online");
   const running = useWorkspace(state => state.transcript.running);

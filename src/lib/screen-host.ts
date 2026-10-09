@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core"
+import { invoke } from "./native";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 
 /** Mirror of `screen::capture::DisplayInfo` on the desktop side. */

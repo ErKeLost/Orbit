@@ -1,10 +1,14 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { readTextFile } from "../../lib/git";
+import { setDraftFor, useDrafts } from "../../lib/drafts";
+import { saveFileDraft } from "../../lib/file-save";
+import { CodeEditor } from "./CodeEditor";
+import { useWorkspace } from "../../lib/store";
+import { toast } from "../../shared/ui/toast";
 import { formatBytes, mediaKind, useMediaMeta, type MediaKind } from "../../lib/media";
-import { FileHighlighter } from "../../components/FileHighlighter";
 import { Markdown } from "../../components/Markdown";
 import { splitMarkdownFrontmatter } from "../../shared/lib/markdownFrontmatter";
 import { MarkdownViewShell, useMarkdownMode } from "../chat/MarkdownModeToggle";
@@ -98,6 +102,16 @@ export function FileView({
   const markdown = file ? isMarkdownPath(file.path) : false;
   // Like MonoCode, markdown documents open as preview and remember the mode per file.
   const [mode, setMode] = useMarkdownMode(file?.path ?? "", "preview");
+  const [saving, setSaving] = useState(false);
+  // The mobile shell has no ⌘S, so its save affordance lives in the footer and
+  // only while there is something to save. The desktop edits and saves with the
+  // keyboard alone.
+  const remote = useWorkspace((state) => state.runtimeTarget) === "mobile";
+  // Files open editable: typing *is* how a draft begins, and the draft — not the
+  // editor component — holds the unsaved text until it is saved, which is what
+  // makes closing a tab (or switching panes) safe.
+  const draft = useDrafts((state) => (file ? state.drafts[file.path] : undefined));
+  const dirty = draft !== undefined;
   const contents = useQuery({
     queryKey: ["file", file?.path ?? ""],
     queryFn: () => readTextFile(file?.path ?? ""),
@@ -107,6 +121,19 @@ export function FileView({
   });
   if (!file) return null;
   const relative = cwd && file.path.startsWith(cwd) ? file.path.slice(cwd.length).replace(/^\//, "") : file.path;
+  // Saving is silent: the tab dot disappearing and the text being on disk are
+  // the answer. Only a failure is announced.
+  async function save() {
+    setSaving(true);
+    try {
+      await saveFileDraft(file!.path);
+    } catch (error) {
+      toast.error(String(error instanceof Error ? error.message : error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={file.name}>
       {/* MonoCode keeps a pane's tabs inside the pane (`FilePane` → `SurfaceTabs`),
@@ -124,24 +151,44 @@ export function FileView({
             </div>
           }
           source={
-            <div className="h-full overflow-auto pt-10">
-              <FileHighlighter code={contents.data} fileName={file.name} wrap />
-            </div>
+            <CodeEditor
+              key={`${file.path}:source`}
+              value={draft ?? contents.data}
+              fileName={file.name}
+              onChange={(text) => setDraftFor(file.path, text)}
+              onSave={() => void save()}
+            />
           }
         />
       ) : (
-        <div ref={lockOverscroll} className="file-view min-h-0 flex-1 overflow-auto overscroll-none">
+        <div ref={lockOverscroll} className="file-view flex min-h-0 flex-1 flex-col overflow-hidden">
           {contents.isPending ? (
             <div className="grid h-full place-items-center text-content/40"><Loader className="size-4 animate-spin" /></div>
           ) : contents.isError ? (
             <p className="px-4 py-3 text-[12px] text-content/50">{String(contents.error)}</p>
           ) : (
-            <FileHighlighter code={contents.data ?? ""} fileName={file.name} wrap />
+            <CodeEditor
+              key={file.path}
+              value={draft ?? contents.data ?? ""}
+              fileName={file.name}
+              onChange={(text) => setDraftFor(file.path, text)}
+              onSave={() => void save()}
+            />
           )}
         </div>
       )}
-      <div className="flex h-7 shrink-0 items-center border-t border-stroke px-3 font-mono text-[11px] text-content/45">
+      <div className="flex h-7 shrink-0 items-center gap-2 border-t border-stroke px-3 font-mono text-[11px] text-content/45">
         <span className="min-w-0 truncate">{relative}</span>
+        {remote && dirty ? (
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => void save()}
+            className="ml-auto shrink-0 rounded-md bg-accent px-2.5 py-0.5 font-sans text-[11px] font-medium text-white disabled:opacity-60"
+          >
+            {saving ? "保存中…" : "保存"}
+          </button>
+        ) : null}
       </div>
     </section>
   );

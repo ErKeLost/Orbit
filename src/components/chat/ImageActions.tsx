@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { isTauri } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/native";
 import { Image as ClipboardImage } from "@tauri-apps/api/image";
 import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";

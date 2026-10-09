@@ -3,6 +3,8 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useWorkspace, type Panel } from "../../lib/store";
 import { mergeProjects, projectExtraRoots, projectRoots, useProjects, type Project } from "../../lib/projects";
 import { connect, desktopRuntime, forgetProject, report, setSessionRoots } from "../../lib/rpc";
+import { runRemoteHostOperation } from "../../lib/remote-runtime";
+import { ProjectDirectoryPicker } from "./ProjectDirectoryPicker";
 import { installDesktopUpdate, useDesktopUpdate } from "../../lib/desktop-update";
 import { useGitDiffStats } from "../../lib/git";
 import { useAnimatedReorder } from "../../shared/hooks/useAnimatedReorder";
@@ -264,6 +266,8 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
   const setWidth = useShell((state) => state.setProjectRailWidth);
   const setProjectRailOpen = useShell((state) => state.setProjectRailOpen);
   const [busyProject, setBusyProject] = useState("");
+  const [picker, setPicker] = useState(false);
+  const runtimeTarget = useWorkspace((state) => state.runtimeTarget);
   const [menu, setMenu] = useState<{ project: Project; x: number; y: number } | null>(null);
   const [editing, setEditing] = useState<Project | null>(null);
   const [removing, setRemoving] = useState<Project | null>(null);
@@ -323,6 +327,15 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
     const fallback = projects.find((project) => project.path !== target.path);
     setBusyProject(target.path);
     try {
+      // On a phone the registry lives on the desktop, so the removal has to go
+      // there; the local store is a mirror and will be replaced by the desktop's
+      // next publication anyway.
+      if (runtimeTarget === "mobile") {
+        await runRemoteHostOperation({ name: "project.forget", path: target.path });
+        setRemoving(null);
+        toast.success("已在电脑上移除项目", { description: "磁盘文件不会被删除" });
+        return;
+      }
       await forgetProject(target.path);
       remove(target.path);
       setRemoving(null);
@@ -370,7 +383,16 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
 
           <div ref={lockOverscroll} className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-none pb-2">
             <div className="mb-2 shrink-0">
-              <SectionHeader label="项目" onAdd={desktopRuntime() ? () => void addProjects().catch(report) : undefined} />
+              <SectionHeader
+                label="项目"
+                onAdd={
+                  runtimeTarget === "mobile"
+                    ? () => setPicker(true)
+                    : desktopRuntime()
+                      ? () => void addProjects().catch(report)
+                      : undefined
+                }
+              />
               {visibleProjects.length === 0 ? (
                 <p className="px-4 pb-1 text-[11px] leading-tight text-content/40">还没有项目</p>
               ) : null}
@@ -438,6 +460,7 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
           <p className="mt-3 text-[12px] leading-relaxed text-content/55">只会从侧栏移除，不会删除磁盘文件。</p>
         </ConfirmDialog>
       ) : null}
+      {picker ? <ProjectDirectoryPicker open onClose={() => setPicker(false)} /> : null}
       <ResizeHandle label="调整项目栏宽度" dragging={resize.dragging} onPointerDown={resize.onPointerDown} onDoubleClick={resize.onDoubleClick} />
     </nav>
   );

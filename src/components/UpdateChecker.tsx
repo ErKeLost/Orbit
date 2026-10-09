@@ -1,5 +1,6 @@
 import { useEffect } from "react"
-import { invoke, isTauri } from "@tauri-apps/api/core"
+import { isTauri } from "@tauri-apps/api/core";
+import { invoke } from "../lib/native";
 import { getVersion } from "@tauri-apps/api/app"
 import { toast as gooeyToast } from "../shared/ui/toast";
 import { useWorkspace } from "../lib/store"

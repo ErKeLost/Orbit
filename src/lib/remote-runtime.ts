@@ -139,6 +139,10 @@ class StableRemoteRuntime {
     return this.requireActive().runHostOperation<T>(operation, timeoutMs)
   }
 
+  runHostInvoke<T = RemoteJson>(command: string, args: Record<string, RemoteJson> | undefined) {
+    return this.requireActive().runHostInvoke<T>(command, args)
+  }
+
   getSnapshot(timeoutMs?: number) {
     return this.requireActive().getSnapshot(timeoutMs)
   }
@@ -192,6 +196,17 @@ export function sendRemotePiCommand(project: string, command: Record<string, Rem
 
 export function runRemoteHostOperation<T = RemoteJson>(operation: RemoteHostOperation, timeoutMs?: number) {
   return connectedClient().runHostOperation<T>(operation, timeoutMs)
+}
+
+/**
+ * Run one of the desktop's commands on the desktop.
+ *
+ * The arguments are the ones the local call site already passes, so the same
+ * component works on both sides of the pairing; see `native.ts` for the routing
+ * rule and `src-tauri/src/remote_ops.rs` for what the Host will answer.
+ */
+export function runRemoteInvoke<T = RemoteJson>(command: string, args?: Record<string, unknown>) {
+  return connectedClient().runHostInvoke<T>(command, args as Record<string, RemoteJson> | undefined)
 }
 
 export function remoteHostSnapshot() {

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/native";
 
 export const NOTE_IMAGE_PREFIX = "/note-assets/";
 

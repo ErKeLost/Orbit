@@ -61,6 +61,30 @@ describe("remote protocol", () => {
 
   test("validates typed host operations", () => {
     expect(isRemoteRequest({ type: "host.operation", operation: { name: "session.list", cwd: "/workspace/demo" } })).toBe(true)
+    expect(isRemoteRequest({ type: "host.operation", operation: { name: "project.add", path: "/workspace/demo" } })).toBe(true)
+    expect(isRemoteRequest({ type: "host.operation", operation: { name: "project.forget", path: "/workspace/demo" } })).toBe(true)
+    expect(isRemoteRequest({ type: "host.operation", operation: { name: "project.add", path: "" } })).toBe(false)
     expect(isRemoteRequest({ type: "host.operation", operation: { name: "arbitrary.command", cwd: "/workspace/demo" } })).toBe(false)
+  })
+
+  test("routes a desktop command with the arguments its own UI sends", () => {
+    expect(isRemoteRequest({ type: "host.invoke", command: "list_dir", args: { path: "/workspace/demo" } })).toBe(true)
+    expect(isRemoteRequest({ type: "host.invoke", command: "git_changed_files" })).toBe(true)
+    expect(isRemoteRequest({ type: "host.invoke", command: "" })).toBe(false)
+    expect(isRemoteRequest({ type: "host.invoke" })).toBe(false)
+    // Parameters, not a payload of arbitrary shape: an argument list that is
+    // not an object is a client bug that should be caught here.
+    expect(isRemoteRequest({ type: "host.invoke", command: "list_dir", args: "/tmp" })).toBe(false)
+  })
+
+  test("carries the project registry and the answerable commands", () => {
+    const snapshot = { protocol: REMOTE_PROTOCOL, serverTime: 1, connections: [], projects: [{ path: "/work/app", name: "app", roots: ["/work/api"] }], commands: ["list_dir"] }
+    expect(isRemoteHostSnapshot(snapshot)).toBe(true)
+    expect(isRemoteHostSnapshot({ ...snapshot, projects: [{ path: "/work/app" }] })).toBe(false)
+    expect(isRemoteHostSnapshot({ ...snapshot, commands: [1] })).toBe(false)
+    // Both fields are additive: a Host that predates them still validates.
+    expect(isRemoteHostSnapshot({ protocol: REMOTE_PROTOCOL, serverTime: 1, connections: [] })).toBe(true)
+    expect(isRemoteEvent({ type: "host.projects", projects: [{ path: "/work/app", name: "app" }], serverTime: 2 })).toBe(true)
+    expect(isRemoteEvent({ type: "host.projects", projects: "nope", serverTime: 2 })).toBe(false)
   })
 })

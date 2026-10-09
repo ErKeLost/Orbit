@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/native";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";

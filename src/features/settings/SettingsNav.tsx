@@ -71,7 +71,10 @@ function NavRow({ label, icon: Icon, active = false, disabled = false, onClick }
 /** Body of the project rail while settings are open (MonoCode `SettingsNav`). */
 export function SettingsNav() {
   const page = useWorkspace((state) => state.settingsPage);
-  const desktop = useWorkspace((state) => state.runtimeTarget === "desktop");
+  // A phone reaches these pages over the paired socket, so only the browser
+  // preview has nothing behind them.
+  const target = useWorkspace((state) => state.runtimeTarget);
+  const desktop = target === "desktop" || target === "mobile";
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   return (
     <>

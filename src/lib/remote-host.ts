@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core"
+import { invoke } from "./native";
 import { persistState } from "./persistent"
 import { REMOTE_PROTOCOL, type RemoteTheme } from "./remote-protocol"
 

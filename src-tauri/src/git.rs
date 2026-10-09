@@ -14,7 +14,9 @@ const MAX_UNTRACKED_BYTES: u64 = 1024 * 1024;
 const MAX_TEXT_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_DIR_ENTRIES: usize = 5_000;
 
-fn expand_home(path: &str) -> PathBuf {
+/// Expand a leading `~`. Shared with the remote Host, whose project requests
+/// arrive as paths the phone typed or picked.
+pub(crate) fn expand_home(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
         if let Some(home) = std::env::var_os("HOME") {
             return PathBuf::from(home).join(rest);
@@ -450,6 +452,69 @@ pub async fn read_text_file(path: String) -> Result<String, String> {
             return Err("Binary file".to_string());
         }
         Ok(String::from_utf8_lossy(&bytes).into_owned())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Write a text file, creating the directories it needs.
+///
+/// The desktop editor tab is read-only today, so this exists for the writer the
+/// phone *is*: a paired phone can edit a file on this machine, which is the
+/// point of mirroring the workspace rather than previewing it.
+#[tauri::command]
+pub async fn write_text_file(path: String, contents: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let file = expand_home(&path);
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&file, contents).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Create a directory (and its parents).
+#[tauri::command]
+pub async fn create_dir(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::create_dir_all(expand_home(&path)).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Move or rename a path. A destination that exists is refused, so a rename
+/// cannot silently destroy whatever was there.
+#[tauri::command]
+pub async fn rename_path(from: String, to: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let source = expand_home(&from);
+        let destination = expand_home(&to);
+        if destination.exists() {
+            return Err(format!("{} 已存在", destination.display()));
+        }
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::rename(&source, &destination).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Delete a file, or a directory and everything under it.
+#[tauri::command]
+pub async fn delete_path(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = expand_home(&path);
+        let meta = std::fs::symlink_metadata(&target).map_err(|e| e.to_string())?;
+        if meta.is_dir() {
+            std::fs::remove_dir_all(&target).map_err(|e| e.to_string())
+        } else {
+            std::fs::remove_file(&target).map_err(|e| e.to_string())
+        }
     })
     .await
     .map_err(|e| e.to_string())?

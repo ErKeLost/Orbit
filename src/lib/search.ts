@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./native";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "./store";
 
@@ -17,7 +17,14 @@ export type SearchSessionHit = {
   modified: string;
 };
 
-const desktop = () => useWorkspace.getState().runtimeTarget === "desktop";
+/**
+ * Whether a workspace backend exists: the desktop, or a phone whose paired
+ * desktop answers (`native.ts` routes the call). The browser preview has none.
+ */
+const hasBackend = () => {
+  const target = useWorkspace.getState().runtimeTarget;
+  return target === "desktop" || target === "mobile";
+};
 export const MIN_QUERY = 2;
 
 export function searchFiles(cwd: string, query: string) {
@@ -32,7 +39,7 @@ export function useFileSearch(cwd: string, query: string, enabled: boolean) {
   return useQuery({
     queryKey: ["search", "files", cwd, query],
     queryFn: () => searchFiles(cwd, query),
-    enabled: enabled && desktop() && query.trim().length >= MIN_QUERY && Boolean(cwd),
+    enabled: enabled && hasBackend() && query.trim().length >= MIN_QUERY && Boolean(cwd),
     staleTime: 10_000,
   });
 }
@@ -41,7 +48,7 @@ export function useSessionSearch(query: string, enabled: boolean) {
   return useQuery({
     queryKey: ["search", "sessions", query],
     queryFn: () => searchSessions(query),
-    enabled: enabled && desktop() && query.trim().length >= MIN_QUERY,
+    enabled: enabled && hasBackend() && query.trim().length >= MIN_QUERY,
     staleTime: 10_000,
   });
 }

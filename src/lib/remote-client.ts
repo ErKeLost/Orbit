@@ -14,6 +14,7 @@ import {
   type RemoteRequest,
 } from "./remote-protocol"
 import { decryptRemoteFrame, encryptRemoteFrame, equalBytes, newSessionId } from "./remote-crypto"
+import { useRemoteWorkspace } from "./remote-workspace"
 
 export type RemoteClientState = "offline" | "connecting" | "online"
 export type RemoteForegroundReason = "app-resume" | "network-change" | "focus"
@@ -365,6 +366,11 @@ export class OrbitRemoteClient {
   getSnapshot(timeoutMs = 10_000): Promise<RemoteHostSnapshot> {
     return this.request({ type: "host.snapshot" }, timeoutMs).then(result => {
       if (!isRemoteHostSnapshot(result)) throw new Error("Orbit Host 返回了无效的状态快照")
+      // What the Host offers is published the moment it is known: the router in
+      // `native.ts` reads it to decide machine, and the rail reads the project
+      // registry it carries.
+      useRemoteWorkspace.getState().setCommands(result.commands ?? null)
+      if (result.projects) useRemoteWorkspace.getState().setProjects(result.projects)
       return result
     })
   }
@@ -388,6 +394,11 @@ export class OrbitRemoteClient {
 
   runHostOperation<T = RemoteJson>(operation: RemoteHostOperation, timeoutMs = 30_000): Promise<T> {
     return this.request({ type: "host.operation", operation }, timeoutMs).then(result => result as T)
+  }
+
+  /** Call one of the desktop's own commands, with the arguments its UI sends. */
+  runHostInvoke<T = RemoteJson>(command: string, args: Record<string, RemoteJson> | undefined, timeoutMs = 60_000): Promise<T> {
+    return this.request({ type: "host.invoke", command, ...(args ? { args } : {}) }, timeoutMs).then(result => result as T)
   }
 
   request(request: RemoteRequest, timeoutMs = 30_000): Promise<RemoteJson | undefined> {
@@ -535,6 +546,9 @@ export class OrbitRemoteClient {
   }
 
   private receive(event: RemoteEvent): void {
+    // The desktop's own state, pushed without a request: a project the user
+    // adds on either side has to appear on the other one immediately.
+    if (event.type === "host.projects") useRemoteWorkspace.getState().setProjects(event.projects)
     this.handlers.onEvent?.(event)
     if (event.type === "pi.event") this.handlers.onPiEvent?.(event.project, event.payload)
     if (event.type === "pi.events") {

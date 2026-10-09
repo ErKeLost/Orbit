@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/native";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toast as gooeyToast } from "../../shared/ui/toast";
 import { useWorkspace } from "../../lib/store";
-import { desktopRuntime, loadMessages, refresh, report, request } from "../../lib/rpc";
+import { workspaceBackend, desktopRuntime, loadMessages, refresh, report, request } from "../../lib/rpc";
 import { Button, Input } from "../UI";
 import { usePrompt } from "../../lib/prompt";
 import { Icon } from "../Icon";
@@ -21,7 +21,7 @@ export function PiToolsPanel() {
     catch (error) { report(error); }
   }
   async function terminalCommand(args: string[]) {
-    if (!desktopRuntime()) { report("该 Pi 功能需要电脑端"); return; }
+    if (!workspaceBackend()) { report("该 Pi 功能需要电脑端"); return; }
     try { await invoke("open_pi_terminal", { cwd, session: null, piArgs: args }); gooeyToast.info("已在终端打开 Pi 命令", { description: args.join(" "), showTimestamp: false }); }
     catch (error) { report(error); }
   }
@@ -47,7 +47,7 @@ export function PiToolsPanel() {
     } catch (error) { report(error); }
   }
   async function packageCommand(action: "install" | "update" | "remove") {
-    if (!desktopRuntime()) { report("Pi Package 管理需要电脑端"); return; }
+    if (!workspaceBackend()) { report("Pi Package 管理需要电脑端"); return; }
     if (!packageName.trim() && action !== "update") { report("请输入 Pi Package 名称"); return; }
     const args = action === "install" ? ["install", packageName.trim()] : action === "remove" ? ["remove", packageName.trim()] : ["update", "--extensions"];
     try { await invoke("open_pi_terminal", { cwd, session: null, piArgs: args }); setPackageName(""); }

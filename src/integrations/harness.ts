@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/native";
 import type { HarnessId } from "../features/sessions/model/session";
 import { gitRangeContext, gitStagedContext } from "../platform/tauri/fs";
 

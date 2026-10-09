@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./native";
 import { useQuery } from "@tanstack/react-query";
 
 export type MediaKind = "image" | "audio" | "video" | "pdf";

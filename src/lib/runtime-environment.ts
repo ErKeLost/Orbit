@@ -1,4 +1,5 @@
-import { invoke, isTauri } from "@tauri-apps/api/core"
+import { isTauri } from "@tauri-apps/api/core";
+import { invoke } from "./native";
 import type { RuntimeTarget } from "./store"
 
 export type RuntimeEnvironment = {

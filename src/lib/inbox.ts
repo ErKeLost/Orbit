@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./native";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "./store";
 
@@ -87,7 +87,14 @@ export type PrCheck = {
 
 export type PrChecks = { headOid: string; checks: PrCheck[] };
 
-const desktop = () => useWorkspace.getState().runtimeTarget === "desktop";
+/**
+ * Whether a workspace backend exists: the desktop, or a phone whose paired
+ * desktop answers (`native.ts` routes the call). The browser preview has none.
+ */
+const hasBackend = () => {
+  const target = useWorkspace.getState().runtimeTarget;
+  return target === "desktop" || target === "mobile";
+};
 
 /* ------------------------------------------------------------------ shared */
 
@@ -518,7 +525,7 @@ export function useGithubStatus(enabled = true) {
   return useQuery({
     queryKey: ["inbox", "github-status"],
     queryFn: githubStatus,
-    enabled: enabled && desktop(),
+    enabled: enabled && hasBackend(),
     staleTime: 60_000,
   });
 }
@@ -527,7 +534,7 @@ export function useGitlabStatus(enabled = true) {
   return useQuery({
     queryKey: ["inbox", "gitlab-status"],
     queryFn: gitlabStatus,
-    enabled: enabled && desktop(),
+    enabled: enabled && hasBackend(),
     staleTime: 60_000,
   });
 }

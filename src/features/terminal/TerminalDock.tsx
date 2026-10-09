@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/native";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { MenuItem, PointMenu } from "../../shared/ui/controls";
 import {

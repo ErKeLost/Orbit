@@ -14,6 +14,7 @@ import { FileTypeIcon } from "./FileTypeIcon";
 import { IS_MAC } from "./chrome";
 import { setTabDrop, tabDropFromPoint } from "./paneDrop";
 import { useActiveWorkspace, useShell, type OpenFile } from "./shellStore";
+import { useDrafts } from "../../lib/drafts";
 
 type TabMenu = { x: number; y: number; path: string };
 
@@ -52,6 +53,9 @@ export function SurfaceTabs({
   const activeTabRef = useRef<HTMLDivElement | null>(null);
   const [menu, setMenu] = useState<TabMenu | null>(null);
   const files = pane?.files ?? NO_FILES;
+  // Which open tabs have unsaved text (`lib/drafts`), so a dot can stand where
+  // the close button normally sits.
+  const drafts = useDrafts((state) => state.drafts);
 
   const paths = useMemo(() => files.map((file) => file.path), [files]);
   const items = useMemo(() => files.map((file) => ({ id: file.path, file })), [files]);
@@ -163,6 +167,7 @@ export function SurfaceTabs({
           const closing = entry.closing;
           const opening = entry.opening;
           const active = !closing && file.path === pane?.activeFile;
+          const dirty = file.path in drafts;
           const tab = (
             <div
               ref={(el) => {
@@ -217,6 +222,7 @@ export function SurfaceTabs({
                 </span>
                 <TabLabel className={`flex-1 ${file.preview ? "italic" : ""}`}>{file.name}</TabLabel>
               </button>
+              {dirty ? <span aria-label="有未保存的修改" title="有未保存的修改" className="absolute right-1 top-1/2 size-2 -translate-y-1/2 rounded-full bg-accent group-hover:opacity-0" /> : null}
               <button
                 type="button"
                 data-no-drag

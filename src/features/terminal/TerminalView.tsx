@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/native";
 import { listen } from "@tauri-apps/api/event";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";

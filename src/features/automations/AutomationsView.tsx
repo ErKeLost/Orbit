@@ -45,7 +45,6 @@ import {
   Zap,
   type IconComponent,
 } from "../../shared/ui/icons";
-
 const TEMPLATE_ICONS: Record<string, IconComponent> = {
   search: Search,
   alert: AlertCircle,

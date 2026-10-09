@@ -1,19 +1,20 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/native";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { getVersion } from "@tauri-apps/api/app";
 import { toast as gooeyToast } from "../../shared/ui/toast";
 import { Eye, X as EyeOff, Share as ScanLine } from "../../shared/ui/icons";
 import QRCode from "antd/es/qr-code";
 import type { RpcCommand, RpcSessionState } from "@earendil-works/pi-coding-agent";
-import { useWorkspace } from "../../lib/store";
+import { useWorkspace, type Panel } from "../../lib/store";
 import { useRuntimeDiscovery, type RuntimeDiscovery } from "../../lib/runtime-diagnostics";
 import { clearSessionHistory, connect, deleteMcpServer, desktopRuntime, disconnect, getGuiSettings, getProjectTrustMode, imageConfig, listMcpServers, loadMessages, mcpConfigLocation, refresh, refreshCapabilities, report, request, saveImageConfig, saveMcpServer, setGuiSetting, setProjectTrustMode, type ImageConfig, type McpServerView, type ProjectTrustMode } from "../../lib/rpc";
 import { CACHE_WARMING_LABELS, CODEMODE_TOOL, MCP_EXPOSURE_LABELS, TOOL_SEARCH_TOOL, inactiveCapabilityTools, parseCapabilities, availableMediaModels } from "../../lib/capabilities";
 import { persistState } from "../../lib/persistent";
 import { getRemoteHost, relaySettingsStatus, rememberRemoteHostEnabled, saveRelaySettings, startRemoteHost, stopRemoteHost, type RelaySettingsStatus, type RemoteHostInfo } from "../../lib/remote-host";
-import { GLOBAL_SHORTCUT, NOTIFY_ON_COMPLETE_KEY, readAutostart, readGlobalShortcut, writeAutostart, writeGlobalShortcut } from "../../lib/desktop-integration";
+import { GLOBAL_SHORTCUT, NOTIFY_ON_COMPLETE_KEY, readAutostart, readGlobalShortcut, readKeepAwake, writeAutostart, writeGlobalShortcut, writeKeepAwake } from "../../lib/desktop-integration";
+import { readStartupPanel, STARTUP_PANELS, writeStartupPanel } from "../../lib/startup-panel";
 import { checkMobileUpdate, mobileUpdateErrorMessage } from "../../lib/mobile-update";
 import { checkForDesktopUpdate, offerMobileUpdate } from "../UpdateChecker";
 import { Button, Card, CardContent, Input, Select, Switch } from "../UI";
@@ -204,10 +205,16 @@ function QueueSettings({ status, state }: { status: string; state: RpcSessionSta
 }
 
 function DesktopIntegrationSettings({ desktop }: { desktop: boolean }) {
+  const platform = useWorkspace(state => state.runtimePlatform);
   const [notify, setNotify] = useState(() => localStorage.getItem(NOTIFY_ON_COMPLETE_KEY) !== "false");
   const [shortcut, setShortcut] = useState(false);
   const [autostart, setAutostart] = useState(false);
+  const [keepAwake, setKeepAwake] = useState(() => readKeepAwake());
+  const [startupPanel, setStartupPanel] = useState<Panel>(() => readStartupPanel());
   const [busy, setBusy] = useState(false);
+  // The assertion is the macOS implementation of "do not sleep"; other desktops
+  // keep their own power settings, and saying "on" there would be a lie.
+  const canKeepAwake = desktop && platform === "macos";
   useEffect(() => {
     if (!desktop) return;
     void readGlobalShortcut().then(setShortcut).catch(report);
@@ -219,7 +226,23 @@ function DesktopIntegrationSettings({ desktop }: { desktop: boolean }) {
     catch (error) { report(error); }
     finally { setBusy(false); }
   }
+  async function changeKeepAwake(enabled: boolean) {
+    setKeepAwake(enabled);
+    try {
+      // A refused assertion is invisible otherwise: the switch would read "on"
+      // while the Mac sleeps exactly as it did before.
+      const applied = await writeKeepAwake(enabled);
+      if (enabled && !applied) gooeyToast.warning("系统没有授予保持唤醒", { showTimestamp: false });
+    }
+    catch (error) { report(error); }
+  }
   return <>
+    <SettingRow title="启动页面" description="每次打开 Orbit 时默认显示的页面。默认是「移动端」，扫码配对和 Host 开关就在第一屏。">
+      {desktop ? <Select aria-label="启动页面" value={startupPanel} onChange={event => { const panel = event.target.value as Panel; setStartupPanel(panel); writeStartupPanel(panel); }}>{STARTUP_PANELS.map(panel => <option key={panel.id} value={panel.id}>{panel.label}</option>)}</Select> : <span className="remote-settings-note">电脑端设置</span>}
+    </SettingRow>
+    <SettingRow title="保持屏幕唤醒" description={canKeepAwake ? "Orbit 运行时持有系统唤醒锁（等同于 caffeinate -d -i），屏幕和电脑都不会因为空闲睡眠。手机连接依赖这台电脑在线，所以默认开启。" : "只有 macOS 上的 Orbit 会持有唤醒锁，其他平台沿用系统电源设置。"}>
+      {canKeepAwake ? <Switch aria-label="保持屏幕唤醒" checked={keepAwake} onChange={checked => void changeKeepAwake(checked)} /> : <span className="remote-settings-note">{desktop ? "系统电源设置" : "电脑端设置"}</span>}
+    </SettingRow>
     <SettingRow title="完成通知" description="任务跑完时发系统通知；Orbit 在前台时不打扰。">
       {desktop ? <Switch aria-label="完成通知" checked={notify} onChange={checked => { setNotify(checked); localStorage.setItem(NOTIFY_ON_COMPLETE_KEY, String(checked)); }} /> : <span className="remote-settings-note">电脑端设置</span>}
     </SettingRow>
@@ -474,6 +497,7 @@ export function DesktopHostSettings({ pageMode = false }: { pageMode?: boolean }
           <p className="mobile-access-qr-copy">{host.mode === "relay" ? "任何网络均可连接" : "同一 Wi-Fi 下直连电脑，连接速度更快"}</p>
           <Button variant="ghost" title="复制配对链接" aria-label="复制配对链接" onClick={() => void copyPairingUri()}>复制配对链接</Button>
           {connectionFeedback && <p className="remote-host-feedback" role="status">{connectionFeedback}</p>}
+          <p className="remote-host-security"><Icon name="shield-check" />已配对的手机与这台电脑等同权限：能浏览、读取和修改这里的文件，也能执行 Git 与终端命令。配对链接只发到自己的设备。</p>
         </div> : <div className="mobile-access-qr-block"><div className="mobile-access-qr-empty"><ScanLine /><strong>开启电脑 Host 后显示二维码</strong><span>使用手机 Orbit 扫描即可连接</span></div></div>}
       </SettingsGroup>
     </div>;
@@ -571,7 +595,7 @@ export function GeneralSettingsPanel() {
 
   return <>
     <div className="panel-heading"><div><h1><Icon name="gear-six" />常规</h1></div></div>
-    <SettingsGroup title="桌面集成" icon="desktop" description="系统通知、全局快捷键与开机自启。"><DesktopIntegrationSettings desktop={desktop} /></SettingsGroup>
+    <SettingsGroup title="桌面集成" icon="desktop" description="启动页面、屏幕保持唤醒、系统通知、全局快捷键与开机自启。"><DesktopIntegrationSettings desktop={desktop} /></SettingsGroup>
     <SettingsGroup title="工作区" icon="folder-simple"><TrustSettings mode={trustMode} busy={trustBusy} desktop={desktop} onChange={changeTrustMode} /></SettingsGroup>
     {runtimeTarget === "mobile" && <SettingsGroup title="软件更新" icon="arrows-clockwise" description="主动从 GitHub Release 检查 Android 安装包。"><MobileAppUpdateSettings /></SettingsGroup>}
     <SettingsGroup title="上下文" icon="brain" description="管理当前会话的容量与压缩方式。"><ContextSettings cwd={cwd} status={status} running={running} state={state} onCompact={manualCompact} /></SettingsGroup>

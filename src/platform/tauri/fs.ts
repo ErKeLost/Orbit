@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/native";
 
 /** Git data layer for the source-control surface (MonoCode's platform git API). */
 

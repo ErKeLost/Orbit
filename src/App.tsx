@@ -3,6 +3,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import { MetricsSync } from "./lib/metrics";
 import { useWorkspace } from "./lib/store";
 import { useWorkspaceBootstrap, useWorkspaceShortcuts } from "./hooks/use-workspace-shell";
+import { useProjectRegistry } from "./hooks/use-project-registry";
 import { useDesktopNotifications } from "./hooks/use-desktop-integration";
 import { RemotePairingScreen } from "./components/remote/RemotePairingScreen";
 import { ScreenOverlay } from "./components/screen/ScreenOverlay";
@@ -256,6 +257,9 @@ export default function App() {
   // only the rail and the new-session surface.
   const withSessions = workspaceMode === "project" && Boolean(cwd) && cwd !== homeDir;
   useAutomationScheduler();
+  // One project registry for both sides: the desktop publishes it to the Host,
+  // the phone mirrors it, and a request from the phone is applied on the desktop.
+  useProjectRegistry();
   const collapsedRailMode = useShell((state) => state.collapsedRailMode);
   const bootstrap = useWorkspaceBootstrap();
   const online = useWorkspace((state) => state.connection === "online");

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./native";
 import { native } from "./rpc";
 
 export const RELEASES_API = "https://api.github.com/repos/ErKeLost/Orbit/releases/latest";

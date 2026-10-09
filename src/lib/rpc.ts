@@ -184,6 +184,15 @@ export function dispatchRemoteEvent(project:string,payload:unknown){
 }
 function mobileRuntime(){return useWorkspace.getState().runtimeTarget==='mobile'}
 export function desktopRuntime(){return useWorkspace.getState().runtimeTarget==='desktop'}
+/**
+ * Any runtime with a workspace backend.
+ *
+ * The desktop itself, or a phone whose paired desktop answers (`native.ts`
+ * routes the command over the authenticated socket), so a capability no longer
+ * depends on which machine the UI happens to be running on. Only the browser
+ * preview has nothing behind it.
+ */
+export function workspaceBackend(){const target=useWorkspace.getState().runtimeTarget;return target==='desktop'||target==='mobile'}
 function asRemoteCommand(command:Record<string,unknown>){return command as unknown as Record<string,RemoteJson>}
 function sendCommand(project:string,command:Record<string,unknown>){
  return mobileRuntime()?sendRemotePiCommand(project,asRemoteCommand(command)):invoke('pi_send',{project,command})
@@ -239,16 +248,16 @@ export async function sendPrompt(command:RpcCommand,target=useWorkspace.getState
 export const setSessionRoots=(roots:string[],target=useWorkspace.getState().cwd)=>request({type:'prompt',message:`/gui-workspace-set ${JSON.stringify({roots})}`},30000,target)
 async function syncConfiguredProjectRoots(cwd:string,target=cwd){const project=useProjects.getState().projects.find(item=>item.path===cwd);if(project)await setSessionRoots(projectExtraRoots(project),target)}
 export async function refresh(target=useWorkspace.getState().cwd){const id=route(target),state=await request<RpcSessionState>({type:'get_state'},30000,id);patch(id,{state});const cwd=connections.get(id)?.cwd??useWorkspace.getState().cwd;if(state.sessionFile&&projectActive.get(cwd)===id)persistSession(cwd,state.sessionFile);await queryClient.invalidateQueries({queryKey:['pi','live-stats',id]});return state}
-export async function listProviderModels(provider:string):Promise<{data:ProviderModel[]}> { if(!desktopRuntime()) throw new Error('模型目录设置请在电脑端修改'); return invoke<{data:ProviderModel[]}>('list_provider_models',{provider}) }
+export async function listProviderModels(provider:string):Promise<{data:ProviderModel[]}> { if(!workspaceBackend()) throw new Error('模型目录设置请在电脑端修改'); return invoke<{data:ProviderModel[]}>('list_provider_models',{provider}) }
 export async function listProjectFiles(project=useWorkspace.getState().cwd):Promise<string[]> { if(mobileRuntime())return runRemoteHostOperation<string[]>({name:'project.files',cwd:project});if(!native)throw new Error('文件索引需要桌面应用');return invoke<string[]>('list_project_files',{cwd:project}) }
-export async function listProviderProfiles():Promise<ProviderProfile[]> { if(!desktopRuntime()) throw new Error('Provider 配置请在电脑端修改'); return invoke<ProviderProfile[]>('list_provider_profiles') }
-export async function probeProviderModels(provider:string,baseUrl:string,api:string,apiKey?:string,authHeader=true,modelsUrl?:string):Promise<{data:ProviderModel[]}> { if(!desktopRuntime()) throw new Error('模型目录设置请在电脑端修改'); return invoke<{data:ProviderModel[]}>('probe_provider_models',{provider,baseUrl,api,apiKey:apiKey||null,authHeader,modelsUrl:modelsUrl||null}) }
-export async function saveProvider(input:{provider:string;name?:string;baseUrl:string;modelsUrl?:string;api:string;apiKey?:string;authHeader:boolean}):Promise<{id:string;hasApiKey:boolean}> { if(!desktopRuntime()) throw new Error('Provider 配置请在电脑端修改'); return invoke<{id:string;hasApiKey:boolean}>('save_provider',{provider:input.provider,name:input.name||null,baseUrl:input.baseUrl,modelsUrl:input.modelsUrl||null,api:input.api,apiKey:input.apiKey||null,authHeader:input.authHeader}) }
-export async function deleteProvider(provider:string):Promise<{id:string;deleted:boolean}> { if(!desktopRuntime()) throw new Error('Provider 配置请在电脑端修改'); return invoke<{id:string;deleted:boolean}>('delete_provider',{provider}) }
+export async function listProviderProfiles():Promise<ProviderProfile[]> { if(!workspaceBackend()) throw new Error('Provider 配置请在电脑端修改'); return invoke<ProviderProfile[]>('list_provider_profiles') }
+export async function probeProviderModels(provider:string,baseUrl:string,api:string,apiKey?:string,authHeader=true,modelsUrl?:string):Promise<{data:ProviderModel[]}> { if(!workspaceBackend()) throw new Error('模型目录设置请在电脑端修改'); return invoke<{data:ProviderModel[]}>('probe_provider_models',{provider,baseUrl,api,apiKey:apiKey||null,authHeader,modelsUrl:modelsUrl||null}) }
+export async function saveProvider(input:{provider:string;name?:string;baseUrl:string;modelsUrl?:string;api:string;apiKey?:string;authHeader:boolean}):Promise<{id:string;hasApiKey:boolean}> { if(!workspaceBackend()) throw new Error('Provider 配置请在电脑端修改'); return invoke<{id:string;hasApiKey:boolean}>('save_provider',{provider:input.provider,name:input.name||null,baseUrl:input.baseUrl,modelsUrl:input.modelsUrl||null,api:input.api,apiKey:input.apiKey||null,authHeader:input.authHeader}) }
+export async function deleteProvider(provider:string):Promise<{id:string;deleted:boolean}> { if(!workspaceBackend()) throw new Error('Provider 配置请在电脑端修改'); return invoke<{id:string;deleted:boolean}>('delete_provider',{provider}) }
 export async function listSessions(project:string){if(mobileRuntime())return runRemoteHostOperation<import('./protocol').Session[]>({name:'session.list',cwd:project});if(!native)return [];return invoke<import('./protocol').Session[]>('list_sessions',{cwd:project})}
 export async function deleteSession(sessionPath:string):Promise<void> { if(mobileRuntime()){await runRemoteHostOperation<null>({name:'session.delete',sessionPath});return}if(!native) throw new Error('删除会话需要桌面应用'); return invoke<void>('delete_session',{sessionPath}) }
 export async function clearSessionHistory():Promise<number> {
- if(!desktopRuntime()) throw new Error('清空会话历史请在电脑端执行')
+ if(!workspaceBackend()) throw new Error('清空会话历史请在电脑端执行')
  const workspace=useWorkspace.getState(),cwd=workspace.cwd,workspaceMode=workspace.workspaceMode
  await Promise.all([...connections.keys()].map(id=>closeConnection(id,'会话历史已清空')))
  projectActive.clear();snapshots.clear();sessionOwners.clear();syncLiveSessions()
@@ -269,41 +278,41 @@ export async function retireSession(sessionPath:string){
  await startConnection(cwd,cwd)
 }
 export async function getSessionTurnDurations(sessionPath:string):Promise<Record<string,number>> { if(mobileRuntime())return runRemoteHostOperation<Record<string,number>>({name:'session.turnDurations',sessionPath});if(!native) return {}; return invoke<Record<string,number>>('session_turn_durations',{sessionPath}) }
-export async function syncProviderModels(provider:string):Promise<{provider:string;count:number;previous:number;firstModelId?:string}> { if(!desktopRuntime()) throw new Error('同步模型请在电脑端执行'); return invoke<{provider:string;count:number;previous:number;firstModelId?:string}>('sync_provider_models',{provider}) }
-export async function persistDefaultModel(provider:string,modelId:string):Promise<{provider:string;id:string}> { if(!desktopRuntime()) throw new Error('默认模型请在电脑端设置'); return invoke<{provider:string;id:string}>('set_default_model',{provider,modelId}) }
+export async function syncProviderModels(provider:string):Promise<{provider:string;count:number;previous:number;firstModelId?:string}> { if(!workspaceBackend()) throw new Error('同步模型请在电脑端执行'); return invoke<{provider:string;count:number;previous:number;firstModelId?:string}>('sync_provider_models',{provider}) }
+export async function persistDefaultModel(provider:string,modelId:string):Promise<{provider:string;id:string}> { if(!workspaceBackend()) throw new Error('默认模型请在电脑端设置'); return invoke<{provider:string;id:string}>('set_default_model',{provider,modelId}) }
 export type ProjectTrustMode = 'ask' | 'always' | 'never'
-export async function getProjectTrustMode():Promise<ProjectTrustMode> { if(!desktopRuntime()) throw new Error('项目权限请在电脑端设置'); return invoke<ProjectTrustMode>('get_project_trust_mode') }
+export async function getProjectTrustMode():Promise<ProjectTrustMode> { if(!workspaceBackend()) throw new Error('项目权限请在电脑端设置'); return invoke<ProjectTrustMode>('get_project_trust_mode') }
 // --- MCP servers (Pi 1.0) -------------------------------------------------
 // Pi reads `~/.pi/agent/mcp.json`; the GUI edits that file through Rust and
 // reads live connection state through the `gui-mcp` capability status.
 export type McpServerView={name:string;transport:'stdio'|'http'|'invalid';command:string|null;args:string[];url:string|null;envKeys:string[];headerKeys:string[];enabled:boolean;exposure:string|null;description:string|null;timeout:number|null}
 export type McpServerList={path:string;servers:McpServerView[];authenticated:string[]}
-export async function listMcpServers():Promise<McpServerList> { if(!desktopRuntime()) throw new Error('MCP 服务器请在电脑端管理'); return invoke<McpServerList>('list_mcp_servers') }
-export async function saveMcpServer(name:string,config:Record<string,unknown>):Promise<McpServerView> { if(!desktopRuntime()) throw new Error('MCP 服务器请在电脑端管理'); return invoke<McpServerView>('save_mcp_server',{name,config}) }
-export async function deleteMcpServer(name:string):Promise<{name:string;deleted:boolean}> { if(!desktopRuntime()) throw new Error('MCP 服务器请在电脑端管理'); return invoke<{name:string;deleted:boolean}>('delete_mcp_server',{name}) }
-export async function mcpConfigLocation():Promise<{path:string;authPath:string;logPath:string}> { if(!desktopRuntime()) throw new Error('MCP 配置路径需要电脑端'); return invoke<{path:string;authPath:string;logPath:string}>('mcp_config_location') }
+export async function listMcpServers():Promise<McpServerList> { if(!workspaceBackend()) throw new Error('MCP 服务器请在电脑端管理'); return invoke<McpServerList>('list_mcp_servers') }
+export async function saveMcpServer(name:string,config:Record<string,unknown>):Promise<McpServerView> { if(!workspaceBackend()) throw new Error('MCP 服务器请在电脑端管理'); return invoke<McpServerView>('save_mcp_server',{name,config}) }
+export async function deleteMcpServer(name:string):Promise<{name:string;deleted:boolean}> { if(!workspaceBackend()) throw new Error('MCP 服务器请在电脑端管理'); return invoke<{name:string;deleted:boolean}>('delete_mcp_server',{name}) }
+export async function mcpConfigLocation():Promise<{path:string;authPath:string;logPath:string}> { if(!workspaceBackend()) throw new Error('MCP 配置路径需要电脑端'); return invoke<{path:string;authPath:string;logPath:string}>('mcp_config_location') }
 /** Pi 1.0 settings Orbit can write: `cacheWarming` and `codemode`. */
 export type GuiSettings={path:string;settings:{cacheWarming:string|null;codemode:{mode?:'on'|'only';inlineBudget?:number}|null}}
-export async function getGuiSettings():Promise<GuiSettings> { if(!desktopRuntime()) throw new Error('Pi 设置请在电脑端修改'); return invoke<GuiSettings>('get_gui_settings') }
-export async function setGuiSetting(key:'cacheWarming'|'codemode',value:unknown):Promise<{key:string;value:unknown}> { if(!desktopRuntime()) throw new Error('Pi 设置请在电脑端修改'); return invoke<{key:string;value:unknown}>('set_gui_setting',{key,value}) }
+export async function getGuiSettings():Promise<GuiSettings> { if(!workspaceBackend()) throw new Error('Pi 设置请在电脑端修改'); return invoke<GuiSettings>('get_gui_settings') }
+export async function setGuiSetting(key:'cacheWarming'|'codemode',value:unknown):Promise<{key:string;value:unknown}> { if(!workspaceBackend()) throw new Error('Pi 设置请在电脑端修改'); return invoke<{key:string;value:unknown}>('set_gui_setting',{key,value}) }
 /** Ask the GUI extension to recompute and republish its capability snapshots. */
 export async function refreshCapabilities(target=useWorkspace.getState().cwd){await request({type:'prompt',message:'/gui-capabilities'},30000,target)}
 /** Session-scoped MCP registration through the built-in MCP extension. */
 export async function registerSessionMcpServer(name:string,config:Record<string,unknown>,target=useWorkspace.getState().cwd){return request({type:'prompt',message:`/gui-mcp ${JSON.stringify({action:'add',name,config})}`},30000,target)}
 export async function unregisterSessionMcpServer(name:string,target=useWorkspace.getState().cwd){return request({type:'prompt',message:`/gui-mcp ${JSON.stringify({action:'remove',name})}`},30000,target)}
-export async function setProjectTrustMode(mode:ProjectTrustMode):Promise<ProjectTrustMode> { if(!desktopRuntime()) throw new Error('项目权限请在电脑端设置'); return invoke<ProjectTrustMode>('set_project_trust_mode',{mode}) }
-export async function computerUseKeyStatus():Promise<{hasKey:boolean}> { if(!desktopRuntime()) throw new Error('Jev Key 请在电脑端设置'); return invoke<{hasKey:boolean}>('computer_use_key_status') }
-export async function saveComputerUseKey(apiKey?:string):Promise<{hasKey:boolean}> { if(!desktopRuntime()) throw new Error('Jev Key 请在电脑端设置'); return invoke<{hasKey:boolean}>('save_computer_use_key',{apiKey:apiKey?.trim()||null}) }
+export async function setProjectTrustMode(mode:ProjectTrustMode):Promise<ProjectTrustMode> { if(!workspaceBackend()) throw new Error('项目权限请在电脑端设置'); return invoke<ProjectTrustMode>('set_project_trust_mode',{mode}) }
+export async function computerUseKeyStatus():Promise<{hasKey:boolean}> { if(!workspaceBackend()) throw new Error('Jev Key 请在电脑端设置'); return invoke<{hasKey:boolean}>('computer_use_key_status') }
+export async function saveComputerUseKey(apiKey?:string):Promise<{hasKey:boolean}> { if(!workspaceBackend()) throw new Error('Jev Key 请在电脑端设置'); return invoke<{hasKey:boolean}>('save_computer_use_key',{apiKey:apiKey?.trim()||null}) }
 export type ComputerUseModel='jev'|'clef-flash'
 export type ComputerUseConfig={decisionModel:ComputerUseModel;cloudflareAccountId:string;systemoneBaseUrl:string;keys:{jev:boolean;cloudflare:boolean}}
 export type ComputerUseTestResult={ok:boolean;provider:string;model:string;latencyMs:number;answer:Record<string,unknown>|null;usage:{input_tokens?:number;output_tokens?:number}|null}
-export async function computerUseConfig():Promise<ComputerUseConfig> { if(!desktopRuntime()) throw new Error('电脑操作请在电脑端设置'); return invoke<ComputerUseConfig>('computer_use_config') }
-export async function saveComputerUseConfig(patch:Partial<Pick<ComputerUseConfig,'decisionModel'|'cloudflareAccountId'|'systemoneBaseUrl'>>):Promise<ComputerUseConfig> { if(!desktopRuntime()) throw new Error('电脑操作请在电脑端设置'); return invoke<ComputerUseConfig>('save_computer_use_config',{config:patch}) }
-export async function saveComputerUseCloudflareToken(token?:string):Promise<{hasToken:boolean}> { if(!desktopRuntime()) throw new Error('Cloudflare Token 请在电脑端设置'); return invoke<{hasToken:boolean}>('save_computer_use_cloudflare_token',{token:token?.trim()||null}) }
-export async function testComputerUseDecision():Promise<ComputerUseTestResult> { if(!desktopRuntime()) throw new Error('电脑操作请在电脑端设置'); return invoke<ComputerUseTestResult>('test_computer_use_decision') }
+export async function computerUseConfig():Promise<ComputerUseConfig> { if(!workspaceBackend()) throw new Error('电脑操作请在电脑端设置'); return invoke<ComputerUseConfig>('computer_use_config') }
+export async function saveComputerUseConfig(patch:Partial<Pick<ComputerUseConfig,'decisionModel'|'cloudflareAccountId'|'systemoneBaseUrl'>>):Promise<ComputerUseConfig> { if(!workspaceBackend()) throw new Error('电脑操作请在电脑端设置'); return invoke<ComputerUseConfig>('save_computer_use_config',{config:patch}) }
+export async function saveComputerUseCloudflareToken(token?:string):Promise<{hasToken:boolean}> { if(!workspaceBackend()) throw new Error('Cloudflare Token 请在电脑端设置'); return invoke<{hasToken:boolean}>('save_computer_use_cloudflare_token',{token:token?.trim()||null}) }
+export async function testComputerUseDecision():Promise<ComputerUseTestResult> { if(!workspaceBackend()) throw new Error('电脑操作请在电脑端设置'); return invoke<ComputerUseTestResult>('test_computer_use_decision') }
 export type ImageConfig={model:string;resolution:string;aspect:string}
-export async function imageConfig():Promise<ImageConfig> { if(!desktopRuntime()) throw new Error('图片模型请在电脑端设置'); return invoke<ImageConfig>('image_config') }
-export async function saveImageConfig(patch:Partial<ImageConfig>):Promise<ImageConfig> { if(!desktopRuntime()) throw new Error('图片模型请在电脑端设置'); return invoke<ImageConfig>('save_image_config',{config:patch}) }
+export async function imageConfig():Promise<ImageConfig> { if(!workspaceBackend()) throw new Error('图片模型请在电脑端设置'); return invoke<ImageConfig>('image_config') }
+export async function saveImageConfig(patch:Partial<ImageConfig>):Promise<ImageConfig> { if(!workspaceBackend()) throw new Error('图片模型请在电脑端设置'); return invoke<ImageConfig>('save_image_config',{config:patch}) }
 export async function loadMessages(target=useWorkspace.getState().cwd){
  const id=route(target),data=await request<{messages:PiMessage[]}>({type:'get_messages'},30000,id)
  patch(id,{transcript:hydrate(data.messages)})

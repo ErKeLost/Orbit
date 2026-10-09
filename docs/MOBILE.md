@@ -75,6 +75,94 @@ The Host is disabled until the user starts mobile access. Stopping the Host drop
 active sessions, while the stored identity lets the next start reuse the same
 pairing credentials. Treat the pairing URI and the identity file as secrets.
 
+## The desktop's own commands, mirrored
+
+The phone is not a viewer with a second, smaller feature set. It runs the same
+React application, so it asks the same questions the desktop does — list this
+directory, read this file, stage this change, commit, open a terminal — and
+`invoke` routes those questions to the machine that owns the answer: locally on
+the desktop, or over the authenticated encrypted socket (`host.invoke`) to the
+desktop when the app is running on a phone.
+
+The Host answers with the *same* Rust functions the local webview calls
+(`src-tauri/src/remote_ops.rs`), which is why a feature cannot work on one side
+and be missing on the other. Two rules keep that safe and maintainable:
+
+* **The Host advertises what it answers.** `host.snapshot.commands` lists the
+  reachable commands, and the phone routes a command there only when it is on
+  that list. There is no second allowlist in the app to drift out of step, and
+  an older APK against a newer desktop keeps working with what it knows.
+* **Every command is a decision.** `tests/remote-commands.test.ts` fails if a
+  registered command is neither mirrored nor excluded with a written reason, and
+  fails again if an exclusion outlives the command it describes.
+
+The exclusions are the commands about *the device in the user's hand* rather
+than about the workspace: the phone's own bootstrap and APK update, the pairing
+Host's lifecycle, the wake assertion, `pi_connect` (which hands out a
+webview-local event channel — phones attach instead), and the three commands
+whose paths come from a clipboard or picker on that device.
+
+**The permission this implies is deliberate.** A paired phone is the same user
+on the same machine, so it can read and write files, run Git, and open
+terminals on the desktop — the pairing page says so in plain words. The token is
+therefore a key to that computer: `REMOTE_COMMANDS` is reviewed like a security
+boundary, because it is one.
+
+### One project registry
+
+The desktop window owns the project list (names, extra roots, order). It
+publishes that list to the Host, which serves it in every snapshot and pushes
+changes as `host.projects`; the phone renders it instead of keeping a private
+copy. Adding a project from the phone is a `project.add` request the Host hands
+back to that same window, which adds it, opens it, and republishes — one writer,
+and the phone's rail is never a second opinion.
+
+### What is not mirrored yet
+
+Three things are not commands, so they cannot be mirrored by name:
+
+* **Terminal output.** Keystrokes, resize, status and kill are mirrored, but a
+  PTY's output travels as a desktop event (`pty-data`), which has no remote
+  counterpart yet — so the terminal dock stays closed on a phone (teleporting
+  the user to a terminal that shows nothing is worse than not offering one).
+  `open_pi_terminal` does open a real terminal window on the desktop from the
+  phone today.
+* **Media previews.** Images, audio, video and PDFs are served to the desktop
+  webview through the asset protocol, which a phone cannot reach; metadata
+  (`media_meta`) works. The fix is to read the bytes over the paired socket.
+* **Editing a project's own metadata** (rename, extra roots) and importing a
+  session file: the first needs a `project.update` request, the second opens a
+  picker on the device that is holding the phone.
+
+### The file editor
+
+The phone edits files with the same editor the desktop uses — CodeMirror 6 with
+shiki's tokens, `⌘F` find — and saves with the footer button (`⌘S` on a hardware
+keyboard); save travels to the desktop as the `write_text_file` command. See
+[EDITOR.md](EDITOR.md).
+
+## Staying reachable
+
+The Host is the desktop process, so "the phone cannot connect" has two causes
+that are indistinguishable from the phone: Orbit is not running, or the computer
+went to sleep. Both are treated as part of the feature rather than as the user's
+problem:
+
+* **Closing the window hides it instead of quitting while the Host is running.**
+  The Host lives in this process, and a closed window would have taken every
+  attached phone with it. `⌘Q` still quits, and the Dock icon (or the global
+  show/hide hotkey) brings the hidden window back. With mobile access off,
+  closing the window quits as it always did.
+* **While Orbit runs, it holds the two IOKit idle-sleep assertions** — the same
+  pair `caffeinate -d -i` creates — so neither the display nor the machine times
+  out a few minutes after the last keystroke. The assertion belongs to the
+  process, so it covers every window and is released by the process exit.
+  Settings → 通用 → 「保持屏幕唤醒」 turns it off; only macOS implements it, and
+  the other desktops stay on the operating system's own power settings.
+* **A cold start opens on 「移动端」** — the Host switch and the QR code are the
+  first screen — because that is the panel a launch exists for. Settings →
+  通用 → 「启动页面」 changes it permanently.
+
 ## Install and use the Android build
 
 1. Download `orbit-android-arm64-<tag>.apk` from the Orbit GitHub Release and

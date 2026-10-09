@@ -114,6 +114,11 @@ export function ChatPane() {
   const sessionFile = useWorkspace((state) => state.state?.sessionFile) ?? persistedSessionFile(project);
   const dockPosition = useShell((state) => state.terminalPosition);
   const dockOpen = useShell((state) => state.terminalOpen);
+  // The dock needs the PTY's output, which travels as a desktop event
+  // (`pty-data`) that has no remote counterpart yet. On a phone the dock would
+  // take keystrokes and show nothing, so it stays closed until that stream is
+  // mirrored; `open_pi_terminal` already opens a real terminal on the desktop.
+  const terminalAvailable = useWorkspace((state) => state.runtimeTarget) !== "mobile";
   const historical = useQuery({
     queryKey: ["pi", "turn-durations", sessionFile],
     queryFn: () => getSessionTurnDurations(sessionFile),
@@ -247,7 +252,7 @@ export function ChatPane() {
 
   const runningLabel = transcript.compacting ? "正在压缩上下文" : transcript.phase && transcript.phase !== "就绪" ? transcript.phase : "Working…";
   const dockVertical = dockPosition === "top" || dockPosition === "bottom";
-  const dock = dockOpen ? <TerminalDock cwd={project} open /> : null;
+  const dock = dockOpen && terminalAvailable ? <TerminalDock cwd={project} open /> : null;
 
   if (groups.length === 0 && !waiting) {
     return (

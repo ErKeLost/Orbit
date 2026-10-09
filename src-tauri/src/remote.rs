@@ -28,6 +28,15 @@ enum RemoteHostOperation {
     SessionTurnDurations { session_path: String },
     #[serde(rename = "session.delete", rename_all = "camelCase")]
     SessionDelete { session_path: String },
+    /// Add a project to the desktop's own registry.
+    ///
+    /// The registry lives in the desktop window (it owns the names, the icon
+    /// and the extra roots), so the Host validates the path and asks that window
+    /// to do the write. One writer, and the phone renders its published list.
+    #[serde(rename = "project.add")]
+    ProjectAdd { path: String },
+    #[serde(rename = "project.forget")]
+    ProjectForget { path: String },
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -89,7 +98,7 @@ mod desktop {
         thread,
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
-    use tauri::{AppHandle, Manager, State};
+    use tauri::{AppHandle, Emitter, Manager, State};
     use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufStream};
     use tokio::net::TcpStream;
     use tokio_tungstenite::{
@@ -101,6 +110,9 @@ mod desktop {
     use uuid::Uuid;
 
     const EVENT_BATCH_WINDOW: Duration = Duration::from_millis(16);
+    /// Emitted into the desktop window when a phone asks to change the project
+    /// registry: the window owns that list, so the Host asks rather than writes.
+    pub const PROJECT_REQUEST_EVENT: &str = "orbit://projects/request";
     const EVENT_QUEUE_CAPACITY: usize = 4096;
     const CLIENT_QUEUE_CAPACITY: usize = 256;
     /// How often a connection task checks whether the host was asked to stop.
@@ -198,6 +210,13 @@ mod desktop {
     pub struct RemoteHost {
         running: Mutex<Option<RunningHost>>,
         theme: Mutex<RemoteTheme>,
+        /// The desktop window's project registry, as last published by it.
+        ///
+        /// The window is the writer — it owns the names and the extra roots —
+        /// so this is a publication, not a second copy to keep in step: a phone
+        /// reads it from every snapshot, and the window refreshes it whenever
+        /// the list changes.
+        projects: Mutex<Vec<Value>>,
     }
 
     impl Default for RemoteHost {
@@ -205,6 +224,7 @@ mod desktop {
             Self {
                 running: Mutex::new(None),
                 theme: Mutex::new(RemoteTheme::default()),
+                projects: Mutex::new(Vec::new()),
             }
         }
     }
@@ -262,6 +282,45 @@ mod desktop {
                         clients.clear();
                     }
                 }
+            }
+        }
+
+        /// Whether the Host is serving right now.
+        ///
+        /// Asked by the macOS close handler, which must not let a window take a
+        /// live Host — and with it every attached phone — down. Only that
+        /// caller exists, hence the platform gate rather than a public accessor
+        /// nothing else reads.
+        #[cfg(target_os = "macos")]
+        pub fn is_running(&self) -> bool {
+            self.running.lock().is_ok_and(|slot| slot.is_some())
+        }
+
+        /// The project registry the desktop window last published.
+        pub fn projects(&self) -> Vec<Value> {
+            self.projects.lock().map(|list| list.clone()).unwrap_or_default()
+        }
+
+        /// Publish the registry and tell every connected phone about it.
+        ///
+        /// A phone that is looking at the rail is looking at this list, so a
+        /// change the user makes on either side has to reach the other one
+        /// without waiting for the next reconnect.
+        pub fn set_projects(&self, projects: Vec<Value>) {
+            if let Ok(mut list) = self.projects.lock() {
+                *list = projects.clone();
+            }
+            let clients = self
+                .running
+                .lock()
+                .ok()
+                .and_then(|slot| slot.as_ref().map(|host| host.clients.clone()));
+            if let Some(clients) = clients {
+                broadcast_all(
+                    &clients,
+                    json!({"type":"host.projects","projects":projects,"serverTime":unix_millis()})
+                        .to_string(),
+                );
             }
         }
 
@@ -697,7 +756,38 @@ mod desktop {
                     .await
                     .map(|()| Value::Null)
             }
+            super::RemoteHostOperation::ProjectAdd { path } => {
+                request_project(app, "add", path)
+            }
+            super::RemoteHostOperation::ProjectForget { path } => {
+                request_project(app, "forget", path)
+            }
         }
+    }
+
+    /// Hand a project change to the desktop window, which owns the registry.
+    ///
+    /// The Host checks that an added path exists (the phone's picker is a
+    /// directory listing, so a typo is possible) and then emits the request;
+    /// the window adds or forgets it and republishes the list, which comes back
+    /// to every phone as `host.projects`. The phone never receives a success it
+    /// cannot see in that list.
+    fn request_project(app: &AppHandle, action: &str, path: String) -> Result<Value, String> {
+        let target = crate::git::expand_home(&path);
+        if action == "add" {
+            let meta = std::fs::metadata(&target)
+                .map_err(|_| format!("{} 不存在", target.display()))?;
+            if !meta.is_dir() {
+                return Err(format!("{} 不是文件夹", target.display()));
+            }
+        }
+        let resolved = target.to_string_lossy().into_owned();
+        app.emit(
+            PROJECT_REQUEST_EVENT,
+            json!({"action": action, "path": resolved}),
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(json!({"action": action, "path": resolved}))
     }
 
     /// Handle one client message.
@@ -752,8 +842,21 @@ mod desktop {
                     "theme": app.state::<RemoteHost>().theme(),
                     "machineName": app.state::<RemoteHost>().info().map(|info| info.machine_name).unwrap_or_else(|| "Orbit Desktop".into()),
                     "connections": app.state::<Bridge>().connections(),
+                    "projects": app.state::<RemoteHost>().projects(),
+                    // What this Host will answer. Advertised rather than
+                    // assumed: the phone routes a command here only when it is
+                    // on the list, so an older APK against a newer desktop
+                    // keeps using whatever it does know.
+                    "commands": crate::remote_ops::REMOTE_COMMANDS,
                 })),
             ),
+            Some("host.invoke") => {
+                let Some(command) = request.get("command").and_then(Value::as_str) else {
+                    return json!({"type":"remote.error","requestId":request_id,"error":"host.invoke 缺少 command"}).to_string();
+                };
+                let args = request.get("args").cloned().unwrap_or(Value::Null);
+                response(request_id, crate::remote_ops::dispatch(app, command, args).await)
+            }
             Some("host.operation") => {
                 let operation = request
                     .get("operation")
@@ -1960,6 +2063,14 @@ pub struct RemoteHost;
 #[cfg(mobile)]
 impl RemoteHost {
     pub fn stop(&self) {}
+
+    /// A mobile build is never the Host: the registry it would publish is
+    /// always empty, and nothing on this device reads it.
+    pub fn projects(&self) -> Vec<Value> {
+        Vec::new()
+    }
+
+    pub fn set_projects(&self, _projects: Vec<Value>) {}
 }
 
 #[tauri::command]
@@ -2007,6 +2118,16 @@ pub fn save_relay_settings(settings: RelaySettings) -> Result<RelaySettingsStatu
         let _ = settings;
         Err("Relay 配置请在电脑端修改".into())
     }
+}
+
+/// The desktop window publishes its project registry for the phones.
+///
+/// Called whenever that list changes (and once at startup). The Host keeps the
+/// latest publication so `host.snapshot` can answer with it, and forwards it to
+/// every connected phone so a rail that is already open updates in place.
+#[tauri::command]
+pub fn publish_projects(state: tauri::State<'_, RemoteHost>, projects: Vec<Value>) {
+    state.set_projects(projects);
 }
 
 #[tauri::command]

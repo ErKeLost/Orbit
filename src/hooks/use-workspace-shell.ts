@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { readKeepAwake, writeKeepAwake } from "../lib/desktop-integration";
+import { saveFileDraft } from "../lib/file-save";
+import { readStartupPanel } from "../lib/startup-panel";
 import { normalizeProjectPath, useProjects } from "../lib/projects";
 import { changeSession, connect, connectRemoteConnection, dispatchRemoteEvent, loadMessages, report, suspendRemoteConnection } from "../lib/rpc";
 import { detectRuntimeEnvironment } from "../lib/runtime-environment";
@@ -126,6 +129,23 @@ export function useWorkspaceBootstrap() {
       .catch(() => gooeyToast.warning("移动访问未能自动恢复", { description: "请在「移动端」里重新启用", showTimestamp: false }));
   }, [runtimeTarget]);
 
+  // Launch defaults: where Orbit lands, and holding the machine awake.
+  //
+  // Neither is per-session state. The landing page is pinned before the project
+  // auto-restore settles (a connection does not move the panel), so a cold
+  // start opens — in the default configuration — on 「移动端」, with the QR code
+  // and the Host switch already on screen for the phone that is about to scan
+  // it. The wake assertion is process-wide and its only writer is this effect,
+  // which re-runs with the app: nothing else can toggle it behind the user's
+  // back, and the process exit releases it.
+  const appliedLaunchDefaults = useRef(false);
+  useEffect(() => {
+    if (runtimeTarget !== "desktop" || appliedLaunchDefaults.current) return;
+    appliedLaunchDefaults.current = true;
+    useWorkspace.getState().set({ panel: readStartupPanel() });
+    void writeKeepAwake(readKeepAwake()).catch(report);
+  }, [runtimeTarget]);
+
   useEffect(() => {
     if (runtimeTarget !== "mobile") return;
     const resume = () => {
@@ -219,6 +239,26 @@ export function useWorkspaceShortcuts(
         // Search everything, like MonoCode's ⌘K.
         event.preventDefault();
         useWorkspace.getState().set({ panel: "search" });
+      }
+      if (event.key.toLowerCase() === "f" && event.shiftKey) {
+        // VS Code's other half of search: ⌘F finds in the open file (the
+        // editor owns that key itself), ⌘⇧F searches the whole workspace.
+        event.preventDefault();
+        useWorkspace.getState().set({ panel: "search" });
+        return;
+      }
+      if (event.key.toLowerCase() === "s") {
+        // Save the focused editor pane. The editor binds ⌘S itself while it has
+        // focus; this catches the case where the pane is focused but the caret
+        // was in something else (a tab, the footer, the transcript).
+        const shell = useShell.getState();
+        const workspace = shell.workspaces.find((item) => item.id === shell.activeWorkspaceId) ?? shell.workspaces[0];
+        const path = workspace?.panes[workspace.activePane]?.activeFile;
+        if (!path) return;
+        event.preventDefault();
+        // Saving is silent — the tab dot disappearing is the acknowledgement.
+        void saveFileDraft(path).catch(report);
+        return;
       }
       if (event.key.toLowerCase() === "j") {
         // Toggle the built-in terminal dock (MonoCode's ⌘J).

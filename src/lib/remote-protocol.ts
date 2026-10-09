@@ -14,6 +14,18 @@ export type RemoteHostOperation =
   | { name: "project.files"; cwd: string }
   | { name: "session.turnDurations"; sessionPath: string }
   | { name: "session.delete"; sessionPath: string }
+  /**
+   * A project change, which the desktop window applies to its own registry.
+   *
+   * The Host validates the path and asks the window; the phone then sees the
+   * result in `projects` rather than in this reply, because the window owns the
+   * list (names, extra roots, order).
+   */
+  | { name: "project.add"; path: string }
+  | { name: "project.forget"; path: string }
+
+/** One project as the desktop publishes it to the phone. */
+export type RemoteProject = { path: string; name: string; roots?: string[] }
 
 /** Shape a phone asks the desktop preview for. The host clamps and may adapt. */
 export type RemoteScreenSettings = {
@@ -93,6 +105,16 @@ export type RemoteRequest =
   | { type: "host.ping"; requestId?: string }
   | { type: "host.snapshot"; requestId?: string }
   | { type: "host.operation"; requestId?: string; operation: RemoteHostOperation }
+  /**
+   * Call one of the desktop's own commands.
+   *
+   * The phone runs the same application, so it asks the same questions; the
+   * Host answers them with the same functions the desktop webview calls
+   * (`src-tauri/src/remote_ops.rs`). What may be asked is a closed list the
+   * Host advertises in `host.snapshot.commands`, so the phone only routes a
+   * command to the Host when the Host said it would answer it.
+   */
+  | { type: "host.invoke"; requestId?: string; command: string; args?: RemoteJson }
   | { type: "connection.attach"; requestId?: string; connectionId: string }
   | { type: "pi.command"; requestId?: string; project: string; command: Record<string, RemoteJson> }
   | { type: "screen.start"; requestId?: string; settings?: RemoteScreenSettings }
@@ -110,7 +132,17 @@ export type RemoteRequest =
   | { type: "screen.ack"; requestId?: string; seq?: number; queueDelayMs: number }
 
 export type RemoteConnection = { id: string; cwd: string }
-export type RemoteHostSnapshot = { protocol: typeof REMOTE_PROTOCOL; serverTime: number; theme?: RemoteTheme; machineName?: string; connections: RemoteConnection[] }
+export type RemoteHostSnapshot = {
+  protocol: typeof REMOTE_PROTOCOL
+  serverTime: number
+  theme?: RemoteTheme
+  machineName?: string
+  connections: RemoteConnection[]
+  /** The desktop's project registry, as last published by its window. */
+  projects?: RemoteProject[]
+  /** Commands this Host will answer over `host.invoke`. */
+  commands?: string[]
+}
 
 /**
  * One encoded preview frame. `data` is base64 of the codec payload; the
@@ -145,6 +177,7 @@ export type RemoteEvent =
   | RemoteScreenFrame
   | { type: "host.hello"; protocol: typeof REMOTE_PROTOCOL; hostId: string; serverTime: number; theme?: RemoteTheme; machineName?: string }
   | { type: "host.theme"; theme: RemoteTheme; serverTime: number }
+  | { type: "host.projects"; projects: RemoteProject[]; serverTime: number }
   | { type: "host.pong"; requestId?: string; serverTime: number }
   | { type: "pi.event"; project: string; payload: RemoteJson }
   | { type: "pi.events"; project: string; payloads: RemoteJson[] }
@@ -167,8 +200,15 @@ export function isRemoteTheme(value: unknown): value is RemoteTheme {
   return value === "light" || value === "dark"
 }
 
+export function isRemoteProject(value: unknown): value is RemoteProject {
+  return record(value) && stringValue(value.path) && stringValue(value.name)
+    && (value.roots === undefined || (Array.isArray(value.roots) && value.roots.every(stringValue)))
+}
+
 export function isRemoteHostSnapshot(value: unknown): value is RemoteHostSnapshot {
   if (!record(value) || value.protocol !== REMOTE_PROTOCOL || typeof value.serverTime !== "number" || (value.theme !== undefined && !isRemoteTheme(value.theme)) || (value.machineName !== undefined && !stringValue(value.machineName)) || !Array.isArray(value.connections)) return false
+  if (value.projects !== undefined && (!Array.isArray(value.projects) || !value.projects.every(isRemoteProject))) return false
+  if (value.commands !== undefined && (!Array.isArray(value.commands) || !value.commands.every(stringValue))) return false
   return value.connections.every(connection => record(connection) && stringValue(connection.id) && stringValue(connection.cwd))
 }
 
@@ -176,6 +216,7 @@ export function isRemoteHostOperation(value: unknown): value is RemoteHostOperat
   if (!record(value) || typeof value.name !== "string") return false
   if (value.name === "session.list" || value.name === "project.files") return stringValue(value.cwd)
   if (value.name === "session.turnDurations" || value.name === "session.delete") return stringValue(value.sessionPath)
+  if (value.name === "project.add" || value.name === "project.forget") return stringValue(value.path)
   return false
 }
 
@@ -209,6 +250,11 @@ export function isRemoteRequest(value: unknown): value is RemoteRequest {
   if (!record(value) || typeof value.type !== "string") return false
   if (value.type === "host.ping" || value.type === "host.snapshot") return value.requestId === undefined || typeof value.requestId === "string"
   if (value.type === "host.operation") return (value.requestId === undefined || typeof value.requestId === "string") && isRemoteHostOperation(value.operation)
+  if (value.type === "host.invoke") {
+    return (value.requestId === undefined || typeof value.requestId === "string")
+      && stringValue(value.command)
+      && (value.args === undefined || record(value.args))
+  }
   if (value.type === "connection.attach") return (value.requestId === undefined || typeof value.requestId === "string") && stringValue(value.connectionId)
   if (value.type === "screen.start") return value.requestId === undefined || typeof value.requestId === "string"
   if (value.type === "screen.stop" || value.type === "screen.stats" || value.type === "screen.displays") return value.requestId === undefined || typeof value.requestId === "string"
@@ -234,6 +280,8 @@ export function isRemoteEvent(value: unknown): value is RemoteEvent {
       return value.protocol === REMOTE_PROTOCOL && stringValue(value.hostId) && typeof value.serverTime === "number" && (value.theme === undefined || isRemoteTheme(value.theme)) && (value.machineName === undefined || stringValue(value.machineName))
     case "host.theme":
       return isRemoteTheme(value.theme) && typeof value.serverTime === "number"
+    case "host.projects":
+      return Array.isArray(value.projects) && value.projects.every(isRemoteProject) && typeof value.serverTime === "number"
     case "host.pong":
       return requestId && typeof value.serverTime === "number"
     case "pi.event":
