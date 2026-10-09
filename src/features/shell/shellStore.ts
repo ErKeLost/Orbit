@@ -163,6 +163,16 @@ function readWorkspaces(cwd: string): Persisted {
 type ShellState = Persisted & {
   /** Panes that just appeared from a split, keyed by pane id (transient). */
   entering: Record<string, PaneEdge>;
+  /**
+   * Bumped by every `openFile`, so a surface narrower than the desktop can
+   * bring the file forward.
+   *
+   * The phone has no pane grid: it shows one file at a time and needs to know
+   * that the user just asked for one, even when that file was already open
+   * behind the conversation. Watching the open files alone cannot tell those
+   * two apart.
+   */
+  fileOpenSeq: number;
   projectRailOpen: boolean;
   sessionSidebarOpen: boolean;
   sidebarTab: SidebarTab;
@@ -277,6 +287,7 @@ export const useShell = create<ShellState>((set, get) => {
   return {
     ...initial,
     entering: {},
+    fileOpenSeq: 0,
     projectRailOpen: readBool(PROJECT_RAIL_KEY, true),
     sessionSidebarOpen: readBool(SESSION_SIDEBAR_KEY, true),
     sidebarTab: (() => {
@@ -419,6 +430,7 @@ export const useShell = create<ShellState>((set, get) => {
 
     openFile: (path, options) => {
       const state = get();
+      set({ fileOpenSeq: state.fileOpenSeq + 1 });
       const index = activeIndex(state);
       const workspace = state.workspaces[index];
       const found = findFile(workspace, path);

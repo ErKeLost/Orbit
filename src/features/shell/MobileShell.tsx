@@ -3,15 +3,16 @@ import { createPortal } from "react-dom";
 import { useWorkspace } from "../../lib/store";
 import { changeSession, report } from "../../lib/rpc";
 import { LAYER } from "../../shared/lib/layers";
-import { Plus, Settings, SlidersHorizontal, X, MessageMultiple, PanelLeft, AppWindow } from "../../shared/ui/icons";
+import { Plus, Settings, SlidersHorizontal, X, MessageMultiple, PanelLeft, AppWindow, ChevronLeft } from "../../shared/ui/icons";
 import { ChatPane } from "../chat/ChatPane";
 import { SettingsView } from "../settings/SettingsView";
 import { SettingsNav } from "../settings/SettingsNav";
 import { Panel } from "../../components/Panels";
+import { FileView } from "./FileView";
 import { ProjectRail } from "./ProjectRail";
 import { SessionSidebar } from "./SessionSidebar";
 import { TitleIconButton } from "./chrome";
-import { useShell } from "./shellStore";
+import { useActiveWorkspace, useShell } from "./shellStore";
 import { compactTitle } from "../../lib/session-visual";
 import { mergeProjectSessions, useProjectSessions } from "../../hooks/use-project-sessions";
 
@@ -29,13 +30,30 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
   const liveSessions = useWorkspace((state) => state.liveSessions);
   const [drawer, setDrawer] = useState(false);
   const [drawerTab, setDrawerTab] = useState<"sessions" | "projects">("sessions");
+  // A phone has no room for the desktop's pane grid, so a file takes the whole
+  // surface and the conversation waits behind it.
+  const [chatSurface, setChatSurface] = useState(true);
+  const paneId = useActiveWorkspace((workspace) => workspace.activePane);
+  const pane = useActiveWorkspace((workspace) => workspace.panes[workspace.activePane]);
+  const fileOpenSeq = useShell((state) => state.fileOpenSeq);
+  const openFile = pane ? pane.files.find((file) => file.path === pane.activeFile) ?? pane.files[0] ?? null : null;
+  const showFile = openFile != null && !chatSurface;
   const sessions = useProjectSessions(cwd);
   const merged = mergeProjectSessions(cwd, sessions.data ?? [], liveSessions);
   const session = merged.sessions.find((item) => item.path === sessionFile);
   const title = panel === "settings" ? "设置" : compactTitle(session?.name || session?.firstMessage, "新会话", 28);
 
+  // A file opened anywhere — the tree, search, a diff — becomes what the phone
+  // is looking at. `fileOpenSeq` rather than the open files themselves: asking
+  // for a file that is already open behind the chat must bring it forward again.
+  useEffect(() => {
+    if (fileOpenSeq === 0) return;
+    useWorkspace.getState().set({ panel: "chat" });
+    setChatSurface(false);
+  }, [fileOpenSeq]);
+
   // Picking anything in the drawer closes it, like a native nav drawer.
-  useEffect(() => setDrawer(false), [sessionFile, cwd, panel]);
+  useEffect(() => setDrawer(false), [sessionFile, cwd, panel, fileOpenSeq]);
   useEffect(() => {
     useShell.getState().setSidebarTab("sessions");
   }, []);
@@ -43,12 +61,23 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
   return (
     <div className="mobile-shell flex h-full min-h-0 flex-col bg-background-base text-content">
       <header className="flex h-11 shrink-0 select-none items-center gap-1 border-b border-stroke px-2">
-        <TitleIconButton label="打开导航" onClick={() => setDrawer(true)}>
-          <PanelLeft className="size-4" strokeWidth={1.75} />
-        </TitleIconButton>
+        {showFile ? (
+          <TitleIconButton label="返回会话" onClick={() => setChatSurface(true)}>
+            <ChevronLeft className="size-4" strokeWidth={1.75} />
+          </TitleIconButton>
+        ) : (
+          <TitleIconButton label="打开导航" onClick={() => setDrawer(true)}>
+            <PanelLeft className="size-4" strokeWidth={1.75} />
+          </TitleIconButton>
+        )}
         <span className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-[14px] font-medium">
-          <span className="min-w-0 truncate">{title}</span>
+          <span className="min-w-0 truncate">{showFile ? openFile.name : title}</span>
         </span>
+        {showFile ? (
+          <TitleIconButton label="打开导航" onClick={() => setDrawer(true)}>
+            <PanelLeft className="size-4" strokeWidth={1.75} />
+          </TitleIconButton>
+        ) : null}
         <TitleIconButton
           label={screenPip ? "关闭屏幕" : "打开屏幕"}
           active={screenPip}
@@ -65,6 +94,10 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
       <main className="flex min-h-0 flex-1 flex-col">
         {panel === "settings" ? (
           <SettingsView />
+        ) : showFile ? (
+          // The same editor pane the desktop shows: the phone only gives it the
+          // whole surface instead of a cell in the pane grid.
+          <FileView paneId={paneId} cwd={cwd} showGrip={false} />
         ) : panel === "chat" ? (
           <div className="mobile-composer-dock flex min-h-0 flex-1 flex-col">
             <ChatPane />
