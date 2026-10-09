@@ -7,196 +7,130 @@
 @property --ds-effort-level-color {
   syntax: "<color>";
   inherits: true;
-  initial-value: #9e9e9e;
+  initial-value: #8f8f96;
 }
 
-@property --ds-effort-level-soft {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: #d6d6d6;
-}
-
-@property --ds-effort-level-deep {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: #787878;
-}
-
+/*
+ * ozzy 的 galaxy brain effort slider（mygo examples/effort-slider）里的滑块，
+ * 只有轨道本身，没有卡片/边框：20px 高（圆角 5px）、3px 档位点（Medium 是
+ * 3×10 的竖条）、24px 大脑滑块（Galaxy 档 32px 变蓝紫 + 像素轨道 + 光柱）。
+ * 轨道灰阶走 Orbit token，大脑、像素、光柱用 demo 自己的颜色。
+ */
 .effort-slider {
-  --ds-effort-accent: #8c73c9;
-  --ds-effort-accent-deep: #a17ec2;
-  --ds-effort-text: #5f5b58;
-  --ds-effort-text-strong: #3f3b38;
-  --ds-effort-muted: #77736f;
-  --ds-effort-track: #edeae8;
-  --ds-effort-track-fill: #e0dbd6;
+  --ds-effort-track: color-mix(in srgb, var(--color-content) 9%, transparent);
+  --ds-effort-dot: color-mix(in srgb, var(--color-content) 26%, transparent);
+  --ds-effort-bar: color-mix(in srgb, var(--color-content) 30%, transparent);
+  --ds-effort-level-color: #8f8f96;
+  /* 填充、边框、大脑都跟着主题强调色走，取偏深的几档，不再是写死的粉紫。 */
+  --ds-effort-accent: var(--user-accent-color, var(--color-accent, hsl(211 92% 62%)));
+  --ds-effort-accent-deep: color-mix(in srgb, var(--ds-effort-accent) 62%, black 38%);
+  --ds-effort-accent-darker: color-mix(in srgb, var(--ds-effort-accent) 48%, black 52%);
+  --ds-effort-fill-from: color-mix(in srgb, var(--ds-effort-accent) 48%, black 30%);
+  --ds-effort-fill-to: color-mix(in srgb, var(--ds-effort-accent) 70%, black 20%);
+  --ds-effort-brain-fill: color-mix(in srgb, var(--ds-effort-accent) 62%, black 18%);
+  --ds-effort-brain-line: color-mix(in srgb, var(--ds-effort-accent) 40%, black 60%);
+  --ds-effort-galaxy-brain-from: color-mix(in srgb, var(--ds-effort-accent) 58%, #5a66f0 42%);
+  --ds-effort-galaxy-brain-to: color-mix(in srgb, var(--ds-effort-accent) 70%, #8b5cf6 30%);
+  --ds-effort-galaxy-brain-line: color-mix(in srgb, var(--ds-effort-accent) 34%, black 66%);
+  /* Galaxy 档的档位名也跟着强调色（偏深的一档）。 */
+  --ds-effort-galaxy-label: color-mix(in srgb, var(--ds-effort-accent) 72%, white 28%);
+  /* 轨道描边：很淡很细，只是一点点主题色边，不抢像素画面的戏。 */
+  --ds-effort-track-border: color-mix(in srgb, var(--ds-effort-accent) 16%, transparent);
   --ds-effort-progress: 0;
-  --ds-effort-thumb-w: 1.625rem;
-  --ds-effort-thumb-h: 1.875rem;
-  --ds-effort-thumb-inset: 2px;
-  --ds-effort-track-pad: 1px;
-  --ds-effort-track-radius: 0.625rem;
-  --ds-effort-outline: rgba(76, 70, 65, 0.12);
-  --ds-effort-level-color: #9e9e9e;
-  --ds-effort-level-soft: #d6d6d6;
-  --ds-effort-level-deep: #787878;
-  --light-color: #d3dcf8;
+  --ds-effort-thumb-w: 1.75rem;
+  --ds-effort-thumb-inset: 3px;
+  --ds-effort-track-h: 1.625rem;
+  --ds-effort-track-radius: 5px;
+  /* 填充停在大脑中心前 10px，和 demo 一致。 */
+  --ds-effort-fill-inset: 12px;
+  --ds-effort-thumb-travel: calc(100% - var(--ds-effort-thumb-w) - var(--ds-effort-thumb-inset) * 2);
+  --ds-effort-thumb-center: calc(var(--ds-effort-thumb-inset) + var(--ds-effort-thumb-w) * 0.5 + var(--ds-effort-thumb-travel) * var(--ds-effort-progress));
+  --ds-effort-shake-x: 0px;
+  --ds-effort-shake-y: 0px;
   --light-x: 50%;
   --light-y: 50%;
   --light-strength: 0;
   --ease-decay: cubic-bezier(0.2, 0, 0, 1);
-  display: block;
+  --ease-brain: cubic-bezier(0.19, 1, 0.22, 1);
+  display: grid;
   width: 100%;
   max-width: 100%;
-  color: var(--ds-effort-text);
-  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 1rem;
-  line-height: 1.4;
-  font-synthesis: none;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  transition-property: --ds-effort-progress, --ds-effort-level-color, --ds-effort-level-soft, --ds-effort-level-deep;
-  transition-duration: 360ms;
-  transition-timing-function: cubic-bezier(0.25, 1, 0.5, 1);
+  transform: translate(var(--ds-effort-shake-x), var(--ds-effort-shake-y));
+  transition-property: --ds-effort-progress, --ds-effort-level-color;
+  transition-duration: 500ms;
+  transition-timing-function: var(--ease-brain);
 }
 
-.dark .effort-slider {
-  --ds-effort-accent: #a17ec2;
-  --ds-effort-accent-deep: #b39ad6;
-  --ds-effort-text: color-mix(in srgb, var(--color-content) 50%, transparent);
-  --ds-effort-text-strong: var(--color-content);
-  --ds-effort-muted: color-mix(in srgb, var(--color-content) 50%, transparent);
-  --ds-effort-track: rgba(255, 255, 255, 0.08);
-  --ds-effort-track-fill: rgba(255, 255, 255, 0.12);
-  --ds-effort-outline: rgba(255, 255, 255, 0.1);
-  --light-color: #b9c8ff;
+.dark .effort-slider,
+html[data-theme="dark"] .effort-slider {
+  --ds-effort-track: color-mix(in srgb, var(--color-content) 11%, transparent);
+  --ds-effort-dot: color-mix(in srgb, var(--color-content) 30%, transparent);
+  --ds-effort-bar: color-mix(in srgb, var(--color-content) 34%, transparent);
 }
 
 .effort-slider[data-dragging] { transition-duration: 0ms; }
-.effort-slider[data-clicking] { transition-duration: 240ms; }
 .effort-slider[data-disabled] { opacity: 0.58; }
 .effort-slider *, .effort-slider *::before, .effort-slider *::after { box-sizing: border-box; }
 
-.effort-slider-shell {
+/* 只留一行文案：Effort + 当前档位，档位名跟着档位颜色走。 */
+.effort-slider-head {
   position: relative;
-  height: 2.375rem;
+  z-index: 4;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.625rem;
+  font-size: 0.6875rem;
+  line-height: 1.2;
 }
+
+.effort-slider-head-label {
+  color: color-mix(in srgb, var(--color-content) 52%, transparent);
+}
+
+.effort-slider-head-value {
+  color: color-mix(in srgb, var(--ds-effort-level-color) 78%, var(--color-content));
+  font-size: 0.75rem;
+  font-weight: 450;
+  transition: color 220ms linear;
+}
+
+.effort-slider[data-galaxy] .effort-slider-head-value { color: var(--ds-effort-galaxy-label); }
+.effort-slider[data-off] .effort-slider-head-value { color: color-mix(in srgb, var(--color-content) 62%, transparent); }
+
+.effort-slider-shell { position: relative; }
 
 .effort-slider-track {
-  position: absolute;
-  inset: 0.1875rem 0;
-  overflow: hidden;
+  position: relative;
+  height: var(--ds-effort-track-h);
   border-radius: var(--ds-effort-track-radius);
-  background:
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--ds-effort-level-color) 22%, var(--ds-effort-track)) 0%,
-      color-mix(in srgb, var(--ds-effort-level-color) 13%, var(--ds-effort-track)) 52%,
-      color-mix(in srgb, var(--ds-effort-level-color) 5%, var(--ds-effort-track)) 100%
-    );
-  box-shadow: inset 0 0 0 1px var(--ds-effort-outline);
-  transition: background 240ms cubic-bezier(0.25, 1, 0.5, 1);
+  background: var(--ds-effort-track);
+  box-shadow: inset 0 0 0 1px var(--ds-effort-track-border);
 }
-
-.effort-slider-track::after {
-  position: absolute;
-  z-index: -1;
-  inset: 0;
-  border-radius: inherit;
-  opacity: 0.05;
-  pointer-events: none;
-  content: "";
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='28'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='28' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
-}
-
-.effort-slider-light {
-  position: absolute;
-  z-index: 0;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  background: radial-gradient(circle at var(--light-x) var(--light-y), var(--light-color) 0%, transparent 42%);
-  opacity: calc(var(--light-strength) * 0.25);
-  transition: opacity 180ms ease-out;
-}
-
-.effort-slider-outline {
-  position: absolute;
-  z-index: 1;
-  inset: 0.1875rem 0;
-  border-radius: var(--ds-effort-track-radius);
-  background: radial-gradient(circle at var(--light-x) var(--light-y), #fff 0%, var(--light-color) 26%, transparent 52%);
-  -webkit-mask: radial-gradient(ellipse, transparent 0%, transparent calc(100% - 9px), #000 calc(100% - 2px));
-  mask: radial-gradient(ellipse, transparent 0%, transparent calc(100% - 9px), #000 calc(100% - 2px));
-  opacity: var(--light-strength);
-  pointer-events: none;
-  transition: opacity 180ms ease-out;
-}
-
-.effort-slider-thumb-light {
-  position: absolute;
-  z-index: 0;
-  top: 50%;
-  left: calc((100% - var(--ds-effort-thumb-w) - (var(--ds-effort-thumb-inset) * 2)) * var(--ds-effort-progress) + var(--ds-effort-thumb-inset));
-  width: calc(var(--ds-effort-thumb-w) + 3.5rem);
-  height: calc(var(--ds-effort-thumb-h) + 1.75rem);
-  background: radial-gradient(circle, var(--light-color) 0%, transparent 60%);
-  opacity: calc(0.1 + var(--light-strength) * 0.06);
-  pointer-events: none;
-  transform: translate(-50%, -50%);
-  transition: opacity 180ms ease-out;
-}
-
-.effort-slider[data-max] .effort-slider-light,
-.effort-slider[data-max] .effort-slider-outline,
-.effort-slider[data-max] .effort-slider-thumb-light { opacity: 0; }
 
 .effort-slider-fill {
   position: absolute;
-  z-index: 0;
+  z-index: 1;
   top: 0;
   bottom: 0;
-  left: var(--ds-effort-track-pad);
-  width: calc((100% - (var(--ds-effort-track-pad) * 2) - var(--ds-effort-thumb-w) - (var(--ds-effort-thumb-inset) * 2)) * var(--ds-effort-progress) + (var(--ds-effort-thumb-inset) + var(--ds-effort-thumb-w) * 0.5));
-  border-radius: calc(var(--ds-effort-track-radius) - 1px) 0 0 calc(var(--ds-effort-track-radius) - 1px);
-  background: radial-gradient(ellipse closest-side at var(--fill-x) 50%, color-mix(in srgb, var(--ds-effort-level-color) 28%, transparent) 0%, color-mix(in srgb, var(--ds-effort-level-color) 10%, var(--ds-effort-track-fill)) 100%);
+  left: 0;
+  width: max(0px, calc(var(--ds-effort-thumb-center) - var(--ds-effort-fill-inset)));
+  overflow: hidden;
+  border-radius: var(--ds-effort-track-radius);
+  background:
+    linear-gradient(90deg, var(--ds-effort-track) 0%, transparent 100%),
+    linear-gradient(90deg, var(--ds-effort-fill-from), var(--ds-effort-fill-to));
   pointer-events: none;
-  transition: opacity 200ms var(--ease-decay);
+  transition: opacity 160ms linear;
 }
 
-.effort-slider[data-max] .effort-slider-fill { opacity: 0; }
-
-.effort-slider-track::before {
-  position: absolute;
-  z-index: 0;
-  inset: 0;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #dccdf0 0%, #d4c2ee 14%, #c8b2e8 32%, #b99ee2 52%, #aa88dc 72%, #9c74d8 88%, #8f62d4 100%);
-  opacity: 0;
-  transform-origin: right center;
-  transition: opacity 340ms ease-in;
-  content: "";
-}
-
-.effort-slider[data-max] .effort-slider-track::before { opacity: 1; }
-
-.effort-slider-max-fallback,
-.effort-slider-pixels {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 200ms var(--ease-decay);
-}
-
-.effort-slider-max-fallback { background: linear-gradient(90deg, #dccdf0 0%, #d4c2ee 14%, #c8b2e8 32%, #b99ee2 52%, #aa88dc 72%, #9c74d8 88%, #8f62d4 100%); }
-.effort-slider[data-pixels-ready] .effort-slider-pixels { opacity: 1; }
+/* 最低档时大脑就在最左边，那一小截填充只会变成一个紫色小点，干脆不画。 */
+.effort-slider[data-off] .effort-slider-fill,
+.effort-slider[data-galaxy] .effort-slider-fill { opacity: 0; }
 
 .effort-slider-ticks {
   position: absolute;
-  z-index: 3;
+  z-index: 2;
   inset: 0;
   pointer-events: none;
 }
@@ -204,38 +138,94 @@
 .effort-slider-ticks i {
   position: absolute;
   top: 50%;
-  left: calc((100% - var(--ds-effort-thumb-w) - (var(--ds-effort-thumb-inset) * 2)) * var(--tick-progress) + (var(--ds-effort-thumb-inset) + var(--ds-effort-thumb-w) * 0.5));
+  left: calc(var(--ds-effort-thumb-inset) + var(--ds-effort-thumb-w) * 0.5 + var(--ds-effort-thumb-travel) * var(--tick-progress, 0));
   width: 0.25rem;
   height: 0.25rem;
   border-radius: 999px;
-  background: #b6b2af;
-  opacity: 0;
+  background: var(--ds-effort-dot);
   transform: translate(-50%, -50%);
-  transition: opacity 180ms var(--ease-decay);
+  transition: background 160ms linear, opacity 160ms linear;
 }
 
-.effort-slider-ticks i.on {
-  background: color-mix(in srgb, var(--ds-effort-level-color) 74%, white);
-  box-shadow: 0 0 5px color-mix(in srgb, var(--ds-effort-level-color) 78%, transparent);
-  opacity: 0.95;
+/* Medium 是推荐档：demo 里它是一根竖条，Galaxy 时变亮。 */
+.effort-slider-ticks i[data-recommended] {
+  width: 0.25rem;
+  height: 0.75rem;
+  border-radius: 0.125rem;
+  background: var(--ds-effort-bar);
 }
 
-/* 档位之间补的小点更小更淡，保持档位本身还能一眼看出来。 */
-.effort-slider-ticks i:not([data-level-tick]) {
-  width: 0.15625rem;
-  height: 0.15625rem;
+.effort-slider[data-galaxy] .effort-slider-ticks i { opacity: 0; }
+.effort-slider[data-galaxy] .effort-slider-ticks i[data-recommended] {
+  background: color-mix(in srgb, var(--ds-effort-level-color) 40%, #c8c4dc);
+  opacity: 1;
 }
 
-.effort-slider-ticks i.on:not([data-level-tick]) {
-  opacity: 0.5;
-  box-shadow: none;
+/* 画布比轨道高出一大截，左右也留一点，留给光柱和爆炸；文字浮在它上面。 */
+.effort-slider-galaxy {
+  position: absolute;
+  z-index: 3;
+  top: -3.5rem;
+  right: -0.75rem;
+  bottom: -3.5rem;
+  left: -0.75rem;
+  width: calc(100% + 1.5rem);
+  height: calc(100% + 7rem);
+  pointer-events: none;
+}
+
+.effort-slider-thumb {
+  position: absolute;
+  z-index: 4;
+  top: 50%;
+  left: calc(var(--ds-effort-thumb-travel) * var(--ds-effort-progress) + var(--ds-effort-thumb-inset));
+  display: grid;
+  width: var(--ds-effort-thumb-w);
+  height: var(--ds-effort-thumb-w);
+  place-items: center;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.effort-slider-brain {
+  display: block;
+  width: var(--ds-effort-thumb-w);
+  height: var(--ds-effort-thumb-w);
+  overflow: visible;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
+  transform-origin: center;
+  transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.effort-slider-brain-fill { fill: var(--ds-effort-brain-fill); }
+.effort-slider-brain-line { stroke: var(--ds-effort-brain-line); }
+.effort-slider-brain-line-galaxy { stroke: var(--ds-effort-galaxy-brain-line); }
+
+.effort-slider[data-galaxy] .effort-slider-brain { transform: scale(1.3333); }
+.effort-slider[data-off] .effort-slider-brain { filter: grayscale(0.85) opacity(0.75); }
+
+.effort-slider-brain-pink,
+.effort-slider-brain-galaxy { transition: opacity 160ms linear; }
+.effort-slider-brain-galaxy { opacity: 0; }
+.effort-slider[data-galaxy] .effort-slider-brain-galaxy { opacity: 1; }
+.effort-slider[data-galaxy] .effort-slider-brain-pink { opacity: 0; }
+
+.effort-slider-light {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle at var(--light-x) var(--light-y), #fff 0%, transparent 46%);
+  opacity: calc(var(--light-strength) * 0.16);
+  pointer-events: none;
+  transition: opacity 180ms ease-out;
 }
 
 .effort-slider-shell > input {
   position: absolute;
-  z-index: 5;
-  inset: 0 var(--ds-effort-track-pad);
-  width: calc(100% - var(--ds-effort-track-pad) * 2);
+  z-index: 6;
+  inset: 0;
+  width: 100%;
   height: 100%;
   margin: 0;
   appearance: none;
@@ -247,55 +237,23 @@
   touch-action: none;
 }
 
-.effort-slider-shell > input::-webkit-slider-runnable-track { height: var(--ds-effort-thumb-h); border: 0; background: transparent; }
+.effort-slider-shell > input::-webkit-slider-runnable-track { height: var(--ds-effort-track-h); border: 0; background: transparent; }
 .effort-slider-shell > input::-webkit-slider-thumb { width: 1px; height: 1px; margin-top: 0; appearance: none; -webkit-appearance: none; border: 0; border-radius: 0; background: transparent; opacity: 0; pointer-events: none; }
-.effort-slider-shell > input::-moz-range-track { height: var(--ds-effort-thumb-h); border: 0; background: transparent; }
+.effort-slider-shell > input::-moz-range-track { height: var(--ds-effort-track-h); border: 0; background: transparent; }
 .effort-slider-shell > input::-moz-range-progress { background: transparent; }
 .effort-slider-shell > input::-moz-range-thumb { width: 1px; height: 1px; border: 0; border-radius: 0; background: transparent; opacity: 0; pointer-events: none; }
 
-.effort-slider-thumb {
-  position: absolute;
-  z-index: 4;
-  top: 50%;
-  left: calc((100% - var(--ds-effort-thumb-w) - (var(--ds-effort-thumb-inset) * 2)) * var(--ds-effort-progress) + var(--ds-effort-thumb-inset));
-  width: var(--ds-effort-thumb-w);
-  height: var(--ds-effort-thumb-h);
-  border: 1px solid color-mix(in srgb, var(--ds-effort-level-deep) 26%, rgba(76, 70, 65, 0.12));
-  /* Square-ish, like everything else in the field; a pill read as a different control. */
-  border-radius: 0.25rem;
-  background: radial-gradient(circle at 50% 46%, color-mix(in srgb, var(--ds-effort-level-color) 26%, transparent) 0%, transparent 74%),
-    linear-gradient(180deg, #fff, color-mix(in srgb, var(--ds-effort-level-soft) 26%, #fff) 52%, color-mix(in srgb, var(--ds-effort-level-soft) 54%, #f4f2f0));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 1px color-mix(in srgb, var(--ds-effort-level-deep) 9%, transparent), 0 1px 2px rgba(62, 56, 50, 0.12), 0 4px 10px rgba(62, 56, 50, 0.07);
-  pointer-events: none;
-  transform: translateY(-50%);
-  transition-property: transform, box-shadow, background, border-color;
-  transition-duration: 180ms;
-  transition-timing-function: ease-out;
-}
-
-.effort-slider[data-dragging] .effort-slider-thumb {
-  border-color: color-mix(in srgb, var(--ds-effort-level-color) 56%, transparent);
-  transform: translateY(-50%) scale(0.97);
-  transition-property: none;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 1px color-mix(in srgb, var(--ds-effort-level-deep) 12%, transparent), 0 0 0 4px color-mix(in srgb, var(--ds-effort-level-color) 16%, transparent), 0 2px 4px rgba(62, 56, 50, 0.16);
-}
-.effort-slider:focus-within .effort-slider-thumb {
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95), inset 0 -1px 1px color-mix(in srgb, var(--ds-effort-level-deep) 9%, transparent), 0 0 0 3px color-mix(in srgb, var(--ds-effort-accent) 30%, transparent), 0 1px 2px rgba(62, 56, 50, 0.12), 0 4px 10px rgba(62, 56, 50, 0.07);
-}
-.effort-slider[data-glow] .effort-slider-thumb {
-  background: radial-gradient(circle at 50% 46%, color-mix(in srgb, var(--ds-effort-level-color) 32%, transparent) 0%, transparent 74%),
-    linear-gradient(180deg, #fff, color-mix(in srgb, var(--ds-effort-level-soft) 40%, #fff) 55%, color-mix(in srgb, var(--ds-effort-level-soft) 66%, #f0eeec));
-}
+.effort-slider:focus-within .effort-slider-track { box-shadow: 0 0 0 2px color-mix(in srgb, var(--ds-effort-accent) 40%, transparent); }
 .effort-slider[data-disabled] .effort-slider-shell > input { cursor: not-allowed; }
 
 @media (prefers-reduced-motion: reduce) {
   .effort-slider,
-  .effort-slider-track::before,
   .effort-slider-fill,
-  .effort-slider-light,
-  .effort-slider-outline,
-  .effort-slider-thumb-light,
-  .effort-slider-thumb { transition-duration: 0.001ms; }
-  .effort-slider[data-max] .effort-slider-max-fallback { opacity: 1; }
-  .effort-slider-pixels { display: none; }
+  .effort-slider-ticks i,
+  .effort-slider-thumb,
+  .effort-slider-brain,
+  .effort-slider-brain-pink,
+  .effort-slider-brain-galaxy,
+  .effort-slider-light { transition-duration: 0.001ms; }
+  .effort-slider-galaxy { display: none; }
 }

@@ -244,12 +244,20 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
       const target = choices.find(model => model.id === selected.defaultModel) ?? choices.find(model => model.id === synced.firstModelId) ?? choices[0];
       if (!target) throw new Error(`${selected.name || id} 没有可用模型，请检查配置`);
       await request({ type: "set_model", provider: id, modelId: target.id }, 30_000, cwd);
-      const current = await refresh(cwd);
-      if (current.model?.provider !== id || current.model.id !== target.id) throw new Error("Pi 没有确认 Provider 切换");
-      await persistDefaultModel(id, target.id);
+      // Pi 的 state 要等下一趟 get_state 才回来（一次往返）；先把新模型贴到 store 上，
+      // 这样从设置页切回会话时不会还挂着旧 provider，确认失败再回滚。
+      const before = useWorkspace.getState().state;
+      if (before?.model) useWorkspace.getState().set({ state: { ...before, model: { ...before.model, provider: id, id: target.id } } });
+      const [current] = await Promise.all([refresh(cwd), persistDefaultModel(id, target.id)]);
+      if (current.model?.provider !== id || current.model.id !== target.id) {
+        if (before) useWorkspace.getState().set({ state: before });
+        throw new Error("Pi 没有确认 Provider 切换");
+      }
       update({ defaultModelId: target.id });
-      await queryClient.invalidateQueries({ queryKey: ["pi", "models", cwd] });
-      await profiles.refetch();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["pi", "models", cwd] }),
+        profiles.refetch(),
+      ]);
       gooeyToast.success("已应用 Provider 配置", { description: `${selected.name || id} · ${target.id}`, showTimestamp: false });
     } catch (error) { report(error); } finally { setSwitchingProviderId(null); }
   }

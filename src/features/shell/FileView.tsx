@@ -17,6 +17,7 @@ import { ChevronDown, ChevronRight, ImagePlus, Loader } from "../../shared/ui/ic
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { SurfaceTabs } from "./SurfaceTabs";
 import { useActiveWorkspace } from "./shellStore";
+import { GitFileDiffView } from "../source-control/ui/GitFileDiffView";
 
 function MediaView({ file, kind }: { file: { path: string; name: string }; kind: MediaKind }) {
   const meta = useMediaMeta(file.path, kind);
@@ -99,7 +100,9 @@ export function FileView({
   const pane = useActiveWorkspace((workspace) => workspace.panes[paneId]);
   const file = pane?.files.find((item) => item.path === pane.activeFile) ?? pane?.files[0] ?? null;
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
-  const kind = file ? mediaKind(file.path) : null;
+  // A diff tab is a read-only view of a working-tree comparison, not a file.
+  const diff = file?.diff;
+  const kind = file && !diff ? mediaKind(file.path) : null;
   const markdown = file ? isMarkdownPath(file.path) : false;
   // Like Orbit, markdown documents open as preview and remember the mode per file.
   const [mode, setMode] = useMarkdownMode(file?.path ?? "", "preview");
@@ -116,14 +119,14 @@ export function FileView({
   const contents = useQuery({
     queryKey: ["file", file?.path ?? ""],
     queryFn: () => readTextFile(file?.path ?? ""),
-    enabled: file != null && kind == null,
+    enabled: file != null && kind == null && diff == null,
     staleTime: 2000,
     refetchOnWindowFocus: true,
   });
   const queryClient = useQueryClient();
   // 磁盘变更感知：Agent（或任何进程）改了正在显示的文件，轮询发现后重读。
   // 有未保存草稿时跳过——绝不能让磁盘版本覆盖用户正在打的内容。
-  const watchPath = file != null && kind == null ? file.path : null;
+  const watchPath = file != null && kind == null && diff == null ? file.path : null;
   useEffect(() => {
     if (!watchPath) return;
     const stopWatching = watchFilePath(watchPath);
@@ -157,7 +160,9 @@ export function FileView({
       {/* Orbit keeps a pane's tabs inside the pane (`FilePane` → `SurfaceTabs`),
           so the file name sits above the content it belongs to. */}
       <SurfaceTabs paneId={paneId} showGrip={showGrip} onPaneDragStart={onPaneDragStart} />
-      {kind != null ? (
+      {diff ? (
+        <GitFileDiffView cwd={cwd} path={file.path} kind={diff} />
+      ) : kind != null ? (
         <MediaView file={file} kind={kind} />
       ) : markdown && contents.data != null ? (
         <MarkdownViewShell
@@ -195,7 +200,7 @@ export function FileView({
           )}
         </div>
       )}
-      <div className="flex h-7 shrink-0 items-center gap-2 border-t border-stroke px-3 font-mono text-[11px] text-content/45">
+      <div className={`flex h-7 shrink-0 items-center gap-2 border-t border-stroke px-3 font-mono text-[11px] text-content/45 ${diff ? "hidden" : ""}`}>
         <span className="min-w-0 truncate">{relative}</span>
         {remote && dirty ? (
           <button

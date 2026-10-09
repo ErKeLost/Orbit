@@ -8,7 +8,7 @@ import { useTabCloseMotion } from "../../shared/hooks/useTabCloseMotion";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { TabLabel } from "../../shared/ui/TabLabel";
 import { MenuItem, MenuSeparator, PointMenu } from "../../shared/ui/controls";
-import { GripVertical, X } from "../../shared/ui/icons";
+import { GripVertical, FileDiff, X } from "../../shared/ui/icons";
 import { TabWidthMotion } from "./ClosingTab";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { IS_MAC } from "./chrome";
@@ -218,7 +218,11 @@ export function SurfaceTabs({
                 }`}
               >
                 <span className="grid shrink-0 place-items-center">
-                  <FileTypeIcon name={file.name} isDir={false} size={14} />
+                  {file.diff ? (
+                    <FileDiff className="size-3.5 text-content/60" strokeWidth={1.75} />
+                  ) : (
+                    <FileTypeIcon name={file.name} isDir={false} size={14} />
+                  )}
                 </span>
                 <TabLabel className={`flex-1 ${file.preview ? "italic" : ""}`}>{file.name}</TabLabel>
               </button>

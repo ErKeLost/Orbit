@@ -25,7 +25,7 @@ export type ProviderModel={
   raw?:Record<string,unknown>
 }
 export type ProviderProfile={id:string;name?:string;baseUrl?:string;modelsUrl?:string;api?:string;authHeader?:boolean;isDefault:boolean;defaultModel?:string;models?:ProviderModel[];hasApiKey:boolean;modelCount:number}
-type Snapshot=Pick<Workspace,'transcript'|'telemetry'|'state'|'connection'|'error'|'draft'|'dialogs'|'notices'|'statuses'|'widgets'|'agents'>
+export type Snapshot=Pick<Workspace,'transcript'|'telemetry'|'state'|'connection'|'error'|'draft'|'dialogs'|'notices'|'statuses'|'widgets'|'agents'>
 type Pending={project:string;resolve:(value:unknown)=>void;reject:(error:Error)=>void;timeout:ReturnType<typeof setTimeout>}
 const SESSION_FILES_KEY='pi-gui.sessionFiles.v1',LEGACY_SESSION_FILES_KEY=['pi-gui','sessionFiles'].join('.')
 const pending=new Map<string,Pending>(),snapshots=new Map<string,Snapshot>(),connections=new Map<string,{token:symbol;cwd:string}>(),projectActive=new Map<string,string>(),sessionOwners=new Map<string,string>(),eventQueues=new Map<string,Event[]>(),flushTimers=new Map<string,ReturnType<typeof setTimeout>>()
@@ -42,7 +42,7 @@ function current(id:string):Snapshot{return useWorkspace.getState().connectionId
 // 按 messages 数组引用缓存：流式里每个 patch 都会比较前后标题，原来每次都从头扫消息；
 // messages 引用没变（多数 patch 只改 phase/tools/telemetry）时直接复用上次结果。
 const titleCache=new WeakMap<object,string>()
-function firstUserTitle(transcript:Workspace['transcript']){
+export function firstUserTitle(transcript:Workspace['transcript']){
  const cached=titleCache.get(transcript.messages)
  if(cached!==undefined)return cached
  const title=scanFirstUserTitle(transcript)

@@ -82,6 +82,12 @@ function ModelPickerImpl() {
   };
 
   async function choose(command: Parameters<typeof request>[0]) {
+    // 思考档位先在本地落一次：松开滑块那一刻 composer 上的 pill 就变，
+    // RPC 只是去确认；确认失败再回滚。get_state 会把真实状态盖回来。
+    const previous = useWorkspace.getState().state;
+    if (command.type === "set_thinking_level" && previous) {
+      useWorkspace.getState().set({ state: { ...previous, thinkingLevel: command.level } });
+    }
     try {
       await request(command, 30000, project);
       const next = await request<typeof state>({ type: "get_state" }, 30000, project);
@@ -91,6 +97,7 @@ function ModelPickerImpl() {
       }
       useWorkspace.getState().set({ state: next });
     } catch (error) {
+      if (command.type === "set_thinking_level" && previous) useWorkspace.getState().set({ state: previous });
       report(error);
     }
   }

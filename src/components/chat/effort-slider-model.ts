@@ -44,6 +44,19 @@ export function effortLabel(level?: string) {
   return level.charAt(0).toUpperCase() + level.slice(1);
 }
 
+/** Medium 是速度和质量之间的推荐档，demo 里它是轨道上那根竖条。 */
+export function effortIsRecommended(level?: string) {
+  return effortFieldMode(level) === "medium";
+}
+
+/**
+ * 最高档就是 Galaxy：demo 里它比 Max 还高一档（大脑变蓝紫、轨道变成像素网格、
+ * 光柱外射），我们把它绑在最后一个可用档位上，所以最高只到 High 的模型同样能看到。
+ */
+export function effortIsGalaxy(level: string | undefined, levels: readonly string[]) {
+  return levels.length > 0 && level === levels[levels.length - 1];
+}
+
 export function effortVisualSlot(level?: string) {
   return VISUAL_SLOT[normalize(level)] ?? 0;
 }

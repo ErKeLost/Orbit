@@ -17,12 +17,16 @@ import { useShell, type SidebarTab } from "./shellStore";
 import { FileTree } from "./FileTree";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { GitChangesPanel } from "../source-control/ui/GitChangesPanel";
-import { GitFileDiffModal } from "../source-control/ui/GitFileDiffModal";
-import type { GitFileDiffKind } from "../../platform/tauri/fs";
 import { TerminalSpinner } from "./TerminalSpinner";
 
 const SIDEBAR_MIN = 220;
 const SIDEBAR_MAX = 420;
+
+/** The repo-relative path the changes list matches against `selectedPath`. */
+function relativeTo(cwd: string, path: string) {
+  const root = cwd.replace(/\/+$/, "");
+  return path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
+}
 
 function relativeTime(iso: string) {
   const time = Date.parse(iso);
@@ -252,7 +256,7 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
   const setWidth = useShell((state) => state.setSessionSidebarWidth);
   const setProjectRailOpen = useShell((state) => state.setProjectRailOpen);
   const [query, setQuery] = useState("");
-  const [diffTarget, setDiffTarget] = useState<{ path: string; kind: GitFileDiffKind } | null>(null);
+  const [selected, setSelected] = useState<{ path: string; kind: "staged" | "unstaged" } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const project = workspaceMode === "project" && cwd && cwd !== homeDir ? cwd : "";
@@ -304,12 +308,15 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
           <GitChangesPanel
             cwd={project}
             enabled={visible && tab === "changes" && online}
+            selectedPath={selected?.path}
+            selectedKind={selected?.kind}
             onOpenFile={(path, kind, pin) => {
-              if (pin) {
-                setDiffTarget(null);
-                openFile(path, { pin: true });
-              } else {
-                setDiffTarget({ path, kind });
+              // A plain click opens the diff as its own tab; a double click opens
+              // the editable file instead.
+              if (pin) openFile(path, { pin: true });
+              else {
+                setSelected({ path: relativeTo(project, path), kind });
+                openFile(path, { pin: true, diff: kind });
               }
             }}
             onOpenAllChanges={() => undefined}
@@ -319,16 +326,6 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
           <p className="px-3 py-2 text-[12px] text-content/50">没有项目文件夹</p>
         )}
       </div>
-
-      {diffTarget && project ? (
-        <GitFileDiffModal
-          cwd={project}
-          path={diffTarget.path}
-          kind={diffTarget.kind}
-          onClose={() => setDiffTarget(null)}
-          onOpenInEditor={(path) => openFile(path, { pin: true })}
-        />
-      ) : null}
 
       {tab === "sessions" && project ? (
         <div className="flex h-9 shrink-0 items-center gap-1 border-b border-stroke px-2">

@@ -3,8 +3,10 @@
 .composer-model-menu {
   display: grid;
   width: min(280px, calc(100vw - 24px));
+  /* 高度跟着模型数量走：两三个模型就只是两三个模型的高度；
+     列表超过 .composer-model-groups 的 max-height 才固定高度并滚动。 */
   max-height: min(470px, calc(100vh - 96px));
-  grid-template-rows: auto minmax(96px, 300px) auto;
+  grid-template-rows: auto minmax(0, auto) auto;
   gap: 0;
   padding: 0;
   overflow: hidden;
@@ -34,7 +36,7 @@
 
 .composer-model-search input::placeholder { color: color-mix(in srgb, var(--color-content) 50%, transparent); }
 
-.composer-model-groups { min-height: 0; padding: 1px 6px 6px; overflow-y: auto; overscroll-behavior: contain; border-top: 1px solid var(--color-stroke); scrollbar-width: thin; }
+.composer-model-groups { min-height: 0; max-height: 300px; padding: 1px 6px 6px; overflow-y: auto; overscroll-behavior: contain; border-top: 1px solid var(--color-stroke); scrollbar-width: thin; }
 
 .composer-model-group { padding: 6px 0 1px; }
 
@@ -43,10 +45,10 @@
 .composer-model-row {
   display: flex;
   width: 100%;
-  min-height: 34px;
+  min-height: 36px;
   align-items: center;
   gap: 7px;
-  padding: 3px 7px;
+  padding: 5px 7px;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -54,6 +56,9 @@
   text-align: left;
   cursor: pointer;
 }
+
+/* 行与行之间留一点上下间距，不再挤成一片。 */
+.composer-model-row + .composer-model-row { margin-top: 4px; }
 
 .composer-model-row:hover,.composer-model-row.active { background: var(--color-selection); }
 
@@ -65,7 +70,7 @@
 
 .composer-model-empty { margin: 12px 8px; color: color-mix(in srgb, var(--color-content) 50%, transparent); font-size: 11px; }
 
-.composer-effort-footer { padding: 4px 12px; border-top: 1px solid var(--color-stroke); background: color-mix(in oklch, color-mix(in srgb, var(--color-content) 6%, transparent) 24%, var(--color-background-base)); }
+.composer-effort-footer { padding: 10px 12px 12px; border-top: 1px solid var(--color-stroke); background: color-mix(in oklch, color-mix(in srgb, var(--color-content) 6%, transparent) 24%, var(--color-background-base)); }
 
 .light .composer-model-search,
 html[data-theme="light"] .composer-model-search {

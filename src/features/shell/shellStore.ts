@@ -25,7 +25,7 @@ import {
 export type SidebarTab = "sessions" | "files" | "changes";
 export type CollapsedRailMode = "compact" | "hidden";
 export type DockPosition = "bottom" | "top" | "left" | "right";
-export type OpenFile = { path: string; name: string; preview: boolean };
+export type OpenFile = { path: string; name: string; preview: boolean; /** Set on a diff tab: the working-tree comparison it shows. */ diff?: "staged" | "unstaged" };
 export type PaneState = { files: OpenFile[]; activeFile: string | null };
 
 /** The session pane's leaf id; editor panes use `editor:<n>`. */
@@ -193,8 +193,9 @@ type ShellState = Persisted & {
   bindWorkspaceConnection: (id: string, connectionId: string) => void;
   setWorkspaceCwd: (id: string, cwd: string) => void;
   focusPane: (paneId: string) => void;
-  /** Open a file in the focused editor pane, splitting one off when there is none. */
-  openFile: (path: string, options?: { pin?: boolean; pane?: string }) => void;
+  /** Open a file in the focused editor pane, splitting one off when there is none.
+   * `diff` opens the tab as a working-tree diff instead of an editable file. */
+  openFile: (path: string, options?: { pin?: boolean; pane?: string; diff?: "staged" | "unstaged" }) => void;
   pinFile: (path: string, pane?: string) => void;
   closeFile: (path: string, pane?: string) => void;
   focusFile: (path: string | null, pane?: string) => void;
@@ -424,16 +425,18 @@ export const useShell = create<ShellState>((set, get) => {
       if (found) {
         patchActive((current) => {
           const pane = current.panes[found.paneId];
-          const files = options?.pin
-            ? pane.files.map((file) => (file.path === path ? { ...file, preview: false } : file))
-            : pane.files;
+          const files = pane.files.map((file) =>
+            file.path === path
+              ? { ...file, preview: options?.pin ? false : file.preview, diff: options?.diff }
+              : file,
+          );
           return { ...current, panes: { ...current.panes, [found.paneId]: { files, activeFile: path } }, activePane: found.paneId };
         });
         return;
       }
       const requested = options?.pane && workspace.panes[options.pane] ? options.pane : null;
       const target = requested ?? (workspace.panes[workspace.activePane] ? workspace.activePane : Object.keys(workspace.panes)[0] ?? null);
-      const entry: OpenFile = { path, name: fileName(path), preview: !options?.pin };
+      const entry: OpenFile = { path, name: fileName(path), preview: !options?.pin, ...(options?.diff ? { diff: options.diff } : {}) };
       if (target) {
         patchActive((current) => {
           const pane = current.panes[target];

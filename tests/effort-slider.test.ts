@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { effortFieldProfile, type EffortFieldMode } from "../src/components/chat/effort-pixel-field";
-import { effortColorsForLevels, effortFieldMode, effortVisualPosition, effortVisualSlot } from "../src/components/chat/effort-slider-model";
+import {
+  effortColorsForLevels,
+  effortFieldMode,
+  effortIsGalaxy,
+  effortIsRecommended,
+  effortVisualPosition,
+  effortVisualSlot,
+} from "../src/components/chat/effort-slider-model";
 
 describe("effort slider visual semantics", () => {
   test("does not treat the final available level as Max", () => {
@@ -23,12 +29,24 @@ describe("effort slider visual semantics", () => {
     expect(effortFieldMode("medium")).toBe("medium");
   });
 
-  test("increases pixel density and animation speed at every stage", () => {
-    const modes: EffortFieldMode[] = ["off", "minimal", "low", "medium", "high", "extra", "max"];
-    const profiles = modes.map(effortFieldProfile);
-    expect(profiles.every((profile, index) => index === 0 || profile.density > profiles[index - 1].density)).toBe(true);
-    expect(profiles.every((profile, index) => index === 0 || profile.period < profiles[index - 1].period)).toBe(true);
-    const colors = modes.map((_, index) => effortColorsForLevels(modes, index).base);
-    expect(new Set(colors).size).toBe(modes.length);
+  test("keeps a distinct colour for every stage", () => {
+    const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+    const colors = levels.map((level) => effortColorsForLevels(levels, levels.indexOf(level)).base);
+    expect(new Set(colors).size).toBe(levels.length);
+  });
+
+  test("treats the top available level as Galaxy", () => {
+    const five = ["off", "minimal", "low", "medium", "high"];
+    expect(effortIsGalaxy("high", five)).toBe(true);
+    expect(effortIsGalaxy("medium", five)).toBe(false);
+    const seven = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+    expect(effortIsGalaxy("high", seven)).toBe(false);
+    expect(effortIsGalaxy("max", seven)).toBe(true);
+  });
+
+  test("marks medium as the recommended stage", () => {
+    const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+    expect(levels.filter(effortIsRecommended)).toEqual(["medium"]);
+    expect(effortIsRecommended("max")).toBe(false);
   });
 });
