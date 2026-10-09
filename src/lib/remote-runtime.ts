@@ -7,6 +7,7 @@ import {
   type RemoteForegroundReason,
 } from "./remote-client"
 import {
+  findRemoteConnection,
   parsePairingEndpoints,
   type RemoteConnection,
   type RemoteEndpoint,
@@ -231,6 +232,40 @@ export function remoteHostSnapshot() {
   return connectedClient().getSnapshot()
 }
 
+function connectionValue(value: RemoteJson | undefined): RemoteConnection | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined
+  const { id, cwd } = value as { id?: unknown; cwd?: unknown }
+  return typeof id === "string" && id && typeof cwd === "string" && cwd ? { id, cwd } : undefined
+}
+
+/** Whether an error means this Host predates `connection.resolve`. */
+function unknownOperationError(error: unknown): boolean {
+  const message = String(error instanceof Error ? error.message : error)
+  return message.includes("host.operation") || message.includes("不支持的远程消息")
+}
+
+/**
+ * Ask the desktop which live connection serves a project.
+ *
+ * The desktop resolves a path the way its own bridge does — an exact
+ * connection id first, then the canonical directory — so a phone never has to
+ * reproduce the desktop's path rules. That is the difference between "the
+ * desktop has this project open" and "the phone can attach to it" for a path
+ * that reaches the desktop through a symlink or with a trailing slash.
+ *
+ * `undefined` means "no connection, or a Host too old to answer". A transport
+ * failure still throws: treating it as "no connection" would hide why the
+ * phone cannot reach the computer at all.
+ */
+export async function resolveRemoteConnection(project: string, timeoutMs = 10_000): Promise<RemoteConnection | undefined> {
+  try {
+    return connectionValue(await runRemoteHostOperation({ name: "connection.resolve", path: project }, timeoutMs))
+  } catch (error) {
+    if (unknownOperationError(error)) return undefined
+    throw error
+  }
+}
+
 /**
  * Wait for the desktop to expose a live connection for a project.
  *
@@ -238,13 +273,17 @@ export function remoteHostSnapshot() {
  * connection, so the Host asks it rather than creating one — which means the
  * phone has to wait for the connection to appear instead of assuming it is
  * instant. Bounded so a desktop that never answers fails the tap rather than
- * hanging the rail.
+ * hanging the rail. Every round asks the Host to resolve and only then falls
+ * back to the connections in the snapshot, so the answer is the desktop's
+ * rather than a path guess the phone made alone.
  */
 export async function waitForRemoteConnection(cwd: string, timeoutMs = 20_000): Promise<RemoteConnection | undefined> {
   const deadline = Date.now() + timeoutMs
   for (;;) {
+    const resolved = await resolveRemoteConnection(cwd)
+    if (resolved) return resolved
     const snapshot = await remoteHostSnapshot()
-    const connection = snapshot.connections.find(item => item.cwd === cwd)
+    const connection = findRemoteConnection(snapshot.connections, cwd)
     if (connection) return connection
     if (Date.now() >= deadline) return undefined
     await new Promise(resolve => setTimeout(resolve, 300))

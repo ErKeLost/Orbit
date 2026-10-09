@@ -81,29 +81,32 @@ fn remove_worker_if_current(
     }
     current
 }
+/**
+ * The live worker key that serves `project`.
+ *
+ * A caller may hold an older path spelling (a trailing slash, a symlinked
+ * parent such as `/tmp` on macOS) while the worker keeps the canonical
+ * directory it was started in. Resolve that alias rather than reporting a
+ * missing connection. Exact connection ids still win, so concurrent sessions
+ * on one project stay isolated.
+ */
+fn worker_key(workers: &HashMap<String, Worker>, project: &str) -> Option<String> {
+    if workers.contains_key(project) {
+        return Some(project.to_owned());
+    }
+    let canonical = PathBuf::from(project).canonicalize().ok()?;
+    workers
+        .iter()
+        .find_map(|(id, worker)| (worker.cwd == canonical).then(|| id.clone()))
+}
+
 impl Bridge {
     pub fn send(&self, project: &str, command: Value) -> Result<(), String> {
         if !command.is_object() || command.get("type").and_then(Value::as_str).is_none() {
             return Err("RPC command requires a type".into());
         }
         let mut slot = self.0.lock().map_err(|e| e.to_string())?;
-        // The UI may restore an older project path spelling (for example a
-        // trailing slash) while the worker keeps the canonical directory.
-        // Resolve that alias before reporting a missing connection. Exact
-        // connection ids still win so concurrent sessions remain isolated.
-        let key = if slot.contains_key(project) {
-            project.to_owned()
-        } else {
-            let canonical = PathBuf::from(project).canonicalize().ok();
-            slot.iter()
-                .find_map(|(id, worker)| {
-                    canonical
-                        .as_deref()
-                        .filter(|path| *path == worker.cwd.as_path())
-                        .map(|_| id.clone())
-                })
-                .ok_or("项目尚未连接")?
-        };
+        let key = worker_key(&slot, project).ok_or("项目尚未连接")?;
         let worker = slot.get_mut(&key).ok_or("项目尚未连接")?;
         let mut bytes = serde_json::to_vec(&command).map_err(|e| e.to_string())?;
         bytes.push(b'\n');
@@ -112,6 +115,18 @@ impl Bridge {
             .write_all(&bytes)
             .and_then(|_| worker.stdin.flush())
             .map_err(|e| e.to_string())
+    }
+
+    /// The connection that serves `project`, as `(connection id, canonical directory)`.
+    ///
+    /// This is the same resolution `send` uses, which is what lets a phone
+    /// attach to whatever the desktop has open instead of reproducing the
+    /// desktop's own path rules.
+    pub fn resolve(&self, project: &str) -> Option<(String, String)> {
+        let workers = self.0.lock().ok()?;
+        let key = worker_key(&workers, project)?;
+        let worker = workers.get(&key)?;
+        Some((key, worker.cwd.to_string_lossy().into_owned()))
     }
 
     pub fn connections(&self) -> Vec<Value> {
@@ -3479,6 +3494,44 @@ mod tests {
             cwd: std::env::temp_dir(),
         }
     }
+    #[test]
+    fn resolve_answers_with_the_worker_that_owns_a_path_spelling() {
+        let bridge = Bridge::default();
+        let root = std::env::temp_dir().join(format!(
+            "orbit-bridge-resolve-{}",
+            std::process::id()
+        ));
+        let real = root.join("project");
+        let alias = root.join("link");
+        fs::create_dir_all(&real).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        #[cfg(not(unix))]
+        let alias = real.clone();
+
+        let canonical = real.canonicalize().unwrap();
+        let id = alias.to_string_lossy().into_owned();
+        let mut owned = worker();
+        owned.cwd = canonical.clone();
+        bridge.0.lock().unwrap().insert(id.clone(), owned);
+
+        // Sending resolves the alias so a phone's spelling reaches the worker…
+        assert!(bridge
+            .send(&id, json!({"type":"get_state"}))
+            .is_ok());
+        // …and `resolve` publishes which connection did, which is what lets the
+        // phone attach to a project the desktop has open under another spelling.
+        let (resolved_id, resolved_cwd) = bridge.resolve(&id).unwrap();
+        assert_eq!(resolved_id, id);
+        assert_eq!(resolved_cwd, canonical.to_string_lossy());
+        // Trailing slashes and unknown paths are handled without panicking.
+        assert!(bridge.resolve(&format!("{id}/")).is_some());
+        assert!(bridge.resolve(&root.join("missing").to_string_lossy()).is_none());
+
+        bridge.stop();
+        let _ = fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn disconnecting_one_project_keeps_the_other_process_alive() {
         let bridge = Bridge::default();

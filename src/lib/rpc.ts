@@ -7,8 +7,8 @@ import {useWorkspace,type LiveSession,type Workspace,type WorkspaceMode} from '.
 import {normalizeProjectPath,projectExtraRoots,useProjects} from './projects'
 import {parseAgentSnapshot} from './agents'
 import {emptyTranscript,hydrate,reduceEvent,type Event,type PiMessage,type RpcSessionState,type UiRequest} from './protocol'
-import {attachRemoteConnection,remoteHostSnapshot,runRemoteHostOperation,sendRemotePiCommand,waitForRemoteConnection} from './remote-runtime'
-import type {RemoteJson} from './remote-protocol'
+import {attachRemoteConnection,remoteHostSnapshot,resolveRemoteConnection,runRemoteHostOperation,sendRemotePiCommand,waitForRemoteConnection} from './remote-runtime'
+import {findRemoteConnection,type RemoteConnection,type RemoteJson} from './remote-protocol'
 export const queryClient=new QueryClient({defaultOptions:{queries:{retry:false,refetchOnWindowFocus:false,staleTime:15000,gcTime:120000}}})
 export const native=isTauri()
 export type ProviderModel={
@@ -206,6 +206,13 @@ export function request<T=unknown>(command:RpcCommand,timeoutMs=30000,target=use
  })
 }
 export function report(error:unknown){useWorkspace.getState().set({error:String(error instanceof Error?error.message:error)})}
+/** The desktop's live projects, as a phone names them in a failure it shows. */
+function describeConnections(connections:readonly RemoteConnection[]){return connections.length?connections.map(item=>item.cwd).join('、'):'无'}
+function asConnection(value:RemoteJson|undefined):RemoteConnection|undefined{
+ if(typeof value!=='object'||value===null||Array.isArray(value))return undefined
+ const {id,cwd}=value as {id?:unknown;cwd?:unknown}
+ return typeof id==='string'&&id&&typeof cwd==='string'&&cwd?{id,cwd}:undefined
+}
 export function persistedSessionFile(project:string):string {
  const value=readSessionFiles()[project];return typeof value==='string'?value:''
 }
@@ -411,17 +418,27 @@ export async function connect(cwd:string,workspaceMode:WorkspaceMode=useWorkspac
  if(mobileRuntime()){
   const snapshot=await remoteHostSnapshot()
   if(snapshot.theme||snapshot.machineName)useWorkspace.getState().set({...snapshot.theme?{remoteTheme:snapshot.theme}:{},...snapshot.machineName?{remoteMachineName:snapshot.machineName}:{}})
-  let connection=snapshot.connections.find(item=>item.cwd===cwd)
+  let connection=findRemoteConnection(snapshot.connections,cwd)
+  if(!connection){
+   // A snapshot only carries the strings the desktop published, so it cannot
+   // resolve a spelling difference. The desktop owns path identity — a project
+   // may be registered as `/tmp/demo` while its Pi worker reports the canonical
+   // `/private/tmp/demo` — so ask the Host before deciding it is not open. A
+   // Host too old to answer leaves this undefined and the open below still runs.
+   connection=await resolveRemoteConnection(cwd)
+  }
   if(!connection){
    // The rail renders the desktop's whole registry, but only a project with a
    // live Pi connection can be attached to. Tapping a listed-but-closed project
    // used to dead-end; ask the desktop to open it (the same thing selecting it
-   // there does) and wait for the connection to appear.
-   try{await runRemoteHostOperation({name:'project.open',path:cwd})}
+   // there does). An answer that already carries a connection means it was open
+   // all along, which skips the wait entirely.
+   let opened:RemoteConnection|undefined
+   try{opened=asConnection(await runRemoteHostOperation({name:'project.open',path:cwd}))}
    catch(error){throw new Error(`电脑端无法打开这个项目：${error instanceof Error?error.message:error}`)}
-   connection=await waitForRemoteConnection(cwd)
+   connection=opened??await waitForRemoteConnection(cwd)
   }
-  if(!connection)throw new Error('电脑端没有这个项目的活动连接')
+  if(!connection)throw new Error(`电脑端没有这个项目的活动连接：${cwd}（电脑端当前连接：${describeConnections(snapshot.connections)}）`)
   await connectRemoteConnection(connection,workspaceMode)
   if(workspaceMode==='project')await syncConfiguredProjectRoots(cwd)
   return

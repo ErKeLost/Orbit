@@ -45,6 +45,15 @@ enum RemoteHostOperation {
     /// running, so the phone can enter any project it can see.
     #[serde(rename = "project.open")]
     ProjectOpen { path: String },
+    /// Which live connection serves a project, resolved by the Host.
+    ///
+    /// The Host owns path identity: it answers with the connection for an exact
+    /// id, or for the canonical directory behind any spelling of that path (a
+    /// trailing slash, a symlinked parent such as `/tmp` on macOS). A phone
+    /// asks here instead of comparing paths itself, so a project the desktop
+    /// has open stays attachable whatever spelling it arrived with.
+    #[serde(rename = "connection.resolve")]
+    ConnectionResolve { path: String },
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -801,11 +810,31 @@ mod desktop {
                 request_project(app, "add", path)
             }
             super::RemoteHostOperation::ProjectOpen { path } => {
+                // Already open: answer with the connection in this round trip.
+                // The window would only re-select it, and the phone would then
+                // poll for something that already exists — that poll is where a
+                // path spelling the phone could not match itself used to time
+                // out and dead-end the tap.
+                let connection = connection_for(app, &path);
+                if !connection.is_null() {
+                    return Ok(connection);
+                }
                 request_project(app, "open", path)
             }
             super::RemoteHostOperation::ProjectForget { path } => {
                 request_project(app, "forget", path)
             }
+            super::RemoteHostOperation::ConnectionResolve { path } => {
+                Ok(connection_for(app, &path))
+            }
+        }
+    }
+
+    /// One connection as the phone receives it, or `null` when nothing serves `path`.
+    fn connection_for(app: &AppHandle, path: &str) -> Value {
+        match app.state::<crate::bridge::Bridge>().resolve(path) {
+            Some((id, cwd)) => json!({"id": id, "cwd": cwd}),
+            None => Value::Null,
         }
     }
 

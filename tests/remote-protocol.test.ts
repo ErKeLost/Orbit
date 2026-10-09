@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { decodeRemoteMessage, encodeRemoteMessage, isRemoteEvent, isRemoteHostSnapshot, isRemoteRequest, parsePairingEndpoints, parsePairingUri, remoteWebSocketUrl, REMOTE_PROTOCOL } from "../src/lib/remote-protocol"
+import { decodeRemoteMessage, encodeRemoteMessage, findRemoteConnection, isRemoteEvent, isRemoteHostSnapshot, isRemoteRequest, parsePairingEndpoints, parsePairingUri, remoteWebSocketUrl, sameRemotePath, REMOTE_PROTOCOL } from "../src/lib/remote-protocol"
 
 const KEY = "k".repeat(43)
 
@@ -59,12 +59,33 @@ describe("remote protocol", () => {
     expect(() => parsePairingUri("orbit://pair?host=127.0.0.1&port=0&token=short&protocol=old")).toThrow()
   })
 
+  test("matches a project to its connection without trusting one spelling", () => {
+    const connections = [{ id: "/tmp/demo", cwd: "/private/tmp/demo" }, { id: "/work/demo#2", cwd: "/work/demo" }]
+    // The phone's spelling, the desktop's canonical directory, and an exact
+    // connection id all reach the connection that serves the project.
+    expect(findRemoteConnection(connections, "/tmp/demo")).toEqual(connections[0])
+    expect(findRemoteConnection(connections, "/private/tmp/demo")).toEqual(connections[0])
+    expect(findRemoteConnection(connections, "/work/demo#2")).toEqual(connections[1])
+    expect(findRemoteConnection(connections, "/work/demo")).toEqual(connections[1])
+    expect(findRemoteConnection(connections, "/work/demo/")).toEqual(connections[1])
+    expect(findRemoteConnection(connections, "/work/other")).toBeUndefined()
+    // An empty project is not the root directory, and `/` is a real path.
+    expect(findRemoteConnection(connections, "")).toBeUndefined()
+    expect(findRemoteConnection([{ id: "/", cwd: "/" }], "")).toBeUndefined()
+    expect(findRemoteConnection([{ id: "/", cwd: "/" }], "/")).toEqual({ id: "/", cwd: "/" })
+    expect(sameRemotePath("/work/demo/", "/work/demo")).toBe(true)
+    expect(sameRemotePath("", "/")).toBe(false)
+    expect(sameRemotePath("/work/a", "/work/b")).toBe(false)
+  })
+
   test("validates typed host operations", () => {
     expect(isRemoteRequest({ type: "host.operation", operation: { name: "session.list", cwd: "/workspace/demo" } })).toBe(true)
     expect(isRemoteRequest({ type: "host.operation", operation: { name: "project.add", path: "/workspace/demo" } })).toBe(true)
     expect(isRemoteRequest({ type: "host.operation", operation: { name: "project.forget", path: "/workspace/demo" } })).toBe(true)
     expect(isRemoteRequest({ type: "host.operation", operation: { name: "project.open", path: "/workspace/demo" } })).toBe(true)
     expect(isRemoteRequest({ type: "host.operation", operation: { name: "project.open", path: "" } })).toBe(false)
+    expect(isRemoteRequest({ type: "host.operation", operation: { name: "connection.resolve", path: "/workspace/demo" } })).toBe(true)
+    expect(isRemoteRequest({ type: "host.operation", operation: { name: "connection.resolve", path: "" } })).toBe(false)
     expect(isRemoteRequest({ type: "host.operation", operation: { name: "project.add", path: "" } })).toBe(false)
     expect(isRemoteRequest({ type: "host.operation", operation: { name: "arbitrary.command", cwd: "/workspace/demo" } })).toBe(false)
   })

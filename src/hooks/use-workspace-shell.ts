@@ -10,7 +10,7 @@ import { notifyRemoteForeground, openRemoteRuntime, remoteHostSnapshot, storedPa
 import { restoreRemoteHost } from "../lib/remote-host";
 import { restorePersistentState } from "../lib/persistent";
 import { toast as gooeyToast } from "../shared/ui/toast";
-import type { RemoteConnection, RemoteHostSnapshot } from "../lib/remote-protocol";
+import { findRemoteConnection, type RemoteConnection, type RemoteHostSnapshot } from "../lib/remote-protocol";
 import { useWorkspace } from "../lib/store";
 import { CHAT_PANE_ID, useShell } from "../features/shell/shellStore";
 import { useWorkspaceTabs } from "../features/shell/use-workspace-tabs";
@@ -20,8 +20,12 @@ let runtimeStarted = false;
 type PairingState = { uri: string; required: boolean; connecting: boolean; error: string | null };
 
 function preferredRemoteConnection(snapshot: RemoteHostSnapshot, connectionId?: string, cwd?: string, fallbackToFirst = true): RemoteConnection | undefined {
-  return snapshot.connections.find(item => item.id === connectionId)
-    ?? snapshot.connections.find(item => item.cwd === cwd)
+  // The connection the phone last used wins, then the project it was in. Both
+  // go through the same alias-tolerant match the rail uses, so a path spelling
+  // the Host later canonicalized (a symlinked parent, a trailing slash) still
+  // finds its connection instead of dropping the phone to a different project.
+  return (connectionId ? findRemoteConnection(snapshot.connections, connectionId) : undefined)
+    ?? (cwd ? findRemoteConnection(snapshot.connections, cwd) : undefined)
     ?? (fallbackToFirst ? snapshot.connections[0] : undefined);
 }
 

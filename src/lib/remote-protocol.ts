@@ -33,6 +33,16 @@ export type RemoteHostOperation =
    * would. `project.add` implies an open, this one is the open without a write.
    */
   | { name: "project.open"; path: string }
+  /**
+   * Which live connection serves a project.
+   *
+   * The desktop owns path identity, and it is the only side that can resolve
+   * one: a project may be registered as `/tmp/demo` while the Pi worker it
+   * started reports the canonical `/private/tmp/demo`. The phone asking here
+   * means it never has to reproduce the desktop's path rules, and a project the
+   * desktop already has open is attachable instead of a dead end.
+   */
+  | { name: "connection.resolve"; path: string }
 
 /** One project as the desktop publishes it to the phone. */
 export type RemoteProject = { path: string; name: string; roots?: string[] }
@@ -142,6 +152,29 @@ export type RemoteRequest =
   | { type: "screen.ack"; requestId?: string; seq?: number; queueDelayMs: number }
 
 export type RemoteConnection = { id: string; cwd: string }
+
+/** Trailing slashes are the same directory; `/` itself is a real path. */
+export function sameRemotePath(left: string, right: string): boolean {
+  if (left === right) return true
+  const stripped = (value: string) => value.replace(/\/+$/, "")
+  const a = stripped(left)
+  return a.length > 0 && a === stripped(right)
+}
+
+/**
+ * The connection that serves `project`, as far as a snapshot can tell.
+ *
+ * Exact ids win (one project can have several live sessions), then the exact
+ * directory, then the same path written with a trailing slash. This is the
+ * offline fallback for `connection.resolve`; the Host's answer is authoritative
+ * because only it can canonicalize.
+ */
+export function findRemoteConnection(connections: readonly RemoteConnection[], project: string): RemoteConnection | undefined {
+  return connections.find((item) => item.id === project)
+    ?? connections.find((item) => item.cwd === project)
+    ?? connections.find((item) => sameRemotePath(item.id, project))
+    ?? connections.find((item) => sameRemotePath(item.cwd, project))
+}
 export type RemoteHostSnapshot = {
   protocol: typeof REMOTE_PROTOCOL
   serverTime: number
@@ -226,7 +259,7 @@ export function isRemoteHostOperation(value: unknown): value is RemoteHostOperat
   if (!record(value) || typeof value.name !== "string") return false
   if (value.name === "session.list" || value.name === "project.files") return stringValue(value.cwd)
   if (value.name === "session.turnDurations" || value.name === "session.delete") return stringValue(value.sessionPath)
-  if (value.name === "project.add" || value.name === "project.forget" || value.name === "project.open") return stringValue(value.path)
+  if (value.name === "project.add" || value.name === "project.forget" || value.name === "project.open" || value.name === "connection.resolve") return stringValue(value.path)
   return false
 }
 

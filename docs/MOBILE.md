@@ -133,10 +133,24 @@ them: tapping a listed project without a connection failed with
 「电脑端没有这个项目的活动连接」, which read as "the project is there but the tap
 does nothing". Tapping now sends `project.open`, the Host hands it to the desktop
 window, the window runs its own `connect` (the same one selecting the project
-there does), and the phone polls the snapshot until the connection appears —
-bounded, so a desktop that never answers fails the tap instead of hanging it.
+there does), and the phone polls until the connection appears — bounded, so a
+desktop that never answers fails the tap instead of hanging it.
 `project.add` still implies an open; `project.open` is the open without a
 registry write, so a project is only listed once.
+
+**The Host resolves the path, because only it can.** A project is registered
+under the spelling the user typed, while the Pi worker reports the canonical
+directory it was started in — the same project can be `/tmp/demo` to the phone
+and `/private/tmp/demo` to the desktop. Comparing those strings on the phone
+turned a project the desktop had open into 「没有活动连接」, and no amount of
+retrying could change it, because the phone was comparing two correct answers.
+So `connection.resolve` exists: the phone sends a spelling, the Host answers with
+the connection that serves it, resolving exactly the way its own bridge resolves
+a command (an exact connection id first, then the canonical directory).
+`project.open` answers with the connection directly when the project is already
+open, which also removes the wait. The phone's own comparison is a fallback for
+an older Host, and treats a trailing slash as the same directory — never as a
+different project.
 
 The consequence is deliberate: the phone and the desktop share one workspace
 pointer. Opening a project on the phone switches the desktop to it, exactly as
