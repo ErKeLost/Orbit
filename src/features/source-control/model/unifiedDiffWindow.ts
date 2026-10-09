@@ -14,6 +14,9 @@ export type DiffViewRow =
   | { type: "line"; line: UnifiedLine; stage: boolean; height: number }
   | { type: "fold"; id: string; hidden: number; height: number };
 
+/** Anything the virtualizer can lay out; it only ever reads `height`. */
+export type HeightedRow = { height: number };
+
 export type RowWindow = {
   start: number;
   end: number;
@@ -71,13 +74,13 @@ export function flattenVisibleRows(
   return rows;
 }
 
-export function rowsHeight(rows: readonly DiffViewRow[]): number {
+export function rowsHeight(rows: readonly HeightedRow[]): number {
   let height = 0;
   for (const row of rows) height += row.height;
   return height;
 }
 
-export function layoutRows(rows: readonly DiffViewRow[]): RowLayout {
+export function layoutRows(rows: readonly HeightedRow[]): RowLayout {
   const offsets = new Array<number>(rows.length + 1);
   offsets[0] = 0;
   for (let index = 0; index < rows.length; index += 1) {
@@ -87,7 +90,7 @@ export function layoutRows(rows: readonly DiffViewRow[]): RowLayout {
 }
 
 export function windowRows(
-  rows: readonly DiffViewRow[],
+  rows: readonly HeightedRow[],
   viewTop: number,
   viewBottom: number,
   overscan = UNIFIED_OVERSCAN_PX,

@@ -1302,3 +1302,12 @@ html.theme-light [data-composer-box] {
   margin: 0 2px;
   background: var(--color-stroke);
 }
+
+/* 分栏 diff 里没有对应行的那一半：斜线纹理占位（Codex 同款）。 */
+.split-diff-void {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--color-content) 13%, transparent) 0 1px,
+    transparent 1px 7px
+  );
+}

@@ -35,13 +35,17 @@ import {
   flattenVisibleRows,
   layoutRows,
   UNIFIED_FOLD_PX,
-  UNIFIED_HUNK_PX,
   UNIFIED_LINE_PX,
   UNIFIED_OVERSCAN_PX,
   windowRows,
-  type DiffViewRow,
   type RowWindow,
 } from "../model/unifiedDiffWindow";
+import {
+  splitColumnWidth,
+  toSplitRows,
+  type SplitCell,
+  type SplitRow,
+} from "../model/splitDiff";
 
 export type UnifiedDiffFileModel = {
   id: string;
@@ -400,7 +404,14 @@ const FileSection = memo(function FileSection({
             className="min-w-0 flex-1 truncate font-mono text-[12px] text-content/85"
             title={file.label}
           >
-            {file.label}
+            {/* Codex-style file header: the directories recede, the file name
+                carries the row. */}
+            {name.length < file.label.length ? (
+              <span className="text-content/45">
+                {file.label.slice(0, file.label.length - name.length)}
+              </span>
+            ) : null}
+            {name}
           </span>
           <DiffCounts additions={file.additions} deletions={file.deletions} />
         </button>
@@ -562,26 +573,24 @@ function VirtualRows({
   );
   const rows = useMemo(
     () =>
-      flattenVisibleRows(
-        blocks,
-        (foldId) => reveals[foldId],
-        !!canStageHunk && !!onStageHunk,
+      // Fold mechanics first — they own the reveal state — then the split
+      // pairing: the k-th deletion meets the k-th insertion, the short side
+      // gets a void cell that renders as hatching.
+      toSplitRows(
+        flattenVisibleRows(
+          blocks,
+          (foldId) => reveals[foldId],
+          !!canStageHunk && !!onStageHunk,
+        ),
       ),
     [blocks, canStageHunk, fileId, onStageHunk, reveals],
   );
   const rowLayout = useMemo(() => layoutRows(rows), [rows]);
   const totalHeight = rowLayout.totalHeight;
-  const minWidthCh = useMemo(() => {
-    let max = 40;
-    for (const row of rows) {
-      if (row.type === "line") {
-        max = Math.max(max, row.line.text.length);
-      }
-    }
-    // Slack for DiffLineRow's padding and its w-7 +/− marker column; keep in
-    // sync if either changes.
-    return max + 10;
-  }, [rows]);
+  // Both columns size to the longest line either shows, so the halves stay
+  // aligned while the whole grid scrolls horizontally together; the slack per
+  // column covers gutter, marker and padding.
+  const minWidthCh = useMemo(() => splitColumnWidth(rows) * 2 + 26, [rows]);
   const [range, setRange] = useState<RowWindow>(() => ({
     start: 0,
     end: 0,
@@ -630,7 +639,7 @@ function VirtualRows({
         const row = rows[index];
         if (!row) break;
         if (y < row.height) {
-          const key = diffRowKey(row, index);
+          const key = splitRowKey(row, index);
           setHoverKey((current) => (current === key ? current : key));
           return;
         }
@@ -650,19 +659,6 @@ function VirtualRows({
     if (!near) return;
     hoverAtY(mouseYRef.current);
   }, [hoverAtY, near]);
-
-  useLayoutEffect(() => {
-    if (!near) return;
-    const body = bodyRef.current;
-    if (!body) return;
-    const apply = () => {
-      body.style.setProperty("--unified-body-width", `${body.clientWidth}px`);
-    };
-    apply();
-    const observer = new ResizeObserver(apply);
-    observer.observe(body);
-    return () => observer.disconnect();
-  }, [near, totalHeight]);
 
   useEffect(() => {
     if (!near) return;
@@ -733,41 +729,48 @@ function VirtualRows({
     paddingBottom: range.padBottom,
   };
 
-  const renderLane = (lane: Lane) =>
-    visible.map((row, index) => {
-      const key = diffRowKey(row, range.start + index);
-      return (
-        <DiffLane
-          key={`${lane}-${key}`}
-          row={row}
-          lane={lane}
-          hovered={hoverKey === key}
-          commenting={commentTarget?.key === key}
-          tokens={row.type === "line" ? tokens?.get(row.line) : undefined}
-          onReveal={
-            row.type === "fold"
-              ? (direction) => onReveal(row.id, direction)
-              : undefined
-          }
-          onStage={
-            row.type === "line" && row.stage && row.line.pos != null
-              ? () => onStageHunk?.(fileId, row.line.pos as number)
-              : undefined
-          }
-          onComment={
-            lane === "gutter" && row.type === "line" && row.line.kind !== "hunk"
-              ? (anchor) => setCommentTarget({ key, line: row.line, anchor })
-              : undefined
-          }
-        />
-      );
-    });
+  const renderRow = (row: SplitRow, index: number) => {
+    const key = splitRowKey(row, range.start + index);
+    return (
+      <SplitRowView
+        key={key}
+        row={row}
+        hovered={hoverKey === key}
+        commenting={commentTarget?.key === key}
+        tokensLeft={
+          row.type === "pair" && row.left.kind !== "void"
+            ? tokens?.get(row.left.line)
+            : undefined
+        }
+        tokensRight={
+          row.type === "pair" && row.right.kind !== "void"
+            ? tokens?.get(row.right.line)
+            : undefined
+        }
+        onReveal={
+          row.type === "fold"
+            ? (direction) => onReveal(row.id, direction)
+            : undefined
+        }
+        onComment={
+          row.type === "pair"
+            ? (line, anchor) => setCommentTarget({ key, line, anchor })
+            : undefined
+        }
+        onStage={
+          row.type === "pair" && row.stage && row.stagePos != null
+            ? () => onStageHunk?.(fileId, row.stagePos as number)
+            : undefined
+        }
+      />
+    );
+  };
 
   return (
     <>
       <div
         ref={bodyRef}
-        className="flex"
+        className="min-w-0 flex-1"
         onMouseMove={(event) => {
           mouseYRef.current = event.clientY;
           hoverAtY(event.clientY);
@@ -777,15 +780,12 @@ function VirtualRows({
           hoverAtY(null);
         }}
       >
-        <div className="relative z-10 w-12 shrink-0" style={lanePad}>
-          {renderLane("gutter")}
-        </div>
         <div
           ref={codeRef}
           className="min-w-0 flex-1 overflow-x-auto overscroll-x-none"
         >
           <div style={{ ...lanePad, minWidth: `max(100%, ${minWidthCh}ch)` }}>
-            {renderLane("code")}
+            {visible.map(renderRow)}
           </div>
         </div>
       </div>
@@ -800,63 +800,67 @@ function VirtualRows({
   );
 }
 
-type Lane = "gutter" | "code";
-
 type DiffCommentDraft = {
   key: string;
   line: UnifiedLine;
   anchor: DOMRect;
 };
 
-function diffRowKey(row: DiffViewRow, index: number) {
+function splitRowKey(row: SplitRow, index: number) {
   if (row.type === "fold") return `fold-${row.id}`;
-  return `${index}-${row.line.kind}-${row.line.oldNumber ?? "x"}-${row.line.newNumber ?? "x"}`;
+  const left =
+    row.left.kind === "void"
+      ? "void"
+      : `${row.left.line.oldNumber ?? "x"}/${row.left.line.newNumber ?? "x"}`;
+  const right =
+    row.right.kind === "void"
+      ? "void"
+      : `${row.right.line.newNumber ?? "x"}`;
+  return `${index}-${left}-${right}`;
 }
 
-function DiffLane({
+function SplitRowView({
   row,
-  lane,
   hovered,
   commenting,
-  tokens,
+  tokensLeft,
+  tokensRight,
   onReveal,
-  onStage,
   onComment,
+  onStage,
 }: {
-  row: DiffViewRow;
-  lane: Lane;
+  row: SplitRow;
   hovered: boolean;
   commenting: boolean;
-  tokens?: SyntaxToken[];
+  tokensLeft?: SyntaxToken[];
+  tokensRight?: SyntaxToken[];
   onReveal?: (direction: "up" | "down" | "all") => void;
+  onComment?: (line: UnifiedLine, anchor: DOMRect) => void;
   onStage?: () => void;
-  onComment?: (anchor: DOMRect) => void;
 }) {
   if (row.type === "fold") {
-    if (lane === "gutter") {
-      return (
-        <div className="relative z-20" style={{ height: UNIFIED_FOLD_PX }}>
-          <div
-            className="absolute inset-y-0 left-0"
-            style={{ width: "var(--unified-body-width, 100%)" }}
-          >
-            <FoldBar hidden={row.hidden} onReveal={onReveal!} />
-          </div>
-        </div>
-      );
-    }
-    return <div style={{ height: UNIFIED_FOLD_PX }} />;
+    return <FoldBar hidden={row.hidden} onReveal={onReveal!} />;
   }
   return (
-    <DiffLineRow
-      line={row.line}
-      lane={lane}
-      hovered={hovered}
-      commenting={commenting}
-      tokens={tokens}
-      onStage={onStage}
-      onComment={onComment}
-    />
+    <div className="flex items-stretch" style={{ height: row.height }}>
+      <SplitHalf
+        side="left"
+        cell={row.left}
+        hovered={hovered}
+        commenting={commenting}
+        tokens={tokensLeft}
+        onComment={row.left.kind !== "void" ? onComment : undefined}
+      />
+      <SplitHalf
+        side="right"
+        cell={row.right}
+        hovered={hovered}
+        commenting={commenting}
+        tokens={tokensRight}
+        onComment={row.right.kind !== "void" ? onComment : undefined}
+        onStage={onStage}
+      />
+    </div>
   );
 }
 
@@ -869,7 +873,7 @@ function FoldBar({
 }) {
   return (
     <div
-      className="flex items-center gap-1 bg-content/8 px-2"
+      className="relative z-20 flex items-center gap-1 bg-content/8 px-2"
       style={{ height: UNIFIED_FOLD_PX }}
     >
       <button
@@ -901,124 +905,117 @@ function FoldBar({
   );
 }
 
-const DiffLineRow = memo(function DiffLineRow({
-  line,
-  lane,
+/** The hatched placeholder opposite a change: this side has no line here. */
+function SplitVoid({ side }: { side: "left" | "right" }) {
+  return (
+    <div
+      aria-hidden="true"
+      className={`split-diff-void w-1/2 shrink-0 grow-0 ${
+        side === "right" ? "border-l border-stroke" : ""
+      }`}
+    />
+  );
+}
+
+const SplitHalf = memo(function SplitHalf({
+  side,
+  cell,
   hovered,
   commenting,
   tokens,
-  onStage,
   onComment,
+  onStage,
 }: {
-  line: UnifiedLine;
-  lane: Lane;
+  side: "left" | "right";
+  cell: SplitCell;
   hovered: boolean;
   commenting: boolean;
   tokens?: SyntaxToken[];
+  onComment?: (line: UnifiedLine, anchor: DOMRect) => void;
   onStage?: () => void;
-  onComment?: (anchor: DOMRect) => void;
 }) {
-  if (line.kind === "hunk") {
-    return (
-      <div
-        className="flex items-center bg-content/5"
-        style={{ height: UNIFIED_HUNK_PX }}
-      >
-        {lane === "code" ? (
-          <span className="px-3 font-mono text-[11px] leading-none text-content/40">
-            {line.text}
-          </span>
-        ) : null}
-      </div>
-    );
-  }
-  const added = line.kind === "add";
-  const deleted = line.kind === "del";
+  if (cell.kind === "void") return <SplitVoid side={side} />;
+  const line = cell.line;
+  const added = cell.kind === "add";
+  const deleted = cell.kind === "del";
   const number = deleted ? line.oldNumber : line.newNumber;
   const row = added ? "bg-diff-add-bg" : deleted ? "bg-diff-del-bg" : "";
-  const gutterTint = added
-    ? "bg-diff-add-gutter"
+  // The change bar sits on each half's left edge — red before a removed line,
+  // green before an added one, the middle divider for the new column.
+  const markerBar = added
+    ? "bg-diff-add-fg"
     : deleted
-      ? "bg-diff-del-gutter"
+      ? "bg-diff-del-fg"
       : "";
   const gutterText = added
     ? "text-diff-add-fg"
     : deleted
       ? "text-diff-del-fg"
       : "text-content/35";
-
-  if (lane === "gutter") {
-    return (
-      <div
-        className={`relative flex items-center ${row}`}
-        style={{ height: UNIFIED_LINE_PX }}
-      >
-        {gutterTint ? (
-          <span
-            className={`pointer-events-none absolute inset-0 ${gutterTint}`}
-          />
-        ) : null}
-        <span
-          className={`relative block w-full pr-2 text-right font-mono text-[11px] leading-none tabular-nums ${gutterText}`}
-        >
-          {number ?? ""}
-        </span>
-        {onComment ? (
-          <button
-            type="button"
-            title={`Comment on line ${number ?? ""}`.trim()}
-            aria-label={`Comment on line ${number ?? ""}`.trim()}
-            onClick={(event) =>
-              onComment(event.currentTarget.getBoundingClientRect())
-            }
-            className={`absolute top-0.5 left-0.5 z-10 grid size-4 place-items-center rounded-[3px] bg-content text-background-base outline-none transition-opacity hover:opacity-80 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent/50 ${
-              hovered || commenting
-                ? "opacity-100"
-                : "pointer-events-none opacity-0"
-            }`}
-          >
-            <MessageSquarePlus className="size-2.5" strokeWidth={2} />
-          </button>
-        ) : null}
-        {onStage ? (
-          <button
-            type="button"
-            title="暂存此块"
-            aria-label="暂存此块"
-            onClick={onStage}
-            className={`absolute top-0.5 left-full z-10 ml-0.5 grid size-4 place-items-center rounded-[3px] bg-white text-[11px] font-bold text-black ${
-              hovered ? "opacity-100" : "pointer-events-none opacity-0"
-            }`}
-          >
-            +
-          </button>
-        ) : null}
-      </div>
-    );
-  }
-
+  const glyph = added ? "+" : deleted ? "−" : "";
   return (
     <div
-      className={`flex items-center ${row}`}
-      style={{ height: UNIFIED_LINE_PX }}
+      className={`relative flex w-1/2 min-w-0 items-center overflow-hidden ${
+        side === "right" ? "border-l border-stroke" : ""
+      } ${row}`}
+      style={{ height: "100%" }}
     >
+      {added || deleted ? (
+        <span
+          aria-hidden="true"
+          className={`pointer-events-none absolute inset-y-0 left-0 w-[2px] ${markerBar}`}
+        />
+      ) : null}
+      <span className="w-10 shrink-0 pr-2 text-right font-mono text-[11px] leading-none tabular-nums text-content/35">
+        {number ?? ""}
+      </span>
       {/* Width is counted in minWidthCh. select-none keeps the glyph and the
           screen-reader cue out of copied code. */}
       <span
         className={`w-7 shrink-0 select-none pl-3 font-mono text-[12px] leading-none font-semibold ${gutterText}`}
       >
-        <span aria-hidden="true">{added ? "+" : deleted ? "−" : ""}</span>
+        <span aria-hidden="true">{glyph}</span>
         {added || deleted ? (
           <span className="sr-only">{added ? "Added: " : "Removed: "}</span>
         ) : null}
       </span>
       <span
         className={`whitespace-pre pr-3 font-mono text-[12px] leading-none text-content/80 ${
-          line.kind === "context" ? "opacity-70" : ""
+          cell.kind === "context" ? "opacity-70" : ""
         }`}
       >
         {renderLineText(line, tokens)}
       </span>
+      {onComment ? (
+        <button
+          type="button"
+          title={`Comment on line ${number ?? ""}`.trim()}
+          aria-label={`Comment on line ${number ?? ""}`.trim()}
+          onClick={(event) =>
+            onComment(line, event.currentTarget.getBoundingClientRect())
+          }
+          className={`absolute top-0.5 left-0.5 z-10 grid size-4 place-items-center rounded-[3px] bg-content text-background-base outline-none transition-opacity hover:opacity-80 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent/50 ${
+            hovered || commenting
+              ? "opacity-100"
+              : "pointer-events-none opacity-0"
+          }`}
+        >
+          <MessageSquarePlus className="size-2.5" strokeWidth={2} />
+        </button>
+      ) : null}
+      {onStage ? (
+        <button
+          type="button"
+          title="暂存此块"
+          aria-label="暂存此块"
+          onClick={onStage}
+          className={`absolute top-0.5 left-6 z-10 grid size-4 place-items-center rounded-[3px] bg-white text-[11px] font-bold text-black ${
+            hovered ? "opacity-100" : "pointer-events-none opacity-0"
+          }`}
+        >
+          +
+        </button>
+      ) : null}
     </div>
   );
 });

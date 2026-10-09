@@ -46,7 +46,8 @@ it("marks added and removed lines with a glyph, not only color", async () => {
   );
 
   // The code span holds only the line text, so copying it skips the marker
-  // column and its screen-reader cue.
+  // column and its screen-reader cue. In the split view each row renders two
+  // halves (old | new), so the markers come out left-then-right per row.
   const rows = [...container.querySelectorAll("span.w-7")].map((marker) => ({
     glyph: marker.querySelector('[aria-hidden="true"]')?.textContent,
     cue: marker.querySelector(".sr-only")?.textContent ?? null,
@@ -54,8 +55,10 @@ it("marks added and removed lines with a glyph, not only color", async () => {
   }));
   expect(rows).toEqual([
     { glyph: "", cue: null, code: "alpha" },
+    { glyph: "", cue: null, code: "alpha" },
     { glyph: "−", cue: "Removed: ", code: "beta" },
     { glyph: "+", cue: "Added: ", code: "BETA" },
+    { glyph: "", cue: null, code: "gamma" },
     { glyph: "", cue: null, code: "gamma" },
   ]);
 });
