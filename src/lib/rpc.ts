@@ -321,7 +321,9 @@ export type ImageConfig={model:string;resolution:string;aspect:string}
 export async function imageConfig():Promise<ImageConfig> { if(!workspaceBackend()) throw new Error('图片模型请在电脑端设置'); return invoke<ImageConfig>('image_config') }
 export async function saveImageConfig(patch:Partial<ImageConfig>):Promise<ImageConfig> { if(!workspaceBackend()) throw new Error('图片模型请在电脑端设置'); return invoke<ImageConfig>('save_image_config',{config:patch}) }
 export async function loadMessages(target=useWorkspace.getState().cwd){
- const id=route(target),data=await request<{messages:PiMessage[]}>({type:'get_messages'},30000,id)
+ // 几百条消息的会话，get_messages 的响应就是几 MB，会被电脑端切成多帧发过来；
+ // 30s 的上限让“会话大”和“链路卡住了”变成同一个结果，所以给它更长的预算。
+ const id=route(target),data=await request<{messages:PiMessage[]}>({type:'get_messages'},60000,id)
  patch(id,{transcript:hydrate(data.messages)})
  const state=await refresh(id),currentTranscript=current(id).transcript
  if(state.isStreaming||state.isCompacting){
@@ -354,8 +356,13 @@ async function startConnection(cwd:string,id:string,options?:{restoreLast?:boole
    await attachRemoteConnection(id)
    const state=await request<RpcSessionState>({type:'get_state'},45000,id)
    patch(id,{state})
-   await loadMessages(id)
    patch(id,{connection:'online'})
+   // The transcript is the heaviest thing a connection carries, and failing to
+   // fetch it must not take the connection down with it: the worker is attached
+   // and still takes prompts, and re-entering the session retries the history.
+   // Treating it as a failed connect is what turned one big `get_messages` into
+   // 「连接失败」 and every later tap on the connection doing nothing.
+   await loadMessages(id).catch(error=>patch(id,{error:String(error)}))
   }catch(error){connections.delete(id);projectActive.delete(cwd);failPending(id,'连接失败');patch(id,{connection:'offline'});throw error}
   return
  }

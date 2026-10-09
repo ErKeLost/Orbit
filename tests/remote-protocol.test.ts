@@ -90,6 +90,16 @@ describe("remote protocol", () => {
     expect(isRemoteRequest({ type: "host.operation", operation: { name: "arbitrary.command", cwd: "/workspace/demo" } })).toBe(false)
   })
 
+  test("accepts the slices of an event too large for one frame", () => {
+    expect(isRemoteEvent({ type: "pi.event.chunk", project: "/workspace/demo", id: 1, index: 0, total: 2, data: '{"type":"response"' })).toBe(true)
+    // A slice that claims to be outside its own run would build a payload with a
+    // hole in it, so it is not a slice at all.
+    expect(isRemoteEvent({ type: "pi.event.chunk", project: "/workspace/demo", id: 1, index: 2, total: 2, data: "{}" })).toBe(false)
+    expect(isRemoteEvent({ type: "pi.event.chunk", project: "/workspace/demo", id: 1, index: 0, total: 0, data: "{}" })).toBe(false)
+    expect(isRemoteEvent({ type: "pi.event.chunk", project: "/workspace/demo", id: 1, index: 0, total: 2, data: 3 })).toBe(false)
+    expect(isRemoteEvent({ type: "pi.event.chunk", project: "", id: 1, index: 0, total: 2, data: "{}" })).toBe(false)
+  })
+
   test("routes a desktop command with the arguments its own UI sends", () => {
     expect(isRemoteRequest({ type: "host.invoke", command: "list_dir", args: { path: "/workspace/demo" } })).toBe(true)
     expect(isRemoteRequest({ type: "host.invoke", command: "git_changed_files" })).toBe(true)

@@ -5,9 +5,9 @@ import {
   isRemoteHostSnapshot,
   remoteWebSocketUrl,
   REMOTE_PROTOCOL,
+  type RemoteConnection,
   type RemoteEndpoint,
   type RemoteEvent,
-  type RemoteConnection,
   type RemoteHostSnapshot,
   type RemoteHostOperation,
   type RemoteJson,
@@ -52,6 +52,25 @@ type PendingRequest = {
 
 type SocketMode = "initial" | "replacement"
 
+/** One oversized Pi event being reassembled from `pi.event.chunk` frames. */
+type ChunkAssembly = {
+  parts: string[]
+  received: number
+  bytes: number
+  startedAt: number
+}
+
+/**
+ * How much reassembly one client will hold.
+ *
+ * A phone cannot use more memory than it has, so a slice run that grows past the
+ * budget is dropped with an error rather than allowed to fill it. The cap is per
+ * payload and higher than any session Orbit has to show, but bounded either way.
+ */
+const MAX_CHUNKED_PAYLOAD_BYTES = 48 * 1024 * 1024
+const MAX_CHUNK_ASSEMBLIES = 4
+const CHUNK_ASSEMBLY_TIMEOUT_MS = 30_000
+
 type PhysicalConnection = {
   socket: WebSocket
   mode: SocketMode
@@ -89,6 +108,8 @@ export class OrbitRemoteClient {
   private heartbeatMisses = 0
   private lastInboundAt = 0
   private outboundTail: Promise<void> = Promise.resolve()
+  /** Oversized events being reassembled, keyed by `project + chunk id`. */
+  private chunks = new Map<string, ChunkAssembly>()
 
   constructor(handlers: RemoteClientHandlers = {}, options: RemoteClientOptions = {}) {
     this.handlers = handlers
@@ -274,6 +295,10 @@ export class OrbitRemoteClient {
     this.clearConnectionTimers(connection)
     if (this.active === connection) {
       this.active = null
+      // Slices of a payload are ordered on one socket, so a socket that died
+      // mid-run can never be completed: start the next run from nothing rather
+      // than merging two lives of the same event.
+      this.chunks.clear()
       this.stopHeartbeat()
       this.rejectPending(new Error("Orbit Host 连接已关闭"))
       this.setState("offline")
@@ -430,6 +455,7 @@ export class OrbitRemoteClient {
     this.closePhysical(this.replacement)
     this.active = null
     this.replacement = null
+    this.chunks.clear()
     this.rejectPending(new Error("Orbit Host 连接已关闭"))
     this.setState("offline")
   }
@@ -546,6 +572,12 @@ export class OrbitRemoteClient {
   }
 
   private receive(event: RemoteEvent): void {
+    // Slices are transport, not Pi: they are reassembled here and the finished
+    // payload is delivered as the `pi.event` it stands for.
+    if (event.type === "pi.event.chunk") {
+      this.receiveChunk(event)
+      return
+    }
     // The desktop's own state, pushed without a request: a project the user
     // adds on either side has to appear on the other one immediately.
     if (event.type === "host.projects") useRemoteWorkspace.getState().setProjects(event.projects)
@@ -569,6 +601,57 @@ export class OrbitRemoteClient {
     if (event.type === "remote.error") pending.reject(new Error(event.error))
     else if (event.ok) pending.resolve(event.result)
     else pending.reject(new Error(event.error ?? "Orbit Host 请求失败"))
+  }
+
+  /**
+   * Add one slice to its payload, delivering it once every slice has arrived.
+   *
+   * Frames of one payload cannot interleave with each other (single socket,
+   * single writer), so a gap means the connection dropped mid-run: those
+   * assemblies are discarded on the next slice or on reconnect rather than
+   * waiting forever for a payload the host would have to resend.
+   */
+  private receiveChunk(event: Extract<RemoteEvent, { type: "pi.event.chunk" }>): void {
+    const key = `${event.project}\u0000${event.id}`
+    const now = Date.now()
+    for (const [candidate, assembly] of this.chunks) {
+      if (candidate !== key && now - assembly.startedAt > CHUNK_ASSEMBLY_TIMEOUT_MS) this.chunks.delete(candidate)
+    }
+    let assembly = this.chunks.get(key)
+    if (!assembly) {
+      if (this.chunks.size >= MAX_CHUNK_ASSEMBLIES) {
+        const oldest = [...this.chunks.entries()].sort((left, right) => left[1].startedAt - right[1].startedAt)[0]
+        if (oldest) this.chunks.delete(oldest[0])
+      }
+      assembly = { parts: new Array<string>(event.total).fill(""), received: 0, bytes: 0, startedAt: now }
+      this.chunks.set(key, assembly)
+    } else if (assembly.parts.length !== event.total) {
+      // A second run reusing the id with another slice count: start over.
+      assembly.parts = new Array<string>(event.total).fill("")
+      assembly.received = 0
+      assembly.bytes = 0
+      assembly.startedAt = now
+    }
+    if (!assembly.parts[event.index]) {
+      assembly.parts[event.index] = event.data
+      assembly.received += 1
+      assembly.bytes += event.data.length
+    }
+    if (assembly.bytes > MAX_CHUNKED_PAYLOAD_BYTES) {
+      this.chunks.delete(key)
+      this.handlers.onError?.(new Error("电脑端发来的响应过大，手机无法接收"))
+      return
+    }
+    if (assembly.received < event.total) return
+    this.chunks.delete(key)
+    let payload: RemoteJson
+    try {
+      payload = JSON.parse(assembly.parts.join("")) as RemoteJson
+    } catch {
+      this.handlers.onError?.(new Error("电脑端发来的分段事件无法解析"))
+      return
+    }
+    this.handlers.onPiEvent?.(event.project, payload)
   }
 
   private rejectPending(error: Error): void {

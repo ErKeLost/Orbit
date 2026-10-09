@@ -108,7 +108,7 @@ mod desktop {
         path::PathBuf,
         pin::Pin,
         sync::{
-            atomic::{AtomicBool, Ordering},
+            atomic::{AtomicBool, AtomicU64, Ordering},
             mpsc::{self, Receiver, SyncSender},
             Arc, Mutex,
         },
@@ -638,35 +638,134 @@ mod desktop {
         socket.send(Message::text(payload)).await.is_ok()
     }
 
-    /// 单条事件的上限。超过它投给手机只会把慢上行堵死几秒到几分钟，桌面端
-    /// 会话不受影响；真实场景里只有巨型工具输出才会触发。
+    /// 单条事件在切帧前允许占用的上限。超过它的事件不再丢弃，而是切成
+    /// `pi.event.chunk` 多帧、由手机端拼回原始 JSON。
+    ///
+    /// 丢弃是条死路：手机等的可能就是这条 `response`（几百条消息的会话，
+    /// `get_messages` 的响应就是几 MB），它永远不会到，手机只能超时，而桌面
+    /// 端看起来一切正常。
     const MAX_EVENT_PAYLOAD_BYTES: usize = 4 * 1024 * 1024;
+    /// 切片大小。跟批次预算同一个量级：任何一帧都不该把 relay 或手机的上行堵住。
+    const EVENT_CHUNK_BYTES: usize = 512 * 1024;
     /// 单帧批次的字节预算。超过就拆成多帧，保证任何一帧都不会卡住 relay。
     const MAX_EVENT_BATCH_BYTES: usize = 768 * 1024;
+    /// 一片事件切到底也不该超过的量：再大就不是“慢”，而是手机存不下。
+    const MAX_CHUNKED_PAYLOAD_BYTES: usize = 48 * 1024 * 1024;
+    /// 切片编号。同一个 payload 的每一片共用一个编号，手机按 `project + id` 归并。
+    static CHUNK_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-    fn chunk_payloads(payloads: Vec<Value>) -> Vec<Vec<Value>> {
-        let mut chunks: Vec<Vec<Value>> = Vec::new();
-        let mut current: Vec<Value> = Vec::new();
-        let mut current_bytes = 0usize;
+    fn flush_batch(
+        frames: &mut Vec<String>,
+        project: &str,
+        batch: &mut Vec<Value>,
+        batch_bytes: &mut usize,
+    ) {
+        if batch.is_empty() {
+            return;
+        }
+        frames.push(
+            json!({"type":"pi.events","project":project,"payloads":std::mem::take(batch)})
+                .to_string(),
+        );
+        *batch_bytes = 0;
+    }
+
+    /// 把一批 Pi 事件变成要发的帧。
+    ///
+    /// 小事件按 `MAX_EVENT_BATCH_BYTES` 打包成 `pi.events`；大到一帧装不下的事件
+    /// 切成 `pi.event.chunk`。两者混在同一批里也安全：切片帧自带编号，手机不会
+    /// 把它当成 Pi 事件本身。
+    fn event_frames(project: &str, payloads: Vec<Value>) -> Vec<String> {
+        let mut frames: Vec<String> = Vec::new();
+        let mut batch: Vec<Value> = Vec::new();
+        let mut batch_bytes = 0usize;
         for payload in payloads {
             let bytes = serde_json::to_vec(&payload)
                 .map(|encoded| encoded.len())
                 .unwrap_or(usize::MAX);
             if bytes > MAX_EVENT_PAYLOAD_BYTES {
-                log::warn!("丢弃超大的 Pi 事件（{bytes} 字节）：手机链路无法承载");
+                flush_batch(&mut frames, project, &mut batch, &mut batch_bytes);
+                match split_payload(project, &payload) {
+                    Some(chunks) => frames.extend(chunks),
+                    None => {
+                        log::warn!("丢弃无法切片的 Pi 事件（{bytes} 字节）");
+                    }
+                }
                 continue;
             }
-            if current_bytes + bytes > MAX_EVENT_BATCH_BYTES && !current.is_empty() {
-                chunks.push(std::mem::take(&mut current));
-                current_bytes = 0;
+            if batch_bytes + bytes > MAX_EVENT_BATCH_BYTES && !batch.is_empty() {
+                flush_batch(&mut frames, project, &mut batch, &mut batch_bytes);
             }
-            current_bytes += bytes;
-            current.push(payload);
+            batch_bytes += bytes;
+            batch.push(payload);
         }
-        if !current.is_empty() {
-            chunks.push(current);
+        flush_batch(&mut frames, project, &mut batch, &mut batch_bytes);
+        frames
+    }
+
+    /// 一帧装不下的事件，切成手机可以拼回去的多帧。
+    ///
+    /// 切的是序列化后的 JSON 文本，并且只落在字符边界上，所以手机把片段顺序拼起来
+    /// 就是原封不动的那条 payload。超过 `MAX_CHUNKED_PAYLOAD_BYTES` 的，如果是一
+    /// 条 `response`，就换一条明确的失败响应——让手机拿到“太大”，而不是干等超时。
+    fn split_payload(project: &str, payload: &Value) -> Option<Vec<String>> {
+        let text = serde_json::to_string(payload).ok()?;
+        if text.len() > MAX_CHUNKED_PAYLOAD_BYTES {
+            return oversized_response(payload, text.len())
+                .map(|frame| vec![frame.to_string()]);
         }
-        chunks
+        let id = CHUNK_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let mut parts: Vec<&str> = Vec::new();
+        let mut start = 0usize;
+        while start < text.len() {
+            let mut end = (start + EVENT_CHUNK_BYTES).min(text.len());
+            while end < text.len() && !text.is_char_boundary(end) {
+                end += 1;
+            }
+            parts.push(&text[start..end]);
+            start = end;
+        }
+        let total = parts.len();
+        Some(
+            parts
+                .into_iter()
+                .enumerate()
+                .map(|(index, data)| {
+                    json!({
+                        "type": "pi.event.chunk",
+                        "project": project,
+                        "id": id,
+                        "index": index,
+                        "total": total,
+                        "data": data,
+                    })
+                    .to_string()
+                })
+                .collect(),
+        )
+    }
+
+    /// 太大、连切片都不要发的那条响应，换成的失败响应。
+    fn oversized_response(payload: &Value, bytes: usize) -> Option<Value> {
+        if payload.get("type").and_then(Value::as_str) != Some("response") {
+            return None;
+        }
+        let id = payload.get("id")?.clone();
+        let command = payload
+            .get("command")
+            .and_then(Value::as_str)
+            .unwrap_or("请求")
+            .to_owned();
+        Some(json!({
+            "type": "response",
+            "id": id,
+            "command": command,
+            "success": false,
+            "error": format!(
+                "响应过大（{} MB），超过手机链路的上限；在电脑端查看，或先压缩上下文",
+                bytes / (1024 * 1024)
+            ),
+        }))
     }
 
     fn broadcast(clients: &Clients, project: &str, frame: String) {
@@ -740,9 +839,7 @@ mod desktop {
                 }
             }
             for (project, payloads) in projects {
-                for chunk in chunk_payloads(payloads) {
-                    let frame =
-                        json!({"type":"pi.events","project":&project,"payloads":chunk}).to_string();
+                for frame in event_frames(&project, payloads) {
                     broadcast(&clients, &project, frame);
                 }
             }
@@ -2124,6 +2221,85 @@ mod desktop {
     mod tests {
         use super::*;
         use std::str::FromStr;
+
+        #[test]
+        fn small_events_travel_as_one_batch() {
+            let frames = event_frames(
+                "/w/demo",
+                vec![json!({"type":"message_update"}), json!({"type":"message_end"})],
+            );
+            assert_eq!(frames.len(), 1);
+            let value: Value = serde_json::from_str(&frames[0]).unwrap();
+            assert_eq!(value["type"], "pi.events");
+            assert_eq!(value["project"], "/w/demo");
+            assert_eq!(value["payloads"].as_array().unwrap().len(), 2);
+        }
+
+        /// 几百条消息的会话，`get_messages` 的响应就是一帧装不下的那种事件。
+        /// 它必须被切成多帧，而不是丢掉——丢掉就是手机干等到超时。
+        #[test]
+        fn an_event_too_big_for_one_frame_is_chunked_not_dropped() {
+            let payload = json!({
+                "type": "response",
+                "command": "get_messages",
+                "id": "r1",
+                "success": true,
+                "data": { "messages": "x".repeat(MAX_EVENT_PAYLOAD_BYTES + 4096) },
+            });
+            let frames = event_frames("/w/demo", vec![payload.clone()]);
+            assert!(frames.len() > 1, "巨型事件应该被切成多帧");
+
+            let mut parts = vec![String::new(); frames.len()];
+            for frame in &frames {
+                assert!(
+                    frame.len() <= EVENT_CHUNK_BYTES + 1024,
+                    "任何一帧都不该大到卡住 relay"
+                );
+                let value: Value = serde_json::from_str(frame).unwrap();
+                assert_eq!(value["type"], "pi.event.chunk");
+                assert_eq!(value["project"], "/w/demo");
+                assert_eq!(value["total"], frames.len());
+                parts[value["index"].as_u64().unwrap() as usize] =
+                    value["data"].as_str().unwrap().to_owned();
+            }
+            // 手机把片段按顺序拼起来，拿到的就是原来那条 payload。
+            let reassembled: Value = serde_json::from_str(&parts.concat()).unwrap();
+            assert_eq!(reassembled, payload);
+        }
+
+        /// 切片在字符边界上断开：多字节字符不能被切成两半。
+        #[test]
+        fn chunks_never_split_a_character() {
+            let payload = json!({
+                "type": "response",
+                "id": "r3",
+                "data": "汉".repeat(MAX_EVENT_PAYLOAD_BYTES / 3 + 1024),
+            });
+            let frames = event_frames("/w/demo", vec![payload.clone()]);
+            assert!(frames.len() > 1);
+            let mut parts = Vec::new();
+            for frame in &frames {
+                let value: Value = serde_json::from_str(frame).unwrap();
+                parts.push(value["data"].as_str().unwrap().to_owned());
+            }
+            let reassembled: Value = serde_json::from_str(&parts.concat()).unwrap();
+            assert_eq!(reassembled, payload);
+        }
+
+        /// 连切片都发不出去的响应，换一条明确的失败：手机要看到“太大”，
+        /// 而不是一直等一个永远不来的响应。
+        #[test]
+        fn an_unshippable_response_still_answers() {
+            let payload = json!({"type":"response","command":"get_messages","id":"r2","success":true,"data":{}});
+            let response = oversized_response(&payload, MAX_CHUNKED_PAYLOAD_BYTES + 1).unwrap();
+            assert_eq!(response["type"], "response");
+            assert_eq!(response["id"], "r2");
+            assert_eq!(response["success"], false);
+            assert_eq!(response["command"], "get_messages");
+            assert!(response["error"].as_str().unwrap().contains("响应过大"));
+            // 别的类型没有等在那一头的请求，只能丢。
+            assert!(oversized_response(&json!({"type":"message_update"}), 1).is_none());
+        }
 
         #[test]
         fn accepts_only_the_websocket_path() {

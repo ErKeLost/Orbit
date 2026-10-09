@@ -224,6 +224,15 @@ export type RemoteEvent =
   | { type: "host.pong"; requestId?: string; serverTime: number }
   | { type: "pi.event"; project: string; payload: RemoteJson }
   | { type: "pi.events"; project: string; payloads: RemoteJson[] }
+  /**
+   * One slice of a Pi event too large for a single frame.
+   *
+   * The host cuts those in half rather than dropping them: a `response` can be
+   * several megabytes (`get_messages` on a few hundred messages), and dropping it
+   * is a timeout on the phone with nothing wrong on the desktop. Slices carry the
+   * JSON text itself, so the client concatenates and parses the original payload.
+   */
+  | { type: "pi.event.chunk"; project: string; id: number; index: number; total: number; data: string }
   | { type: "connection.closed"; project: string }
   | { type: "connection.invalidated"; project: string; command: string }
   | { type: "remote.result"; requestId?: string; ok: boolean; result?: RemoteJson; error?: string }
@@ -331,6 +340,16 @@ export function isRemoteEvent(value: unknown): value is RemoteEvent {
       return stringValue(value.project) && value.payload !== undefined
     case "pi.events":
       return stringValue(value.project) && Array.isArray(value.payloads)
+    case "pi.event.chunk":
+      return stringValue(value.project)
+        && typeof value.id === "number"
+        && Number.isFinite(value.id)
+        && typeof value.index === "number"
+        && typeof value.total === "number"
+        && value.index >= 0
+        && value.total > 0
+        && value.index < value.total
+        && typeof value.data === "string"
     case "connection.closed":
       return stringValue(value.project)
     case "connection.invalidated":

@@ -238,3 +238,80 @@ describe("remote client reconnect", () => {
     expect(client.connectionState).toBe("online")
   })
 })
+
+describe("remote client chunk reassembly", () => {
+  // The desktop cuts one Pi event into `pi.event.chunk` frames when it is too
+  // large for a single frame — a `get_messages` response on a few hundred
+  // messages. Dropping it instead is what a phone sees as "Pi get_messages
+  // 响应超时" while the desktop looks fine, so reassembly is the contract.
+  async function connected(
+    onPiEvent: (project: string, payload: unknown) => void,
+    onError?: (error: Error) => void,
+    options: { reconnectBaseMs?: number; reconnectMaxMs?: number } = {},
+  ) {
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket
+    const client = new OrbitRemoteClient(
+      { onPiEvent, ...(onError ? { onError } : {}) },
+      { heartbeatMs: 0, ...options },
+    )
+    clients.push(client)
+    await client.connect(endpoint)
+    return client
+  }
+
+  // Inbound frames are decrypted on a promise chain, so a delivered payload
+  // lands a turn after the frame that carried it.
+  const settle = () => Bun.sleep(20)
+
+  test("reassembles one payload from frames that arrive in order", async () => {
+    const received: { project: string; payload: unknown }[] = []
+    await connected((project, payload) => received.push({ project, payload }))
+    const payload = JSON.stringify({ type: "response", command: "get_messages", id: "r1", success: true, data: { messages: [{ role: "user", content: "你好" }] } })
+    const cut = Math.floor(payload.length / 3)
+    const parts = [payload.slice(0, cut), payload.slice(cut, cut * 2), payload.slice(cut * 2)]
+    for (const [index, data] of parts.entries()) {
+      await FakeWebSocket.instances[0].serverSend({ type: "pi.event.chunk", project: "/w/demo", id: 7, index, total: parts.length, data })
+    }
+    await settle()
+    expect(received).toEqual([{ project: "/w/demo", payload: JSON.parse(payload) }])
+  })
+
+  test("holds a payload until its last frame, whatever order frames arrive in", async () => {
+    const received: unknown[] = []
+    await connected((_project, payload) => received.push(payload))
+    const payload = JSON.stringify({ type: "response", command: "get_messages", id: "r2", success: true, data: { messages: ["a", "b"] } })
+    const cut = Math.floor(payload.length / 2)
+    const parts = [payload.slice(0, cut), payload.slice(cut)]
+    await FakeWebSocket.instances[0].serverSend({ type: "pi.event.chunk", project: "/w/demo", id: 8, index: 1, total: 2, data: parts[1] })
+    await settle()
+    expect(received).toHaveLength(0)
+    await FakeWebSocket.instances[0].serverSend({ type: "pi.event.chunk", project: "/w/demo", id: 8, index: 0, total: 2, data: parts[0] })
+    await settle()
+    expect(received).toEqual([JSON.parse(payload)])
+  })
+
+  test("says so when a payload cannot be reassembled", async () => {
+    const errors: string[] = []
+    const received: unknown[] = []
+    await connected((_project, payload) => received.push(payload), (error) => errors.push(error.message))
+    await FakeWebSocket.instances[0].serverSend({ type: "pi.event.chunk", project: "/w/demo", id: 9, index: 0, total: 1, data: "not json" })
+    await settle()
+    expect(received).toEqual([])
+    expect(errors).toEqual(["电脑端发来的分段事件无法解析"])
+  })
+
+  test("keeps a dropped socket's half-built payload out of the next one", async () => {
+    const received: unknown[] = []
+    await connected((_project, payload) => received.push(payload), undefined, { reconnectBaseMs: 1, reconnectMaxMs: 5 })
+    await FakeWebSocket.instances[0].serverSend({ type: "pi.event.chunk", project: "/w/demo", id: 11, index: 0, total: 2, data: '{"type":"response"' })
+    await settle()
+    FakeWebSocket.instances[0].serverClose()
+    await settle()
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    // The same chunk id after a reconnect belongs to a new payload, not to the
+    // half of the old one that can never be completed.
+    await FakeWebSocket.instances[1].serverSend({ type: "pi.event.chunk", project: "/w/demo", id: 11, index: 0, total: 1, data: '{"type":"response","id":"r4"}' })
+    await settle()
+    expect(received).toEqual([{ type: "response", id: "r4" }])
+  })
+})

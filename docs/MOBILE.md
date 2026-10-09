@@ -60,6 +60,23 @@ clients instead of allowing unbounded memory growth. The control transport
 sends structured JSON only: screenshots and preview frames never share this
 socket, so a preview can never delay a thinking token or an input reply.
 
+**A frame never carries an unbounded payload.** Small events are packed into
+`pi.events` batches under a byte budget; an event too large for one frame — a
+`get_messages` response on a session with a few hundred messages is several
+megabytes — is cut into `pi.event.chunk` frames that the client concatenates and
+parses back into the original payload. The cutting happens on the serialized
+JSON at character boundaries, so a multi-byte character is never split.
+
+The alternative was tried and is a dead end: dropping the oversized event made a
+large session unopenable from the phone (「Pi get_messages 响应超时」, then
+「连接失败」, then every later tap on that project doing nothing) while the
+desktop showed the same session perfectly. A payload past even the chunked
+ceiling, if it is a `response`, is answered with an explicit failure instead, so
+the phone reports "too large" rather than waiting for something that is never
+coming. On the phone a failed transcript fetch no longer marks the connection
+itself as failed either: the worker is attached and still takes prompts, and
+re-entering the session retries the history.
+
 ## Connection scope
 
 The desktop Host keeps a stable local identity in a permissions-restricted file,
