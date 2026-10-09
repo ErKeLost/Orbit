@@ -17,6 +17,8 @@ import { useShell, type SidebarTab } from "./shellStore";
 import { FileTree } from "./FileTree";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { GitChangesPanel } from "../source-control/ui/GitChangesPanel";
+import { GitFileDiffModal } from "../source-control/ui/GitFileDiffModal";
+import type { GitFileDiffKind } from "../../platform/tauri/fs";
 import { TerminalSpinner } from "./TerminalSpinner";
 
 const SIDEBAR_MIN = 220;
@@ -250,6 +252,7 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
   const setWidth = useShell((state) => state.setSessionSidebarWidth);
   const setProjectRailOpen = useShell((state) => state.setProjectRailOpen);
   const [query, setQuery] = useState("");
+  const [diffTarget, setDiffTarget] = useState<{ path: string; kind: GitFileDiffKind } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const project = workspaceMode === "project" && cwd && cwd !== homeDir ? cwd : "";
@@ -301,7 +304,14 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
           <GitChangesPanel
             cwd={project}
             enabled={visible && tab === "changes" && online}
-            onOpenFile={(path, _kind, pin) => openFile(path, { pin })}
+            onOpenFile={(path, kind, pin) => {
+              if (pin) {
+                setDiffTarget(null);
+                openFile(path, { pin: true });
+              } else {
+                setDiffTarget({ path, kind });
+              }
+            }}
             onOpenAllChanges={() => undefined}
             onOpenCommit={() => undefined}
           />
@@ -309,6 +319,16 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
           <p className="px-3 py-2 text-[12px] text-content/50">没有项目文件夹</p>
         )}
       </div>
+
+      {diffTarget && project ? (
+        <GitFileDiffModal
+          cwd={project}
+          path={diffTarget.path}
+          kind={diffTarget.kind}
+          onClose={() => setDiffTarget(null)}
+          onOpenInEditor={(path) => openFile(path, { pin: true })}
+        />
+      ) : null}
 
       {tab === "sessions" && project ? (
         <div className="flex h-9 shrink-0 items-center gap-1 border-b border-stroke px-2">

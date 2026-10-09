@@ -2,50 +2,19 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X, FileDiff, LoaderCircle } from "../../../shared/ui/icons";
-import { buildUnifiedFile, type UnifiedLine } from "../model/unifiedDiff";
-import { UnifiedDiffView, type UnifiedDiffFileModel } from "./UnifiedDiffView";
+import { CodeChange } from "../../../components/LazyCodeChange";
 import { gitFileDiff, type GitFileDiffKind } from "../../../platform/tauri/fs";
 import { LAYER } from "../../../shared/lib/layers";
 
 const KIND_LABEL: Record<GitFileDiffKind, string> = {
-  staged: "已暂存 vs HEAD",
+  staged: "工作区 vs HEAD",
   unstaged: "工作区 vs HEAD",
 };
-
-function toModel(
-  path: string,
-  diff: { original: string; current: string; binary: boolean; tooLarge: boolean; status: string },
-): UnifiedDiffFileModel {
-  if (diff.binary || diff.tooLarge) {
-    return {
-      id: path,
-      path,
-      label: path,
-      binary: diff.binary,
-      emptyMessage: diff.binary
-        ? "二进制文件，无法展示差异"
-        : "文件过大，无法展示差异（可在编辑器中打开）",
-      additions: 0,
-      deletions: 0,
-      blocks: [],
-    };
-  }
-  const built = buildUnifiedFile(diff.original, diff.current);
-  return {
-    id: path,
-    path,
-    label: path,
-    binary: false,
-    additions: built.additions,
-    deletions: built.deletions,
-    blocks: built.blocks,
-  };
-}
 
 /**
  * 变更面板的 diff 弹层：点变更文件看差异，而不是打开整个文件。
  *
- * 走既有的 `git_file_diff`（HEAD 与工作区各一份全文），本地算行级差异。
+ * 走既有的 `git_file_diff` 读取两份全文，由 @pierre/diffs 展示差异。
  * `onOpenInEditor` 保留原有的「在编辑器打开全文」路径。
  */
 export function GitFileDiffModal({
@@ -61,9 +30,11 @@ export function GitFileDiffModal({
   onClose: () => void;
   onOpenInEditor?: (path: string, kind: GitFileDiffKind) => void;
 }) {
+  const root = cwd.replace(/\/+$/, "");
+  const relative = path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
   const query = useQuery({
-    queryKey: ["git", "file-diff", cwd, path, kind],
-    queryFn: () => gitFileDiff(cwd, path, kind),
+    queryKey: ["git", "file-diff", cwd, relative, kind],
+    queryFn: () => gitFileDiff(cwd, relative, kind),
     staleTime: 0,
     gcTime: 0,
   });
@@ -94,7 +65,7 @@ export function GitFileDiffModal({
           <span className="shrink-0 rounded-full bg-selection px-2 py-0.5 text-[10px] font-medium text-content/70">
             {KIND_LABEL[kind]}
           </span>
-          {onOpenInEditor ? (
+          {onOpenInEditor && file?.status !== "deleted" ? (
             <button
               type="button"
               onClick={() => {
@@ -128,12 +99,18 @@ export function GitFileDiffModal({
             </div>
           ) : file ? (
             <div className="flex min-h-0 flex-1 flex-col">
-              <UnifiedDiffView
-                files={[toModel(path, file)]}
-                fill={false}
-                fileLayout="cards"
-                initialExpansion="all"
-              />
+              {file.binary || file.tooLarge ? (
+                <p className="px-4 py-8 text-[13px] text-content/50">
+                  {file.binary ? "二进制文件，无法展示差异" : "文件过大，无法展示差异（可在编辑器中打开）"}
+                </p>
+              ) : file.original === file.current ? (
+                <p className="px-4 py-8 text-[13px] text-content/50">没有差异</p>
+              ) : (
+                <CodeChange
+                  key={`${path}:${kind}`}
+                  change={{ kind: "snippet", name: path, before: file.original, after: file.current, label: "文件差异" }}
+                />
+              )}
             </div>
           ) : null}
         </div>
@@ -142,6 +119,3 @@ export function GitFileDiffModal({
     document.body,
   );
 }
-
-// 统一行构造保留给未来扩展（例如展示行内词级差异）。
-export type { UnifiedLine };

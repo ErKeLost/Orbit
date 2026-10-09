@@ -1495,7 +1495,6 @@ function ChangeRow({
   const name = basename(file.relative);
   const tree = depth !== undefined;
   const dir = tree ? "" : dirname(file.relative);
-  const canOpen = file.status !== "deleted";
   return (
     <li>
       <div
@@ -1512,10 +1511,10 @@ function ChangeRow({
           type="button"
           title={file.relative}
           onClick={() => {
-            if (canOpen) onOpenFile(file.path, kind);
+            onOpenFile(file.path, kind);
           }}
           onDoubleClick={() => {
-            if (canOpen) onOpenFile(file.path, kind, true);
+            if (file.status !== "deleted") onOpenFile(file.path, kind, true);
           }}
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
         >
