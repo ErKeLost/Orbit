@@ -498,7 +498,44 @@ export async function steerFollowUp(text:string,target=useWorkspace.getState().c
   else await request({type:'follow_up',message},30000,id)
  }
 }
-export async function stop(target=useWorkspace.getState().cwd){const id=route(target),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id);await request({type:'abort'},60000,id);const s=current(id);patch(id,{draft:[s.draft,...cleared.steering,...cleared.followUp].filter(Boolean).join('\n'),transcript:reduceEvent(s.transcript,{type:'queued_preview_clear'})});await refresh(id)}
+/**
+ * Pause: cut the turn that is running, keep the queued steering messages going.
+ *
+ * Pi's `abort` does not touch either queue, but the texts of a pending queue can
+ * only be read by `clear_queue` (there is no read-only queue command), so the
+ * order is: harvest the queue, abort, then replay — the first message as a plain
+ * prompt to start the next turn, the rest as `steer` so they land in the same
+ * turn. The agent loop polls the steering queue when the run starts (agent-loop
+ * "Check for steering messages at start"), so they keep moving up into the
+ * conversation instead of being dumped back into the draft.
+ *
+ * `steer` is used for the tail rather than `prompt` with a streaming behavior:
+ * it is accepted whether or not the new turn has started streaming yet, so the
+ * replay can never trip "Agent is already processing".
+ *
+ * Follow-ups are not replayed — they return to the draft so that stop still
+ * means something actually stops.
+ */
+export async function stop(target=useWorkspace.getState().cwd){
+ const id=route(target)
+ const cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id)
+ await request({type:'abort'},60000,id)
+ patch(id,{transcript:reduceEvent(current(id).transcript,{type:'queued_preview_clear'})})
+ const steering=cleared.steering.filter(text=>text.trim())
+ const returned:string[]=[]
+ if(steering.length){
+  let delivered=0
+  try{
+   await sendPrompt({type:'prompt',message:steering[0]},id,false);delivered=1
+   for(const message of steering.slice(1)){await request({type:'steer',message},30000,id);delivered+=1}
+  }
+  // 只把没投出去的部分退回草稿：成功了再退会变成重复消息。
+  catch(error){returned.push(...steering.slice(delivered));report(error)}
+ }
+ const draft=[...returned,...cleared.followUp].filter(text=>text.trim())
+ if(draft.length){const s=current(id);patch(id,{draft:[s.draft,...draft].filter(Boolean).join('\n')})}
+ await refresh(id)
+}
 export async function changeSession(command:RpcCommand){
  try {
   return await changeSessionOnce(command)
