@@ -115,26 +115,28 @@ export function RemotePairingScreen({ pairingUri, connecting, error, onPairingUr
       </form>
       <p className="remote-pairing-security"><Icon name="shield-check" />配对链接包含访问凭据，请勿分享给其他人。</p>
     </section>
-    {scannerOpen && <div className="remote-pairing-scanner" data-native="true" role="dialog" aria-modal="true" aria-labelledby="remote-pairing-scanner-title">
-      <div className="remote-pairing-scanner-topbar">
-        <button type="button" className="remote-pairing-scanner-close" title="关闭扫码" aria-label="关闭扫码" onClick={closeScanner}><X aria-hidden="true" /></button>
-        <div className="remote-pairing-scanner-title"><ScanQrCode aria-hidden="true" /><strong id="remote-pairing-scanner-title">扫描二维码</strong></div>
-      </div>
-      <div className="remote-pairing-scanner-mask" aria-hidden="true">
-        <div className="remote-pairing-scanner-window">
-          <i className="remote-pairing-scanner-corner is-tl" />
-          <i className="remote-pairing-scanner-corner is-tr" />
-          <i className="remote-pairing-scanner-corner is-bl" />
-          <i className="remote-pairing-scanner-corner is-br" />
-          <i className="remote-pairing-scanner-line" />
+    {scannerOpen && <div className="qr-scanner" role="dialog" aria-modal="true" aria-labelledby="qr-scanner-title">
+      <div className="qr-scanner-shade" aria-hidden="true" />
+      <header className="qr-scanner-topbar">
+        <button type="button" className="qr-scanner-close" title="关闭扫码" aria-label="关闭扫码" onClick={closeScanner}><X aria-hidden="true" /></button>
+        <div className="qr-scanner-heading" id="qr-scanner-title"><ScanQrCode aria-hidden="true" /><strong>扫描二维码</strong></div>
+        <span className="qr-scanner-topbar-spacer" aria-hidden="true" />
+      </header>
+      <div className="qr-scanner-stage">
+        <div className="qr-scanner-frame" aria-hidden="true">
+          <span className="qr-scanner-corner is-tl" />
+          <span className="qr-scanner-corner is-tr" />
+          <span className="qr-scanner-corner is-bl" />
+          <span className="qr-scanner-corner is-br" />
+          <div className="qr-scanner-beam" />
         </div>
+        <p className="qr-scanner-hint">对准电脑屏幕上的配对二维码</p>
+        {(imageBusy || scannerError) && <div className={`qr-scanner-status${scannerError ? " is-error" : ""}`} role={scannerError ? "alert" : "status"}>{imageBusy ? <><LoaderCircle className="animate-spin" aria-hidden="true" /><span>正在识别图片…</span></> : <><span>{scannerError}</span><button type="button" onClick={() => void startNativeScan()}>重新扫描</button></>}</div>}
       </div>
-      {(imageBusy || scannerError) && <div className="remote-pairing-scanner-status" role={scannerError ? "alert" : "status"}>{imageBusy ? <><LoaderCircle className="animate-spin" aria-hidden="true" /><span>正在识别图片…</span></> : <><span>{scannerError}</span><button type="button" onClick={() => void startNativeScan()}>重新扫描</button></>}</div>}
-      <footer className="remote-pairing-scanner-footer">
-        <p>将电脑端显示的配对二维码放入框内</p>
-        <button type="button" className="remote-pairing-scanner-album" title="从相册选择二维码" aria-label="从相册选择二维码" onClick={() => fileRef.current?.click()}><Image aria-hidden="true" /><span>从相册选择</span></button>
-      </footer>
-      <input ref={fileRef} className="remote-pairing-file-input" type="file" accept="image/*" onChange={event => { void scanFile(event.target.files?.[0]); event.currentTarget.value = ""; }} />
+      <div className="qr-scanner-actions">
+        <button type="button" className="qr-scanner-album" title="从相册选择二维码" aria-label="从相册选择二维码" onClick={() => fileRef.current?.click()}><Image aria-hidden="true" /><span>从相册选择</span></button>
+      </div>
+      <input ref={fileRef} className="qr-scanner-file-input" type="file" accept="image/*" onChange={event => { void scanFile(event.target.files?.[0]); event.currentTarget.value = ""; }} />
     </div>}
   </main>;
 }

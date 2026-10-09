@@ -16,7 +16,6 @@ import { InboxSettings } from "../inbox/InboxView";
 const GeneralSettingsPanel = lazy(() => import("../../components/panels/GeneralSettingsPanel").then((m) => ({ default: m.GeneralSettingsPanel })));
 const ScreenSettingsPanel = lazy(() => import("../../components/panels/ScreenSettingsPanel").then((m) => ({ default: m.ScreenSettingsPanel })));
 const PiToolsPanel = lazy(() => import("../../components/panels/PiToolsPanel").then((m) => ({ default: m.PiToolsPanel })));
-const ConsolePanel = lazy(() => import("../../components/panels/ConsolePanel").then((m) => ({ default: m.ConsolePanel })));
 const ProviderSettings = lazy(() => import("../../components/ProviderSettings").then((m) => ({ default: m.ProviderSettings })));
 const ComputerUsePanel = lazy(() => import("../../components/panels/ComputerUsePanel").then((m) => ({ default: m.ComputerUsePanel })));
 
@@ -103,7 +102,7 @@ export function SettingsView() {
   else if (page === "computer-use") content = desktop ? <ComputerUsePanel /> : <DesktopOnly what="电脑操作" />;
   else if (page === "screen") content = <ScreenSettingsPanel />;
   else if (page === "pi-tools") content = <PiToolsPanel />;
-  else content = <ConsolePanel />;
+  else content = <GeneralSettingsPanel />;
 
   return (
     <div role="region" aria-label="设置" data-app-settings className="flex min-h-0 min-w-0 flex-1 flex-col text-content">

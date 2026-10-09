@@ -4,8 +4,8 @@ import { createContext, useCallback, useContext, useSyncExternalStore } from 're
 import { emptyTranscript, reduceEvent, type Event, type Transcript, type RpcSessionState, type UiRequest } from './protocol'
 import { parseAgentSnapshot, type AgentSnapshot } from './agents'
 import type { RemoteTheme } from './remote-protocol'
-export type Panel = 'chat' | 'sessions' | 'tree' | 'commands' | 'settings' | 'mobile-access' | 'console' | 'changes' | 'pi-tools' | 'inbox' | 'search' | 'automations' | 'notes'
-export type SettingsPage = 'general' | 'appearance' | 'chat' | 'skills' | 'inbox' | 'providers' | 'computer-use' | 'screen' | 'sessions' | 'tree' | 'pi-tools' | 'changes' | 'console'
+export type Panel = 'chat' | 'sessions' | 'tree' | 'commands' | 'settings' | 'mobile-access' | 'changes' | 'pi-tools' | 'inbox' | 'search' | 'automations' | 'notes'
+export type SettingsPage = 'general' | 'appearance' | 'chat' | 'skills' | 'inbox' | 'providers' | 'computer-use' | 'screen' | 'sessions' | 'tree' | 'pi-tools' | 'changes'
 export type WorkspaceMode = 'project' | 'home'
 export type RuntimeTarget = 'unknown' | 'browser' | 'desktop' | 'mobile'
 export type LiveSession = { path: string; cwd: string; title: string; running: boolean }

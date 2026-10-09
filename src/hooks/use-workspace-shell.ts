@@ -142,9 +142,18 @@ export function useWorkspaceBootstrap() {
   useEffect(() => {
     if (runtimeTarget !== "desktop" || appliedLaunchDefaults.current) return;
     appliedLaunchDefaults.current = true;
-    useWorkspace.getState().set({ panel: readStartupPanel() });
+    // 旧版本遗留的「控制台」面板已删除；落地值若是它，回聊天页。
+    const landing = readStartupPanel();
+    useWorkspace.getState().set({ panel: (landing as string) === "console" ? "chat" : landing });
     void writeKeepAwake(readKeepAwake()).catch(report);
   }, [runtimeTarget]);
+
+  // 同理：设置页里残留的 console 页签回落到 General。
+  useEffect(() => {
+    const state = useWorkspace.getState();
+    if ((state.settingsPage as string) === "console") state.set({ settingsPage: "general" });
+    if ((state.panel as string) === "console") state.set({ panel: "chat" });
+  }, []);
 
   useEffect(() => {
     if (runtimeTarget !== "mobile") return;

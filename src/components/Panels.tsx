@@ -9,7 +9,6 @@ const PiToolsPanel = lazy(() => import("./panels/PiToolsPanel").then((module) =>
 const SessionsPanel = lazy(() => import("./panels/SessionsPanel").then((module) => ({ default: module.SessionsPanel })));
 const TreePanel = lazy(() => import("./panels/TreePanel").then((module) => ({ default: module.TreePanel })));
 const ChangesPanel = lazy(() => import("./panels/ChangesPanel").then((module) => ({ default: module.ChangesPanel })));
-const ConsolePanel = lazy(() => import("./panels/ConsolePanel").then((module) => ({ default: module.ConsolePanel })));
 
 function panelComponent(panel: PanelName) {
   if (panel === "commands") return <CommandsPanel />;
@@ -19,7 +18,7 @@ function panelComponent(panel: PanelName) {
   if (panel === "sessions") return <SessionsPanel />;
   if (panel === "tree") return <TreePanel />;
   if (panel === "changes") return <ChangesPanel />;
-  return <ConsolePanel />;
+  return <CommandsPanel />;
 }
 
 /** A full-page Orbit surface opened from the project rail. */
