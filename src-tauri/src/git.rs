@@ -457,6 +457,36 @@ pub async fn read_text_file(path: String) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// 打开中文件的轻量元信息（mtime + size），供编辑器轮询感知磁盘变更。
+/// 文件不存在返回 `null`——被删掉也是一种需要通知的变更。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileMeta {
+    pub mtime_ms: u64,
+    pub size: u64,
+}
+
+#[tauri::command]
+pub async fn file_meta(path: String) -> Result<Option<FileMeta>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let file = expand_home(&path);
+        match std::fs::metadata(&file) {
+            Ok(meta) => {
+                let mtime_ms = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                Ok(Some(FileMeta { mtime_ms, size: meta.len() }))
+            }
+            Err(_) => Ok(None),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Write a text file, creating the directories it needs.
 ///
 /// The desktop editor tab is read-only today, so this exists for the writer the

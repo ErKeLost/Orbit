@@ -1,8 +1,9 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { readTextFile } from "../../lib/git";
+import { onFilesInvalidated, watchFilePath } from "../files/model/fileWatch";
 import { setDraftFor, useDrafts } from "../../lib/drafts";
 import { saveFileDraft } from "../../lib/file-save";
 import { CodeEditor } from "./CodeEditor";
@@ -119,6 +120,23 @@ export function FileView({
     staleTime: 2000,
     refetchOnWindowFocus: true,
   });
+  const queryClient = useQueryClient();
+  // 磁盘变更感知：Agent（或任何进程）改了正在显示的文件，轮询发现后重读。
+  // 有未保存草稿时跳过——绝不能让磁盘版本覆盖用户正在打的内容。
+  const watchPath = file != null && kind == null ? file.path : null;
+  useEffect(() => {
+    if (!watchPath) return;
+    const stopWatching = watchFilePath(watchPath);
+    const offInvalidated = onFilesInvalidated((paths) => {
+      if (paths && !paths.includes(watchPath)) return;
+      if (useDrafts.getState().drafts[watchPath] !== undefined) return;
+      void queryClient.invalidateQueries({ queryKey: ["file", watchPath] });
+    });
+    return () => {
+      stopWatching();
+      offInvalidated();
+    };
+  }, [watchPath, queryClient]);
   if (!file) return null;
   const relative = cwd && file.path.startsWith(cwd) ? file.path.slice(cwd.length).replace(/^\//, "") : file.path;
   // Saving is silent: the tab dot disappearing and the text being on disk are

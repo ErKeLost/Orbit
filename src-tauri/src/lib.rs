@@ -287,6 +287,7 @@ pub fn run() {
             git::git_create_branch,
             git::list_dir,
             git::read_text_file,
+            git::file_meta,
             git::write_text_file,
             git::create_dir,
             git::rename_path,

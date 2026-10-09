@@ -49,6 +49,7 @@ pub const REMOTE_COMMANDS: &[&str] = &[
     // --- files -------------------------------------------------------------
     "list_dir",
     "read_text_file",
+    "file_meta",
     "write_text_file",
     "create_dir",
     "rename_path",
@@ -193,6 +194,7 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
         // --- files ---------------------------------------------------------
         "list_dir" => json(git::list_dir(text(&args, "path")?).await?),
         "read_text_file" => json(git::read_text_file(text(&args, "path")?).await?),
+        "file_meta" => json(git::file_meta(text(&args, "path")?).await?),
         "write_text_file" => json(git::write_text_file(text(&args, "path")?, text(&args, "contents")?).await?),
         "create_dir" => json(git::create_dir(text(&args, "path")?).await?),
         "rename_path" => json(git::rename_path(text(&args, "from")?, text(&args, "to")?).await?),
