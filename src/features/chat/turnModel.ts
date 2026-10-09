@@ -147,9 +147,11 @@ export function projectTurn(
   const lastHasTool = steps.some((step) => step.messageIndex === lastIndex && step.kind === "tool");
 
   // The answer is the run of notes at the very end of the final message, as
-  // long as no tool call follows them. The prose is promoted only once the
-  // turn has settled: while streaming, every narration stays inside the work
-  // fold, so intermediate summaries never flash through the answer renderer.
+  // long as no tool call follows them. While streaming, the live tail prose
+  // is promoted too so it reads at full size as it arrives; once a tool call
+  // does follow (lastHasTool), the notes drop back into the work fold — that
+  // is the one accepted transition, and it keeps intermediate narration out
+  // of the answer area after the fact.
   // Successful image generations are content, not process (Orbit appends
   // them as first-class image blocks): lift them out of the work steps so they
   // render outside the fold. Failed calls stay behind as ordinary tool rows.
@@ -159,7 +161,7 @@ export function projectTurn(
   const imageKeys = new Set(imageSteps.map((step) => step.key));
   const workRest = steps.filter((step) => !imageKeys.has(step.key));
   let split = workRest.length;
-  if (!streaming && stoppedCleanly && !lastHasTool) {
+  if ((stoppedCleanly || streaming) && !lastHasTool) {
     while (split > 0) {
       const step = workRest[split - 1];
       if (step.messageIndex !== lastIndex) break;

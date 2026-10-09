@@ -62,7 +62,7 @@ describe("turn projection", () => {
     expect(turn.answer).toEqual([]);
   });
 
-  test("streaming narration stays inside the work fold, never the answer", () => {
+  test("streaming tail prose reads as the answer; narration before a tool call stays in the fold", () => {
     const live: DisplayMessage[] = [
       { id: "a1", message: { role: "assistant", stopReason: "toolUse", content: [
         { type: "text", text: "第一段小结" },
@@ -71,9 +71,8 @@ describe("turn projection", () => {
       { id: "a2", message: { role: "assistant", content: [{ type: "text", text: "第二段小结，还在流式输出" }] } },
     ];
     const turn = projectTurn(live, phaseTools, true);
-    expect(turn.answer).toEqual([]);
+    expect(turn.answer.map((step) => step.text)).toEqual(["第二段小结，还在流式输出"]);
     expect(turn.work.some((step) => step.text === "第一段小结")).toBe(true);
-    expect(turn.work.some((step) => step.text === "第二段小结，还在流式输出")).toBe(true);
   });
 
   test("successful image generations lift out of the work fold as content", () => {
