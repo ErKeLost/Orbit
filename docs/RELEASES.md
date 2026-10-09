@@ -38,16 +38,19 @@ release. The Tauri updater's minisign key
 
 ## Linux and Android signing
 
-Linux publishes an AppImage, a Debian package, and an RPM package. The `.deb`
-and `.rpm` declare Node.js >= 22.19.0 as a package dependency, so apt/dnf installs
-it automatically when an enabled distribution or NodeSource repository provides
-that version. This adds only package metadata to Orbit's release artifacts.
+Linux publishes an AppImage, a Debian package, and an RPM package. Release
+artifacts include Node.js via `scripts/sync-node-runtime.mjs`. RPM packages do
+not require an external Node.js package: the previous `nodejs >= 22.19.0`
+string was encoded as a literal capability name, causing Fedora updates to
+fail dependency checks even when a suitable Node.js was installed. Debian
+packages currently retain their additional system Node.js dependency.
 
-Fedora KDE Plasma users can install the `.rpm` or run the AppImage. AppImage
-cannot install system dependencies, so AppImage users must provide Node.js >=
-22.19.0 separately. The official Tauri updater uses the signed AppImage artifact
-on Linux; `.deb` and `.rpm` installations are updated by installing a newer
-package manually (or through the user's package manager).
+Fedora KDE Plasma users can install the `.rpm` or run the AppImage. The pinned
+Tauri updater supports AppImage, DEB, and RPM updates. RPM installation runs
+`rpm -U` with graphical administrator authorization through `pkexec`; it does
+not resolve new dependencies like `dnf` does. An installation failure prevents
+relaunch. Signed RPM assets and their format-specific updater entries must be
+published along with the other Linux assets.
 
 The updater checks GitHub Releases at application startup in production builds.
 When a newer version is available, it offers to download, install, and relaunch
