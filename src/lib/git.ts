@@ -24,6 +24,7 @@ function hasWorkspaceBackend() {
 
 export const gitDiffStats = (cwd: string) => invoke<GitDiffStats>("git_diff_stats", { cwd });
 export const gitChangedFiles = (cwd: string) => invoke<GitChangedFile[]>("git_changed_files", { cwd });
+
 export const gitBranches = (cwd: string) => invoke<GitBranches>("git_branches", { cwd });
 export const gitCheckout = (cwd: string, name: string, remote?: string | null) =>
   invoke<string>("git_checkout", { cwd, name, remote: remote ?? null });
