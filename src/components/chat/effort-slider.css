@@ -273,28 +273,6 @@
   transition-timing-function: ease-out;
 }
 
-/*
- * The grip is three dots on the field's own 6px pitch, one pseudo-element and a
- * repeating radial gradient. The two bars this replaced read as a pause button,
- * the single line that replaced those read as a divider; a column of dots is the
- * one thing that reads as something you grab.
- */
-.effort-slider-thumb::before {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 2px;
-  height: 14px;
-  background: radial-gradient(circle at 50% 1px, color-mix(in srgb, var(--ds-effort-level-deep) 52%, transparent) 1px, transparent 1.35px) 0 0 / 2px 6px repeat-y;
-  opacity: 0.42;
-  transform: translate(-50%, -50%);
-  transition: opacity 140ms ease-out;
-  content: "";
-}
-
-.effort-slider:hover .effort-slider-thumb::before,
-.effort-slider:focus-within .effort-slider-thumb::before,
-.effort-slider[data-dragging] .effort-slider-thumb::before { opacity: 0.92; }
 .effort-slider[data-dragging] .effort-slider-thumb {
   border-color: color-mix(in srgb, var(--ds-effort-level-color) 56%, transparent);
   transform: translateY(-50%) scale(0.97);
@@ -320,9 +298,4 @@
   .effort-slider-thumb { transition-duration: 0.001ms; }
   .effort-slider[data-max] .effort-slider-max-fallback { opacity: 1; }
   .effort-slider-pixels { display: none; }
-}
-
-/* Retired grip: the column of dots is now the only pseudo-element the thumb has. */
-.dark .effort-slider-thumb::before {
-  background: radial-gradient(circle at 50% 1px, rgba(38, 34, 30, 0.46) 1px, transparent 1.35px) 0 0 / 2px 6px repeat-y;
 }
