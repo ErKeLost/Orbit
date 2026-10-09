@@ -63,6 +63,8 @@ describe("remote protocol", () => {
     expect(isRemoteRequest({ type: "host.operation", operation: { name: "session.list", cwd: "/workspace/demo" } })).toBe(true)
     expect(isRemoteRequest({ type: "host.operation", operation: { name: "project.add", path: "/workspace/demo" } })).toBe(true)
     expect(isRemoteRequest({ type: "host.operation", operation: { name: "project.forget", path: "/workspace/demo" } })).toBe(true)
+    expect(isRemoteRequest({ type: "host.operation", operation: { name: "project.open", path: "/workspace/demo" } })).toBe(true)
+    expect(isRemoteRequest({ type: "host.operation", operation: { name: "project.open", path: "" } })).toBe(false)
     expect(isRemoteRequest({ type: "host.operation", operation: { name: "project.add", path: "" } })).toBe(false)
     expect(isRemoteRequest({ type: "host.operation", operation: { name: "arbitrary.command", cwd: "/workspace/demo" } })).toBe(false)
   })

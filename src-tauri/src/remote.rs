@@ -37,6 +37,14 @@ enum RemoteHostOperation {
     ProjectAdd { path: String },
     #[serde(rename = "project.forget")]
     ProjectForget { path: String },
+    /// Open a project that is already listed on the desktop.
+    ///
+    /// The registry lists every project, but a phone can only attach to a
+    /// project that has a live Pi connection. `project.add` already opens what
+    /// it adds; this is the open for a project that is in the list but not
+    /// running, so the phone can enter any project it can see.
+    #[serde(rename = "project.open")]
+    ProjectOpen { path: String },
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -792,6 +800,9 @@ mod desktop {
             super::RemoteHostOperation::ProjectAdd { path } => {
                 request_project(app, "add", path)
             }
+            super::RemoteHostOperation::ProjectOpen { path } => {
+                request_project(app, "open", path)
+            }
             super::RemoteHostOperation::ProjectForget { path } => {
                 request_project(app, "forget", path)
             }
@@ -800,14 +811,14 @@ mod desktop {
 
     /// Hand a project change to the desktop window, which owns the registry.
     ///
-    /// The Host checks that an added path exists (the phone's picker is a
-    /// directory listing, so a typo is possible) and then emits the request;
-    /// the window adds or forgets it and republishes the list, which comes back
-    /// to every phone as `host.projects`. The phone never receives a success it
-    /// cannot see in that list.
+    /// The Host checks that an added or opened path exists (the phone's picker
+    /// is a directory listing, so a typo is possible) and then emits the
+    /// request; the window adds, opens or forgets it and republishes the list,
+    /// which comes back to every phone as `host.projects`. The phone never
+    /// receives a success it cannot see in that list.
     fn request_project(app: &AppHandle, action: &str, path: String) -> Result<Value, String> {
         let target = crate::git::expand_home(&path);
-        if action == "add" {
+        if action == "add" || action == "open" {
             let meta = std::fs::metadata(&target)
                 .map_err(|_| format!("{} 不存在", target.display()))?;
             if !meta.is_dir() {
@@ -1480,9 +1491,68 @@ mod desktop {
                 sleep_or_stop(&stop, Duration::from_secs(2)).await;
                 continue;
             }
-            // Registration is confirmed asynchronously: the relay acks with
-            // {"relay":"registered"} which the read arm below ignores, and client
-            // traffic only arrives once registration succeeded.
+            // Registration is acknowledged, not assumed: the relay answers
+            // {"relay":"registered"} only after it accepted the host key, and
+            // closes the socket otherwise. Waiting for that ack is what makes
+            // `relay_connected` mean "phones can actually reach this machine"
+            // instead of "we sent a message", so a phone scanning the QR code is
+            // not pointed at a relay that will 404 for a few seconds.
+            let mut registered = false;
+            let register_deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                if stop.load(Ordering::Acquire) {
+                    break;
+                }
+                let remaining = register_deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    log::warn!("Relay 注册确认超时，准备重连");
+                    break;
+                }
+                match tokio::time::timeout(remaining, socket.next()).await {
+                    Ok(Some(Ok(Message::Text(text)))) => {
+                        let accepted = serde_json::from_str::<Value>(&text)
+                            .ok()
+                            .and_then(|value| {
+                                value
+                                    .get("relay")
+                                    .and_then(Value::as_str)
+                                    .map(|kind| kind == "registered")
+                            })
+                            .unwrap_or(false);
+                        if accepted {
+                            registered = true;
+                            break;
+                        }
+                    }
+                    Ok(Some(Ok(Message::Ping(payload)))) => {
+                        let _ = socket.send(Message::Pong(payload)).await;
+                    }
+                    Ok(Some(Ok(Message::Close(frame)))) => {
+                        log::warn!("Relay 拒绝 Host 注册：{frame:?}");
+                        break;
+                    }
+                    Ok(Some(Ok(_))) => {}
+                    Ok(Some(Err(error))) => {
+                        log::warn!("Relay 注册阶段连接断开：{error}");
+                        break;
+                    }
+                    Ok(None) => {
+                        log::warn!("Relay 在注册确认前关闭了连接");
+                        break;
+                    }
+                    Err(_) => {
+                        log::warn!("Relay 注册确认超时，准备重连");
+                        break;
+                    }
+                }
+            }
+            if !registered {
+                let _ = socket.close(None).await;
+                if !stop.load(Ordering::Acquire) {
+                    sleep_or_stop(&stop, Duration::from_secs(2)).await;
+                }
+                continue;
+            }
             relay_connected.store(true, Ordering::Release);
             let mut relay_clients = HashMap::<String, RelayClient>::new();
             let mut heartbeat = tokio::time::interval(Duration::from_secs(15));

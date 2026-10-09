@@ -75,6 +75,14 @@ The Host is disabled until the user starts mobile access. Stopping the Host drop
 active sessions, while the stored identity lets the next start reuse the same
 pairing credentials. Treat the pairing URI and the identity file as secrets.
 
+A pairing attempt is never single-shot. The initial race over the advertised
+endpoints retries a few times with backoff before it reports failure, so a relay
+that has not registered its host yet, a Wi-Fi handover, or a wake from sleep
+resolves itself instead of parking the phone on an error until the user taps
+again. On the relay side the Host marks itself connected only after the relay
+acknowledges its registration (`{"relay":"registered"}`), so the desktop never
+tells the user "中转已连接" while a phone would still be answered with 404.
+
 ## The desktop's own commands, mirrored
 
 The phone is not a viewer with a second, smaller feature set. It runs the same
@@ -116,6 +124,23 @@ changes as `host.projects`; the phone renders it instead of keeping a private
 copy. Adding a project from the phone is a `project.add` request the Host hands
 back to that same window, which adds it, opens it, and republishes — one writer,
 and the phone's rail is never a second opinion.
+
+#### Opening a project from the phone
+
+The registry lists every project; a live Pi connection exists only for the one
+the desktop has open. Those are different facts, and the phone used to conflate
+them: tapping a listed project without a connection failed with
+「电脑端没有这个项目的活动连接」, which read as "the project is there but the tap
+does nothing". Tapping now sends `project.open`, the Host hands it to the desktop
+window, the window runs its own `connect` (the same one selecting the project
+there does), and the phone polls the snapshot until the connection appears —
+bounded, so a desktop that never answers fails the tap instead of hanging it.
+`project.add` still implies an open; `project.open` is the open without a
+registry write, so a project is only listed once.
+
+The consequence is deliberate: the phone and the desktop share one workspace
+pointer. Opening a project on the phone switches the desktop to it, exactly as
+opening it on the desktop switches the phone.
 
 ### What is not mirrored yet
 

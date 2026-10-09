@@ -19,10 +19,10 @@ let runtimeStarted = false;
 
 type PairingState = { uri: string; required: boolean; connecting: boolean; error: string | null };
 
-function preferredRemoteConnection(snapshot: RemoteHostSnapshot, connectionId?: string, cwd?: string): RemoteConnection | undefined {
+function preferredRemoteConnection(snapshot: RemoteHostSnapshot, connectionId?: string, cwd?: string, fallbackToFirst = true): RemoteConnection | undefined {
   return snapshot.connections.find(item => item.id === connectionId)
     ?? snapshot.connections.find(item => item.cwd === cwd)
-    ?? snapshot.connections[0];
+    ?? (fallbackToFirst ? snapshot.connections[0] : undefined);
 }
 
 export function useWorkspaceBootstrap() {
@@ -40,11 +40,21 @@ export function useWorkspaceBootstrap() {
       const workspace = useWorkspace.getState();
       const snapshot = await remoteHostSnapshot();
       if (snapshot.theme || snapshot.machineName) useWorkspace.getState().set({ ...(snapshot.theme ? { remoteTheme: snapshot.theme } : {}), ...(snapshot.machineName ? { remoteMachineName: snapshot.machineName } : {}) });
-      const savedId = localStorage.getItem("orbit.remote.connection.v1") ?? workspace.connectionId;
-      const connection = preferredRemoteConnection(snapshot, savedId, workspace.cwd);
-      if (!connection) throw new Error("电脑端当前没有可用的 Pi 连接，请先在电脑打开工作区");
       useProjects.getState().add(snapshot.connections.map(item => item.cwd));
-      await connectRemoteConnection(connection, workspace.workspaceMode);
+      // `fallbackToFirst: false` matters: a phone that was in a project must not
+      // silently land in whichever connection happens to be first after a
+      // reconnect. Prefer the exact connection, then the project it was in (and
+      // reopen it through `connect`, which asks the desktop), and only then give
+      // up. "It connected but to the wrong project" was this fallback.
+      const savedId = localStorage.getItem("orbit.remote.connection.v1") ?? workspace.connectionId;
+      const connection = preferredRemoteConnection(snapshot, savedId, workspace.cwd, false);
+      if (connection) {
+        await connectRemoteConnection(connection, workspace.workspaceMode);
+      } else {
+        const target = workspace.cwd || snapshot.projects?.[0]?.path;
+        if (!target) throw new Error("电脑端当前没有可用的 Pi 连接，请先在电脑打开工作区");
+        await connect(target, workspace.workspaceMode);
+      }
       setPairing(current => ({ ...current, connecting: false, required: false, error: null }));
       setRemoteRevision(value => value + 1);
     } catch (error) {
@@ -82,12 +92,23 @@ export function useWorkspaceBootstrap() {
       });
       remoteReady.current = true;
       if (snapshot.theme || snapshot.machineName) useWorkspace.getState().set({ ...(snapshot.theme ? { remoteTheme: snapshot.theme } : {}), ...(snapshot.machineName ? { remoteMachineName: snapshot.machineName } : {}) });
+      // Pairing must not require the desktop to already have a project open.
+      // If the Host has registry projects but no live connection, open the first
+      // one the way a tap on the phone's rail would; the workspace pointer then
+      // follows the same path as every later switch.
       const savedId = localStorage.getItem("orbit.remote.connection.v1");
       const connection = preferredRemoteConnection(snapshot, savedId ?? undefined, useWorkspace.getState().cwd);
-      if (!connection) throw new Error("电脑端当前没有可用的 Pi 连接，请先在电脑打开工作区");
-      useWorkspace.getState().set({ runtimeTarget: "mobile", cwd: connection.cwd, connectionId: connection.id, workspaceMode: "project", error: null });
-      useProjects.getState().add(snapshot.connections.map(item => item.cwd));
-      await connectRemoteConnection(connection);
+      const projects = [...snapshot.connections.map(item => item.cwd), ...(snapshot.projects ?? []).map(project => project.path)];
+      useProjects.getState().add(projects);
+      if (connection) {
+        useWorkspace.getState().set({ runtimeTarget: "mobile", cwd: connection.cwd, connectionId: connection.id, workspaceMode: "project", error: null });
+        await connectRemoteConnection(connection);
+      } else {
+        const target = snapshot.projects?.[0]?.path;
+        if (!target) throw new Error("电脑端还没有项目，请先在电脑上打开一个项目");
+        useWorkspace.getState().set({ runtimeTarget: "mobile", cwd: target, connectionId: "", workspaceMode: "project", error: null });
+        await connect(target, "project");
+      }
       setPairing(current => ({ ...current, uri, connecting: false, required: false, error: null }));
       setRemoteRevision(value => value + 1);
     } catch (error) {

@@ -1,12 +1,14 @@
 import { persistState } from "./persistent"
 import {
   OrbitRemoteClient,
+  remoteReconnectDelay,
   type RemoteClientHandlers,
   type RemoteClientState,
   type RemoteForegroundReason,
 } from "./remote-client"
 import {
   parsePairingEndpoints,
+  type RemoteConnection,
   type RemoteEndpoint,
   type RemoteHostOperation,
   type RemoteHostSnapshot,
@@ -42,7 +44,23 @@ class StableRemoteRuntime {
   }
 
   async connect(): Promise<void> {
-    await this.race(false)
+    // A pairing attempt is not allowed to be single-shot. A relay that has not
+    // registered its host yet, a Wi-Fi handover, or a wake from sleep all make
+    // the first round fail for reasons that fix themselves a second later; the
+    // old code closed every candidate and sat on an error until the user tapped
+    // again, which is exactly the "连接特别慢" the pairing screen showed.
+    let lastError: Error = new Error("Orbit Host 没有可用连接地址")
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (this.closed) break
+      try {
+        await this.race(false)
+        return
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error))
+        if (attempt < 2) await new Promise(resolve => setTimeout(resolve, remoteReconnectDelay(attempt, 600, 4000)))
+      }
+    }
+    throw lastError
   }
 
   private makeCandidate(): OrbitRemoteClient {
@@ -211,6 +229,26 @@ export function runRemoteInvoke<T = RemoteJson>(command: string, args?: Record<s
 
 export function remoteHostSnapshot() {
   return connectedClient().getSnapshot()
+}
+
+/**
+ * Wait for the desktop to expose a live connection for a project.
+ *
+ * `project.open` is asynchronous by design — the desktop window owns the Pi
+ * connection, so the Host asks it rather than creating one — which means the
+ * phone has to wait for the connection to appear instead of assuming it is
+ * instant. Bounded so a desktop that never answers fails the tap rather than
+ * hanging the rail.
+ */
+export async function waitForRemoteConnection(cwd: string, timeoutMs = 20_000): Promise<RemoteConnection | undefined> {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    const snapshot = await remoteHostSnapshot()
+    const connection = snapshot.connections.find(item => item.cwd === cwd)
+    if (connection) return connection
+    if (Date.now() >= deadline) return undefined
+    await new Promise(resolve => setTimeout(resolve, 300))
+  }
 }
 
 /**

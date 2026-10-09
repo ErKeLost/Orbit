@@ -296,7 +296,10 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
 
   async function chooseProject(path: string) {
     useWorkspace.getState().set({ panel: "chat" });
-    if (path === cwd && workspaceMode === "project") return;
+    // Tapping the project that is already selected is still a request to *use*
+    // it; bailing out unconditionally meant a tap on a project whose connection
+    // had dropped did nothing at all. Only a live connection is a no-op.
+    if (path === cwd && workspaceMode === "project" && useWorkspace.getState().connection === "online") return;
     setBusyProject(path);
     try {
       await connect(path, "project");

@@ -9,7 +9,7 @@ import { useWorkspace } from "../lib/store"
 /** Emitted by the Host when a phone asks to change the project registry. */
 const PROJECT_REQUEST_EVENT = "orbit://projects/request"
 
-type ProjectRequest = { action: "add" | "forget"; path: string }
+type ProjectRequest = { action: "add" | "open" | "forget"; path: string }
 
 function published(projects: Project[]) {
   return projects.map((project) => ({
@@ -78,24 +78,29 @@ export function useProjectRegistry() {
 /**
  * Apply a request from a paired phone.
  *
- * Adding opens the project as well as listing it: a phone can only attach to a
- * project that has a live Pi connection on the desktop, and "I just added this
- * project on my phone" means the user wants to work in it now. Forgetting falls
- * back the way the desktop's own remove does, so the workspace is never left
+ * Adding opens the project as well as listing it, and opening is the same
+ * without the registry write: a phone can only attach to a project that has a
+ * live Pi connection on the desktop, so "I tapped this project on my phone"
+ * has to create that connection here. That makes the desktop window the one
+ * writer of both the registry and the workspace pointer. Forgetting falls back
+ * the way the desktop's own remove does, so the workspace is never left
  * pointing at a project that is no longer listed.
  */
 async function applyProjectRequest({ action, path }: ProjectRequest): Promise<void> {
   const state = useProjects.getState()
-  if (action === "add") {
-    state.add([path])
-    if (useWorkspace.getState().cwd !== path) await connect(path, "project")
+  if (action === "forget") {
+    const wasActive = useWorkspace.getState().cwd === path
+    state.remove(path)
+    if (!wasActive) return
+    const fallback = useProjects.getState().projects[0]
+    const home = useWorkspace.getState().homeDir
+    if (fallback) await connect(fallback.path, "project")
+    else if (home) await connect(home, "home")
     return
   }
-  const wasActive = useWorkspace.getState().cwd === path
-  state.remove(path)
-  if (!wasActive) return
-  const fallback = useProjects.getState().projects[0]
-  const home = useWorkspace.getState().homeDir
-  if (fallback) await connect(fallback.path, "project")
-  else if (home) await connect(home, "home")
+  if (action === "add") state.add([path])
+  const workspace = useWorkspace.getState()
+  // `connect` is idempotent when this project is already the live connection;
+  // otherwise it starts one, which is exactly what the phone is waiting for.
+  if (workspace.cwd !== path || workspace.connection !== "online") await connect(path, "project")
 }

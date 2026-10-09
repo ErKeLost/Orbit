@@ -23,6 +23,16 @@ export type RemoteHostOperation =
    */
   | { name: "project.add"; path: string }
   | { name: "project.forget"; path: string }
+  /**
+   * Open a project that is already in the desktop's registry.
+   *
+   * The registry lists every project, but a phone can only attach to a project
+   * that has a live Pi connection on the desktop. Tapping a listed-but-closed
+   * project used to dead-end on "电脑端没有这个项目的活动连接"; this operation asks
+   * the desktop window to make the connection, exactly as selecting it there
+   * would. `project.add` implies an open, this one is the open without a write.
+   */
+  | { name: "project.open"; path: string }
 
 /** One project as the desktop publishes it to the phone. */
 export type RemoteProject = { path: string; name: string; roots?: string[] }
@@ -216,7 +226,7 @@ export function isRemoteHostOperation(value: unknown): value is RemoteHostOperat
   if (!record(value) || typeof value.name !== "string") return false
   if (value.name === "session.list" || value.name === "project.files") return stringValue(value.cwd)
   if (value.name === "session.turnDurations" || value.name === "session.delete") return stringValue(value.sessionPath)
-  if (value.name === "project.add" || value.name === "project.forget") return stringValue(value.path)
+  if (value.name === "project.add" || value.name === "project.forget" || value.name === "project.open") return stringValue(value.path)
   return false
 }
 

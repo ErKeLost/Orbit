@@ -7,7 +7,7 @@ import {useWorkspace,type LiveSession,type Workspace,type WorkspaceMode} from '.
 import {normalizeProjectPath,projectExtraRoots,useProjects} from './projects'
 import {parseAgentSnapshot} from './agents'
 import {emptyTranscript,hydrate,reduceEvent,type Event,type PiMessage,type RpcSessionState,type UiRequest} from './protocol'
-import {attachRemoteConnection,remoteHostSnapshot,runRemoteHostOperation,sendRemotePiCommand} from './remote-runtime'
+import {attachRemoteConnection,remoteHostSnapshot,runRemoteHostOperation,sendRemotePiCommand,waitForRemoteConnection} from './remote-runtime'
 import type {RemoteJson} from './remote-protocol'
 export const queryClient=new QueryClient({defaultOptions:{queries:{retry:false,refetchOnWindowFocus:false,staleTime:15000,gcTime:120000}}})
 export const native=isTauri()
@@ -409,8 +409,18 @@ export async function setComputerUseMode(enabled:boolean){
 export async function connect(cwd:string,workspaceMode:WorkspaceMode=useWorkspace.getState().workspaceMode){
  if(!native&&!mobileRuntime())throw new Error('请在桌面应用中选择项目')
  if(mobileRuntime()){
-  const snapshot=await remoteHostSnapshot(),connection=snapshot.connections.find(item=>item.cwd===cwd)
+  const snapshot=await remoteHostSnapshot()
   if(snapshot.theme||snapshot.machineName)useWorkspace.getState().set({...snapshot.theme?{remoteTheme:snapshot.theme}:{},...snapshot.machineName?{remoteMachineName:snapshot.machineName}:{}})
+  let connection=snapshot.connections.find(item=>item.cwd===cwd)
+  if(!connection){
+   // The rail renders the desktop's whole registry, but only a project with a
+   // live Pi connection can be attached to. Tapping a listed-but-closed project
+   // used to dead-end; ask the desktop to open it (the same thing selecting it
+   // there does) and wait for the connection to appear.
+   try{await runRemoteHostOperation({name:'project.open',path:cwd})}
+   catch(error){throw new Error(`电脑端无法打开这个项目：${error instanceof Error?error.message:error}`)}
+   connection=await waitForRemoteConnection(cwd)
+  }
   if(!connection)throw new Error('电脑端没有这个项目的活动连接')
   await connectRemoteConnection(connection,workspaceMode)
   if(workspaceMode==='project')await syncConfiguredProjectRoots(cwd)
