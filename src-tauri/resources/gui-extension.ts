@@ -593,6 +593,50 @@ export function validateCall(settings:ImageSettings,kind:string,modelId:string,i
   return null
 }
 
+const MODELS_CONFIG_PATH=join(homedir(),'.pi/agent/models.json')
+const AUTH_CONFIG_PATH=join(homedir(),'.pi/agent/auth.json')
+
+function readJsonFile(path:string):unknown{
+  try{return JSON.parse(readFileSync(path,'utf8'))}catch{return null}
+}
+
+/**
+ * 每一个「值得问一次它有没有出图模型」的 provider。
+ *
+ * 从 Pi 自己的配置里读，因为那是 provider 的唯一真相 —— `image.json` 只描述默认那一个。
+ * 你说的「Tare 里那 5 个图片模型」，它们之所以现在看不见，就是因为 `Tare` 从没被注册成
+ * 一个 image 类型的 provider；而 `models.json` 里有它。
+ *
+ * `hasKey` 决定要不要问：没有凭据的 provider，`/models` 只会回 401，白跑一趟还可能
+ * 拖慢启动。凭据本身不读出来（`auth.json` 只用来判断存在），因为它由 Pi 在请求时解。
+ *
+ * 纯函数，所以 provider 列表可以拿真实配置直接钉。
+ */
+export function imageProvidersFrom(modelsConfig:unknown,authConfig:unknown){
+  const models=(modelsConfig&&typeof modelsConfig==='object'?modelsConfig:{}) as Record<string,unknown>
+  const providers=(models.providers&&typeof models.providers==='object'?models.providers:{}) as Record<string,unknown>
+  const auth=(authConfig&&typeof authConfig==='object'?authConfig:{}) as Record<string,unknown>
+  const baseUrlOf=(entry:unknown)=>(entry&&typeof entry==='object'?(entry as Record<string,unknown>).baseUrl:undefined)
+  const out:{id:string;name?:string;baseUrl?:string;api?:string;hasKey:boolean}[]=[]
+  for(const [id,entry] of Object.entries(providers)){
+    if(!isProviderId(id))continue
+    const url=baseUrlOf(entry)
+    // 没有 baseUrl 就没有可问的端点；Pi 自己的内置 provider 不在这个文件里。
+    if(!isUrl(url))continue
+    const key=id.trim().toLowerCase()
+    const hasKey=Object.keys(auth).some(name=>name.trim().toLowerCase()===key)
+    const spec=(entry&&typeof entry==='object'?entry:{}) as Record<string,unknown>
+    out.push({
+      id,
+      ...(text(spec.name)?{name:text(spec.name)}:{}),
+      baseUrl:url.replace(/\/+$/,''),
+      ...(text(spec.api)?{api:text(spec.api)}:{}),
+      hasKey,
+    })
+  }
+  return out.sort((left,right)=>left.id.localeCompare(right.id))
+}
+
 /**
  * 从端点自己的模型目录里挑出「输出图片」的那些，并转成 Pi 的模型条目。
  *
