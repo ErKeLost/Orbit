@@ -43,8 +43,9 @@ export function useConversationScroll(options: { /** 置 true 时贴底逻辑整
     if (!element) return;
     let lastScrollTop = element.scrollTop;
     let followFrame = 0;
-    // Explicit user gestures unpin immediately; programmatic scrolls do not.
-    const markIntent = () => undefined;
+    // 用户是不是正在用手指/触控板拖动。意图只从输入手势来，不从滚动方向猜：
+    // 回合结束补高度差、锚定对齐、输入框长高都会产生向上位移，那不是“用户离开底部”。
+    let touching = false;
 
     const stickToBottom = () => {
       // 锚定窗口期（刚发送、等锚定接管）不贴底：先把视图拽到底再拉回顶部
@@ -81,19 +82,15 @@ export function useConversationScroll(options: { /** 置 true 时贴底逻辑整
       followingRef.current = followsAfterScroll(element, lastScrollTop, followingRef.current);
       lastScrollTop = element.scrollTop;
       // atBottom 是几何事实，不等于 following：内容收缩把 scrollTop 钳到底部、
-      // 或亚像素残差让最后一次下滚差一两像素到不了门槛时，人已经在底上，
-      // 之后再往下滚不会产生任何事件——按 following 算按钮就永远挂着。
-      setAtBottom(isAtBottom(element));
-      // 向上位移是用户在离开最新内容（滚轮/键盘/触摸/拖滚动条都汇聚到这里）；
-      // 跟随中的负位移只是布局收缩的钳制，不算用户意图。
-      // 程序化定位只有对齐新轮的向下滚动和轮后回落的零位移，不会向上；
-      // 恢复跟随（回到最新）时清除标记。
-      if (movement < 0 && !followingRef.current) setUserUnpinned(true);
-      else if (followingRef.current) setUserUnpinned(false);
+      // 或亚像素残差让最后一次下滚差一两像素到不了门槛时，人已经在底上。
+      const bottom = isAtBottom(element);
+      setAtBottom(bottom);
+      // 回到最新内容就收起按钮；向上滑动（触摸）算离开底部。
+      if (bottom) setUserUnpinned(false);
+      else if (touching && movement < 0) setUserUnpinned(true);
     };
 
     const onWheel = (event: WheelEvent) => {
-      markIntent();
       // 向上滚一下立即停止跟随，避免下一帧又被贴回底部“抢滚动”。
       if (event.deltaY < 0 && element.scrollTop > 0 && !scrollableAncestorCanConsume(event.target, element, event.deltaY)) {
         followingRef.current = false;
@@ -102,10 +99,9 @@ export function useConversationScroll(options: { /** 置 true 时贴底逻辑整
       }
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (SCROLL_UP_KEYS.has(event.key) || (event.key === " " && event.shiftKey)) markIntent();
+      if (SCROLL_UP_KEYS.has(event.key) || (event.key === " " && event.shiftKey)) setUserUnpinned(true);
     };
     const onPointerDown = (event: PointerEvent) => {
-      markIntent();
       // 命中滚动容器本身 = 拖它的滚动条，是用户在手动滚动。
       if (event.target === element) {
         followingRef.current = false;
@@ -113,10 +109,14 @@ export function useConversationScroll(options: { /** 置 true 时贴底逻辑整
         setUserUnpinned(true);
       }
     };
+    const onTouchStart = () => { touching = true; };
+    const onTouchEnd = () => { touching = false; };
 
     element.addEventListener("scroll", onScroll, { passive: true });
     element.addEventListener("wheel", onWheel, { passive: true });
-    element.addEventListener("touchmove", markIntent, { passive: true });
+    element.addEventListener("touchstart", onTouchStart, { passive: true });
+    element.addEventListener("touchend", onTouchEnd, { passive: true });
+    element.addEventListener("touchcancel", onTouchEnd, { passive: true });
     element.addEventListener("keydown", onKeyDown);
     element.addEventListener("pointerdown", onPointerDown);
 
@@ -139,7 +139,9 @@ export function useConversationScroll(options: { /** 置 true 时贴底逻辑整
       cancelAnimationFrame(followFrame);
       element.removeEventListener("scroll", onScroll);
       element.removeEventListener("wheel", onWheel);
-      element.removeEventListener("touchmove", markIntent);
+      element.removeEventListener("touchstart", onTouchStart);
+      element.removeEventListener("touchend", onTouchEnd);
+      element.removeEventListener("touchcancel", onTouchEnd);
       element.removeEventListener("keydown", onKeyDown);
       element.removeEventListener("pointerdown", onPointerDown);
 

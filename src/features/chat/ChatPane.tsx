@@ -324,7 +324,7 @@ export function ChatPane() {
               type="button"
               title="跳到最新"
               aria-label="跳到最新"
-              onClick={scrollToBottom}
+              onClick={() => { holdStickRef.current = false; scrollToBottom(); }}
               className="pointer-events-auto grid size-6 place-items-center rounded-full bg-accent text-white shadow-lg hover:bg-accent/85"
             >
               <ChevronDown className="size-4" strokeWidth={2} />
