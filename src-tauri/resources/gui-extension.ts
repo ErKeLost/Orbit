@@ -638,6 +638,51 @@ export function imageProvidersFrom(modelsConfig:unknown,authConfig:unknown){
 }
 
 /**
+ * `auth.json` 里某个 provider 的 key。
+ *
+ * 只在这一个地方读出来，而且只交给 `registerProvider` —— 它留在磁盘和 Pi 进程之间，
+ * 不进前端、不进工具 schema、不进日志。同样的规矩见 `image_config.rs` 的注释。
+ */
+export function providerApiKey(authConfig:unknown,id:string):string|undefined{
+  const auth=(authConfig&&typeof authConfig==='object'?authConfig:{}) as Record<string,unknown>
+  const wanted=id.trim().toLowerCase()
+  for(const [name,entry] of Object.entries(auth)){
+    if(name.trim().toLowerCase()!==wanted)continue
+    if(!entry||typeof entry!=='object')continue
+    const spec=entry as Record<string,unknown>
+    const key=text(spec.key)??text(spec.apiKey)??text(spec.value)
+    if(key)return key
+  }
+  return undefined
+}
+
+/**
+ * 问一个 provider 有没有出图模型。
+ *
+ * 探不通就是空数组，不抛：一个 provider 挂了（没有 `/models`、key 过期、离线）不该让
+ * 其余 provider 一个都注册不上。这是启动路径，宁可少一个能力也不能卡住。
+ */
+export async function discoverImageModels(
+  provider:{id:string;baseUrl?:string},
+  key:string|undefined,
+  signal:AbortSignal|undefined,
+  fetchImpl:typeof fetch=fetch,
+){
+  if(!key||!provider.baseUrl)return []
+  try{
+    const response=await fetchImpl(`${provider.baseUrl}/models`,{
+      headers:{Authorization:`Bearer ${key}`},
+      signal,
+    })
+    if(!response.ok)return []
+    const payload=await response.json() as {data?:unknown[]}
+    return imageModelsFromCatalog(Array.isArray(payload?.data)?payload.data:[],`${provider.id}-images`)
+  }catch{
+    return []
+  }
+}
+
+/**
  * 从端点自己的模型目录里挑出「输出图片」的那些，并转成 Pi 的模型条目。
  *
  * 判据按可靠性排序，因为不同家给的东西不一样：
@@ -706,6 +751,34 @@ export function registerImages(pi:ExtensionAPI):void{
       cost:{input:0,output:0,cacheRead:0,cacheWrite:0},
     })),
   })
+  // 其余 provider：各自问一次它有没有出图模型。
+  //
+  // `image.json` 只描述默认那一个，所以「Tare 里那 5 个图片模型」看不见 —— 而 Tare 就
+  // 在 `models.json` 里。这里把它（和其余每一个有凭据的）也注册成一个 image 类型的
+  // provider，于是 `getModelsOfType('image')` 和工具 schema 的 model 枚举都会带上它们。
+  //
+  // 缓存一行都不用写：`refreshModels` 只负责在允许联网时返回列表，恢复 stored、离线
+  // 门控、`publish({persist:{models,checkedAt}})` 落盘和 `signal` 取消都是 Pi 的。
+  const authConfig=readJsonFile(AUTH_CONFIG_PATH)
+  for(const provider of imageProvidersFrom(readJsonFile(MODELS_CONFIG_PATH),authConfig)){
+    const key=providerApiKey(authConfig,provider.id)
+    if(!key||!provider.baseUrl)continue
+    const id=`${provider.id}-images`
+    if(id===settings.provider.id)continue
+    pi.registerProvider(id,{
+      name:`${provider.name??provider.id} · 图片`,
+      baseUrl:provider.baseUrl,
+      apiKey:key,
+      authHeader:true,
+      api:'openai-images',
+      images:{'openai-images':{generateImages}},
+      models:[],
+      async refreshModels(context){
+        if(!context.allowNetwork||context.signal.aborted)return []
+        return await discoverImageModels(provider,key,context.signal) as never
+      },
+    })
+  }
   for(const [kind,spec] of Object.entries(settings.kinds)){
     if(!models.length)continue
     pi.registerTool({
