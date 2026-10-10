@@ -19,10 +19,32 @@ import { SurfaceTabs } from "./SurfaceTabs";
 import { useActiveWorkspace } from "./shellStore";
 import { GitFileDiffView } from "../source-control/ui/GitFileDiffView";
 
-function MediaView({ file, kind }: { file: { path: string; name: string }; kind: MediaKind }) {
+/** The noun a preview would use, so the phone's message names the kind. */
+const MEDIA_LABEL: Record<MediaKind, string> = { image: "图片", audio: "音频", video: "视频", pdf: "PDF" };
+
+function MediaView({ file, kind, remote }: { file: { path: string; name: string }; kind: MediaKind; remote: boolean }) {
   const meta = useMediaMeta(file.path, kind);
   // The asset protocol streams the bytes; nothing is base64'd over IPC.
   const src = convertFileSrc(file.path);
+  // The asset protocol is "this webview reads this machine's disk". A paired
+  // phone has no such file, and the bytes are not mirrored over the socket yet
+  // (docs/MOBILE.md), so `src` there only ever resolves to a broken image. Say
+  // what is true instead of showing one.
+  if (remote) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-auto bg-content/2 p-6">
+        <div className="flex w-full max-w-sm flex-col items-center gap-3 rounded-xl border border-content/10 bg-content/4 px-6 py-8 text-center">
+          <ImagePlus className="size-8 text-content/25" strokeWidth={1.5} />
+          <p className="text-[13px] leading-5 text-content/70">手机端暂不支持预览{MEDIA_LABEL[kind]}，请在电脑上查看。</p>
+          <p className="break-all font-mono text-[11px] leading-4 text-content/40">{file.path}</p>
+        </div>
+        <p className="shrink-0 font-mono text-[11px] text-content/40">
+          {file.name}
+          {meta.data ? ` · ${meta.data.mime} · ${formatBytes(meta.data.size)}` : meta.isFetching ? " · 读取中…" : ""}
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-auto bg-content/2 p-6">
       {kind === "image" ? (
@@ -163,7 +185,7 @@ export function FileView({
       {diff ? (
         <GitFileDiffView cwd={cwd} path={file.path} kind={diff} />
       ) : kind != null ? (
-        <MediaView file={file} kind={kind} />
+        <MediaView file={file} kind={kind} remote={remote} />
       ) : markdown && contents.data != null ? (
         <MarkdownViewShell
           mode={mode}

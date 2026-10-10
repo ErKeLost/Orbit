@@ -185,7 +185,12 @@ Three things are not commands, so they cannot be mirrored by name:
   phone today.
 * **Media previews.** Images, audio, video and PDFs are served to the desktop
   webview through the asset protocol, which a phone cannot reach; metadata
-  (`media_meta`) works. The fix is to read the bytes over the paired socket.
+  (`media_meta`) works, and the phone's file view states that the preview is
+  desktop-only instead of drawing a broken image. That protocol's scope is
+  `requireLiteralLeadingDot: false`, because generated media lives under
+  `~/.pi/agent/orbit-media` and the unix default refuses to match a pattern
+  across a dot-prefixed directory. The real fix for the phone is to read the
+  bytes over the paired socket.
 * **Editing a project's own metadata** (rename, extra roots) and importing a
   session file: the first needs a `project.update` request, the second opens a
   picker on the device that is holding the phone.

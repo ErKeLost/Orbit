@@ -70,7 +70,7 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
             <PanelLeft className="size-4" strokeWidth={1.75} />
           </TitleIconButton>
         )}
-        <span className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-[14px] font-medium">
+        <span className="flex min-w-0 flex-1 items-center text-[14px] font-medium">
           <span className="min-w-0 truncate">{showFile ? openFile.name : title}</span>
         </span>
         {showFile ? (
