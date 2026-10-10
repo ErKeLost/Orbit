@@ -40,7 +40,17 @@ the same injection path and the same accessibility grant as `gui_task`. The
 computer is the executor for every action; the phone sends normalized
 coordinates and never learns about Retina scaling or display arrangement.
 
-## The keyboard and the composer
+## Back, and the keyboard
+
+The Android back gesture is decided by the page, not by the WebView's history.
+Wry's default is `canGoBack() ? goBack() : onBackPressed()`, which for a
+single-page shell is always the second branch: back left the app from anywhere,
+including with the drawer open or a file on screen. `MainActivity` therefore
+leaves `handleBackNavigation` off, and `src/lib/back-gesture.ts` keeps the stack
+of surfaces that claim a press — the drawer, the file pane, the screen window —
+newest first. Only a press nobody claims leaves the app. A surface that has moved
+on declines instead of swallowing the press, and one that throws is skipped
+rather than allowed to make back do nothing at all.
 
 An Android WebView is never resized for the on-screen keyboard on its own. The
 activity draws edge-to-edge (`MainActivity.enableEdgeToEdge`) and Android 15+

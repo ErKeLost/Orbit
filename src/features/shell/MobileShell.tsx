@@ -15,6 +15,7 @@ import { TitleIconButton } from "./chrome";
 import { useActiveWorkspace, useShell } from "./shellStore";
 import { compactTitle } from "../../lib/session-visual";
 import { observeKeyboardInset } from "../../lib/keyboard-inset";
+import { installBackGesture, registerBackHandler } from "../../lib/back-gesture";
 import { mergeProjectSessions, useProjectSessions } from "../../hooks/use-project-sessions";
 
 /**
@@ -63,6 +64,31 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
   // for the shells that resize the visual viewport instead. See
   // `src/lib/keyboard-inset.ts` for why the two never overlap.
   useEffect(() => observeKeyboardInset(), []);
+  // Back belongs to whatever is on top of this shell. `MainActivity` leaves the
+  // app only when nothing claims the press; each overlay claims it while it is
+  // open, newest first. See `src/lib/back-gesture.ts`.
+  useEffect(() => installBackGesture(), []);
+  useEffect(() => {
+    if (!drawer) return;
+    return registerBackHandler(() => {
+      setDrawer(false);
+      return true;
+    });
+  }, [drawer]);
+  useEffect(() => {
+    if (!showFile) return;
+    return registerBackHandler(() => {
+      setChatSurface(true);
+      return true;
+    });
+  }, [showFile]);
+  useEffect(() => {
+    if (!screenPip) return;
+    return registerBackHandler(() => {
+      useWorkspace.getState().set({ screenPip: false });
+      return true;
+    });
+  }, [screenPip]);
 
   return (
     <div className="mobile-shell flex h-full min-h-0 flex-col bg-background-base text-content">
