@@ -28,6 +28,7 @@
 | 扩展 select / confirm / input / editor | GUI 对话框，以 id 返回 extension_ui_response |
 | 扩展 notify / setStatus / setWidget / setTitle / set_editor_text | 提示、状态、文本组件、标题、编辑器 |
 | 项目文件引用 | Composer 的 `@` 文件索引；从当前工作区筛选路径并插入引用 |
+| 文件夹视图 | 目录是独立的一种视图，不再掉进文本分支。`file_meta` 的 `isDir` 是权威答案（同时保留标签页从文件树带来的 `isDir`，避免常见情况多一次往返），`list_dir` 提供一级列表。面包屑按工作区收拢、过深折叠；分区为文件夹 / 图片瀑布 / 其余文件（名称·大小·时间）。图片用 `<img>` + asset protocol + `loading="lazy"`，不用 canvas：WebView 自己流式读盘并在主线程外解码，`content-visibility` 和多图层都比不上它。手机端没有 asset protocol，退化为图标。路径不存在时显示「文件不存在」而不是 `EOS error 2`。分组与排序是纯函数，见 `lib/directory.ts` 与 `tests/directory.test.ts` |
 | Bash 实时输出 | 监听 Pi `bash_execution_update`，显示增量输出、命令、退出码、取消和截断路径 |
 | 会话导入、分享、重命名、复制 | Pi 工具面板接入 `/import`、`/share`、`set_session_name`、`get_last_assistant_text` |
 | Scoped Models、资源重载、快捷键、变更记录 | Pi 工具面板提供官方命令入口；需要 TUI 交互的命令打开原生 Pi 终端 |

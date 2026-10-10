@@ -7,7 +7,8 @@ export type GitDiffStats = { files: number; additions: number; deletions: number
 export type GitChangedFile = { path: string; status: "M" | "A" | "D" | "U"; additions: number; deletions: number };
 export type GitBranchEntry = { name: string; current: boolean; remote: string | null };
 export type GitBranches = { current: string | null; detached: boolean; branches: GitBranchEntry[] };
-export type DirEntry = { name: string; path: string; isDir: boolean; ignored: boolean };
+/** One listing row. `size` is 0 for folders; `mtimeMs` is 0 when unknown. */
+export type DirEntry = { name: string; path: string; isDir: boolean; ignored: boolean; size: number; mtimeMs: number };
 
 /**
  * Whether a workspace backend exists at all.

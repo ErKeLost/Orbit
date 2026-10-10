@@ -396,6 +396,12 @@ pub struct DirEntry {
     pub path: String,
     pub is_dir: bool,
     pub ignored: bool,
+    /// Bytes for a file; 0 for a directory. `metadata.len()` on a directory is
+    /// the size of its own record, not a content size, and must never be
+    /// formatted as one.
+    pub size: u64,
+    /// Unix ms; 0 when the platform will not say.
+    pub mtime_ms: u64,
 }
 
 /// One directory level for the Explorer, folders first, gitignore aware.
@@ -413,8 +419,13 @@ pub async fn list_dir(path: String) -> Result<Vec<DirEntry>, String> {
                     return None;
                 }
                 let full = entry.path();
-                let is_dir = std::fs::metadata(&full).map(|m| m.is_dir()).unwrap_or(false);
-                Some(DirEntry { name, path: path_to_js(&full), is_dir, ignored: false })
+                // The stat is already here for `is_dir`; size and mtime ride along
+                // so the directory listing never needs a second round trip.
+                let (is_dir, size, mtime_ms) = match std::fs::metadata(&full) {
+                    Ok(meta) => (meta.is_dir(), if meta.is_dir() { 0 } else { meta.len() }, file_mtime_ms(&meta)),
+                    Err(_) => (false, 0, 0),
+                };
+                Some(DirEntry { name, path: path_to_js(&full), is_dir, ignored: false, size, mtime_ms })
             })
             .collect();
         if git_is_work_tree(&dir) && !entries.is_empty() {
@@ -459,11 +470,24 @@ pub async fn read_text_file(path: String) -> Result<String, String> {
 
 /// 打开中文件的轻量元信息（mtime + size），供编辑器轮询感知磁盘变更。
 /// 文件不存在返回 `null`——被删掉也是一种需要通知的变更。
+///
+/// `is_dir` 让这一条命令同时回答「这个路径到底是什么」：文件面板靠扩展名
+/// 猜类型，猜不出目录，`read_text_file` 会以 `EISDIR (os error 21)` 收场。
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileMeta {
     pub mtime_ms: u64,
     pub size: u64,
+    pub is_dir: bool,
+}
+
+/// Unix ms, or 0 when the platform will not say.
+fn file_mtime_ms(meta: &std::fs::Metadata) -> u64 {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 #[tauri::command]
@@ -472,13 +496,9 @@ pub async fn file_meta(path: String) -> Result<Option<FileMeta>, String> {
         let file = expand_home(&path);
         match std::fs::metadata(&file) {
             Ok(meta) => {
-                let mtime_ms = meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0);
-                Ok(Some(FileMeta { mtime_ms, size: meta.len() }))
+                let is_dir = meta.is_dir();
+                let size = if is_dir { 0 } else { meta.len() };
+                Ok(Some(FileMeta { mtime_ms: file_mtime_ms(&meta), size, is_dir }))
             }
             Err(_) => Ok(None),
         }

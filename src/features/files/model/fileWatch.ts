@@ -1,4 +1,4 @@
-import { invoke } from "../../../lib/native";
+import { pathMeta, type PathMeta } from "../../../lib/path-meta";
 
 /**
  * 打开中文件的磁盘变更感知。
@@ -9,12 +9,10 @@ import { invoke } from "../../../lib/native";
  * 且天然覆盖所有改动来源——Agent 工具、bash 重定向、git 操作。
  */
 
-type FileMeta = { mtimeMs: number; size: number };
-
 const listeners = new Set<(paths?: string[]) => void>();
-const watched = new Map<string, FileMeta>();
+const watched = new Map<string, PathMeta>();
 const POLL_MS = 2_500;
-const PENDING = { mtimeMs: -1, size: -1 };
+const PENDING: PathMeta = { mtimeMs: -1, size: -1, isDir: false };
 
 let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -22,8 +20,8 @@ function emit(paths?: string[]) {
   for (const listener of listeners) listener(paths);
 }
 
-function statFile(path: string): Promise<FileMeta | null> {
-  return invoke<FileMeta | null>("file_meta", { path }).catch(() => null);
+function statFile(path: string): Promise<PathMeta | null> {
+  return pathMeta(path).catch(() => null);
 }
 
 /** 订阅失效信号。`paths` 缺省表示"全部文件"。返回取消订阅函数。 */
@@ -49,7 +47,7 @@ export function watchFilePath(path: string): () => void {
     watched.set(path, PENDING);
     void statFile(path).then((meta) => {
       // 基线取回前若已注销（标签被关了）就不写回，避免常驻一个幽灵路径。
-      if (watched.get(path) === PENDING) watched.set(path, meta ?? { mtimeMs: 0, size: 0 });
+      if (watched.get(path) === PENDING) watched.set(path, meta ?? { mtimeMs: 0, size: 0, isDir: false });
     });
   }
   if (!timer) timer = setInterval(() => void poll(), POLL_MS);

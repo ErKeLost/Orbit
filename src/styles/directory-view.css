@@ -1,0 +1,329 @@
+/* ==========================================================================
+   Directory view — a folder read as a folder.
+   --------------------------------------------------------------------------
+   Same rules as `provider-page.css`: colors come only from Orbit tokens, and
+   the row metric matches the rest of the shell (32px rows, 6px radius, a
+   `content/6` hover). Nothing here draws a card: a directory is a surface, not
+   a settings block, so the sections are separated by headings, not borders.
+   ========================================================================== */
+
+.dir-view {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  color: var(--color-content);
+}
+
+/* ── Header: breadcrumb, counts, refresh ─────────────────────────────────── */
+
+.dir-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--color-stroke);
+}
+
+.dir-crumbs {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  overflow: hidden;
+}
+
+.dir-crumb {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.dir-crumb:first-child .dir-crumb-button {
+  padding-left: 0;
+}
+
+.dir-crumb-sep {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--color-content) 25%, transparent);
+}
+
+.dir-crumb-button {
+  max-width: 190px;
+  overflow: hidden;
+  padding: 2px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-content) 55%, transparent);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition:
+    background-color 120ms var(--motion-ease-out),
+    color 120ms var(--motion-ease-out);
+}
+
+.dir-crumb-button:hover {
+  background: color-mix(in srgb, var(--color-content) 8%, transparent);
+  color: var(--color-content);
+}
+
+.dir-crumb-button[aria-current="page"] {
+  color: var(--color-content);
+  font-weight: 500;
+}
+
+.dir-summary {
+  flex-shrink: 0;
+  margin: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-content) 40%, transparent);
+}
+
+.dir-refresh {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+}
+
+.dir-refresh:hover {
+  background: color-mix(in srgb, var(--color-content) 8%, transparent);
+  color: var(--color-content);
+}
+
+.dir-refresh svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ── Body ────────────────────────────────────────────────────────────────── */
+
+.dir-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 16px 28px;
+}
+
+.dir-section + .dir-section {
+  margin-top: 22px;
+}
+
+.dir-section-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+}
+
+.dir-section-head > span {
+  border-radius: 999px;
+  padding: 1px 6px;
+  background: color-mix(in srgb, var(--color-content) 6%, transparent);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-content) 32%, transparent);
+}
+
+.dir-center {
+  display: flex;
+  min-height: 240px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: color-mix(in srgb, var(--color-content) 40%, transparent);
+}
+
+.dir-notice svg {
+  opacity: 0.35;
+}
+
+.dir-notice p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.dir-notice-path {
+  max-width: 420px;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: color-mix(in srgb, var(--color-content) 30%, transparent);
+}
+
+/* ── Folders ─────────────────────────────────────────────────────────────── */
+
+.dir-folder-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 2px;
+}
+
+.dir-folder {
+  display: flex;
+  width: 100%;
+  height: 32px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: 6px;
+  text-align: left;
+  font-size: 12.5px;
+  color: color-mix(in srgb, var(--color-content) 82%, transparent);
+  transition:
+    background-color 120ms var(--motion-ease-out),
+    color 120ms var(--motion-ease-out);
+}
+
+.dir-folder:hover {
+  background: color-mix(in srgb, var(--color-content) 6%, transparent);
+  color: var(--color-content);
+}
+
+.dir-folder-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Images ──────────────────────────────────────────────────────────────── */
+
+.dir-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(116px, 1fr));
+  gap: 12px 10px;
+}
+
+.dir-tile {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  text-align: left;
+}
+
+.dir-tile-frame {
+  display: grid;
+  aspect-ratio: 1;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-content) 4%, transparent);
+  transition: border-color 120ms var(--motion-ease-out);
+}
+
+.dir-tile-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.dir-tile-remote svg {
+  width: 20px;
+  height: 20px;
+  color: color-mix(in srgb, var(--color-content) 25%, transparent);
+}
+
+.dir-tile-name {
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--color-content) 55%, transparent);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 120ms var(--motion-ease-out);
+}
+
+.dir-tile:hover .dir-tile-frame {
+  border-color: color-mix(in srgb, var(--color-content) 25%, transparent);
+}
+
+.dir-tile:hover .dir-tile-name {
+  color: var(--color-content);
+}
+
+/* ── Other files ─────────────────────────────────────────────────────────── */
+
+.dir-file-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dir-file {
+  display: flex;
+  width: 100%;
+  height: 30px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px;
+  border-radius: 6px;
+  text-align: left;
+  font-size: 12.5px;
+  color: color-mix(in srgb, var(--color-content) 78%, transparent);
+  transition:
+    background-color 120ms var(--motion-ease-out),
+    color 120ms var(--motion-ease-out);
+}
+
+.dir-file:hover {
+  background: color-mix(in srgb, var(--color-content) 6%, transparent);
+  color: var(--color-content);
+}
+
+.dir-file-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dir-file-size,
+.dir-file-date {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-content) 35%, transparent);
+  white-space: nowrap;
+}
+
+.dir-file-size {
+  width: 68px;
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+.dir-file-date {
+  width: 92px;
+  text-align: right;
+}
+
+/* A narrow pane drops the metadata before it drops the name. */
+@container (width < 420px) {
+  .dir-file-size,
+  .dir-file-date,
+  .dir-summary {
+    display: none;
+  }
+}

@@ -17,7 +17,9 @@ import { MarkdownViewShell, useMarkdownMode } from "../chat/MarkdownModeToggle";
 import { ChevronDown, ChevronRight, ImagePlus, Loader } from "../../shared/ui/icons";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { SurfaceTabs } from "./SurfaceTabs";
-import { useActiveWorkspace } from "./shellStore";
+import { useActiveWorkspace, useShell } from "./shellStore";
+import { DirectoryView } from "./DirectoryView";
+import { usePathMeta } from "../../lib/path-meta";
 import { GitFileDiffView } from "../source-control/ui/GitFileDiffView";
 
 /** Refusing to preview, or a fetch that failed: the same shape either way. */
@@ -111,6 +113,21 @@ function MediaView({ file, kind, remote }: { file: { path: string; name: string 
   );
 }
 
+/**
+ * A path that is not there any more — a chat link to something since moved, a
+ * tab restored after a `git clean`. Saying so is the whole job; `read_text_file`
+ * used to answer this case with a raw `No such file or directory (os error 2)`.
+ */
+function MissingFileNotice({ path }: { path: string }) {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+      <ImagePlus className="size-8 text-content/20" strokeWidth={1.5} />
+      <p className="text-[13px] text-content/60">文件不存在</p>
+      <p className="max-w-md break-all font-mono text-[11px] leading-4 text-content/35">{path}</p>
+    </div>
+  );
+}
+
 /** Orbit's `isMarkdownPath`: the extensions that open in preview mode. */
 function isMarkdownPath(path: string): boolean {
   const extension = (path.split(".").pop() ?? "").toLowerCase();
@@ -155,6 +172,17 @@ export function FileView({
   // A diff tab is a read-only view of a working-tree comparison, not a file.
   const diff = file?.diff;
   const kind = file && !diff ? mediaKind(file.path) : null;
+  // 目录不是「恰好没有扩展名的媒体」：扩展名里根本没有这个信息，只有 stat 有。
+  // 所以每一条路径都问一次磁盘，同时接受标签页带过来的答案（树本来就知道那是
+  // 文件夹），磁盘仍然是否决权更高的那个。
+  //
+  // 顺序是刻意的：不阻塞地先发一次文本读取，让常见情况（打开源码文件）不必等
+  // 一次往返；只有目录会白跑那一趟，而目录本来就不常从聊天里的路径块打开。
+  const stat = usePathMeta(file && !diff ? file.path : null, !diff);
+  const isDirectory = stat.data?.isDir ?? file?.isDir ?? false;
+  const missing = stat.isSuccess && stat.data === null;
+  // 只对真正的文件读文本：目录读下去只会得到 `EISDIR (os error 21)`。
+  const textEnabled = file != null && kind == null && diff == null && !isDirectory;
   const markdown = file ? isMarkdownPath(file.path) : false;
   // Like Orbit, markdown documents open as preview and remember the mode per file.
   const [mode, setMode] = useMarkdownMode(file?.path ?? "", "preview");
@@ -168,17 +196,18 @@ export function FileView({
   // makes closing a tab (or switching panes) safe.
   const draft = useDrafts((state) => (file ? state.drafts[file.path] : undefined));
   const dirty = draft !== undefined;
+  const openFile = useShell((state) => state.openFile);
   const contents = useQuery({
     queryKey: ["file", file?.path ?? ""],
     queryFn: () => readTextFile(file?.path ?? ""),
-    enabled: file != null && kind == null && diff == null,
+    enabled: textEnabled,
     staleTime: 2000,
     refetchOnWindowFocus: true,
   });
   const queryClient = useQueryClient();
   // 磁盘变更感知：Agent（或任何进程）改了正在显示的文件，轮询发现后重读。
   // 有未保存草稿时跳过——绝不能让磁盘版本覆盖用户正在打的内容。
-  const watchPath = file != null && kind == null && diff == null ? file.path : null;
+  const watchPath = textEnabled ? file?.path ?? null : null;
   useEffect(() => {
     if (!watchPath) return;
     const stopWatching = watchFilePath(watchPath);
@@ -214,6 +243,15 @@ export function FileView({
       <SurfaceTabs paneId={paneId} showGrip={showGrip} onPaneDragStart={onPaneDragStart} />
       {diff ? (
         <GitFileDiffView cwd={cwd} path={file.path} kind={diff} />
+      ) : isDirectory ? (
+        <DirectoryView
+          path={file.path}
+          cwd={cwd}
+          remote={remote}
+          onOpen={(path, isDir) => openFile(path, { pin: true, isDir })}
+        />
+      ) : missing ? (
+        <MissingFileNotice path={file.path} />
       ) : kind != null ? (
         <MediaView file={file} kind={kind} remote={remote} />
       ) : markdown && contents.data != null ? (

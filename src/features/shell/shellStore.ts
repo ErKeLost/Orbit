@@ -25,7 +25,11 @@ import {
 export type SidebarTab = "sessions" | "files" | "changes";
 export type CollapsedRailMode = "compact" | "hidden";
 export type DockPosition = "bottom" | "top" | "left" | "right";
-export type OpenFile = { path: string; name: string; preview: boolean; /** Set on a diff tab: the working-tree comparison it shows. */ diff?: "staged" | "unstaged" };
+export type OpenFile = { path: string; name: string; preview: boolean; /** Set on a diff tab: the working-tree comparison it shows. */ diff?: "staged" | "unstaged"; /**
+   * Known on a folder opened from the tree or a listing, so the pane does not
+   * have to ask the disk before it knows not to read a directory as text.
+   * `lib/path-meta` stays the authority; this only avoids the first round trip.
+   */ isDir?: boolean };
 export type PaneState = { files: OpenFile[]; activeFile: string | null };
 
 /** The session pane's leaf id; editor panes use `editor:<n>`. */
@@ -205,7 +209,7 @@ type ShellState = Persisted & {
   focusPane: (paneId: string) => void;
   /** Open a file in the focused editor pane, splitting one off when there is none.
    * `diff` opens the tab as a working-tree diff instead of an editable file. */
-  openFile: (path: string, options?: { pin?: boolean; pane?: string; diff?: "staged" | "unstaged" }) => void;
+  openFile: (path: string, options?: { pin?: boolean; pane?: string; diff?: "staged" | "unstaged"; isDir?: boolean }) => void;
   pinFile: (path: string, pane?: string) => void;
   closeFile: (path: string, pane?: string) => void;
   focusFile: (path: string | null, pane?: string) => void;
@@ -439,7 +443,7 @@ export const useShell = create<ShellState>((set, get) => {
           const pane = current.panes[found.paneId];
           const files = pane.files.map((file) =>
             file.path === path
-              ? { ...file, preview: options?.pin ? false : file.preview, diff: options?.diff }
+              ? { ...file, preview: options?.pin ? false : file.preview, diff: options?.diff, ...(options?.isDir ? { isDir: true } : {}) }
               : file,
           );
           return { ...current, panes: { ...current.panes, [found.paneId]: { files, activeFile: path } }, activePane: found.paneId };
@@ -448,7 +452,7 @@ export const useShell = create<ShellState>((set, get) => {
       }
       const requested = options?.pane && workspace.panes[options.pane] ? options.pane : null;
       const target = requested ?? (workspace.panes[workspace.activePane] ? workspace.activePane : Object.keys(workspace.panes)[0] ?? null);
-      const entry: OpenFile = { path, name: fileName(path), preview: !options?.pin, ...(options?.diff ? { diff: options.diff } : {}) };
+      const entry: OpenFile = { path, name: fileName(path), preview: !options?.pin, ...(options?.diff ? { diff: options.diff } : {}), ...(options?.isDir ? { isDir: true } : {}) };
       if (target) {
         patchActive((current) => {
           const pane = current.panes[target];

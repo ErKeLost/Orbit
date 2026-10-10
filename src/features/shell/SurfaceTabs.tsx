@@ -242,7 +242,7 @@ export function SurfaceTabs({
                   {file.diff ? (
                     <FileDiff className="size-3.5 text-content/60" strokeWidth={1.75} />
                   ) : (
-                    <FileTypeIcon name={file.name} isDir={false} size={14} />
+                    <FileTypeIcon name={file.name} isDir={file.isDir === true} size={14} />
                   )}
                 </span>
                 <TabLabel className={`flex-1 ${file.preview ? "italic" : ""}`}>{file.name}</TabLabel>
