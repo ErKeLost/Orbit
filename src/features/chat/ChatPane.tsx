@@ -18,7 +18,7 @@ import { GalaxyDotBackground } from "../background/GalaxyDotBackground";
 import { TerminalDock } from "../terminal/TerminalDock";
 import { useShell } from "../shell/shellStore";
 import { useAppearance } from "../../lib/appearance";
-import { ErrorRow, InitialWorking, TranscriptGroupView, type TranscriptGroup } from "./Transcript";
+import { ErrorRow, InitialWorking, TranscriptGroupView, TranscriptSkeleton, type TranscriptGroup } from "./Transcript";
 import { Composer } from "./Composer";
 import { PromptOutline } from "./PromptOutline";
 
@@ -253,6 +253,18 @@ export function ChatPane() {
   const runningLabel = transcript.compacting ? "正在压缩上下文" : transcript.phase && transcript.phase !== "就绪" ? transcript.phase : "Working…";
   const dockVertical = dockPosition === "top" || dockPosition === "bottom";
   const dock = dockOpen && terminalAvailable ? <TerminalDock cwd={project} open /> : null;
+
+  // 会话还没到：骨架屏占位，不要停在旧会话的内容上再突然换掉。
+  if (transcript.loading) {
+    return (
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <ChatBackground />
+        <div className="relative z-10 min-h-0 flex-1 overflow-hidden">
+          <TranscriptSkeleton />
+        </div>
+      </div>
+    );
+  }
 
   if (groups.length === 0 && !waiting) {
     return (

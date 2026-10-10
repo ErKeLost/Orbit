@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { SessionTreeNode } from "@earendil-works/pi-coding-agent";
 import { useWorkspace } from "../../lib/store";
-import { changeSession, loadMessages, refresh, report, request } from "../../lib/rpc";
+import { changeSession, refresh, reloadMessages, report, request } from "../../lib/rpc";
 import { Button } from "../UI";
 import { usePrompt } from "../../lib/prompt";
 import { Icon } from "../Icon";
@@ -13,7 +13,8 @@ function TreeNode({ node, leafId, depth = 0, disabled }: { node: SessionTreeNode
   const text = entry.type === "message" ? ("content" in entry.message ? (typeof entry.message.content === "string" ? entry.message.content : JSON.stringify(entry.message.content)) : JSON.stringify(entry.message)).slice(0, 150) : entry.type;
   async function navigate(summarize = false) {
     await request({ type: "prompt", message: `/gui-tree ${JSON.stringify({ id: entry.id, summarize })}` }, 60000);
-    await loadMessages();
+    // 切分支会整体换掉 transcript：先上骨架屏，别让旧分支停在原地再突然抽掉。
+    await reloadMessages();
   }
   async function label() {
     const value = await ask({ title: "为这个节点命名", initial: node.label ?? "" });

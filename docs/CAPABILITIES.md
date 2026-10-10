@@ -16,7 +16,7 @@
 | 中转地址与 API Key | 沿用本机 Pi models.json / auth.json；不把 Key 复制到前端、项目或包内 |
 | 模型切换、effort | 输入框选择器；连接前同步当前 provider 的 `/v1/models` 元数据，再使用 get_available_models / get_available_thinking_levels；保留 Pi 已有模型的 reasoning/compat 覆盖 |
 | 中转站完整模型目录 | composer 模型栏旁的目录按钮；Rust 读取 Pi provider 的 baseUrl/auth.json，请求 OpenAI 兼容的 `/v1/models`，展示远端全部模型并标记是否已写入 Pi models.json |
-| 新建、恢复、命名、克隆、分叉 | 会话列表、标题、会话树；Pi 持久化文件 |
+| 新建、恢复、命名、克隆、分叉 | 会话列表、标题、会话树；Pi 持久化文件。切换/新建/克隆/分叉、切项目、会话树切分支都会先上聊天的骨架屏（`transcript.loading`），等 `hydrate` 把真正的会话换上来，不停在旧内容上再突然抽掉 |
 | 树导航、标签 | GUI 附带扩展调用 ctx.navigateTree / pi.setLabel |
 | 当前模型可用的所有工具、工具开关 | 设置；Pi 的 getAllTools / setActiveTools |
 | 停止与队列 | 输入框；先 clear_queue 再 abort。排队中的 steer 不丢：第一条重新起一轮、其余的按 steer 排进这一轮继续投递；followUp 仍回草稿 |

@@ -28,12 +28,12 @@ function reset() {
 }
 
 describe("startup panel", () => {
-  test("opens on 「移动端」 by default", () => {
+  test("opens on 「会话」 by default", () => {
     reset()
-    expect(STARTUP_PANEL_DEFAULT).toBe("mobile-access")
-    expect(readStartupPanel()).toBe("mobile-access")
-    // The pairing page has to be reachable from the picker for a phone that
-    // connects over the relay rather than on the same Wi-Fi.
+    expect(STARTUP_PANEL_DEFAULT).toBe("chat")
+    expect(readStartupPanel()).toBe("chat")
+    // The pairing page is still a landing surface the user can pick: a phone that
+    // connects over the relay rather than on the same Wi-Fi has to reach it.
     expect(STARTUP_PANELS.map(panel => panel.label)).toContain("移动端")
   })
 

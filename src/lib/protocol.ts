@@ -16,8 +16,14 @@ export type Event = { type: string; message?: PiMessage; toolCallId?: string; to
  * 这段时间 ``running`` 还是 false，屏幕上此前没有任何指示。它只在空闲提交时置位，
  * ``agent_start`` / ``agent_settled`` / ``prompt_settled`` 时撤下。
  */
-export type Transcript = { messages: DisplayMessage[]; active: number; running: boolean; submitted: boolean; compacting: boolean; phase: string; tools: Record<string, Tool>; error: string | null; queue: { steering: string[]; followUp: string[] }; bash: { id?: string; command?: string; output: string; running: boolean } | null; turnStartedAt: number | null }
-export const emptyTranscript = (): Transcript => ({ messages: [], active: -1, running: false, submitted: false, compacting: false, phase: '就绪', tools: {}, error: null, queue: { steering: [], followUp: [] }, bash: null, turnStartedAt: null })
+export type Transcript = { messages: DisplayMessage[]; active: number; running: boolean; submitted: boolean; compacting: boolean; loading: boolean; phase: string; tools: Record<string, Tool>; error: string | null; queue: { steering: string[]; followUp: string[] }; bash: { id?: string; command?: string; output: string; running: boolean } | null; turnStartedAt: number | null }
+/**
+ * `loading` 是骨架屏的开关：切换会话/项目时置位，`hydrate` 换上一份真正的 transcript
+ * 就自然把它清掉（见 `lib/rpc.ts` 的 `loadMessages`）。
+ */
+export const emptyTranscript = (): Transcript => ({ messages: [], active: -1, running: false, submitted: false, compacting: false, loading: false, phase: '就绪', tools: {}, error: null, queue: { steering: [], followUp: [] }, bash: null, turnStartedAt: null })
+/** 会话切换期间先上骨架屏，别让上一个会话的消息停在原地再突然换掉。 */
+export const transcriptLoading = (transcript: Transcript, loading: boolean): Transcript => transcript.loading === loading ? transcript : { ...transcript, loading }
 const MAX_TOOL_RESULT_CHARS = 20_000
 const MAX_TOOL_PATCH_CHARS = 100_000
 const boundedToolText = (text:string) => text.length <= MAX_TOOL_RESULT_CHARS ? text : `${text.slice(0,MAX_TOOL_RESULT_CHARS)}\n\n[输出过长，已省略]`

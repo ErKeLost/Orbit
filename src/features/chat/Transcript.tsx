@@ -771,4 +771,37 @@ export function InitialWorking({ label, startedAt }: { label: string; startedAt?
   );
 }
 
+/**
+ * 会话加载中的骨架屏（`transcript.loading`）。形状照着对话走：一段提问加一段回答。
+ * 切换会话时先把位置占住，hydrate 上来再换内容，不会先把上一个会话的内容留在原地
+ * 再突然抽掉。
+ */
+export function TranscriptSkeleton() {
+  // 每段宽度差一点，避免像同一行复制了三遍。
+  const blocks = [
+    { ask: "w-[38%]", lines: ["w-full", "w-[92%]", "w-[74%]"] },
+    { ask: "w-[26%]", lines: ["w-full", "w-[81%]", "w-[95%]", "w-[58%]"] },
+  ];
+  return (
+    <div
+      data-transcript-skeleton
+      role="status"
+      aria-busy="true"
+      aria-live="polite"
+      className="mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-6 px-4 pt-6"
+    >
+      <span className="sr-only">正在加载会话…</span>
+      {blocks.map((block) => (
+        <div key={block.ask} className="flex min-w-0 flex-col gap-2">
+          <div className={`h-4 animate-pulse rounded-md bg-content/6 ${block.ask}`} />
+          {block.lines.map((width) => (
+            <div key={width} className={`h-3.5 animate-pulse rounded-md bg-content/6 ${width}`} />
+          ))}
+        </div>
+      ))}
+      <div className="h-4 w-[31%] animate-pulse rounded-md bg-content/6" />
+    </div>
+  );
+}
+
 export { workSummaryLine };

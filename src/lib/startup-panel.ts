@@ -4,18 +4,19 @@ import type { Panel } from "./store"
 /**
  * Which surface Orbit lands on after a launch.
  *
- * The landing page is not session state: a cold start that always opens 「会话」
- * costs a click every time the user actually came back for the pairing QR. The
- * default is therefore 「移动端」 — the Host switch and the QR code, which is the
- * one panel a cold start exists for — and the choice is durable, so clearing the
- * WebView storage does not silently move it back.
+ * The default is 「会话」: a cold start is nearly always "继续昨天那件事", and
+ * landing on a settings page costs a click — and a moment of "我怎么在这儿" —
+ * every single time. Pairing a phone is something you do once and go looking for
+ * (设置 → 通用 → 启动页面 也可以把它设成启动页)，所以它不该是默认。
  *
- * Only panels that make sense as a landing surface are offered: the transcript
- * panes and the settings pages are reached from the shell, not from a launch.
+ * The choice is durable, so clearing the WebView storage does not silently move
+ * it back. Only panels that make sense as a landing surface are offered: the
+ * transcript panes and the settings pages are reached from the shell, not from a
+ * launch.
  */
 export const STARTUP_PANEL_KEY = "orbit.startup.panel"
 
-export const STARTUP_PANEL_DEFAULT: Panel = "mobile-access"
+export const STARTUP_PANEL_DEFAULT: Panel = "chat"
 
 export const STARTUP_PANELS: { id: Panel; label: string }[] = [
   { id: "mobile-access", label: "移动端" },

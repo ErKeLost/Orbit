@@ -3,7 +3,7 @@ import { readKeepAwake, writeKeepAwake } from "../lib/desktop-integration";
 import { saveFileDraft } from "../lib/file-save";
 import { readStartupPanel } from "../lib/startup-panel";
 import { normalizeProjectPath, useProjects } from "../lib/projects";
-import { changeSession, connect, connectRemoteConnection, dispatchRemoteEvent, loadMessages, report, suspendRemoteConnection } from "../lib/rpc";
+import { changeSession, connect, connectRemoteConnection, dispatchRemoteEvent, reloadMessages, report, suspendRemoteConnection } from "../lib/rpc";
 import { detectRuntimeEnvironment } from "../lib/runtime-environment";
 import { useRuntimeDiscovery } from "../lib/runtime-diagnostics";
 import { notifyRemoteForeground, openRemoteRuntime, remoteHostSnapshot, storedPairingUri } from "../lib/remote-runtime";
@@ -79,7 +79,8 @@ export function useWorkspaceBootstrap() {
         onEvent: event => {
           if ((event.type === "host.theme" || event.type === "host.hello") && event.theme) useWorkspace.getState().set({ remoteTheme: event.theme });
           if (event.type === "host.hello" && event.machineName) useWorkspace.getState().set({ remoteMachineName: event.machineName });
-          if (event.type === "connection.invalidated") void loadMessages(event.project).catch(report);
+          // 这台连接被别的窗口接管了，整份 transcript 要重新拉：先上骨架屏。
+          if (event.type === "connection.invalidated") void reloadMessages(event.project).catch(report);
           if (event.type === "connection.closed" && event.project === useWorkspace.getState().connectionId) {
             useWorkspace.getState().set({ connection: "connecting", error: null });
             void recoverRemote();

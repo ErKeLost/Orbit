@@ -6,7 +6,7 @@ import type {RpcCommand,RpcResponse} from '@earendil-works/pi-coding-agent'
 import {useWorkspace,type LiveSession,type Workspace,type WorkspaceMode} from './store'
 import {normalizeProjectPath,projectExtraRoots,useProjects} from './projects'
 import {parseAgentSnapshot} from './agents'
-import {emptyTranscript,hydrate,reduceEvent,type Event,type PiMessage,type RpcSessionState,type UiRequest} from './protocol'
+import {emptyTranscript,hydrate,reduceEvent,transcriptLoading,type Event,type PiMessage,type RpcSessionState,type UiRequest} from './protocol'
 import {attachRemoteConnection,remoteHostSnapshot,resolveRemoteConnection,runRemoteHostOperation,sendRemotePiCommand,waitForRemoteConnection} from './remote-runtime'
 import {findRemoteConnection,type RemoteConnection,type RemoteJson} from './remote-protocol'
 export const queryClient=new QueryClient({defaultOptions:{queries:{retry:false,refetchOnWindowFocus:false,staleTime:15000,gcTime:120000}}})
@@ -323,12 +323,19 @@ export async function saveImageConfig(patch:Partial<ImageConfig>):Promise<ImageC
 export async function loadMessages(target=useWorkspace.getState().cwd){
  // 几百条消息的会话，get_messages 的响应就是几 MB，会被电脑端切成多帧发过来；
  // 30s 的上限让“会话大”和“链路卡住了”变成同一个结果，所以给它更长的预算。
- const id=route(target),data=await request<{messages:PiMessage[]}>({type:'get_messages'},60000,id)
- patch(id,{transcript:hydrate(data.messages)})
- const state=await refresh(id),currentTranscript=current(id).transcript
- if(state.isStreaming||state.isCompacting){
-  const transcript={...currentTranscript,running:state.isStreaming,compacting:state.isCompacting,phase:state.isCompacting?'正在压缩上下文':'正在运行',active:[...currentTranscript.messages].map((item,index)=>item.message.role==='assistant'?index:-1).findLast(index=>index>=0)??-1}
-  patch(id,{transcript})
+ const id=route(target)
+ try{
+  const data=await request<{messages:PiMessage[]}>({type:'get_messages'},60000,id)
+  patch(id,{transcript:hydrate(data.messages)})
+  const state=await refresh(id),currentTranscript=current(id).transcript
+  if(state.isStreaming||state.isCompacting){
+   const transcript={...currentTranscript,running:state.isStreaming,compacting:state.isCompacting,phase:state.isCompacting?'正在压缩上下文':'正在运行',active:[...currentTranscript.messages].map((item,index)=>item.message.role==='assistant'?index:-1).findLast(index=>index>=0)??-1}
+   patch(id,{transcript})
+  }
+ }catch(error){
+  // 骨架屏必须跟着失败一起收起来，否则加载失败后面板就永远停在骨架屏上。
+  patch(id,{transcript:transcriptLoading(current(id).transcript,false)})
+  throw error
  }
 }
 async function closeConnection(id:string,message='连接已关闭'){
@@ -345,12 +352,13 @@ function activateConnection(id:string,cwd:string){
  if(previous.connectionId&&previous.connectionId!==id)snapshots.set(previous.connectionId,snapshot())
  projectActive.set(cwd,id)
  const saved=snapshots.get(id)??fresh()
- useWorkspace.getState().set({...saved,cwd,connectionId:id,panel:'chat'})
+ // 快照里可能留着上一条连接没跑完的 loading，切过去不会再有 hydrate 来收它，先收起来。
+ useWorkspace.getState().set({...saved,cwd,connectionId:id,panel:'chat',transcript:transcriptLoading(saved.transcript,false)})
  persistSession(cwd,saved.state?.sessionFile);syncLiveSessions()
  if(saved.connection==='online')void Promise.all([refresh(id),syncSessionModes(id)]).catch(error=>patch(id,{error:String(error)}))
 }
 async function startConnection(cwd:string,id:string,options?:{restoreLast?:boolean;sessionPath?:string}){
- const token=Symbol(id);connections.set(id,{token,cwd});projectActive.set(cwd,id);patch(id,{connection:'connecting',error:null})
+ const token=Symbol(id);connections.set(id,{token,cwd});projectActive.set(cwd,id);patch(id,{connection:'connecting',error:null,transcript:transcriptLoading(current(id).transcript,true)})
  if(mobileRuntime()){
   try{
    await attachRemoteConnection(id)
@@ -390,7 +398,7 @@ async function startConnection(cwd:string,id:string,options?:{restoreLast?:boole
   patch(id,{connection:'online'})
  }catch(error){
   if(connections.get(id)?.token!==token)return
-  connections.delete(id);if(projectActive.get(cwd)===id)projectActive.delete(cwd);failPending(id,'连接失败');await invoke('pi_disconnect',{project:id}).catch(()=>{});patch(id,{connection:'offline'});throw error
+  connections.delete(id);if(projectActive.get(cwd)===id)projectActive.delete(cwd);failPending(id,'连接失败');await invoke('pi_disconnect',{project:id}).catch(()=>{});patch(id,{connection:'offline',transcript:transcriptLoading(current(id).transcript,false)});throw error
  }
 }
 export async function connectRemoteConnection(connection:{id:string;cwd:string},workspaceMode:WorkspaceMode='project'){
@@ -553,32 +561,54 @@ export async function changeSession(command:RpcCommand){
   return changeSessionOnce(command)
  }
 }
+/** 这些命令会换掉整个 transcript，切换期间用骨架屏顶替旧内容。 */
+const SESSION_SWITCH_COMMANDS=new Set(['switch_session','new_session','clone','fork'])
+/** 骨架屏置位：只在这条连接确实要跑一次 loadMessages 时才调，否则没人会把它收回来。 */
+const markSessionLoading=(id:string)=>patch(id,{transcript:transcriptLoading(current(id).transcript,true)})
+/**
+ * 换掉整份 transcript：先上骨架屏再 loadMessages。会话树切分支这种『不换 session
+ * 但内容整体换掉』的入口走这里，loadMessages 自己会（成功或失败）把骨架屏收起来。
+ */
+export async function reloadMessages(target=useWorkspace.getState().cwd){const id=route(target);markSessionLoading(id);return loadMessages(id)}
 async function changeSessionOnce(command:RpcCommand){
  const cwd=useWorkspace.getState().cwd,active=route(cwd),running=current(active).transcript.running
  if(command.type==='switch_session'){
   if(useWorkspace.getState().state?.sessionFile===command.sessionPath){useWorkspace.getState().set({panel:'chat'});return}
   const owner=sessionOwners.get(command.sessionPath)
+  // 这个会话的遥接已经活着（快照里有消息），切过去是瞬时的，不上骨架屏。
   if(owner&&connections.has(owner)){activateConnection(owner,cwd);await syncConfiguredProjectRoots(cwd,owner);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]});return}
  }
- if(mobileRuntime()){
-  const result=await request<{cancelled?:boolean;text?:string}>(command,60000,active)
-  if(result?.cancelled)throw new Error('扩展取消了会话切换')
-  patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null})
-  if(useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'})
-  await loadMessages(active)
-  if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,active)
-  await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
-  return
+ const switching=SESSION_SWITCH_COMMANDS.has(String(command.type))
+ // 正在跑的那一轮会切到一条新连接上（旧连接留在快照里继续跑），加载发生在
+ // 新连接上，所以这时不能在 active 上置位：没人会去收回它。
+ const swapsConnection=(command.type==='new_session'||command.type==='switch_session')&&running&&!mobileRuntime()
+ if(switching&&!swapsConnection)markSessionLoading(active)
+ try{
+  if(mobileRuntime()){
+   const result=await request<{cancelled?:boolean;text?:string}>(command,60000,active)
+   if(result?.cancelled)throw new Error('扩展取消了会话切换')
+   patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null})
+   if(useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'})
+   await loadMessages(active)
+   if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,active)
+   await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
+   return
+  }
+  if((command.type==='new_session'||command.type==='switch_session')&&running){
+   const id=`${cwd}#${crypto.randomUUID()}`
+   snapshots.set(active,snapshot())
+   useWorkspace.getState().set({...fresh(),cwd,connectionId:id,panel:'chat'})
+   await startConnection(cwd,id,command.type==='switch_session'?{sessionPath:command.sessionPath}:undefined)
+   if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,id)
+   await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]});return
+  }
+  const result=await request<{cancelled?:boolean;text?:string}>(command,60000,active);if(result?.cancelled)throw new Error('扩展取消了会话切换');patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null});if(useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'});await loadMessages(active);if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,active);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
  }
- if((command.type==='new_session'||command.type==='switch_session')&&running){
-  const id=`${cwd}#${crypto.randomUUID()}`
-  snapshots.set(active,snapshot())
-  useWorkspace.getState().set({...fresh(),cwd,connectionId:id,panel:'chat'})
-  await startConnection(cwd,id,command.type==='switch_session'?{sessionPath:command.sessionPath}:undefined)
-  if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,id)
-  await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]});return
+ catch(error){
+  // 取消/失败时手动收起骨架屏：这条路径不会走到 loadMessages 的 hydrate。
+  for(const id of new Set([active,useWorkspace.getState().connectionId]))patch(id,{transcript:transcriptLoading(current(id).transcript,false)})
+  throw error
  }
- const result=await request<{cancelled?:boolean;text?:string}>(command,60000,active);if(result?.cancelled)throw new Error('扩展取消了会话切换');patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null});if(useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'});await loadMessages(active);if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,active);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
 }
 const branchingConnections = new Set<string>()
 export async function branchFromMessage(message: PiMessage) {
