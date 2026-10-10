@@ -114,12 +114,16 @@
 
 .provider-browser-item {
   display: flex;
+  /* A <button> is not stretched by its block formatting context the way a div
+     is: `width: auto` stays shrink-to-fit, so the row background would hug
+     the label instead of spanning the rail. */
+  width: 100%;
   align-items: center;
   gap: 9px;
   height: 34px;
   flex-shrink: 0;
   padding: 0 9px;
-  border-radius: 8px;
+  border-radius: 6px;
   text-align: left;
   font-size: 13px;
   color: color-mix(in srgb, var(--color-content) 78%, transparent);
@@ -206,13 +210,14 @@
 
 .provider-browser-add[data-slot="button"] {
   display: flex;
+  width: 100%;
   height: 34px;
   justify-content: flex-start;
-  margin: 6px 2px 0 !important;
+  margin: 6px 0 0 !important;
   padding: 0 9px !important;
   border: 0 !important;
   border-top: 1px solid color-mix(in srgb, var(--color-content) 8%, transparent) !important;
-  border-radius: 0 0 8px 8px !important;
+  border-radius: 0 0 6px 6px !important;
   background: transparent !important;
   color: color-mix(in srgb, var(--color-content) 55%, transparent) !important;
 }
@@ -733,6 +738,16 @@
 .provider-fallback-mark[data-tone="1"] { background: #a78bfa; color: #2e1065; }
 .provider-fallback-mark[data-tone="2"] { background: #34d399; color: #022c22; }
 .provider-fallback-mark[data-tone="3"] { background: #fbbf24; color: #451a03; }
+
+.provider-fallback-mark {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.provider-detail-mark .provider-fallback-mark {
+  font-size: 17px;
+}
 
 /* ── Editor dialog ───────────────────────────────────────────────────────── */
 

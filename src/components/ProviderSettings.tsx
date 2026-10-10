@@ -76,15 +76,15 @@ const providerIconAliases: Record<string, string> = {
 };
 const monochromeProviderIcons = new Set(["anthropic", "openai", "vercel", "vercelaigateway", "moonshot", "ollama"]);
 
+/** No logo means one letter, not an abbreviation: "T" reads as a mark, "TA" reads as a typo. */
 function fallbackProviderMark(id: string, name?: string) {
   const label = (name || id).trim();
-  const words = label.match(/[A-Za-z0-9]+|[\u3400-\u9fff]+/g) ?? [];
-  const letters = words.length > 1
-    ? words.slice(0, 2).map(word => word[0]).join("")
-    : (words[0] ?? "P").slice(0, 2);
-  let hash = 0;
-  for (const char of id) hash = (hash * 31 + char.charCodeAt(0)) | 0;
-  return <span className="provider-fallback-mark" data-tone={Math.abs(hash) % 4}>{letters.toUpperCase()}</span>;
+  const initial = label.match(/[A-Za-z0-9]|[\u3400-\u9fff]/)?.[0] ?? "P";
+  // FNV-1a: the previous `hash * 31` put three of six sample ids on the same
+  // tone, which reads as a bug when the letter is the only differentiator.
+  let hash = 2166136261;
+  for (const char of id) { hash ^= char.charCodeAt(0); hash = Math.imul(hash, 16777619); }
+  return <span className="provider-fallback-mark" data-tone={(hash >>> 0) % 4}>{initial.toUpperCase()}</span>;
 }
 
 function ProviderMark({ id, name }: { id: string; name?: string }) {
