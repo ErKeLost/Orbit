@@ -15,6 +15,7 @@ import { TitleIconButton } from "./chrome";
 import { useActiveWorkspace, useShell } from "./shellStore";
 import { compactTitle } from "../../lib/session-visual";
 import { observeKeyboardInset } from "../../lib/keyboard-inset";
+import { observeSystemBarInsets } from "../../lib/system-insets";
 import { installBackGesture, registerBackHandler } from "../../lib/back-gesture";
 import { mergeProjectSessions, useProjectSessions } from "../../hooks/use-project-sessions";
 
@@ -64,6 +65,9 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
   // for the shells that resize the visual viewport instead. See
   // `src/lib/keyboard-inset.ts` for why the two never overlap.
   useEffect(() => observeKeyboardInset(), []);
+  // The status bar is not `env(safe-area-inset-top)` on Android; the native
+  // side publishes the real one, and `--safe-top` takes whichever is larger.
+  useEffect(() => observeSystemBarInsets(), []);
   // Back belongs to whatever is on top of this shell. `MainActivity` leaves the
   // app only when nothing claims the press; each overlay claims it while it is
   // open, newest first. See `src/lib/back-gesture.ts`.

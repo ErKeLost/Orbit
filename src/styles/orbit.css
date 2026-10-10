@@ -7,8 +7,11 @@
 :root {
   --font-chat: var(--font-sans);
   --composer-max-width: 56rem;
-  --safe-top: env(safe-area-inset-top, 0px);
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* `env()` is the cutout on Android, not the status bar; `--android-inset-*`
+     is what Android reports and is published by `MainActivity`. Either one
+     alone leaves the title bar under the clock on some phone. */
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--android-inset-top, 0px));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--android-inset-bottom, 0px));
 }
 
 /* Native text selection stays on for chat, file and settings bodies. */

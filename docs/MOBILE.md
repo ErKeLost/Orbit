@@ -61,8 +61,21 @@ full height and the composer sits *under* the keyboard.
 content frame, which is where wry's `setContentView` puts it — by the IME inset.
 That is what resizes the WebView, so the page's layout viewport becomes the area
 the user can actually see and no JavaScript has to know where the keyboard is.
-Only the IME inset is applied: the system bars stay with `env(safe-area-inset-*)`
-in CSS, and padding both would double the gap whenever the keyboard is closed.
+Only the IME inset pads the parent: the system bars stay with the page, and
+padding both would double the gap whenever the keyboard is closed.
+
+The system bars are *not* `env(safe-area-inset-*)` here. In an Android WebView
+Chromium maps that to the display **cutout**, so it is 0 on any phone whose camera
+is not a notch — and the 44px title bar then draws under the clock, where the
+system keeps the touches, leaving the drawer button and the session title
+unreachable. The same `onWebViewCreate` listener therefore hands Android's own
+`WindowInsetsCompat` to the page as `--android-inset-top` / `--android-inset-bottom`
+(pushed on every change, pulled once on mount through `orbitNative.insets()`, so
+neither path has to win a race), and `--safe-top` / `--safe-bottom` take whichever
+of the two insets is larger. `src/lib/system-insets.ts` owns the web half and
+`tests/system-insets.test.ts` pins it — including that an unparseable answer is
+ignored rather than read as zero, since a wrong inset moves the bar somewhere the
+user cannot press either.
 
 `src/lib/keyboard-inset.ts` publishes the same number as `--keyboard-inset` for
 shells that resize the *visual* viewport instead (iOS, the `?preview=mobile`
