@@ -16,6 +16,7 @@ import { getRemoteHost, relaySettingsStatus, rememberRemoteHostEnabled, saveRela
 import { GLOBAL_SHORTCUT, NOTIFY_ON_COMPLETE_KEY, readAutostart, readGlobalShortcut, readKeepAwake, writeAutostart, writeGlobalShortcut, writeKeepAwake } from "../../lib/desktop-integration";
 import { readStartupPanel, STARTUP_PANELS, writeStartupPanel } from "../../lib/startup-panel";
 import { checkMobileUpdate, mobileUpdateErrorMessage } from "../../lib/mobile-update";
+import { backgroundConnectionStatus, restoreBackgroundConnection, setBackgroundConnection, type BackgroundConnectionStatus } from "../../lib/background-connection";
 import { checkForDesktopUpdate, offerMobileUpdate } from "../UpdateChecker";
 import { Button, Card, CardContent, Input, Select, Switch } from "../UI";
 import { ImageEndpointDialog } from "../ImageEndpointDialog";
@@ -320,6 +321,56 @@ function RuntimeSettings({ desktop, cwd }: { desktop: boolean; cwd: string }) {
   </>;
 }
 
+/**
+ * Holding the connection while the app is not on screen.
+ *
+ * Android's only mechanism for this is a foreground service, and it requires a
+ * notification the user cannot dismiss — so the toggle says so rather than
+ * springing it on them, and reports what the service is actually doing: a start
+ * can be refused (a missing prerequisite permission, a start from the
+ * background), and a switch that reads "on" while nothing holds the connection
+ * is worse than one that reads "failed".
+ */
+function BackgroundConnectionSettings() {
+  const [status, setStatus] = useState<BackgroundConnectionStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    // Re-apply the remembered intent here: mounting this panel is always with
+    // the app in the foreground, which is the only state Android lets a
+    // foreground service be started from.
+    void restoreBackgroundConnection()
+      .then((restored) => restored ?? backgroundConnectionStatus())
+      .then(setStatus)
+      .catch(() => undefined);
+  }, []);
+  async function toggle(enabled: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await setBackgroundConnection(enabled);
+      setStatus(next);
+      if (enabled && !next.running) setError(next.error ?? "系统没有启动连接服务");
+    } catch (caught) {
+      setError(String(caught instanceof Error ? caught.message : caught));
+      setStatus(await backgroundConnectionStatus().catch(() => null));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <SettingRow
+      title="后台保持连接"
+      description="用一个前台服务保住配对连接，切到别的应用再回来不必重连。系统会显示一条常驻通知，无法隐藏——这是 Android 对前台服务的要求。网络切换、电脑休眠仍会断开。"
+    >
+      <div className="settings-directory-actions">
+        <Switch aria-label="后台保持连接" checked={status?.running ?? false} disabled={busy || status?.supported === false} onChange={(checked) => void toggle(checked)} />
+        {error ? <span className="remote-settings-note">{error}</span> : null}
+      </div>
+    </SettingRow>
+  );
+}
+
 function MobileAppUpdateSettings() {
   const [version, setVersion] = useState("");
   const [busy, setBusy] = useState(false);
@@ -601,7 +652,7 @@ export function GeneralSettingsPanel() {
     <div className="panel-heading"><div><h1><Icon name="gear-six" />常规</h1></div></div>
     <SettingsGroup title="桌面集成" icon="desktop" description="启动页面、屏幕保持唤醒、系统通知、全局快捷键与开机自启。"><DesktopIntegrationSettings desktop={desktop} /></SettingsGroup>
     <SettingsGroup title="工作区" icon="folder-simple"><TrustSettings mode={trustMode} busy={trustBusy} desktop={desktop} onChange={changeTrustMode} /></SettingsGroup>
-    {runtimeTarget === "mobile" && <SettingsGroup title="软件更新" icon="arrows-clockwise" description="主动从 GitHub Release 检查 Android 安装包。"><MobileAppUpdateSettings /></SettingsGroup>}
+    {runtimeTarget === "mobile" && <SettingsGroup title="后台与更新" icon="arrows-clockwise" description="保持配对连接，以及从 GitHub Release 检查 Android 安装包。"><BackgroundConnectionSettings /><MobileAppUpdateSettings /></SettingsGroup>}
     <SettingsGroup title="上下文" icon="brain" description="管理当前会话的容量与压缩方式。"><ContextSettings cwd={cwd} status={status} running={running} state={state} onCompact={manualCompact} /></SettingsGroup>
     <SettingsGroup title="消息队列" icon="chats"><QueueSettings status={status} state={state} /></SettingsGroup>
     <SettingsGroup title="运行环境" icon="terminal-window" description="Pi、Node、配置和资源目录的实际解析结果。"><RuntimeSettings desktop={desktop} cwd={cwd} /></SettingsGroup>

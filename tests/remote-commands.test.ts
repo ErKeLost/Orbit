@@ -64,6 +64,8 @@ const EXCLUDED: Record<string, string> = {
   splash_ready: "the splash window exists on the desktop only",
   mobile_update_probe: "checks this phone's APK",
   mobile_update_install: "installs on this phone",
+  background_connection_status: "the phone's own service state",
+  set_background_connection: "starts and stops a service on the phone",
   remote_host_start: "the Host's lifecycle; a phone that stopped it would cut itself off",
   remote_host_stop: "the Host's lifecycle",
   remote_host_status: "the Host's lifecycle",

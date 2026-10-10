@@ -320,12 +320,37 @@ connect, where there is nothing to keep and the skeleton is the honest answer.
 A kept transcript says so with a「正在重连电脑…」 pill instead, because content
 that looks live while it is not is worse than a skeleton.
 
-Keeping the process alive in the background instead — a foreground service with
-a permanent notification — was considered and not taken: it is the only way to
-hold a socket across a backgrounded app, and it buys nothing once the reconnect
-stops blanking the screen. It would be the right trade only if the phone ever has
-to see events *while* it is in the background (notifications, or a turn watched
-from another device).
+Keeping the process alive in the background is a separate setting, because it
+costs something the user has to agree to: [`ConnectionService.kt`](../src-tauri/gen/android/app/src/main/java/ai/pi/gui/ConnectionService.kt) is an
+Android **foreground service**, and Android will not run one without a
+notification that cannot be dismissed. Settings → 常规 → 「后台保持连接」 turns it
+on; the intent is persisted next to the pairing and re-applied on launch, where
+the app is in the foreground — the only state Android allows a foreground service
+to be started from.
+
+Three details in there are decisions rather than defaults:
+
+* **`connectedDevice`, not `dataSync`.** Android 15 gave `dataSync` a six-hour
+daily budget, after which the system stops the service and refuses to restart it
+— the opposite of what this is for. `connectedDevice` describes what this
+actually is (one paired device talking to another) and has no such budget; its
+price is one prerequisite permission, `CHANGE_NETWORK_STATE`, which is
+install-time.
+* **`MainActivity.onPause` calls `resumeTimers()`** while the service runs. A
+paused WebView stops its JavaScript timers, and the pairing socket is a
+page-level `WebSocket`: its heartbeat and its dispatch stop with them. Keeping the
+timers is only tied to the service, because without it the process is frozen
+anyway.
+* **The toggle reports the service's own state**, not what was asked for. An
+Android start can be refused, and a switch that reads "on" while nothing holds
+the connection is worse than one that reads "failed".
+
+What it does not buy, and cannot: swiping the app away from recents still ends
+the task and the WebView with it, so `stopWithTask` is `true` — a notification
+surviving a swipe would be a promise nothing keeps. A network change or the
+desktop going to sleep still breaks the connection. What it does buy is that the
+socket is not rebuilt for the ordinary case — switching apps and coming back — so
+the events that happened in between are already there instead of being re-fetched.
 
 ## Install and use the Android build
 

@@ -47,6 +47,10 @@ const DURABLE_KEYS = [
   "orbit.keepAwake",
   "pi-gui.sidebarOpen",
   "pi-gui.sidebarOpen.narrow",
+  // Whether the phone should hold its pairing connection while the app is in
+  // the background. A phone that lost this would silently stop being reachable
+  // between two launches, which is the same class as losing the pairing itself.
+  "orbit.background.connection",
 ] as const
 
 const STORE_FILE = "orbit-state.json"

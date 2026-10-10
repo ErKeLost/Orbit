@@ -33,9 +33,29 @@ class MainActivity : TauriActivity() {
   override val handleBackNavigation: Boolean = false
 
   override fun onWebViewCreate(webView: WebView) {
+    this.webView = webView
     keepComposerAboveKeyboard(webView)
     dispatchBackToThePage(webView)
   }
+
+  /**
+   * Keep the page's JavaScript running while the app is not on screen, but only
+   * while the connection service is holding the process.
+   *
+   * `WryActivity.onPause` calls `WebView.onPause`, which pauses the page's
+   * timers — and the pairing socket is a page-level `WebSocket`, so its heartbeat
+   * and its dispatch stop with them. `resumeTimers` is Android's documented way
+   * to keep them going while the UI is not visible, and it is deliberately tied
+   * to the service: without the service the process is frozen anyway, and
+   * keeping timers alive would only burn battery to lose the socket slightly
+   * later.
+   */
+  override fun onPause() {
+    super.onPause()
+    if (ConnectionService.running) webView?.resumeTimers()
+  }
+
+  private var webView: WebView? = null
 
   /**
    * Keep the composer above the keyboard.

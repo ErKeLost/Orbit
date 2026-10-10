@@ -1,4 +1,8 @@
 <resources>
     <string name="app_name">"Orbit"</string>
     <string name="main_activity_title">"Orbit"</string>
+    <string name="connection_channel">"与电脑的连接"</string>
+    <string name="connection_channel_description">"保持配对的电脑在线，切到别的应用也不会断开。"</string>
+    <string name="connection_notification_title">"Orbit 已连接电脑"</string>
+    <string name="connection_notification_text">"保持连接，切回应用时不必重连。"</string>
 </resources>

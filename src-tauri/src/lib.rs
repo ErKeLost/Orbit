@@ -28,6 +28,7 @@ mod pty_term;
 mod search;
 mod notes;
 mod automations;
+mod mobile_background;
 mod mobile_update;
 mod power;
 mod remote;
@@ -143,7 +144,7 @@ pub fn run() {
     }
     let builder = tauri::Builder::default();
     #[cfg(target_os = "android")]
-    let builder = builder.plugin(mobile_update::init());
+    let builder = builder.plugin(mobile_update::init()).plugin(mobile_background::init());
     #[cfg(any(target_os = "android", target_os = "ios"))]
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
     #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -340,6 +341,8 @@ pub fn run() {
             automations::automation_run_now,
             automations::automations_claim_due,
             automations::automation_run_update,
+            mobile_background::background_connection_status,
+            mobile_background::set_background_connection,
             mobile_update::mobile_update_install,
             mobile_update::mobile_update_probe,
             remote::remote_host_start,
