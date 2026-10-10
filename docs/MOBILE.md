@@ -206,15 +206,8 @@ opening it on the desktop switches the phone.
 
 ### What is not mirrored yet
 
-Three things are not commands, so they cannot be mirrored by name:
+Both remaining entries are not commands, so they cannot be mirrored by name.
 
-* **Terminal output.** Keystrokes, resize, status and kill are mirrored, and so
-  is the output: `pty_term` emits `pty-data` / `pty-exit` to the desktop window as
-  Tauri events, which a phone never sees because it has its own window and its
-  own event bus. The Host republishes the same frames as `pty.event` /
-  `pty.exit` and the phone re-emits them locally (`src/lib/remote-pty.ts`), so the
-  dock is one component on both surfaces. `open_pi_terminal` still opens a real
-  terminal window on the desktop from the phone when a full TUI is wanted.
 * **Media previews.** The desktop streams images, audio, video and PDFs through
   Tauri's asset protocol, which is "this webview reads this machine's disk" and
   therefore means nothing on a phone: the file is not there and the relay only
@@ -225,6 +218,15 @@ Three things are not commands, so they cannot be mirrored by name:
   desktop. That protocol's scope is `requireLiteralLeadingDot: false`, because
   generated media lives under `~/.pi/agent/orbit-media` and the unix default
   refuses to match a pattern across a dot-prefixed directory.
+
+  Streaming is a deliberate non-goal. Images, short audio and small clips play
+  from a `Blob`; a video long enough to want seeking does not fit the cap and is
+  answered with a message rather than a download. Making it seek would mean
+  Range requests, which the pairing socket does not carry and the relay does not
+  forward — a second transport for a file kind this app does not need to play on
+  a phone. PDFs land in the same place for a different reason: an Android WebView
+  has no inline viewer, so the `<object>` fallback in `MediaView` is what is
+  actually shown there.
 * **Editing a project's own metadata** (rename, extra roots) and importing a
   session file: the first needs a `project.update` request, the second opens a
   picker on the device that is holding the phone.
@@ -235,6 +237,22 @@ The phone edits files with the same editor the desktop uses — CodeMirror 6 wit
 shiki's tokens, `⌘F` find — and saves with the footer button (`⌘S` on a hardware
 keyboard); save travels to the desktop as the `write_text_file` command. See
 [EDITOR.md](EDITOR.md).
+
+### The terminal
+
+The dock is the same component on both surfaces, and it is a real PTY on the
+desktop either way: `pty_spawn`, `pty_write`, `pty_resize` and `pty_kill` are
+mirrored commands, so a phone runs its keystrokes on the Host.
+
+Output needed one thing added, because it was the only half that is a *push*.
+`pty_term` emits `pty-data` / `pty-exit` as Tauri events on the machine that owns
+the PTY, and a phone has its own window and its own event bus, so it never saw
+them. The Host republishes the same coalesced chunks as `pty.event` / `pty.exit`
+and the phone re-emits them locally (`src/lib/remote-pty.ts`), which is why
+nothing inside the dock had to change. Frames are not project-scoped:
+`pty_spawn` already decides the same question, and a terminal belongs to whoever
+opened it. `open_pi_terminal` still opens a real terminal window on the desktop
+from the phone when a full TUI is wanted.
 
 ## Staying reachable
 
