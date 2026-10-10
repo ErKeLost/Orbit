@@ -24,6 +24,25 @@ export type Transcript = { messages: DisplayMessage[]; active: number; running: 
 export const emptyTranscript = (): Transcript => ({ messages: [], active: -1, running: false, submitted: false, compacting: false, loading: false, phase: '就绪', tools: {}, error: null, queue: { steering: [], followUp: [] }, bash: null, turnStartedAt: null })
 /** 会话切换期间先上骨架屏，别让上一个会话的消息停在原地再突然换掉。 */
 export const transcriptLoading = (transcript: Transcript, loading: boolean): Transcript => transcript.loading === loading ? transcript : { ...transcript, loading }
+
+/** 用户已经要求、但 Pi 还没确认的模型切换（provider + model id）。 */
+export type PendingModel = { provider: string; id: string }
+
+export const sameModel = (left: PendingModel | undefined, right: { provider?: string; id?: string } | undefined) =>
+  Boolean(left && right && left.provider === right.provider && left.id === right.id)
+
+/**
+ * 把「正在切换」的模型盖到一份会话状态上。
+ *
+ * 切换 provider 要重起 Pi 进程，那几秒里 `get_state` 回的是**重启后**的默认模型
+ * （旧的那个）——直接把这份状态写进 store，就是“点了切换、回来还写着 deepseek，
+ * 等十秒才自己变”。所以在 Pi 确认新模型之前，store 里显示的是用户要的那个。
+ */
+export function withPendingModel<T extends { model?: { provider?: string; id?: string } } | null>(state: T, pending?: PendingModel): T {
+  if (!pending || !state?.model) return state
+  if (sameModel(pending, state.model)) return state
+  return { ...state, model: { ...state.model, provider: pending.provider, id: pending.id } } as T
+}
 const MAX_TOOL_RESULT_CHARS = 20_000
 const MAX_TOOL_PATCH_CHARS = 100_000
 const boundedToolText = (text:string) => text.length <= MAX_TOOL_RESULT_CHARS ? text : `${text.slice(0,MAX_TOOL_RESULT_CHARS)}\n\n[输出过长，已省略]`

@@ -1,5 +1,5 @@
 import {describe,test,expect} from 'bun:test'
-import {assignTurnClocks,emptyTranscript,groupDisplayMessages,reuseGroups,reduceEvent,hydrate,toolResultImages,toolResultText} from '../src/lib/protocol'
+import {assignTurnClocks,emptyTranscript,groupDisplayMessages,reuseGroups,reduceEvent,hydrate,sameModel,toolResultImages,toolResultText,withPendingModel} from '../src/lib/protocol'
 import { summarizeToolCalls } from '../src/lib/tool-activity'
 import { turnDurationId } from '../src/lib/turn-duration'
 describe('Pi 0.87.1 JSONL event projection',()=>{
@@ -301,5 +301,42 @@ describe('reuseGroups',()=>{
   const first=groupDisplayMessages([a,b])
   const reused=reuseGroups(first,groupDisplayMessages([a,b,b2]))
   expect(reused[0]).toBe(first[0]);expect(reused[1].items).toHaveLength(2)
+ })
+})
+
+/**
+ * 切换 provider 要重起 Pi 进程。那几秒里 `get_state` 回的是重启后的默认模型
+ * （旧的那个），轮询每 2 秒还会把它写进 store——用户看到的就是「点了切换、回来
+ * 还写着 deepseek，等十秒才自己变」。意图盖在真实状态上，是这段延迟的解药。
+ */
+describe('模型切换的意图',()=>{
+ test('intent overrides the model of a state that still reports the old one',()=>{
+  const pending={provider:'Tare',id:'claude-opus-5'}
+  const overlaid=withPendingModel({model:{provider:'Deepseek',id:'deepseek-flash'}},pending)
+  expect(overlaid?.model).toEqual({provider:'Tare',id:'claude-opus-5'})
+  // 同一份状态其余字段原样保留（这是个会话状态，不只是模型）。
+  expect(withPendingModel({model:{provider:'Deepseek',id:'deepseek-flash'},isStreaming:true},pending)).toMatchObject({isStreaming:true})
+ })
+
+ test('a state that already reports the chosen model is left alone',()=>{
+  const pending={provider:'Tare',id:'claude-opus-5'}
+  const confirmed={model:{provider:'Tare',id:'claude-opus-5'},isStreaming:false}
+  expect(withPendingModel(confirmed,pending)).toBe(confirmed)
+  expect(sameModel(pending,confirmed.model)).toBe(true)
+ })
+
+ test('no intent, or no model at all, changes nothing',()=>{
+  const confirmed={model:{provider:'Tare',id:'claude-opus-5'}}
+  expect(withPendingModel(confirmed,undefined)).toBe(confirmed)
+  expect(withPendingModel(null,{provider:'Tare',id:'x'})).toBeNull()
+  // 还没拿到 state 的连接不会被凭空造出一个模型。
+  expect(withPendingModel({}, {provider:'Tare',id:'x'})).toEqual({})
+  expect(sameModel(undefined,{provider:'Tare',id:'x'})).toBe(false)
+  expect(sameModel({provider:'Tare',id:'x'},undefined)).toBe(false)
+ })
+
+ test('provider alone is not a match: the model id decides',()=>{
+  expect(sameModel({provider:'Tare',id:'a'},{provider:'Tare',id:'b'})).toBe(false)
+  expect(sameModel({provider:'Tare',id:'a'},{provider:'Other',id:'a'})).toBe(false)
  })
 })

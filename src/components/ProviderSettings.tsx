@@ -14,6 +14,8 @@ import {
   persistDefaultModel,
   imageConfig,
   saveImageConfig,
+  expectModel,
+  settleModel,
   type ProviderModel,
   type ProviderProfile,
 } from "../lib/rpc";
@@ -235,31 +237,40 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
     if (!selected || switchingProviderId || running) return;
     const id = selected.id;
     setSwitchingProviderId(id);
+    // 切换前真正在用的那份：失败时要回滚到它（不是被意图盖过的那份）。
+    const previous = useWorkspace.getState().state;
     try {
       const synced = await syncProviderModels(id);
+      // 目标模型可能要看 Pi 的可用列表，但 provider 的默认模型已经知道；先贴上去，
+      // 后面的 `disconnect` + `connect`（停掉 Pi、重新起进程、恢复会话）要好几秒，
+      // 那几秒里 chip 不能还写着上一个 provider。
+      const intended = selected.defaultModel ?? synced.firstModelId;
+      if (intended) expectModel(cwd, { provider: id, id: intended });
       if (online) await disconnect();
       await connect(cwd);
       const available = await request<{ models: { provider: string; id: string }[] }>({ type: "get_available_models" }, 30_000, cwd);
       const choices = available.models.filter(model => model.provider === id);
       const target = choices.find(model => model.id === selected.defaultModel) ?? choices.find(model => model.id === synced.firstModelId) ?? choices[0];
       if (!target) throw new Error(`${selected.name || id} 没有可用模型，请检查配置`);
+      expectModel(cwd, { provider: id, id: target.id });
       await request({ type: "set_model", provider: id, modelId: target.id }, 30_000, cwd);
-      // Pi 的 state 要等下一趟 get_state 才回来（一次往返）；先把新模型贴到 store 上，
-      // 这样从设置页切回会话时不会还挂着旧 provider，确认失败再回滚。
-      const before = useWorkspace.getState().state;
-      if (before?.model) useWorkspace.getState().set({ state: { ...before, model: { ...before.model, provider: id, id: target.id } } });
       const [current] = await Promise.all([refresh(cwd), persistDefaultModel(id, target.id)]);
       if (current.model?.provider !== id || current.model.id !== target.id) {
-        if (before) useWorkspace.getState().set({ state: before });
+        // Pi 说的就是真话：把被意图盖过的那份换成它。
+        settleModel(cwd, current);
         throw new Error("Pi 没有确认 Provider 切换");
       }
+      settleModel(cwd);
       update({ defaultModelId: target.id });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["pi", "models", cwd] }),
         profiles.refetch(),
       ]);
       gooeyToast.success("已应用 Provider 配置", { description: `${selected.name || id} · ${target.id}`, showTimestamp: false });
-    } catch (error) { report(error); } finally { setSwitchingProviderId(null); }
+    } catch (error) {
+      settleModel(cwd, previous ?? undefined);
+      report(error);
+    } finally { setSwitchingProviderId(null); }
   }
 
   function closeEditor() {
@@ -371,18 +382,25 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
 
   async function applyModel(model: ProviderModel) {
     update({ busy: "use" });
+    const previous = useWorkspace.getState().state;
     try {
       await saveProvider({ provider: provider.trim(), name: name.trim() || undefined, baseUrl: baseUrl.trim(), modelsUrl: modelsUrl.trim() || undefined, api, apiKey: apiKey.trim() || undefined, authHeader });
       await syncProviderModels(provider.trim());
+      // 重连要好几秒，先把要用的模型贴上（同「应用配置」）。
+      expectModel(cwd, { provider: provider.trim(), id: model.id });
       if (online) await disconnect();
       await connect(cwd);
       await request({ type: "set_model", provider: provider.trim(), modelId: model.id }, 30_000, cwd);
       const current = await refresh(cwd);
-      if (current.model?.provider !== provider.trim() || current.model?.id !== model.id) throw new Error("Pi 没有确认模型切换");
+      if (current.model?.provider !== provider.trim() || current.model?.id !== model.id) {
+        settleModel(cwd, current);
+        throw new Error("Pi 没有确认模型切换");
+      }
+      settleModel(cwd);
       await persistDefaultModel(provider.trim(), model.id);
       update({ apiKey: "", defaultModelId: model.id }); gooeyToast.success("模型已切换", { description: `${provider.trim()} / ${model.id}`, showTimestamp: false });
       await profiles.refetch();
-    } catch (error) { report(error); } finally { update({ busy: null }); }
+    } catch (error) { settleModel(cwd, previous ?? undefined); report(error); } finally { update({ busy: null }); }
   }
 
   const imageSettings = useQuery({ queryKey: ["pi", "image-config"], queryFn: imageConfig });

@@ -2,7 +2,7 @@ import { memo, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "../../lib/store";
 import { modelLabel } from "../../lib/model-meta";
-import { persistDefaultModel, report, request } from "../../lib/rpc";
+import { expectModel, persistDefaultModel, report, request, settleModel } from "../../lib/rpc";
 import type { Model, RpcSessionState } from "../../lib/protocol";
 import { Popover } from "../../shared/ui/Popover";
 import { Check, ChevronDown, Search } from "../../shared/ui/icons";
@@ -88,16 +88,24 @@ function ModelPickerImpl() {
     if (command.type === "set_thinking_level" && previous) {
       useWorkspace.getState().set({ state: { ...previous, thinkingLevel: command.level } });
     }
+    // 模型同理，而且它会重起 Pi 进程：先把意图贴上，别停在旧模型上等确认。
+    if (command.type === "set_model") expectModel(project, { provider: command.provider, id: command.modelId });
     try {
       await request(command, 30000, project);
       const next = await request<typeof state>({ type: "get_state" }, 30000, project);
       if (command.type === "set_model") {
-        if (next?.model?.provider !== command.provider || next.model.id !== command.modelId) throw new Error("Pi 没有确认模型切换");
+        if (next?.model?.provider !== command.provider || next.model.id !== command.modelId) {
+          settleModel(project, next ?? undefined);
+          throw new Error("Pi 没有确认模型切换");
+        }
+        settleModel(project, next ?? undefined);
         await persistDefaultModel(command.provider, command.modelId);
+        return;
       }
       useWorkspace.getState().set({ state: next });
     } catch (error) {
-      if (command.type === "set_thinking_level" && previous) useWorkspace.getState().set({ state: previous });
+      if (command.type === "set_model") settleModel(project, previous ?? undefined);
+      else if (command.type === "set_thinking_level" && previous) useWorkspace.getState().set({ state: previous });
       report(error);
     }
   }

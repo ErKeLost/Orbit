@@ -6,7 +6,7 @@ import type {RpcCommand,RpcResponse} from '@earendil-works/pi-coding-agent'
 import {useWorkspace,type LiveSession,type Workspace,type WorkspaceMode} from './store'
 import {normalizeProjectPath,projectExtraRoots,useProjects} from './projects'
 import {parseAgentSnapshot} from './agents'
-import {emptyTranscript,hydrate,reduceEvent,transcriptLoading,type Event,type PiMessage,type RpcSessionState,type UiRequest} from './protocol'
+import {emptyTranscript,hydrate,reduceEvent,sameModel,transcriptLoading,withPendingModel,type Event,type PendingModel,type PiMessage,type RpcSessionState,type UiRequest} from './protocol'
 import {attachRemoteConnection,remoteHostSnapshot,resolveRemoteConnection,runRemoteHostOperation,sendRemotePiCommand,waitForRemoteConnection} from './remote-runtime'
 import {findRemoteConnection,type RemoteConnection,type RemoteJson} from './remote-protocol'
 export const queryClient=new QueryClient({defaultOptions:{queries:{retry:false,refetchOnWindowFocus:false,staleTime:15000,gcTime:120000}}})
@@ -31,6 +31,44 @@ const SESSION_FILES_KEY='pi-gui.sessionFiles.v1',LEGACY_SESSION_FILES_KEY=['pi-g
 const pending=new Map<string,Pending>(),snapshots=new Map<string,Snapshot>(),connections=new Map<string,{token:symbol;cwd:string}>(),projectActive=new Map<string,string>(),sessionOwners=new Map<string,string>(),eventQueues=new Map<string,Event[]>(),flushTimers=new Map<string,ReturnType<typeof setTimeout>>()
 const sessionMetadataPending=new Set<string>()
 const reconnectingProjects=new Map<string,Promise<void>>()
+/** 已要求、待 Pi 确认的模型切换（见 `protocol.ts` 的 `withPendingModel`）。 */
+const pendingModels=new Map<string,PendingModel>()
+/**
+ * 意图挂在「项目」上，不挂在 connection 上。
+ *
+ * 切换 provider 会 `disconnect` + `connect`，连接 id 可能变（一个项目也可以有几条
+ * 并行连接），但用户要的是「这个项目用 Tare」——所以按 cwd 记，重连之后仍然算数。
+ * 传 connection id 时解析成它自己的 cwd。
+ */
+function projectKey(target:string){return connections.get(target)?.cwd??target}
+/**
+ * 用户已经在界面上选定的模型：立刻贴到 store 和轮询缓存上，之后 Pi 的确认只是
+ * 补齐细节。重连（停掉 Pi、重新起进程、恢复会话）要好几秒，不能让用户在这几秒里
+ * 看着上一个 provider —— 也不能在切回会话时从轮询缓存里把旧模型翻出来。
+ */
+export function expectModel(target:string,model:PendingModel){
+ const key=projectKey(target),id=route(target)
+ pendingModels.set(key,model)
+ const state=current(id).state
+ if(state)patch(id,{state})
+ queryClient.setQueryData(['pi','live-state',id],current(id).state??undefined)
+}
+/**
+ * 撤下意图，并把一份权威状态写进 store 和轮询缓存。
+ *
+ * 两条路：Pi 确认了新模型（`get_state` 就是它），或者用户放弃/失败要回滚到
+ * 切换前的那份。不传状态就只撤意图，不动已写入的状态。
+ */
+export function settleModel(target:string,state?:RpcSessionState){
+ const key=projectKey(target),id=route(target)
+ pendingModels.delete(key)
+ const next=state??current(id).state
+ if(!next)return
+ patch(id,{state:next})
+ queryClient.setQueryData(['pi','live-state',id],next)
+}
+/** 待确认的模型（轮询结果写进 store 前也要盖一次）。 */
+export function pendingModel(target:string){return pendingModels.get(projectKey(target))}
 const REMOTE_CONNECTION_KEY='orbit.remote.connection.v1'
 const fresh=():Snapshot=>({transcript:emptyTranscript(),telemetry:emptyTelemetry(),state:null,connection:'offline',error:null,draft:'',dialogs:[],notices:[],statuses:{},widgets:{},agents:null})
 function snapshot():Snapshot{const s=useWorkspace.getState();return {transcript:s.transcript,telemetry:s.telemetry,state:s.state,connection:s.connection,error:s.error,draft:s.draft,dialogs:s.dialogs,notices:s.notices,statuses:s.statuses,widgets:s.widgets,agents:s.agents}}
@@ -92,9 +130,13 @@ async function ensureSessionMetadata(id:string){
 const snapshotListeners=new Map<string,Set<()=>void>>()
 function notifySnapshot(id:string){const set=snapshotListeners.get(id);if(!set)return;for(const listener of[...set])listener()}
 function patch(id:string,value:Partial<Snapshot>){
- const previous=current(id),next={...previous,...value}
+ // 用户刚点了切换、Pi 还没确认的模型优先：重连期间回来的 `get_state` 是重启后的
+ // 旧模型，直接写进 store 会把刚选好的那个顶回旧值（“等了十秒自己变”）。
+ const pending=pendingModels.get(projectKey(id))
+ const resolved=pending&&value.state?{...value,state:withPendingModel(value.state,pending)}:value
+ const previous=current(id),next={...previous,...resolved}
  if(previous.state?.sessionFile&&previous.state.sessionFile!==next.state?.sessionFile&&sessionOwners.get(previous.state.sessionFile)===id)sessionOwners.delete(previous.state.sessionFile)
- snapshots.set(id,next);if(next.state?.sessionFile)sessionOwners.set(next.state.sessionFile,id);if(useWorkspace.getState().connectionId===id)useWorkspace.getState().set(value);notifySnapshot(id)
+ snapshots.set(id,next);if(next.state?.sessionFile)sessionOwners.set(next.state.sessionFile,id);if(useWorkspace.getState().connectionId===id)useWorkspace.getState().set(resolved);notifySnapshot(id)
  const activityChanged=previous.transcript.running!==next.transcript.running||previous.transcript.compacting!==next.transcript.compacting||previous.state?.sessionFile!==next.state?.sessionFile||firstUserTitle(previous.transcript)!==firstUserTitle(next.transcript)
  if(activityChanged)syncLiveSessions()
  if(previous.state?.sessionFile!==next.state?.sessionFile&&next.state?.sessionFile)invalidateSessionList(id)
@@ -254,7 +296,16 @@ export async function sendPrompt(command:RpcCommand,target=useWorkspace.getState
 }
 export const setSessionRoots=(roots:string[],target=useWorkspace.getState().cwd)=>request({type:'prompt',message:`/gui-workspace-set ${JSON.stringify({roots})}`},30000,target)
 async function syncConfiguredProjectRoots(cwd:string,target=cwd){const project=useProjects.getState().projects.find(item=>item.path===cwd);if(project)await setSessionRoots(projectExtraRoots(project),target)}
-export async function refresh(target=useWorkspace.getState().cwd){const id=route(target),state=await request<RpcSessionState>({type:'get_state'},30000,id);patch(id,{state});const cwd=connections.get(id)?.cwd??useWorkspace.getState().cwd;if(state.sessionFile&&projectActive.get(cwd)===id)persistSession(cwd,state.sessionFile);await queryClient.invalidateQueries({queryKey:['pi','live-stats',id]});return state}
+export async function refresh(target=useWorkspace.getState().cwd){
+ const id=route(target),state=await request<RpcSessionState>({type:'get_state'},30000,id)
+ // Pi 回的就是刚要求的那个模型 → 意图完成，之后全听 `get_state` 的。
+ const key=projectKey(id),pending=pendingModels.get(key)
+ if(pending&&sameModel(pending,state.model))pendingModels.delete(key)
+ patch(id,{state})
+ // 轮询缓存同步成刚拿到的真实状态：从设置页切回会话时，MetricsSync 一挂载读到的
+ // 就是它，而不是切换之前的旧快照。
+ queryClient.setQueryData(['pi','live-state',id],withPendingModel(state,pendingModels.get(key)))
+ const cwd=connections.get(id)?.cwd??useWorkspace.getState().cwd;if(state.sessionFile&&projectActive.get(cwd)===id)persistSession(cwd,state.sessionFile);await queryClient.invalidateQueries({queryKey:['pi','live-stats',id]});return state}
 export async function listProviderModels(provider:string):Promise<{data:ProviderModel[]}> { if(!workspaceBackend()) throw new Error('模型目录设置请在电脑端修改'); return invoke<{data:ProviderModel[]}>('list_provider_models',{provider}) }
 export async function listProjectFiles(project=useWorkspace.getState().cwd):Promise<string[]> { if(mobileRuntime())return runRemoteHostOperation<string[]>({name:'project.files',cwd:project});if(!native)throw new Error('文件索引需要桌面应用');return invoke<string[]>('list_project_files',{cwd:project}) }
 export async function listProviderProfiles():Promise<ProviderProfile[]> { if(!workspaceBackend()) throw new Error('Provider 配置请在电脑端修改'); return invoke<ProviderProfile[]>('list_provider_profiles') }
