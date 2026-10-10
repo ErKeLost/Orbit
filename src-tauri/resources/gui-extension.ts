@@ -459,67 +459,203 @@ export function paramsFor(settings:ImageSettings,kind:string,modelId?:string):Re
   return model?.sizes&&Object.keys(model.sizes).length?model.sizes:settings.sizes
 }
 
-export function imageOptionsFromSettings(settings:ImageSettings=readImageSettings()){
-  const resolutions=Object.keys(settings.sizes)
-  return {resolutions,aspects:[...new Set(resolutions.flatMap(resolution=>Object.keys(settings.sizes[resolution]??{})))]}
+/** 端点说已下线的模型不进工具 schema —— 让模型去选一个调不通的东西是纯损失。 */
+function liveModels(settings:ImageSettings){
+  const live=settings.models.filter(model=>model.status!=='Shutdown')
+  return live.length?live:settings.models
 }
 
-/** The tool schema, built from whatever the settings resolved to. */
-export function imageToolSchema(settings:ImageSettings){
-  const {resolutions,aspects}=imageOptionsFromSettings(settings)
+/** 这个模型能不能吃参考图。端点没说（取不到 task_type）时按「能」处理：少一个能力
+ * 比多一个明确报错的参数更糟。 */
+function supportsReference(model?:ImageSettings['models'][number]){
+  if(!model?.taskTypes?.length)return true
+  return model.taskTypes.some(task=>task==='ImageToImage'||task==='MultimodalToImage'||task==='ImageEditing')
+}
+
+/**
+ * 一个 kind 在某个模型上的选项。设置页的下拉和工具 schema 共用这一处 —— 所以页面
+ * 不可能提供一个端点没有的档位，工具也不可能。
+ */
+export function optionsFor(settings:ImageSettings,kind:string,modelId?:string){
+  const sizes=paramsFor(settings,kind,modelId)
+  const resolutions=Object.keys(sizes)
+  return {resolutions,aspects:[...new Set(resolutions.flatMap(resolution=>Object.keys(sizes[resolution]??{})))]}
+}
+
+/** 兼容旧调用点：默认模型自己的表，不再是全局表。 */
+export function imageOptionsFromSettings(settings:ImageSettings=readImageSettings()){
+  return optionsFor(settings,'image',settings.defaults.model)
+}
+
+function paramHint(model:ImageSettings['models'][number]|undefined,spec:MediaKindSpec){
+  const names=Object.keys(model?.params??{}).length?model!.params!:spec.params
+  const entries=Object.entries(names??{})
+  if(!entries.length)return ''
+  return `该模型还支持 options：${entries.map(([key,item])=>{
+    const shape=item.enum?item.enum.join('|'):(item.type??'string')
+    const range=item.min!==undefined||item.max!==undefined?`（${item.min??''}~${item.max??''}）`:''
+    return `${key}: ${shape}${range}${item.description?` — ${item.description}`:''}`
+  }).join('；')}。`
+}
+
+/**
+ * The tool schema for one capability, built from whatever the config resolved to.
+ *
+ * 一个工具只能有一个扁平 schema —— 模型间差异无法用条件 schema 表达（`oneOf` /
+ * `if-then` 在 OpenAI strict mode 被直接拒）。所以这里的取舍是：**schema 按当前默认
+ * 模型生成**（常见路径精确），而显式换模型时由 `execute` 按那个模型校验并明确报错。
+ *
+ * 函数名里没有 "image"：它只认 `kind`。
+ */
+export function toolSchemaFor(settings:ImageSettings,kind:string){
+  const spec=settings.kinds[kind]
+  if(!spec)throw new Error(`没有这种能力：${kind}`)
+  const models=liveModels(settings)
+  const target=settings.defaults.model??models[0]?.id
+  const model=models.find(entry=>entry.id===target)??models[0]
+  const usesCatalog=Object.values(spec.params).some(param=>param.from==='catalog')
+  const usesSizes=Object.values(spec.params).some(param=>param.from==='sizes')
+  const {resolutions,aspects}=optionsFor(settings,kind,model?.id)
+  const properties:Record<string,unknown>={}
+  for(const [name,param] of Object.entries(spec.params)){
+    if(name==='model'&&usesCatalog){
+      properties.model={type:'string',enum:models.map(entry=>entry.id),description:`可选模型 id，默认 ${model?.id??''}。换模型后其余选项会随之变化。`}
+      continue
+    }
+    if((name==='resolution'||name==='aspect')&&usesSizes){
+      const table=name==='resolution'?resolutions:aspects
+      properties[name]={type:'string',enum:table,description:`${name==='resolution'?'分辨率':'画幅比例'}，默认 ${param.default??''}。仅当前模型支持的档位。`}
+      continue
+    }
+    if(param.enum)properties[name]={type:'string',enum:param.enum,...(param.description?{description:param.description}:{})}
+    else if(param.type)properties[name]={type:param.type==='integer'?'number':param.type,...(param.description?{description:param.description}:{})}
+  }
+  const canReference=supportsReference(model)
+  if(canReference)properties.references={type:'array',items:{type:'string'},minItems:1,maxItems:14,description:'可选：本地参考图路径（相对项目或绝对路径，最多 14 张）。传了就按参考图生成/修改。'}
   return {
     type:'object',
     properties:{
-      prompt:{type:'string',description:'图片描述，越具体越好（主体、风格、光线、构图）。'},
-      model:{type:'string',description:`可选图片模型 id，默认 ${settings.defaults.model??settings.models[0]?.id??''}。可用：${settings.models.map(model=>model.id).join('、')}`},
-      resolution:{type:'string',enum:resolutions,description:`分辨率，默认 ${settings.defaults.resolution}。`},
-      aspect:{type:'string',enum:aspects,description:'画幅比例。不传则让模型根据 prompt 自己决定。'},
-      references:{type:'array',items:{type:'string'},minItems:1,maxItems:14,description:'可选：本地参考图路径（相对项目或绝对路径，最多 14 张）。传了就按参考图生成/修改，用于图生图。'},
+      prompt:{type:'string',description:spec.label?`${spec.label}描述，越具体越好。`:'描述，越具体越好。'},
+      ...properties,
+      ...(paramHint(model,spec)?{options:{type:'object',additionalProperties:true,description:`模型专属参数。${paramHint(model,spec)}`}}:{}),
     },
     required:['prompt'],
     additionalProperties:false,
   } as const
 }
+
+/** 一个参数值是否符合它声明的形状。返回错误文案，或 `null` 表示通过。 */
+function checkParam(name:string,value:unknown,spec:MediaParamSpec):string|null{
+  if(spec.enum&&!spec.enum.includes(String(value)))return `参数 ${name} 只能是 ${spec.enum.join(' / ')}，收到 ${JSON.stringify(value)}`
+  if(spec.type==='integer'&&!Number.isInteger(value))return `参数 ${name} 必须是整数，收到 ${JSON.stringify(value)}`
+  if(spec.type==='number'&&typeof value!=='number')return `参数 ${name} 必须是数字，收到 ${JSON.stringify(value)}`
+  if(spec.type==='boolean'&&typeof value!=='boolean')return `参数 ${name} 必须是布尔值，收到 ${JSON.stringify(value)}`
+  if(spec.type==='string'&&typeof value!=='string')return `参数 ${name} 必须是字符串，收到 ${JSON.stringify(value)}`
+  if(typeof value==='number'){
+    if(spec.min!==undefined&&value<spec.min)return `参数 ${name} 不能小于 ${spec.min}`
+    if(spec.max!==undefined&&value>spec.max)return `参数 ${name} 不能大于 ${spec.max}`
+  }
+  return null
+}
+
+/**
+ * 按「实际要用的那个模型」校验，而不是按 schema 生成时用的那个。
+ *
+ * 这是这一层存在的全部理由：schema 是启动时按默认模型算的，而一次调用可以从
+ * `model` 参数换到另一个模型。以前这些情况会**静默兜底**（尺寸查不到就退回分辨率
+ * 名，用户拿到一张画幅不对的图且不知道为什么）；现在它们明确报错。
+ */
+export function validateCall(settings:ImageSettings,kind:string,modelId:string,input:{resolution?:string;aspect?:string;options?:Record<string,unknown>}){
+  const model=settings.models.find(entry=>entry.id===modelId)
+  if(!model)return `配置里没有模型 ${modelId}`
+  const sizes=paramsFor(settings,kind,modelId)
+  const resolutions=Object.keys(sizes)
+  if(input.resolution&&!resolutions.includes(input.resolution)){
+    return `模型 ${modelId} 不支持分辨率 ${input.resolution}。支持：${resolutions.join(' / ')||'（无）'}`
+  }
+  const resolution=input.resolution??settings.defaults.resolution
+  const aspect=input.aspect&&input.aspect!==''?input.aspect:undefined
+  if(aspect&&!Object.hasOwn(sizes[resolution]??{},aspect)){
+    return `模型 ${modelId} 在 ${resolution} 下不支持画幅 ${aspect}。支持：${Object.keys(sizes[resolution]??{}).join(' / ')||'（无）'}`
+  }
+  // 两种 params 是两个不同的东西，校验要看合并后的：
+  //   kinds.<kind>.params  这种能力**要**什么（接口）
+  //   models[].params      这个模型**额外**支持什么，并覆盖接口上的默认约束
+  // 只看模型那份，`duration` 这种「能力要的」会被误判成「模型不支持」。
+  const declared={...(settings.kinds[kind]?.params??{}),...(model.params??{})}
+  for(const [key,value] of Object.entries(input.options??{})){
+    if(value===undefined)continue
+    const spec=declared[key]
+    if(!spec)return `模型 ${modelId} 不支持参数 ${key}。支持：${Object.keys(declared).join(' / ')||'（无）'}`
+    const problem=checkParam(key,value,spec)
+    if(problem)return problem
+  }
+  return null
+}
+
+/**
+ * 注册每一种已配置的能力。**循环 `kinds`，函数里没有 "image" 这个字面量。**
+ *
+ * 所以「加视频」= 往配置里加一条 `kinds.video`。这也是为什么注册要放在一个循环里，
+ * 而不是每个能力一个 `registerXxx`。
+ */
 export function registerImages(pi:ExtensionAPI):void{
   const settings=readImageSettings()
+  const models=liveModels(settings)
   pi.registerProvider(settings.provider.id,{
     name:settings.provider.name,
     baseUrl:settings.provider.baseUrl,
     api:'openai-images',
     authHeader:true,
     images:{'openai-images':{generateImages}},
-    models:settings.models.map(model=>({...model,type:'image' as const,api:'openai-images',input:['text','image'],output:['image'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0}})),
+    models:models.map(model=>({
+      id:model.id,
+      ...(model.name?{name:model.name}:{}),
+      type:'image' as const,
+      api:'openai-images',
+      input:['text','image'] as ('text'|'image')[],
+      output:['image'] as ('text'|'image')[],
+      cost:{input:0,output:0,cacheRead:0,cacheWrite:0},
+    })),
   })
-  pi.registerTool({
-    name:'generate_image',
-    label:'生成图片',
-    description:`用 ${settings.provider.name} 的图片模型根据文字生成图片，并把图片直接返回给用户。传 references 时按参考图生成。`,
-    promptGuidelines:['用户要求图片、插画、海报、图标、配图时，直接用 generate_image 并传入详细的 prompt；不要为此使用 codemode。','用户给了参考图（发来图片文件、或说明了本地图片路径）时，把路径放进 references 做图生图；参考图必须是本地文件路径，不支持远程 URL。'],
-    parameters:imageToolSchema(settings),
-    async execute(_toolCallId:string,params:unknown,signal:AbortSignal|undefined,_onUpdate:unknown,ctx:any){
-      const input=params as {prompt:string;model?:string;resolution?:string;aspect?:string;references?:string[]}
-      const effective=readImageSettings()
-      const resolution=input.resolution??effective.defaults.resolution
-      const aspect=input.aspect??effective.defaults.aspect
-      // The tool schema constrains resolution/aspect to the configured table.
-      const size=aspect?effective.sizes[resolution]?.[aspect]:resolution
-      const parts=[{type:'text' as const,text:input.prompt},...(input.references??[]).map(path=>referenceImage(path,ctx.cwd))]
-      const available=await ctx.modelRegistry.getAvailableOfType('image') as {provider:string;id:string}[]
-      const wanted=input.model??effective.defaults.model
-      const model=wanted?available.find(candidate=>candidate.id===wanted):available[0]
-      if(!model)throw new Error(wanted?`没有可用的图片模型 ${wanted}`:'没有可用的图片模型')
-      const result=await ctx.modelRegistry.generateImages(model,{input:parts},{signal,metadata:{size}})
-      if(result.stopReason!=='stop')throw new Error(result.errorMessage??'图片生成失败')
-      const images=(result.output as {type:string;data:string;mimeType:string}[]).filter(part=>part.type==='image')
-      if(!images.length)throw new Error('模型没有返回图片')
-      const paths=images.map((part,index)=>writeMediaFile(part.data,index,part.mimeType))
-      return {
-        content:[...images.map(part=>({type:'image' as const,data:part.data,mimeType:part.mimeType})),{type:'text' as const,text:`已生成 ${paths.length} 张图片：${paths.join('、')}`}],
-        details:{model:`${model.provider}/${model.id}`,prompt:input.prompt,resolution,aspect:aspect??null,size,paths,references:input.references??[]},
-      }
-    },
-  })
+  for(const [kind,spec] of Object.entries(settings.kinds)){
+    if(!models.length)continue
+    pi.registerTool({
+      name:`generate_${kind}`,
+      label:`生成${spec.label??kind}`,
+      description:`用 ${settings.provider.name} 生成${spec.label??kind}，并把结果直接返回给用户。传 references 时按参考图生成。`,
+      promptGuidelines:[`用户要求${spec.label??kind}、插画、海报、图标、配图时，直接用 generate_${kind} 并传入详细的 prompt；不要为此使用 codemode。`,`换 model 前先看该模型支持的参数；传了它不支持的组合会明确报错，不要重试同一个组合。`],
+      parameters:toolSchemaFor(settings,kind),
+      async execute(_toolCallId:string,params:unknown,signal:AbortSignal|undefined,_onUpdate:unknown,ctx:any){
+        const input=params as {prompt:string;model?:string;resolution?:string;aspect?:string;references?:string[];options?:Record<string,unknown>}
+        if(spec.recipe!=='sync')throw new Error(`能力 ${kind} 用的是 ${spec.recipe} 调用，其实现尚未接入`)
+        const effective=readImageSettings()
+        const available=await ctx.modelRegistry.getAvailableOfType('image') as {provider:string;id:string}[]
+        const wanted=input.model??effective.defaults.model
+        const model=wanted?available.find(candidate=>candidate.id===wanted):available[0]
+        if(!model)throw new Error(wanted?`没有可用的模型 ${wanted}`:'没有可用的模型')
+        // 先按「实际要用的模型」校验，再发请求 —— 静默兜底换成明确报错的那一步。
+        const problem=validateCall(effective,kind,model.id,{resolution:input.resolution,aspect:input.aspect,options:input.options})
+        if(problem)throw new Error(problem)
+        const sizes=paramsFor(effective,kind,model.id)
+        const resolution=input.resolution??effective.defaults.resolution
+        const aspect=input.aspect&&input.aspect!==''?input.aspect:undefined
+        const size=aspect?sizes[resolution]?.[aspect]:resolution
+        const parts=[{type:'text' as const,text:input.prompt},...(input.references??[]).map(path=>referenceImage(path,ctx.cwd))]
+        const result=await ctx.modelRegistry.generateImages(model,{input:parts},{signal,metadata:{size}})
+        if(result.stopReason!=='stop')throw new Error(result.errorMessage??'生成失败')
+        const images=(result.output as {type:string;data:string;mimeType:string}[]).filter(part=>part.type==='image')
+        if(!images.length)throw new Error('模型没有返回图片')
+        const paths=images.map((part,index)=>writeMediaFile(part.data,index,part.mimeType))
+        return {
+          content:[...images.map(part=>({type:'image' as const,data:part.data,mimeType:part.mimeType})),{type:'text' as const,text:`已生成 ${paths.length} 张图片：${paths.join('、')}`}],
+          details:{kind,model:`${model.provider}/${model.id}`,prompt:input.prompt,resolution,aspect:aspect??null,size,paths,references:input.references??[],options:input.options??null},
+        }
+      },
+    })
+  }
 }
+
 export default async function (pi: ExtensionAPI) {
   let latestProviderToolChars: number | undefined
   registerSubagentTools(pi)

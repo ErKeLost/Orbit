@@ -6,7 +6,7 @@ import {
   DEFAULT_IMAGE_RESOLUTION,
   imageGenerationRequest,
   imageOptionsFromSettings,
-  imageToolSchema,
+  toolSchemaFor,
   resolveImageSettings,
 } from '../src-tauri/resources/gui-extension'
 
@@ -163,7 +163,7 @@ describe('what the settings page and the tool schema are offered', () => {
   })
 
   test('the tool schema cannot offer a resolution the endpoint has no preset for', () => {
-    const schema = imageToolSchema(resolveImageSettings({ sizes: { '2K': { '1:1': '2048x2048' } }, models: [{ id: 'only' }] }))
+    const schema = toolSchemaFor(resolveImageSettings({ sizes: { '2K': { '1:1': '2048x2048' } }, models: [{ id: 'only' }] }), 'image')
     expect(schema.properties.resolution.enum).toEqual(['2K'])
     expect(schema.properties.aspect.enum).toEqual(['1:1'])
     expect(schema.properties.model.description).toContain('only')
