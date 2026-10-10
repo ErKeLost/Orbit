@@ -116,8 +116,15 @@ function PiCapabilitiesSettings({ desktop, online, running, tools }: { desktop: 
   const imageSettings = useQuery({ queryKey: ["pi", "image-config"], queryFn: imageConfig, enabled: desktop });
   const [imageEndpointOpen, setImageEndpointOpen] = useState(false);
   async function writeImageSetting(patch: ImageConfigPatch) {
-    try { await saveImageConfig(patch); await imageSettings.refetch(); gooeyToast.success("图片设置已更新", { showTimestamp: false }); }
-    catch (error) { report(error); }
+    try {
+      await saveImageConfig(patch);
+      await imageSettings.refetch();
+      // 换了默认模型，分辨率和画幅的选项也要跟着换 —— 它们来自**那个模型自己的**尺寸表
+      // （扩展侧 `imageOptionsFromSettings()` 读的是 `defaults.model`），而这份选项是从
+      // capabilities 来的。不刷新的话，一个只到 1K 的模型仍然会给你 4K 的选项。
+      await refreshCapabilities();
+      gooeyToast.success("图片设置已更新", { showTimestamp: false });
+    } catch (error) { report(error); }
   }
   return <>
     <SettingRow title="Codemode" description={capabilities?.tools.codemode ? "模型写 JavaScript 调用工具（含 MCP），支持并行、图片生成和分类器。" : "当前 runtime 未提供 codemode 工具。"}>
