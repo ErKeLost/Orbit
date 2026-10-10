@@ -297,7 +297,10 @@ export function createGalaxyField({ rootRef, canvasRef, trackRef }: GalaxyFieldO
     ctx.fillRect(fillX, fillY, Math.max(0, end - inset), fillH);
 
     const cols = Math.floor((thumbX - 2) / PIXEL_PITCH);
-    const rows = Math.max(1, Math.floor((fillH - 1) / PIXEL_PITCH));
+    // 行数按 4px 网格把轨道铺满（demo 的 20px 轨道 = 5 行），整块上下居中；
+    // 用 floor 会少一行，底部空出一条。
+    const rows = Math.max(1, Math.round(fillH / PIXEL_PITCH));
+    const gridTop = (fillH - rows * PIXEL_PITCH) / 2 + (PIXEL_PITCH - PIXEL_SIZE) / 2;
     for (let c = 0; c < cols; c++) {
       const x = 0.5 + c * PIXEL_PITCH;
       const u = x / Math.max(1, thumbX);
@@ -309,7 +312,7 @@ export function createGalaxyField({ rootRef, canvasRef, trackRef }: GalaxyFieldO
         ctx.globalAlpha = alpha;
         ctx.fillStyle = palette.pixel[Math.floor(hash(c, r, 4) * palette.pixel.length) % palette.pixel.length];
         // 3px 的像素用方块画，圆角在这个尺寸上看不出来，但快好几倍。
-        ctx.fillRect(fillX + x, fillY + 0.5 + r * PIXEL_PITCH, PIXEL_SIZE, PIXEL_SIZE);
+        ctx.fillRect(fillX + x, fillY + gridTop + r * PIXEL_PITCH, PIXEL_SIZE, PIXEL_SIZE);
       }
     }
     ctx.restore();
