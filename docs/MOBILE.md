@@ -204,6 +204,32 @@ The consequence is deliberate: the phone and the desktop share one workspace
 pointer. Opening a project on the phone switches the desktop to it, exactly as
 opening it on the desktop switches the phone.
 
+### Attachments
+
+An attachment is bytes, so it crosses to the Host as base64 inside the `prompt`
+command — the one thing on this list that does not need a new transport. What it
+did need is preparation, because a phone is not a desktop here in two ways:
+
+* **A camera photo is several megabytes**, which base64 makes a third larger
+  again, in a single WebSocket frame that the Host reads with tungstenite's 16
+  MiB limit. Pasting a screenshot already went through `encodeClipboardImage`
+  and its 2048px ceiling; picking a file did not.
+* **`File.type` is often empty.** Android's picker hands back a `content://`
+  source, and an attachment sent with an empty `mimeType` reaches the provider as
+  something it cannot decode, and renders as `data:;base64,…`, which no browser
+  shows either. The desktop path already derived the type from the file name;
+  the picker path did not.
+
+`src/lib/image-attachment.ts` decides both, and its decisions are pure so they
+are tested without a canvas or a device: keep an image that is already small,
+re-encode past `MAX_ATTACHMENT_EDGE` (2048) or `RECODE_ABOVE_BYTES` (2 MB), keep
+PNG as PNG so a screenshot's text stays crisp and make everything else JPEG, and
+refuse anything still over `MAX_ATTACHMENT_BYTES` (8 MB) by name. The cap is not
+arbitrary: 8 MB of bytes is ~10.7 MB of base64, which fits the 16 MiB frame the
+Host accepts with room to spare — and a test pins that relationship, because
+raising the cap without raising the frame limit would drop the socket mid-send
+rather than refuse the attachment.
+
 ### What is not mirrored yet
 
 Both remaining entries are not commands, so they cannot be mirrored by name.

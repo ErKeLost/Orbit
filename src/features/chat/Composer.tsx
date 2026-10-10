@@ -8,6 +8,7 @@ import { ensureSessionModes, recallQueue, report, sendPrompt, setComputerUseMode
 import { useSessionTarget } from "../shell/use-session-target";
 import { base64ToBlob } from "../../lib/image-bytes";
 import { encodeBlobToBase64, encodeClipboardImage } from "../../lib/image-encode";
+import { prepareImageAttachment, resolveImageMime } from "../../lib/image-attachment";
 import { shouldSubmitComposer } from "../../lib/composer";
 import { useMetrics } from "../../hooks/use-metrics";
 import { Popover } from "../../shared/ui/Popover";
@@ -40,10 +41,34 @@ function lruCache<T>(cache: Map<string, T>, key: string, value: T) {
   while (cache.size > 4) cache.delete(cache.keys().next().value!);
 }
 
-function imageAttachments(files: Iterable<File>): Attachment[] {
-  return Array.from(files).flatMap((file) =>
-    file.type.startsWith("image/") ? [{ kind: "image" as const, id: crypto.randomUUID(), name: file.name || "粘贴的图片", mimeType: file.type, blob: file }] : [],
+/**
+ * Picked files → attachments that can actually be sent.
+ *
+ * Both halves of this are phone problems. A camera JPEG is several megabytes in
+ * a single WebSocket frame, and Android's picker returns `content://` sources
+ * whose `File.type` is empty often enough that the type has to come from the
+ * name. `prepareImageAttachment` decides both; a file it refuses is reported and
+ * skipped rather than attached and dropped at the far end.
+ */
+async function prepareAttachments(files: Iterable<File>): Promise<Attachment[]> {
+  const prepared = await Promise.all(
+    Array.from(files).map(async (file): Promise<Attachment | null> => {
+      try {
+        const image = await prepareImageAttachment({ name: file.name, type: file.type, size: file.size, blob: file });
+        return { kind: "image", id: crypto.randomUUID(), name: image.name, mimeType: image.mimeType, blob: image.blob };
+      } catch (error) {
+        report(error);
+        return null;
+      }
+    }),
   );
+  return prepared.filter((item): item is Attachment => item !== null);
+}
+
+function addPrepared(setAttachments: (update: (current: Attachment[]) => Attachment[]) => void, files: Iterable<File>) {
+  void prepareAttachments(files).then((next) => {
+    if (next.length) setAttachments((current) => [...current, ...next]);
+  });
 }
 
 async function readClipboardImage(): Promise<ImageAttachment | null> {
@@ -335,10 +360,10 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
       const target = event.target instanceof Element ? event.target : null;
       if (!target?.closest("[data-composer-box]")) return;
       const files = Array.from(event.clipboardData?.files ?? []);
-      const images = files.filter((file) => file.type.startsWith("image/"));
+      const images = files.filter((file) => resolveImageMime(file) !== null);
       if (images.length) {
         event.preventDefault();
-        setAttachments((current) => [...current, ...imageAttachments(images)]);
+        addPrepared(setAttachments, images);
         return;
       }
       if (files.length === 0 && !event.clipboardData?.getData("text/plain") && runtimeTarget === "desktop") {
@@ -600,7 +625,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
               ref={fileInput}
               onChange={(event) => {
                 const files = event.target.files;
-                if (files) setAttachments((current) => [...current, ...imageAttachments(files)]);
+                if (files) addPrepared(setAttachments, files);
                 event.target.value = "";
               }}
             />
