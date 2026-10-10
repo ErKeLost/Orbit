@@ -191,6 +191,8 @@ export type MediaParamSpec={
 
 export type MediaKindSpec={
   label?:string
+  /** 设置里关掉的能力不注册工具。**缺省是开** —— 老配置没有这个键。 */
+  enabled:boolean
   /** 调用怎么发，不是生成什么。`sync` 直接回字节；`async-task` 起任务再轮询。 */
   recipe:'sync'|'async-task'
   output?:{ext?:string;dir?:string}
@@ -331,6 +333,7 @@ export function resolveImageSettings(stored:unknown):ImageSettings{
 export const BUILTIN_KINDS:Record<string,MediaKindSpec>={
   image:{
     label:'图片',
+    enabled:true,
     recipe:'sync',
     output:{ext:'png',dir:'orbit-media'},
     params:{
@@ -372,6 +375,7 @@ function parseKinds(value:unknown):Record<string,MediaKindSpec>{
     const output=spec.output&&typeof spec.output==='object'?spec.output as Record<string,unknown>:{}
     out[kind]={
       ...(typeof spec.label==='string'&&spec.label.trim()?{label:spec.label.trim()}:{}),
+      enabled:spec.enabled===undefined?true:spec.enabled!==false,
       recipe,
       ...(typeof output.ext==='string'||typeof output.dir==='string'
         ?{output:{...(typeof output.ext==='string'?{ext:output.ext}:{}),...(typeof output.dir==='string'?{dir:output.dir}:{})}}
@@ -780,6 +784,13 @@ export function registerImages(pi:ExtensionAPI):void{
     })
   }
   for(const [kind,spec] of Object.entries(settings.kinds)){
+    // 关掉的能力**不注册工具** —— 于是它的 schema 和 guidelines 都不进提示。这正是
+    // 「可以开启或者关闭」落地的地方：关掉之后模型不是「不推荐用它」，而是根本看不到它。
+    //
+    // 判断写成 `=== false` 而不是 `!spec.enabled`：缺省是**开**，所以只有显式的关闭才算
+    // 关闭。写成取反的话，任何一个漏了 `enabled` 的来源（内置默认、手写的配置）都会静默
+    // 变成「全部关掉」—— 而那等于整个功能消失，且不报错。
+    if(spec.enabled===false)continue
     if(!models.length)continue
     pi.registerTool({
       name:`generate_${kind}`,

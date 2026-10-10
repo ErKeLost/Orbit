@@ -383,6 +383,12 @@ fn validated_kinds(value: &Value) -> Result<Value, String> {
         if let Some(label) = spec.get("label").and_then(trimmed) {
             item.insert("label".into(), Value::String(label));
         }
+        // 一个能力可以在设置里被关掉。缺省是开 —— 老配置里没有这个键，它们必须是开的，
+        // 否则升级一次就等于把功能静默关了。
+        item.insert(
+            "enabled".into(),
+            Value::Bool(spec.get("enabled").and_then(Value::as_bool).unwrap_or(true)),
+        );
         let recipe = spec
             .get("recipe")
             .and_then(trimmed)
@@ -718,6 +724,23 @@ mod tests {
         // case, where the extension decides what exists.
         let merged = merge(&json!({}), &validate_patch(&json!({"model": "anything"})).unwrap());
         assert!(check_consistency(&merged).is_ok());
+    }
+
+    /// 关掉一个能力要能存住，而且**缺省是开**。
+    ///
+    /// 最后那半句更重要：老配置里没有 `enabled` 这个键，如果缺省成 false，升级一次就
+    /// 等于把功能静默关了 —— 那种失败没人会立刻发现。
+    #[test]
+    fn a_capability_can_be_switched_off_and_defaults_to_on() {
+        let after = saved(
+            &stored_with_provider(),
+            json!({"kinds": {
+                "image": {"recipe": "sync"},
+                "video": {"recipe": "async-task", "enabled": false},
+            }}),
+        );
+        assert_eq!(after["kinds"]["image"]["enabled"], true, "缺省必须是开");
+        assert_eq!(after["kinds"]["video"]["enabled"], false);
     }
 
     /// 能力表必须活过一次保存 —— 工具 schema、设置页的行、调用校验全都读它。
