@@ -199,7 +199,18 @@ export type MediaKindSpec={
 
 export type ImageSettings={
   provider:{id:string;name:string;baseUrl:string}
-  models:{id:string;name?:string}[]
+  models:{
+    id:string
+    name?:string
+    /** 这个模型自己的尺寸表。缺省退回全局 `sizes` —— 「不同模型不一样」落在数据上。 */
+    sizes?:Record<string,Record<string,string>>
+    /** 这个模型自己的额外参数。端点没有「参数 schema」这个概念，所以只能配。 */
+    params?:Record<string,MediaParamSpec>
+    /** 端点说的能力（`task_type`）：TextToImage / ImageToImage / … */
+    taskTypes?:string[]
+    /** 端点说的状态：Retiring / Shutdown。Shutdown 的不进工具 schema。 */
+    status?:string
+  }[]
   sizes:Record<string,Record<string,string>>
   defaults:{model?:string;resolution:string;aspect?:string}
   /** 能力表。缺省时退回内置的 `image` 一条，所以老配置行为不变。 */
@@ -219,21 +230,73 @@ const text=(value:unknown):string|undefined=>typeof value==='string'&&value.trim
  * config is edited by hand as well as by a form, and a stale default is a
  * smaller problem than an error in the middle of a request.
  */
+function parseStringArray(value:unknown):string[]|undefined{
+  if(!Array.isArray(value))return undefined
+  const items=value.filter((item):item is string=>typeof item==='string')
+  return items.length?items:undefined
+}
+
+/** 尺寸表：`{ "2K": { "16:9": "2848x1600" } }`。空表返回 `{}`，调用方决定退回什么。 */
+function parseSizes(value:unknown):Record<string,Record<string,string>>{
+  if(!value||typeof value!=='object')return {}
+  const out:Record<string,Record<string,string>>={}
+  for(const [resolution,aspects] of Object.entries(value as Record<string,unknown>)){
+    if(!aspects||typeof aspects!=='object')continue
+    const map:Record<string,string>={}
+    for(const [aspect,size] of Object.entries(aspects as Record<string,unknown>)){
+      const value=text(size)
+      if(value)map[aspect]=value
+    }
+    if(Object.keys(map).length)out[resolution]=map
+  }
+  return out
+}
+
+function parseParams(value:unknown):Record<string,MediaParamSpec>{
+  if(!value||typeof value!=='object')return {}
+  const out:Record<string,MediaParamSpec>={}
+  for(const [name,item] of Object.entries(value as Record<string,unknown>)){
+    if(!item||typeof item!=='object')continue
+    const raw=item as Record<string,unknown>
+    const clean:MediaParamSpec={}
+    if(raw.from==='sizes'||raw.from==='catalog')clean.from=raw.from
+    if(['string','integer','number','boolean'].includes(String(raw.type)))clean.type=raw.type as MediaParamSpec['type']
+    const values=parseStringArray(raw.enum)
+    if(values)clean.enum=values
+    if(typeof raw.min==='number')clean.min=raw.min
+    if(typeof raw.max==='number')clean.max=raw.max
+    if('default' in raw)clean.default=raw.default
+    if(typeof raw.description==='string')clean.description=raw.description
+    out[name]=clean
+  }
+  return out
+}
+
 export function resolveImageSettings(stored:unknown):ImageSettings{
   const raw=(stored&&typeof stored==='object'?stored:{}) as Record<string,unknown>
   const provider=(raw.provider&&typeof raw.provider==='object'?raw.provider:{}) as Record<string,unknown>
   const defaults=(raw.defaults&&typeof raw.defaults==='object'?raw.defaults:{}) as Record<string,unknown>
-  const models=Array.isArray(raw.models)
-    ? raw.models.flatMap((entry)=>{const id=text((entry as Record<string,unknown>)?.id);return id?[{id,name:text((entry as Record<string,unknown>)?.name)}]:[]})
+  const models:ImageSettings['models']=Array.isArray(raw.models)
+    ? raw.models.flatMap((entry)=>{
+        const item=(entry&&typeof entry==='object'?entry:{}) as Record<string,unknown>
+        const id=text(item.id)
+        if(!id)return []
+        const own=parseSizes(item.sizes)
+        const params=parseParams(item.params)
+        const taskTypes=parseStringArray(item.taskTypes)
+        const status=text(item.status)
+        return [{
+          id,
+          ...(text(item.name)?{name:text(item.name)}:{}),
+          ...(Object.keys(own).length?{sizes:own}:{}),
+          ...(Object.keys(params).length?{params}:{}),
+          ...(taskTypes?{taskTypes}:{}),
+          ...(status?{status}:{}),
+        }]
+      })
     : []
   const parsedKinds=parseKinds(raw.kinds)
-  const sizes=raw.sizes&&typeof raw.sizes==='object'
-    ? Object.fromEntries(Object.entries(raw.sizes as Record<string,unknown>).flatMap(([resolution,aspects])=>{
-        if(!aspects||typeof aspects!=='object')return []
-        const map=Object.fromEntries(Object.entries(aspects as Record<string,unknown>).flatMap(([aspect,size])=>{const value=text(size);return value?[[aspect,value]]:[]}))
-        return Object.keys(map).length?[[resolution,map]]:[]
-      }))
-    : {}
+  const sizes=parseSizes(raw.sizes)
   const effective:ImageSettings={
     provider:{
       id:isProviderId(provider.id)?provider.id:ARK_IMAGE_PROVIDER.id,
@@ -245,16 +308,22 @@ export function resolveImageSettings(stored:unknown):ImageSettings{
     defaults:{resolution:DEFAULT_IMAGE_RESOLUTION},
     kinds:Object.keys(parsedKinds).length?parsedKinds:BUILTIN_KINDS,
   }
-  const resolutions=Object.keys(effective.sizes)
   // The flat keys are what this file held before it could name a provider, and
   // what the settings page wrote until it grew the nested form. Nested wins.
   const wantedModel=text(defaults.model)??text(raw.model)
   const wantedResolution=text(defaults.resolution)??text(raw.resolution)
   const wantedAspect=text(defaults.aspect)??text(raw.aspect)
+  if(wantedModel&&effective.models.some(model=>model.id===wantedModel))effective.defaults.model=wantedModel
+  // 默认值必须落在**默认模型**的表里，不是全局表里 —— 换到一个分辨率更少的模型之后
+  // 原来的默认值会变成非法的，留着它就等于每次调用都报错。
+  //
+  // 顺序是这整段的关键：取表和收敛都必须在 `defaults.model` 定下来**之后**。早一步
+  // 读到的就是全局表，于是收敛看着通过、其实一次都没生效。
+  const table=paramsFor(effective,'image',effective.defaults.model)
+  const resolutions=Object.keys(table)
   const resolution=resolutions.includes(wantedResolution??'')?wantedResolution!:(resolutions.includes(DEFAULT_IMAGE_RESOLUTION)?DEFAULT_IMAGE_RESOLUTION:resolutions[0]!)
   effective.defaults.resolution=resolution
-  if(wantedAspect&&Object.hasOwn(effective.sizes[resolution]??{},wantedAspect))effective.defaults.aspect=wantedAspect
-  if(wantedModel&&effective.models.some(model=>model.id===wantedModel))effective.defaults.model=wantedModel
+  if(wantedAspect&&Object.hasOwn(table[resolution]??{},wantedAspect))effective.defaults.aspect=wantedAspect
   return effective
 }
 
@@ -375,6 +444,21 @@ async function generateImages(model:any,context:any,options:any){
  * Reported from the same resolved settings the tool uses, so the page can never
  * offer a resolution the endpoint has no preset for.
  */
+/**
+ * 一个 kind 在某个模型上的尺寸表。
+ *
+ * 「不同模型不一样」落地的唯一地方：模型自己有就用自己的，没有就退回全局。
+ * `kind` 目前只用来找 `kinds[kind].params` 里 `from:'sizes'` 的项 —— 也就是说
+ * **哪种能力用尺寸表是数据说的**，不是这个函数知道的。
+ */
+export function paramsFor(settings:ImageSettings,kind:string,modelId?:string):Record<string,Record<string,string>>{
+  const spec=settings.kinds[kind]
+  const usesSizes=spec?Object.values(spec.params).some(param=>param.from==='sizes'):true
+  if(!usesSizes)return {}
+  const model=modelId?settings.models.find(entry=>entry.id===modelId):undefined
+  return model?.sizes&&Object.keys(model.sizes).length?model.sizes:settings.sizes
+}
+
 export function imageOptionsFromSettings(settings:ImageSettings=readImageSettings()){
   const resolutions=Object.keys(settings.sizes)
   return {resolutions,aspects:[...new Set(resolutions.flatMap(resolution=>Object.keys(settings.sizes[resolution]??{})))]}
