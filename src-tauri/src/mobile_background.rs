@@ -13,14 +13,14 @@
 //! prerequisite permission, a start from the background) and a toggle that reads
 //! "on" while nothing holds the connection is worse than one that reads "failed".
 
-use serde_json::{json, Value};
+use serde_json::Value;
 
 #[cfg(target_os = "android")]
 mod android {
     use super::*;
     use tauri::{
         plugin::{Builder, PluginHandle, TauriPlugin},
-        AppHandle, Manager, Runtime, Wry,
+        AppHandle, Manager, Wry,
     };
 
     const PLUGIN_IDENTIFIER: &str = "ai.pi.gui";
@@ -59,6 +59,11 @@ mod android {
     }
 }
 
+/// Registered only where the service exists; `lib.rs` adds the plugin under the
+/// same `cfg`, which is why this is a re-export rather than a stub.
+#[cfg(target_os = "android")]
+pub use android::init;
+
 /// The Kotlin side knows whether the service runs and why it does not; only this
 /// side knows whether the platform has one at all, so the field is added here and
 /// the shape is the same on every platform.
@@ -81,7 +86,7 @@ pub async fn background_connection_status(app: tauri::AppHandle) -> Result<Value
     #[cfg(not(target_os = "android"))]
     {
         let _ = app;
-        Ok(json!({"running": false, "supported": false, "error": null}))
+        Ok(serde_json::json!({"running": false, "supported": false, "error": null}))
     }
 }
 

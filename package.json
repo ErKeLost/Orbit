@@ -11,6 +11,7 @@
     "tauri": "node scripts/tauri.mjs",
     "check": "tsc -b && bun run check:computer-use && bun run lint",
     "check:computer-use": "node scripts/sync-computer-use.mjs && tsc -p tsconfig.computer-use.json",
+    "check:android": "node scripts/check-android.mjs",
     "doctor": "react-doctor src --no-supply-chain --no-score",
     "test": "bun test ./tests ./src/features/source-control/model && vitest run",
     "test:pi": "node scripts/smoke-pi.mjs",

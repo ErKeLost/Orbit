@@ -18,10 +18,17 @@ bun run tauri dev
 ```sh
 bun run check
 bun test
+bun run check:android    # aarch64-linux-android 的 Rust + 手写 Kotlin，需要 NDK
 bun run test:pi           # 实际 Pi RPC / 扩展 / Bash 集成，不发送模型请求
 bun run test:pi --live    # 增加一次真实中转模型请求
 bun run tauri build --bundles app
 ```
+
+`bun run check` 与 `cargo check` 都只编译**宿主机**目标，`#[cfg(target_os = "android")]`
+里的代码和 `src-tauri/gen/android` 下手写的 Kotlin 它们都看不见——那部分只在 Android
+任务里才会被编译。`bun run check:android` 就是本地把这两半各编译一遍（Rust 约 30 秒，
+Kotlin 首次约 1 分钟），避免为了一个 `cfg` 里的笔误等一轮 25 分钟的 CI。加
+`--rust-only` 可以只跑快的那个。
 
 `bun run dev` 仅运行浏览器预览，原生能力需要桌面 App。
 
