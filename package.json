@@ -1,7 +1,7 @@
 {
   "name": "orbit",
   "private": true,
-  "version": "0.6.59",
+  "version": "0.6.60",
   "type": "module",
   "scripts": {
     "dev": "vite",
