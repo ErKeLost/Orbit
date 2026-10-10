@@ -37,6 +37,7 @@
 | Codemode 与 Tool Search | 设置开关通过 `gui-tools-set` 激活这两个内置扩展工具；`codemode` 与 `tool_search` 在 Pi 1.0 中是 `model-only` 暴露，未激活时不计入 prompt 工具集。`codemode.mode`（on/only）由设置写入 settings.json |
 | 工具暴露分类 | `gui-capabilities` 报告 direct / model-only / codemode / deferred / hidden 的数量；MCP 服务器可逐个切换 exposure（写入 `mcp.json`） |
 | 图片生成与分类器模型 | `gui-media` 用 `getModelsOfType()` + `hasConfiguredAuth()` 列出可用图片/分类器模型；codemode 脚本可用 `models.generateImages()`、`models.classify()`，GUI 触发的生成结果写入 `~/.pi/agent/orbit-media/` 并提示路径。出图端点（provider / Base URL / 模型 / 密钥）在设置里可配，见下节 |
+| 生成能力按 kind 配置 | `~/.pi/agent/image.json` 的 `kinds` 是能力表：一种能力（今天只有 `image`）自带参数表、`recipe`（`sync` 直接回字节 / `async-task` 起任务再轮询）和 `enabled` 开关，工具名是 `generate_${kind}`。**参数表是数据**：`from:'sizes'` 取该模型自己的尺寸表，`from:'catalog'` 取该 kind 的模型列表，所以「不同模型不一样」不用改代码。模型可带自己的 `sizes` / `params` / `taskTypes`，默认值会收敛到默认模型支持的档位上。schema 与设置页的选项来自同一处 `optionsFor()`，但**一次调用按实际选中的模型校验**：不支持的组合明确报错，不再静默兜底成默认值。关掉的能力不注册工具，schema 和 guidelines 都不进提示。模型列表从每个有凭据的 provider 的 `/models` 发现（判据 `output_modalities` → `domain`，`Shutdown` 的丢掉），缓存由 Pi 的 `refreshModels` / `publish({persist})` 负责，扩展一行缓存都不写 |
 | 虚拟（路由）模型 | 扩展调用 `pi.registerVirtualModel()`；`/gui-virtual-model register` 接收数据驱动的路由规则，continuation/retry 默认粘在上一次成功回答的物理模型上以保缓存；`gui-virtual-models` 列出已注册项 |
 | 缓存预热与 Codemode 设置 | 设置写入 `~/.pi/agent/settings.json` 的白名单键（`cacheWarming`、`codemode`），Rust 侧先校验取值；非白名单键直接拒绝 |
 | 分支摘要导航 | 会话树同时提供普通导航和 `navigateTree({ summarize: true })` |
