@@ -25,6 +25,21 @@ export const emptyTranscript = (): Transcript => ({ messages: [], active: -1, ru
 /** 会话切换期间先上骨架屏，别让上一个会话的消息停在原地再突然换掉。 */
 export const transcriptLoading = (transcript: Transcript, loading: boolean): Transcript => transcript.loading === loading ? transcript : { ...transcript, loading }
 
+/**
+ * Whether a reconnect may keep the transcript that is already on screen.
+ *
+ * Both halves are load-bearing. `sameConnection` is what separates a recovery
+ * from a switch: coming back to the app is the same project showing the same
+ * session, while landing on another project must not leave the previous one's
+ * messages under the new one's title. `hasMessages` separates that from a first
+ * connect, where there is nothing to keep and the skeleton is the honest answer.
+ *
+ * The cost of getting this wrong is a skeleton on every return from another app,
+ * which is exactly what the user sees most often and trusts least.
+ */
+export const reconnectKeepsTranscript = ({ recovery, sameConnection, hasMessages }: { recovery: boolean; sameConnection: boolean; hasMessages: boolean }): boolean =>
+  recovery && sameConnection && hasMessages
+
 /** 用户已经要求、但 Pi 还没确认的模型切换（provider + model id）。 */
 export type PendingModel = { provider: string; id: string }
 

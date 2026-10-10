@@ -54,7 +54,11 @@ export function useWorkspaceBootstrap() {
       const savedId = localStorage.getItem("orbit.remote.connection.v1") ?? workspace.connectionId;
       const connection = preferredRemoteConnection(snapshot, savedId, workspace.cwd, false);
       if (connection) {
-        await connectRemoteConnection(connection, workspace.workspaceMode);
+        // A recovery, not a switch: if this is the connection already on screen,
+        // `connectRemoteConnection` keeps its transcript instead of replacing it
+        // with the skeleton. Coming back from another app is the most common
+        // thing a phone does, and it must not look like a cold start.
+        await connectRemoteConnection(connection, workspace.workspaceMode, { recovery: true });
       } else {
         const target = workspace.cwd || snapshot.projects?.[0]?.path;
         if (!target) throw new Error("电脑端当前没有可用的 Pi 连接，请先在电脑打开工作区");

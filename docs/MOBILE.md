@@ -302,6 +302,31 @@ problem:
   first screen — because that is the panel a launch exists for. Settings →
   通用 → 「启动页面」 changes it permanently.
 
+### Coming back from another app
+
+The phone's pairing socket is a `WebSocket` inside the WebView, so it does not
+survive the app being backgrounded: `WryActivity.onPause` pauses the WebView, and
+Doze closes what is left. A return therefore always reconnects, and that part is
+Android's rather than ours.
+
+What is ours is what the reconnect does to the screen. It used to replace the
+conversation with the loading skeleton — on every single return, which is the
+most common thing a phone does. `reconnectKeepsTranscript`
+(`src/lib/protocol.ts`) is the rule that stops it, and both of its halves are
+load-bearing: `sameConnection` is what separates a recovery from a switch, so
+landing on another project cannot leave the previous project's messages under
+the new one's title, and `hasMessages` is what separates a recovery from a first
+connect, where there is nothing to keep and the skeleton is the honest answer.
+A kept transcript says so with a「正在重连电脑…」 pill instead, because content
+that looks live while it is not is worse than a skeleton.
+
+Keeping the process alive in the background instead — a foreground service with
+a permanent notification — was considered and not taken: it is the only way to
+hold a socket across a backgrounded app, and it buys nothing once the reconnect
+stops blanking the screen. It would be the right trade only if the phone ever has
+to see events *while* it is in the background (notifications, or a turn watched
+from another device).
+
 ## Install and use the Android build
 
 1. Download `orbit-android-arm64-<tag>.apk` from the Orbit GitHub Release and

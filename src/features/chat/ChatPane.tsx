@@ -98,6 +98,7 @@ export function ChatPane() {
   const runtimeTarget = useWorkspace((state) => state.runtimeTarget);
   const agents = useWorkspace((state) => state.agents);
   const statuses = useWorkspace((state) => state.statuses);
+  const connection = useWorkspace((state) => state.connection);
   const transcript = useFrameStream();
   const holdStickRef = useRef(false);
   // 发送那一刻置位（onSubmitted 在乐观追加渲染前同步调用），锚定接管后由
@@ -290,6 +291,14 @@ export function ChatPane() {
       {dockPosition === "top" || dockPosition === "left" ? dock : null}
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
       <ChatBackground />
+      {/* Kept content during a reconnect: the screen is still the session the
+          user left, and saying so is the difference between "it is thinking"
+          and "it is lying to me". */}
+      {connection === "connecting" && transcript.messages.length > 0 ? (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center">
+          <span className="mt-2 rounded-full border border-stroke/60 bg-background-base/85 px-2.5 py-1 text-[11px] text-content/60 backdrop-blur">正在重连电脑…</span>
+        </div>
+      ) : null}
       <div className="@container relative min-h-0 flex-1 transcript-composer-fade">
         <div ref={ref} className="agent-transcript h-full overflow-y-auto overscroll-none font-mono text-[13px] leading-5 [overflow-anchor:none]">
           {/* Orbit's chat transcript: top-aligned content whose newest turn
