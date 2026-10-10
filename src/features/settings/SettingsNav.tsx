@@ -30,6 +30,7 @@ export const SETTINGS_GROUPS: { id: string; label: string; sections: SettingsSec
     label: "智能体",
     sections: [
       { id: "providers", label: "Providers", description: "Pi 的模型端点、API Key 与模型目录。", icon: Bot, desktopOnly: true },
+      { id: "integrations", label: "第三方接入", description: "生成能力的端点、开关与默认模型。", icon: Wrench, desktopOnly: true },
       { id: "computer-use", label: "操作电脑", description: "让 Pi 用自然语言点选本机界面所用的决策模型。", icon: CursorMagicSelection, desktopOnly: true },
       { id: "skills", label: "技能", description: "查看与管理 Pi 加载的技能和命令。", icon: Sparkles },
       { id: "pi-tools", label: "常用工具", description: "直接在终端里运行的 Pi 命令。", icon: Wrench },

@@ -840,3 +840,19 @@
     overscroll-behavior: contain;
   }
 }
+
+/* 能力行上的模型选择器：和 `.provider-row-value` 同高同宽，看起来是一列里的东西。 */
+.provider-kind-select {
+  max-width: 260px;
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--color-content) 2%, transparent);
+  font-size: 12px;
+  color: color-mix(in srgb, var(--color-content) 75%, transparent);
+}
+
+.provider-kind-select:disabled {
+  opacity: 0.5;
+}

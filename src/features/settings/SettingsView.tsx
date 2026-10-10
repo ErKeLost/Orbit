@@ -17,6 +17,7 @@ const GeneralSettingsPanel = lazy(() => import("../../components/panels/GeneralS
 const ScreenSettingsPanel = lazy(() => import("../../components/panels/ScreenSettingsPanel").then((m) => ({ default: m.ScreenSettingsPanel })));
 const PiToolsPanel = lazy(() => import("../../components/panels/PiToolsPanel").then((m) => ({ default: m.PiToolsPanel })));
 const ProviderSettings = lazy(() => import("../../components/ProviderSettings").then((m) => ({ default: m.ProviderSettings })));
+const IntegrationsPanel = lazy(() => import("../../components/panels/IntegrationsPanel"));
 const ComputerUsePanel = lazy(() => import("../../components/panels/ComputerUsePanel").then((m) => ({ default: m.ComputerUsePanel })));
 
 function DesktopOnly({ what }: { what: string }) {
@@ -99,6 +100,7 @@ export function SettingsView() {
   else if (page === "skills") content = <SkillsPage />;
   else if (page === "inbox") content = <InboxSettings />;
   else if (page === "providers") content = desktop ? <ProviderSettings /> : <DesktopOnly what=" Provider" />;
+  else if (page === "integrations") content = desktop ? <IntegrationsPanel /> : <DesktopOnly what="第三方接入" />;
   else if (page === "computer-use") content = desktop ? <ComputerUsePanel /> : <DesktopOnly what="电脑操作" />;
   else if (page === "screen") content = <ScreenSettingsPanel />;
   else if (page === "pi-tools") content = <PiToolsPanel />;

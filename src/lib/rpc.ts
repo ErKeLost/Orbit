@@ -377,11 +377,39 @@ export async function testComputerUseDecision():Promise<ComputerUseTestResult> {
  * defaults. Every key other than the derived ones is optional, and an absent key
  * means "use the built-in", which is why an unconfigured install still works.
  */
+/**
+ * One capability's parameter. `from` 说的是值从哪来：`sizes` 取该模型自己的尺寸表，
+ * `catalog` 取该 kind 的模型列表。没有 `from` 就是一个字面量枚举或数值。
+ */
+export type ImageConfigParam = {
+  from?: "sizes" | "catalog"
+  type?: "string" | "integer" | "number" | "boolean"
+  enum?: string[]
+  min?: number
+  max?: number
+  default?: unknown
+  description?: string
+}
+
+/**
+ * 一种生成能力。`recipe` 说的是**这次调用怎么发**，不是生成什么：`sync` 直接回字节，
+ * `async-task` 起任务再轮询。`enabled` 缺省为开 —— 关掉的能力不注册工具。
+ */
+export type ImageConfigKind = {
+  label?: string
+  enabled?: boolean
+  recipe?: string
+  output?: { ext?: string; dir?: string }
+  params?: Record<string, ImageConfigParam>
+}
+
 export type ImageConfig = {
   provider?: { id: string; name?: string; baseUrl?: string }
-  models?: { id: string; name?: string }[]
+  models?: { id: string; name?: string; sizes?: Record<string, Record<string, string>>; params?: Record<string, ImageConfigParam>; taskTypes?: string[]; status?: string }[]
   sizes?: Record<string, Record<string, string>>
   defaults?: { model?: string; resolution?: string; aspect?: string }
+  /** 能力表。缺省时扩展退回内置的一条 `image`。 */
+  kinds?: Record<string, ImageConfigKind>
   /** Whether the file says anything at all. */
   configured: boolean
   /** Whether Pi can resolve a key for the configured (or built-in) provider. */
@@ -398,6 +426,7 @@ export type ImageConfigPatch = {
   models?: ImageConfig["models"] | null
   sizes?: ImageConfig["sizes"] | null
   defaults?: ImageConfig["defaults"] | null
+  kinds?: ImageConfig["kinds"] | null
   /** The flat single-default form the settings page sends. */
   model?: string
   resolution?: string
