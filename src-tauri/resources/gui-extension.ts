@@ -594,6 +594,50 @@ export function validateCall(settings:ImageSettings,kind:string,modelId:string,i
 }
 
 /**
+ * 从端点自己的模型目录里挑出「输出图片」的那些，并转成 Pi 的模型条目。
+ *
+ * 判据按可靠性排序，因为不同家给的东西不一样：
+ *   1. `modalities.output_modalities` —— Ark 和 OpenRouter 都有，最准
+ *   2. 顶层的 `output_modalities` —— 有些中转站这么给
+ *   3. `domain === 'ImageGeneration'` —— Ark 的分类字段
+ * 三者都没有就**不收**。按模型 id 猜（`-image`、`gpt-image`）看着聪明，但它会把
+ * 一个恰好叫这名字的对话模型收进来，而那种错误到调用时才暴露。
+ *
+ * `Shutdown` 的丢掉：`/models` 会把下线模型一起返回（Ark 那 135 条里只有 52 条在售），
+ * 让它们进 schema 只是给模型多几个必然失败的选项。
+ *
+ * 纯函数：没有网络、没有文件，所以端点返回的形状可以直接拿真实目录来钉。
+ */
+export function imageModelsFromCatalog(items:unknown[],providerId:string){
+  const output:unknown[]=[];
+  const seen=new Set<string>();
+  for(const item of items){
+    if(!item||typeof item!=='object')continue
+    const entry=item as Record<string,unknown>
+    const id=text(entry.id)
+    if(!id||seen.has(id))continue
+    if(text(entry.status)==='Shutdown')continue
+    const modalities=(entry.modalities&&typeof entry.modalities==='object'?entry.modalities:{}) as Record<string,unknown>
+    const declared=parseStringArray(modalities.output_modalities)??parseStringArray(entry.output_modalities)
+    const isImage=declared?declared.includes('image'):entry.domain==='ImageGeneration'
+    if(!isImage)continue
+    const inputs=parseStringArray(modalities.input_modalities)??parseStringArray(entry.input_modalities)??['text']
+    seen.add(id)
+    output.push({
+      id,
+      ...(text(entry.name)?{name:text(entry.name)}:{}),
+      provider:providerId,
+      type:'image' as const,
+      api:'openai-images',
+      input:(inputs.includes('image')?['text','image']:['text']) as ('text'|'image')[],
+      output:['image'] as ('text'|'image')[],
+      cost:{input:0,output:0,cacheRead:0,cacheWrite:0},
+    })
+  }
+  return output;
+}
+
+/**
  * 注册每一种已配置的能力。**循环 `kinds`，函数里没有 "image" 这个字面量。**
  *
  * 所以「加视频」= 往配置里加一条 `kinds.video`。这也是为什么注册要放在一个循环里，
