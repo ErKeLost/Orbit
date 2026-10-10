@@ -30,6 +30,7 @@ use crate::bridge;
 const MAX_MODELS: usize = 32;
 const MAX_RESOLUTIONS: usize = 8;
 const MAX_ASPECTS: usize = 16;
+const MAX_PARAMS: usize = 32;
 
 /// The provider the extension registers when the file names none.
 ///
@@ -318,10 +319,106 @@ fn validated_models(value: &Value) -> Result<Value, String> {
         if let Some(name) = entry.get("name").and_then(trimmed) {
             item.insert("name".into(), Value::String(name));
         }
+        // A model may carry its own size table and its own extra parameters. The
+        // endpoint has no way to describe either — OpenAI's `/models` has no
+        // "parameter schema" concept at all — so the file is where they live.
+        // Unknown keys are still dropped: a hand-edited file must not smuggle in
+        // a field the extension would then silently ignore.
+        if let Some(sizes) = entry.get("sizes") {
+            item.insert("sizes".into(), validated_sizes(sizes)?);
+        }
+        if let Some(params) = entry.get("params") {
+            item.insert("params".into(), validated_params(params)?);
+        }
+        // What the endpoint said about this model, cached so the tool schema can
+        // use it without a request. Not authoritative — `catalog` is.
+        for key in ["taskTypes", "inputModalities"] {
+            if let Some(values) = entry.get(key) {
+                item.insert(key.into(), validated_string_list(values, &format!("models[].{key}"))?);
+            }
+        }
         seen.push(id);
         clean.push(Value::Object(item));
     }
     Ok(Value::Array(clean))
+}
+
+/// One model's extra parameters.
+///
+/// The shape is `{ type, enum, min, max, default, description }` and the extension
+/// is the only consumer, so this is a whitelist rather than a schema: anything it
+/// does not understand is dropped instead of being passed on to be ignored.
+fn validated_params(value: &Value) -> Result<Value, String> {
+    let params = value
+        .as_object()
+        .ok_or_else(|| "models[].params 必须是对象".to_string())?;
+    if params.len() > MAX_PARAMS {
+        return Err(format!("models[].params 最多 {MAX_PARAMS} 个"));
+    }
+    let mut clean = Map::new();
+    for (name, spec) in params {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("models[].params 的参数名不能为空".into());
+        }
+        let spec = spec
+            .as_object()
+            .ok_or_else(|| format!("models[].params.{name} 必须是对象"))?;
+        let mut item = Map::new();
+        if let Some(kind) = spec.get("type").and_then(trimmed) {
+            if !["string", "integer", "number", "boolean"].contains(&kind.as_str()) {
+                return Err(format!("models[].params.{name}.type 不支持：{kind}"));
+            }
+            item.insert("type".into(), Value::String(kind));
+        }
+        if let Some(values) = spec.get("enum") {
+            item.insert(
+                "enum".into(),
+                validated_string_list(values, &format!("models[].params.{name}.enum"))?,
+            );
+        }
+        for bound in ["min", "max"] {
+            if let Some(number) = spec.get(bound).and_then(Value::as_f64) {
+                item.insert(bound.into(), json!(number));
+            }
+        }
+        if let Some(default) = spec.get("default") {
+            if default.is_string() || default.is_number() || default.is_boolean() {
+                item.insert("default".into(), default.clone());
+            }
+        }
+        if let Some(description) = spec.get("description").and_then(trimmed) {
+            item.insert("description".into(), Value::String(description));
+        }
+        clean.insert(name.into(), Value::Object(item));
+    }
+    Ok(Value::Object(clean))
+}
+
+/// A non-empty list of distinct non-empty strings.
+///
+/// Empty is refused rather than kept: `[]` reads as "this model has no
+/// capabilities", which is never what someone meant to write, and the way to clear
+/// the field is `null`.
+fn validated_string_list(value: &Value, what: &str) -> Result<Value, String> {
+    let items = value.as_array().ok_or_else(|| format!("{what} 必须是数组"))?;
+    let mut seen: Vec<&str> = Vec::new();
+    for item in items {
+        let item = item
+            .as_str()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .ok_or_else(|| format!("{what} 的每一项必须是非空字符串"))?;
+        if !seen.contains(&item) {
+            seen.push(item);
+        }
+    }
+    if seen.is_empty() {
+        return Err(format!("{what} 不能为空数组；传 null 表示清除"));
+    }
+    Ok(Value::Array(
+        seen.into_iter().map(|item| Value::String(item.to_owned())).collect(),
+    ))
 }
 
 fn validated_sizes(value: &Value) -> Result<Value, String> {
@@ -540,6 +637,61 @@ mod tests {
         // case, where the extension decides what exists.
         let merged = merge(&json!({}), &validate_patch(&json!({"model": "anything"})).unwrap());
         assert!(check_consistency(&merged).is_ok());
+    }
+
+    /// 一个模型的私有尺寸表与私有参数必须活过一次保存。
+    ///
+    /// 它们没有别的地方可去：OpenAI 的 `/models` 根本没有「参数 schema」这个概念，
+    /// 所以文件就是它们唯一的家。而 `validated_models` 是个白名单 —— 在白名单里漏掉
+    /// 一个键，它的表现不是报错，是**配置存进去就被静默抹掉**。
+    #[test]
+    fn a_models_own_sizes_and_params_survive_a_save() {
+        let stored = normalized(&json!({
+            "provider": {"id": "my-endpoint", "baseUrl": "https://img.test/v1"},
+            "models": [{"id": "a"}],
+        }));
+        let after = saved(
+            &stored,
+            json!({"models": [{
+                "id": "a",
+                "name": "A",
+                "sizes": {"1K": {"1:1": "1024x1024"}, "4K": {"1:1": "4096x4096", "21:9": "6240x2656"}},
+                "params": {
+                    "sequential_image_generation": {"enum": ["disabled", "auto"], "default": "disabled"},
+                    "max_images": {"type": "integer", "min": 1, "max": 15},
+                },
+                "taskTypes": ["TextToImage", "ImageToImage"],
+                "inputModalities": ["text", "image"],
+            }]}),
+        );
+        let model = &after["models"][0];
+        assert_eq!(model["sizes"]["4K"]["21:9"], "6240x2656");
+        assert_eq!(model["params"]["max_images"]["max"], 15.0);
+        assert_eq!(model["params"]["sequential_image_generation"]["enum"][1], "auto");
+        assert_eq!(model["taskTypes"][1], "ImageToImage");
+        assert_eq!(model["inputModalities"][0], "text");
+    }
+
+    /// 白名单以两种方式生效，而它们不同：看不懂的**类型**要响亮地拒绝（写它的人
+    /// 显然想表达什么），看不懂的**字段**则丢掉（它可能只是更早/更晚版本的残留）。
+    #[test]
+    fn an_unsupported_param_type_is_refused_but_an_unknown_field_is_dropped() {
+        assert!(refused(json!({"models": [{"id": "a", "params": {"p": {"type": "not-a-type"}}}]}))
+            .contains("不支持：not-a-type"));
+
+        let after = saved(
+            &stored_with_provider(),
+            json!({"models": [{"id": "a", "params": {"p": {"type": "integer", "extra": 1}}}]}),
+        );
+        let params = &after["models"][0]["params"]["p"];
+        assert_eq!(params["type"], "integer");
+        assert!(params["extra"].is_null(), "an unknown field must not survive");
+    }
+
+    /// 空数组会被读成「这个模型没有任何能力」，那不是任何人的本意 —— 清除字段用 null。
+    #[test]
+    fn an_empty_capability_list_is_refused() {
+        assert!(refused(json!({"models": [{"id": "a", "taskTypes": []}]})).contains("不能为空数组"));
     }
 
     #[test]
