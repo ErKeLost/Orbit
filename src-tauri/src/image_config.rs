@@ -31,6 +31,7 @@ const MAX_MODELS: usize = 32;
 const MAX_RESOLUTIONS: usize = 8;
 const MAX_ASPECTS: usize = 16;
 const MAX_PARAMS: usize = 32;
+const MAX_KINDS: usize = 16;
 
 /// The provider the extension registers when the file names none.
 ///
@@ -74,7 +75,7 @@ pub fn image_config_path() -> Result<PathBuf, String> {
 fn normalized(stored: &Value) -> Value {
     let mut out = Map::new();
     let object = stored.as_object();
-    for key in ["provider", "models", "sizes"] {
+    for key in ["provider", "models", "sizes", "kinds"] {
         if let Some(value) = object.and_then(|object| object.get(key)) {
             if value.is_object() || value.is_array() {
                 out.insert(key.into(), value.clone());
@@ -255,6 +256,14 @@ fn validate_patch(input: &Value) -> Result<Value, String> {
         }
     }
 
+    if let Some(value) = object.get("kinds") {
+        if value.is_null() {
+            out.insert("kinds".into(), Value::Null);
+        } else {
+            out.insert("kinds".into(), validated_kinds(value)?);
+        }
+    }
+
     if let Some(value) = object.get("sizes") {
         if value.is_null() {
             out.insert("sizes".into(), Value::Null);
@@ -343,6 +352,68 @@ fn validated_models(value: &Value) -> Result<Value, String> {
     Ok(Value::Array(clean))
 }
 
+/// The capability table: what this endpoint can generate, and what each of those
+/// asks for.
+///
+/// This is the centre of the design. A kind carries its own parameter table, so
+/// adding video is one more entry here rather than a new code path — and the tool
+/// schema, the settings page's rows and the validation all read the same table.
+///
+/// `recipe` names how a call is made, not what it makes: `sync` returns the bytes,
+/// `async-task` starts a job and polls. Two shapes cover every generator Ark
+/// publishes today (`/images/generations` and `/contents/generations/tasks`).
+fn validated_kinds(value: &Value) -> Result<Value, String> {
+    const RECIPES: [&str; 2] = ["sync", "async-task"];
+    let kinds = value
+        .as_object()
+        .ok_or_else(|| "kinds 必须是对象".to_string())?;
+    if kinds.is_empty() || kinds.len() > MAX_KINDS {
+        return Err(format!("kinds 需要 1 到 {MAX_KINDS} 种能力"));
+    }
+    let mut clean = Map::new();
+    for (kind, spec) in kinds {
+        let kind = kind.trim();
+        if kind.is_empty() {
+            return Err("kinds 的能力名不能为空".into());
+        }
+        let spec = spec
+            .as_object()
+            .ok_or_else(|| format!("kinds.{kind} 必须是对象"))?;
+        let mut item = Map::new();
+        if let Some(label) = spec.get("label").and_then(trimmed) {
+            item.insert("label".into(), Value::String(label));
+        }
+        let recipe = spec
+            .get("recipe")
+            .and_then(trimmed)
+            .ok_or_else(|| format!("kinds.{kind}.recipe 不能为空"))?;
+        if !RECIPES.contains(&recipe.as_str()) {
+            return Err(format!(
+                "kinds.{kind}.recipe 只支持 {}，收到 {recipe}",
+                RECIPES.join(" / ")
+            ));
+        }
+        item.insert("recipe".into(), Value::String(recipe));
+        if let Some(output) = spec.get("output").and_then(Value::as_object) {
+            let mut out = Map::new();
+            if let Some(ext) = output.get("ext").and_then(trimmed) {
+                out.insert("ext".into(), Value::String(ext));
+            }
+            if let Some(dir) = output.get("dir").and_then(trimmed) {
+                out.insert("dir".into(), Value::String(dir));
+            }
+            if !out.is_empty() {
+                item.insert("output".into(), Value::Object(out));
+            }
+        }
+        if let Some(params) = spec.get("params") {
+            item.insert("params".into(), validated_params(params)?);
+        }
+        clean.insert(kind.into(), Value::Object(item));
+    }
+    Ok(Value::Object(clean))
+}
+
 /// One model's extra parameters.
 ///
 /// The shape is `{ type, enum, min, max, default, description }` and the extension
@@ -389,6 +460,16 @@ fn validated_params(value: &Value) -> Result<Value, String> {
         }
         if let Some(description) = spec.get("description").and_then(trimmed) {
             item.insert("description".into(), Value::String(description));
+        }
+        // 在 `kinds.<kind>.params` 里，一项的值可以不是字面量，而是「从哪来」：
+        // `sizes` 取该模型的尺寸表，`catalog` 取该 kind 的模型列表。同一个校验器
+        // 服务两处，所以在 `models[].params` 上允许它出现 —— 那里没人读，但拒绝一个
+        // 无害的键只会让两个地方必须记得用不同的校验器。
+        if let Some(from) = spec.get("from").and_then(trimmed) {
+            if !["sizes", "catalog"].contains(&from.as_str()) {
+                return Err(format!("models[].params.{name}.from 只支持 sizes / catalog，收到 {from}"));
+            }
+            item.insert("from".into(), Value::String(from));
         }
         clean.insert(name.into(), Value::Object(item));
     }
@@ -637,6 +718,50 @@ mod tests {
         // case, where the extension decides what exists.
         let merged = merge(&json!({}), &validate_patch(&json!({"model": "anything"})).unwrap());
         assert!(check_consistency(&merged).is_ok());
+    }
+
+    /// 能力表必须活过一次保存 —— 工具 schema、设置页的行、调用校验全都读它。
+    ///
+    /// 加视频就是在这里多一条：`recipe` 说这次调用怎么发（`sync` 直接回字节，
+    /// `async-task` 起任务再轮询），而不是说它生成什么。Ark 今天公开的每一种生成器
+    /// 都落在这两种形状里（`/images/generations` 和 `/contents/generations/tasks`）。
+    #[test]
+    fn the_capability_table_survives_a_save() {
+        let stored = stored_with_provider();
+        let after = saved(
+            &stored,
+            json!({"kinds": {
+                "image": {
+                    "label": "图片",
+                    "recipe": "sync",
+                    "output": {"ext": "png", "dir": "orbit-media"},
+                    "params": {
+                        "resolution": {"from": "sizes", "default": "2K"},
+                        "count": {"type": "integer", "min": 1, "max": 15, "default": 1},
+                    },
+                },
+                "video": {
+                    "label": "视频",
+                    "recipe": "async-task",
+                    "output": {"ext": "mp4"},
+                    "params": {"duration": {"type": "number", "min": 1, "max": 12, "default": 5}},
+                },
+            }}),
+        );
+        assert_eq!(after["kinds"]["image"]["recipe"], "sync");
+        assert_eq!(after["kinds"]["video"]["recipe"], "async-task");
+        assert_eq!(after["kinds"]["video"]["output"]["ext"], "mp4");
+        assert_eq!(after["kinds"]["image"]["params"]["resolution"]["from"], "sizes");
+    }
+
+    /// `recipe` 决定调用怎么发，所以它只能是这两种之一 —— 一个拼错的 recipe 不是
+    /// 「稍后处理」，是这条能力永远发不出请求。
+    #[test]
+    fn a_kind_has_to_name_a_recipe_we_can_run() {
+        assert!(refused(json!({"kinds": {"image": {"recipe": "streaming"}}}))
+            .contains("只支持 sync / async-task"));
+        assert!(refused(json!({"kinds": {"image": {"label": "图片"}}})).contains("recipe 不能为空"));
+        assert!(refused(json!({"kinds": {}})).contains("需要 1 到"));
     }
 
     /// 一个模型的私有尺寸表与私有参数必须活过一次保存。
