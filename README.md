@@ -19,16 +19,20 @@ bun run tauri dev
 bun run check
 bun test
 bun run check:android    # aarch64-linux-android 的 Rust + 手写 Kotlin，需要 NDK
+bun run check:intel      # x86_64-apple-darwin 的 Rust（orbit + ax_control）
 bun run test:pi           # 实际 Pi RPC / 扩展 / Bash 集成，不发送模型请求
 bun run test:pi --live    # 增加一次真实中转模型请求
 bun run tauri build --bundles app
 ```
 
-`bun run check` 与 `cargo check` 都只编译**宿主机**目标，`#[cfg(target_os = "android")]`
-里的代码和 `src-tauri/gen/android` 下手写的 Kotlin 它们都看不见——那部分只在 Android
-任务里才会被编译。`bun run check:android` 就是本地把这两半各编译一遍（Rust 约 30 秒，
-Kotlin 首次约 1 分钟），避免为了一个 `cfg` 里的笔误等一轮 25 分钟的 CI。加
-`--rust-only` 可以只跑快的那个。
+`bun run check` 与 `cargo check` 都只编译**宿主机**目标。两个已发布的目标因此都在它们的
+视野之外：`#[cfg(target_os = "android")]` 里的代码和 `src-tauri/gen/android` 下手写的
+Kotlin（要在 Android 任务里才编译），以及 `x86_64-apple-darwin`（要在 Release 的 Intel
+任务里才编译）——那趟 CI 是 45 分钟。`bun run check:android` 和 `bun run check:intel`
+就是本地把这几半各编译一遍（Android 的 Rust 约 30 秒、Kotlin 首次约 1 分钟，Intel 首次
+约 2 分钟），避免为了一个笔误等一轮 CI。`check:android --rust-only` 可以只跑快的那个。
+
+Intel 那条需要先 `rustup target add x86_64-apple-darwin`；脚本会提示。
 
 `bun run dev` 仅运行浏览器预览，原生能力需要桌面 App。
 

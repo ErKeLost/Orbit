@@ -1,10 +1,38 @@
 # Desktop releases
 
 Pushing a `v*` tag starts the `Release Orbit` GitHub Actions workflow. It
-publishes Apple Silicon macOS, Linux x86_64, Windows, and Android ARM64
+publishes Apple Silicon and Intel macOS, Linux x86_64, Windows, and Android ARM64
 artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
+
+## macOS architectures
+
+Two macOS jobs run, because they are two audiences rather than two builds of one
+target. Intel Macs that Ventura did not carry (2015–2017 models) can reach
+Monterey at most, and an Apple Silicon bundle is not something they can run at
+all. Dropping x86_64 does not make the app slower for them; it makes it not
+exist.
+
+The Intel job runs on an **Intel runner** (`macos-15-intel`) instead of
+cross-compiling from the arm64 one. `scripts/sync-node-runtime.mjs` bundles the
+Node for `process.arch`, so an arm64 host would put an arm64 Node inside an Intel
+app. `scripts/sync-worker.mjs` is already target-aware
+(`TAURI_ENV_TARGET`), so `ax_control` follows the triple either way.
+
+The packaged-app check (worker signature, worker startup, deep bundle signature)
+is gated on `startsWith(matrix.name, 'macOS')` and builds its path from
+`matrix.rust_targets` — it must run for **every** macOS job, because the
+Accessibility grant is attached to the ad-hoc-signed worker inside the bundle.
+When this job was Apple-Silicon-only, that check hardcoded the `aarch64` path.
+
+`bundle.macOS.minimumSystemVersion` is `11.0`. Tauri's default is `10.13`, which
+is unreachable for arm64 but reachable for Intel — and High Sierra and Catalina
+stop at Safari 13/15, while the entire theme is built on `color-mix()`, which
+needs WebKit 16.2. Without the key those machines would install an app whose
+borders and dividers silently disappear. Big Sur can reach Safari 16.6, so
+`11.0` is the honest floor; there is no `Info.plist` key for a WebKit version, so
+a machine that has never taken a Safari update is still on its own.
 
 ## macOS signing (current release configuration)
 
@@ -15,7 +43,8 @@ The macOS app uses ad-hoc signing (`signingIdentity: "-"` in
 workflow does not select it. Do not change the app's signing identity as part
 of a worker fix: switching identities changes its Accessibility requirement.
 
-The `ax_control` desktop worker is a separate arm64 executable copied into the
+The `ax_control` desktop worker is a separate executable, built for the target
+architecture and copied into the
 app's Resources directory. Rust gives it an ad-hoc linker signature. Keep that
 signature when staging the worker; signing the outer `.app` does not sign
 executables inside Resources. `scripts/sync-worker.mjs` verifies the staged

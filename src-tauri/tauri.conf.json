@@ -69,7 +69,8 @@
     },
     "macOS": {
       "signingIdentity": "-",
-      "hardenedRuntime": false
+      "hardenedRuntime": false,
+      "minimumSystemVersion": "11.0"
     },
     "linux": {
       "deb": {

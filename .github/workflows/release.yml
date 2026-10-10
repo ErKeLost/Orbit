@@ -33,7 +33,7 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
               --title "Orbit $GITHUB_REF_NAME" --generate-notes \
-              --notes "Orbit installers for macOS, Linux, and Windows. macOS builds use fast ad-hoc signing and are not notarized; right-click the app on first install to approve it. Updating may require allowing Accessibility again."
+              --notes "Orbit installers for macOS (Apple Silicon and Intel), Linux, and Windows. macOS builds use fast ad-hoc signing and are not notarized; right-click the app on first install to approve it. Updating may require allowing Accessibility again."
           fi
 
   release:
@@ -49,10 +49,18 @@ jobs:
             os: macos-15
             args: --target aarch64-apple-darwin
             rust_targets: aarch64-apple-darwin
-          # 暂时停发 Intel 包：需要时取消注释即可恢复。
-          # - name: macOS Intel
-          #   os: macos-15-intel
-          #   args: --target x86_64-apple-darwin
+          # Intel Macs that Ventura left behind (2015–2017 models) can reach
+          # Monterey at most, so dropping x86_64 drops those users entirely —
+          # not a slower build of the same app, no build at all.
+          #
+          # It runs on an Intel runner on purpose rather than cross-compiling
+          # from the arm64 one: `sync-node-runtime` bundles the Node for
+          # `process.arch`, so an arm64 host would ship an arm64 Node inside an
+          # Intel app. `sync-worker` already follows `TAURI_ENV_TARGET`.
+          - name: macOS Intel
+            os: macos-15-intel
+            args: --target x86_64-apple-darwin
+            rust_targets: x86_64-apple-darwin
           - name: Linux x86_64
             os: ubuntu-22.04
             args: ""
@@ -89,10 +97,7 @@ jobs:
         with:
           targets: ${{ matrix.rust_targets }}
 
-      # 暂时停发 Intel 包，随 matrix 一起注释。
-      # - name: Install Intel macOS target
-      #   if: matrix.name == 'macOS Intel'
-      #   run: rustup target add x86_64-apple-darwin
+      # 每个 macOS 目标都在 matrix 里声明，没有额外一步。
 
       - name: Install Linux build dependencies
         if: matrix.name == 'Linux x86_64'
@@ -151,9 +156,12 @@ jobs:
           args: ${{ matrix.args }}
 
       - name: Verify packaged macOS worker signature and startup
-        if: matrix.name == 'macOS Apple Silicon'
+        if: startsWith(matrix.name, 'macOS')
         run: |
-          app="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Orbit.app"
+          # Per-arch, not hardcoded: this step guards the ad-hoc-signed worker that
+          # the Accessibility grant is attached to, so it has to run for every
+          # macOS target rather than only the one it was written for.
+          app="src-tauri/target/${{ matrix.rust_targets }}/release/bundle/macos/Orbit.app"
           worker="$app/Contents/Resources/resources/computer-use/ax_control"
           test -x "$worker"
           codesign --verify --strict --verbose=2 "$worker"
@@ -304,6 +312,7 @@ jobs:
           names = {asset['name'] for asset in release['assets']}
           required_assets = {
               f'Orbit_{version}_aarch64.app.tar.gz', f'Orbit_{version}_aarch64.app.tar.gz.sig', f'Orbit_{version}_aarch64.dmg',
+              f'Orbit_{version}_x64.app.tar.gz', f'Orbit_{version}_x64.app.tar.gz.sig', f'Orbit_{version}_x64.dmg',
               f'Orbit_{version}_x64-setup.exe', f'Orbit_{version}_x64-setup.exe.sig',
               f'Orbit_{version}_x64_en-US.msi', f'Orbit_{version}_x64_en-US.msi.sig',
               f'Orbit_{version}_amd64.AppImage', f'Orbit_{version}_amd64.AppImage.sig',
@@ -317,6 +326,7 @@ jobs:
           ids = {str(asset['id']) for asset in release['assets']}
           required_platforms = {
               'darwin-aarch64', 'darwin-aarch64-app',
+              'darwin-x86_64', 'darwin-x86_64-app',
               'windows-x86_64', 'windows-x86_64-nsis', 'windows-x86_64-msi',
               'linux-x86_64', 'linux-x86_64-appimage', 'linux-x86_64-deb', 'linux-x86_64-rpm',
           }
