@@ -378,6 +378,24 @@ mod desktop {
                 );
             }
         }
+
+        /// Send one frame to every attached client.
+        ///
+        /// Terminal output is the reason this exists. It has no project to be
+        /// scoped to, so it cannot go through `publish`, and `pty_term` already
+        /// coalesces its reads before emitting, so there is nothing left for the
+        /// Pi event batcher to win: a frame per chunk is the same shape the
+        /// desktop window already receives.
+        pub fn publish_all(&self, frame: Value) {
+            let clients = self
+                .running
+                .lock()
+                .ok()
+                .and_then(|slot| slot.as_ref().map(|host| host.clients.clone()));
+            if let Some(clients) = clients {
+                broadcast_all(&clients, frame.to_string());
+            }
+        }
     }
 
     impl Drop for RemoteHost {
@@ -2217,6 +2235,10 @@ mod desktop {
         app.state::<RemoteHost>().publish_connection_closed(project);
     }
 
+    pub(super) fn publish_all(app: &AppHandle, frame: &Value) {
+        app.state::<RemoteHost>().publish_all(frame.clone());
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -2540,4 +2562,20 @@ pub fn publish_connection_closed(app: &tauri::AppHandle, project: &str) {
     desktop::publish_connection_closed(app, project);
     #[cfg(mobile)]
     let _ = (app, project);
+}
+
+/// Forward one terminal frame to every attached client.
+///
+/// `pty_term` emits its output to the desktop window as a Tauri event, which a
+/// paired phone never sees: the phone has its own window and its own event bus.
+/// The same bytes are published here so the terminal dock works on a phone, and
+/// `docs/MOBILE.md` records that it does.
+///
+/// No `pty` frame carries a path or a token: an `id` the phone itself chose,
+/// and the child's own output.
+pub fn publish_terminal(app: &tauri::AppHandle, frame: Value) {
+    #[cfg(desktop)]
+    desktop::publish_all(app, &frame);
+    #[cfg(mobile)]
+    let _ = (app, frame);
 }

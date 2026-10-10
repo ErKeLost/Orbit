@@ -235,6 +235,21 @@ export type RemoteEvent =
   | { type: "pi.event.chunk"; project: string; id: number; index: number; total: number; data: string }
   | { type: "connection.closed"; project: string }
   | { type: "connection.invalidated"; project: string; command: string }
+  /**
+   * Terminal output, as the machine that owns the PTY produces it.
+   *
+   * `pty-data` is a Tauri event on that machine, so a phone never receives it:
+   * the phone has its own window and its own event bus. The Host republishes the
+   * same coalesced chunk here and the phone re-emits it locally, which is what
+   * lets the terminal dock be one component on both surfaces. `id` is the PTY id
+   * the phone itself chose when it called `pty_spawn`.
+   *
+   * Not project-scoped, unlike `pi.events`: a terminal belongs to whoever opened
+   * it, and `pty_spawn` is already how the desktop decides the same thing.
+   */
+  | { type: "pty.event"; id: string; data: string }
+  /** The child behind a PTY finished. `code` is absent when it was signalled. */
+  | { type: "pty.exit"; id: string; code: number | null }
   | { type: "remote.result"; requestId?: string; ok: boolean; result?: RemoteJson; error?: string }
   | { type: "remote.error"; requestId?: string; error: string }
 

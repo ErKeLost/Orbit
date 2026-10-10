@@ -208,12 +208,13 @@ opening it on the desktop switches the phone.
 
 Three things are not commands, so they cannot be mirrored by name:
 
-* **Terminal output.** Keystrokes, resize, status and kill are mirrored, but a
-  PTY's output travels as a desktop event (`pty-data`), which has no remote
-  counterpart yet — so the terminal dock stays closed on a phone (teleporting
-  the user to a terminal that shows nothing is worse than not offering one).
-  `open_pi_terminal` does open a real terminal window on the desktop from the
-  phone today.
+* **Terminal output.** Keystrokes, resize, status and kill are mirrored, and so
+  is the output: `pty_term` emits `pty-data` / `pty-exit` to the desktop window as
+  Tauri events, which a phone never sees because it has its own window and its
+  own event bus. The Host republishes the same frames as `pty.event` /
+  `pty.exit` and the phone re-emits them locally (`src/lib/remote-pty.ts`), so the
+  dock is one component on both surfaces. `open_pi_terminal` still opens a real
+  terminal window on the desktop from the phone when a full TUI is wanted.
 * **Media previews.** Images, audio, video and PDFs are served to the desktop
   webview through the asset protocol, which a phone cannot reach; metadata
   (`media_meta`) works, and the phone's file view states that the preview is

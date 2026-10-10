@@ -378,7 +378,7 @@ fn spawn_unix(
             false
         };
         if emit {
-            let _ = wait_app.emit(EXIT_EVENT, PtyExit { id: wait_id, code });
+            emit_pty_exit(&wait_app, &wait_id, code);
         }
     });
 
@@ -468,7 +468,7 @@ fn spawn_windows(
             false
         };
         if emit {
-            let _ = wait_app.emit(EXIT_EVENT, PtyExit { id: wait_id, code });
+            emit_pty_exit(&wait_app, &wait_id, code);
         }
     });
 
@@ -688,8 +688,26 @@ fn emit_pty_data(app: &AppHandle, id: &str, bytes: &[u8]) {
         DATA_EVENT,
         PtyData {
             id: id.to_string(),
-            data,
+            data: data.clone(),
         },
+    );
+    // The desktop window is not the only surface that shows a terminal: a paired
+    // phone runs the same dock, and its own event bus never sees the emit above.
+    crate::remote::publish_terminal(
+        app,
+        serde_json::json!({"type":"pty.event","id":id,"data":data}),
+    );
+}
+
+/// Announce a finished child to both surfaces.
+///
+/// One helper rather than two emits at each call site: the phone's terminal is
+/// only correct if the local and remote copies of this can never diverge.
+fn emit_pty_exit(app: &AppHandle, id: &str, code: Option<i32>) {
+    let _ = app.emit(EXIT_EVENT, PtyExit { id: id.to_string(), code });
+    crate::remote::publish_terminal(
+        app,
+        serde_json::json!({"type":"pty.exit","id":id,"code":code}),
     );
 }
 

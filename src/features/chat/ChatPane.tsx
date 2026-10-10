@@ -114,11 +114,12 @@ export function ChatPane() {
   const sessionFile = useWorkspace((state) => state.state?.sessionFile) ?? persistedSessionFile(project);
   const dockPosition = useShell((state) => state.terminalPosition);
   const dockOpen = useShell((state) => state.terminalOpen);
-  // The dock needs the PTY's output, which travels as a desktop event
-  // (`pty-data`) that has no remote counterpart yet. On a phone the dock would
-  // take keystrokes and show nothing, so it stays closed until that stream is
-  // mirrored; `open_pi_terminal` already opens a real terminal on the desktop.
-  const terminalAvailable = useWorkspace((state) => state.runtimeTarget) !== "mobile";
+  // The dock is a real PTY on the desktop and an xterm.js view here; what makes
+  // that work on a phone is that `pty_spawn`/`pty_write`/`pty_resize` are
+  // mirrored commands and the output is republished over the socket as
+  // `pty.event` (`src/lib/remote-pty.ts`). Nothing in the dock knows which
+  // machine it is drawing.
+  const terminalAvailable = true;
   const historical = useQuery({
     queryKey: ["pi", "turn-durations", sessionFile],
     queryFn: () => getSessionTurnDurations(sessionFile),

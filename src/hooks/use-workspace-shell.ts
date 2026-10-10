@@ -7,6 +7,7 @@ import { changeSession, connect, connectRemoteConnection, dispatchRemoteEvent, r
 import { detectRuntimeEnvironment } from "../lib/runtime-environment";
 import { useRuntimeDiscovery } from "../lib/runtime-diagnostics";
 import { notifyRemoteForeground, openRemoteRuntime, remoteHostSnapshot, storedPairingUri } from "../lib/remote-runtime";
+import { deliverPtyEvent } from "../lib/remote-pty";
 import { restoreRemoteHost } from "../lib/remote-host";
 import { restorePersistentState } from "../lib/persistent";
 import { toast as gooeyToast } from "../shared/ui/toast";
@@ -77,6 +78,9 @@ export function useWorkspaceBootstrap() {
       const snapshot = await openRemoteRuntime(uri, {
         onPiEvent: dispatchRemoteEvent,
         onEvent: event => {
+          // Terminal frames are the one thing on this socket that the shape of
+          // the app, rather than the transcript, decides what to do with.
+          void deliverPtyEvent(event);
           if ((event.type === "host.theme" || event.type === "host.hello") && event.theme) useWorkspace.getState().set({ remoteTheme: event.theme });
           if (event.type === "host.hello" && event.machineName) useWorkspace.getState().set({ remoteMachineName: event.machineName });
           // 这台连接被别的窗口接管了，整份 transcript 要重新拉：先上骨架屏。
