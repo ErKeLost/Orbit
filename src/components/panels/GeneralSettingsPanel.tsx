@@ -9,7 +9,7 @@ import QRCode from "antd/es/qr-code";
 import type { RpcCommand, RpcSessionState } from "@earendil-works/pi-coding-agent";
 import { useWorkspace, type Panel } from "../../lib/store";
 import { useRuntimeDiscovery, type RuntimeDiscovery } from "../../lib/runtime-diagnostics";
-import { clearSessionHistory, connect, deleteMcpServer, desktopRuntime, disconnect, getGuiSettings, getProjectTrustMode, imageConfig, listMcpServers, loadMessages, mcpConfigLocation, refresh, refreshCapabilities, report, request, saveImageConfig, saveMcpServer, setGuiSetting, setProjectTrustMode, type ImageConfig, type McpServerView, type ProjectTrustMode } from "../../lib/rpc";
+import { clearSessionHistory, connect, deleteMcpServer, desktopRuntime, disconnect, getGuiSettings, getProjectTrustMode, imageConfig, listMcpServers, loadMessages, mcpConfigLocation, refresh, refreshCapabilities, report, request, saveImageConfig, saveMcpServer, setGuiSetting, setProjectTrustMode, type ImageConfigPatch, type McpServerView, type ProjectTrustMode } from "../../lib/rpc";
 import { CACHE_WARMING_LABELS, CODEMODE_TOOL, MCP_EXPOSURE_LABELS, TOOL_SEARCH_TOOL, inactiveCapabilityTools, parseCapabilities, availableMediaModels } from "../../lib/capabilities";
 import { persistState } from "../../lib/persistent";
 import { getRemoteHost, relaySettingsStatus, rememberRemoteHostEnabled, saveRelaySettings, startRemoteHost, stopRemoteHost, type RelaySettingsStatus, type RemoteHostInfo } from "../../lib/remote-host";
@@ -18,6 +18,7 @@ import { readStartupPanel, STARTUP_PANELS, writeStartupPanel } from "../../lib/s
 import { checkMobileUpdate, mobileUpdateErrorMessage } from "../../lib/mobile-update";
 import { checkForDesktopUpdate, offerMobileUpdate } from "../UpdateChecker";
 import { Button, Card, CardContent, Input, Select, Switch } from "../UI";
+import { ImageEndpointDialog } from "../ImageEndpointDialog";
 import { usePrompt } from "../../lib/prompt";
 import { Icon } from "../Icon";
 import "../../styles/remote-access.css";
@@ -112,7 +113,8 @@ function PiCapabilitiesSettings({ desktop, online, running, tools }: { desktop: 
   const classifiers = availableMediaModels(capabilities?.media.classifier ?? []);
   const imageOptions = capabilities?.media.imageOptions ?? { resolutions: [], aspects: [] };
   const imageSettings = useQuery({ queryKey: ["pi", "image-config"], queryFn: imageConfig, enabled: desktop });
-  async function writeImageSetting(patch: Partial<ImageConfig>) {
+  const [imageEndpointOpen, setImageEndpointOpen] = useState(false);
+  async function writeImageSetting(patch: ImageConfigPatch) {
     try { await saveImageConfig(patch); await imageSettings.refetch(); gooeyToast.success("图片设置已更新", { showTimestamp: false }); }
     catch (error) { report(error); }
   }
@@ -141,22 +143,24 @@ function PiCapabilitiesSettings({ desktop, online, running, tools }: { desktop: 
       </SettingRow>;
     })}
     {!config?.servers.length && <SettingRow title="没有 MCP 服务器" description="添加后可以用 codemode 脚本、tool_search 或直接工具调用远程与本地 MCP。"><span className="remote-settings-note">{desktop ? "未配置" : "电脑端设置"}</span></SettingRow>}
-    <SettingRow title="图片模型" description={images.length ? "generate_image 默认使用的模型；工具参数可覆盖，分辨率与画幅只作为默认值。" : "需要带图片生成能力的 provider 凭据（如火山方舟）。"}>
-      {desktop && images.length ? <div className="settings-directory-actions">
-        <Select aria-label="图片模型" value={imageSettings.data?.model ?? ""} onChange={event => void writeImageSetting({ model: event.target.value })}>
+    <SettingRow title="图片模型" description={images.length ? "generate_image 默认使用的模型；工具参数可覆盖，分辨率与画幅只作为默认值。" : "需要一个 OpenAI 兼容的出图端点；未配置时用内置的火山方舟。"}>
+      {desktop ? <div className="settings-directory-actions">
+        <Select aria-label="图片模型" value={imageSettings.data?.defaults?.model ?? ""} onChange={event => void writeImageSetting({ model: event.target.value })}>
           <option value="">默认（第一个可用）</option>
           {images.map(model => <option key={`${model.provider}/${model.id}`} value={model.id}>{model.name ?? model.id}</option>)}
         </Select>
-        <Select aria-label="默认分辨率" value={imageSettings.data?.resolution ?? ""} onChange={event => void writeImageSetting({ resolution: event.target.value })}>
+        <Select aria-label="默认分辨率" value={imageSettings.data?.defaults?.resolution ?? ""} onChange={event => void writeImageSetting({ resolution: event.target.value })}>
           <option value="">默认分辨率</option>
           {imageOptions.resolutions.map(resolution => <option key={resolution} value={resolution}>{resolution}</option>)}
         </Select>
-        <Select aria-label="默认画幅" value={imageSettings.data?.aspect ?? ""} onChange={event => void writeImageSetting({ aspect: event.target.value })}>
+        <Select aria-label="默认画幅" value={imageSettings.data?.defaults?.aspect ?? ""} onChange={event => void writeImageSetting({ aspect: event.target.value })}>
           <option value="">画幅自动</option>
           {imageOptions.aspects.map(aspect => <option key={aspect} value={aspect}>{aspect}</option>)}
         </Select>
-      </div> : <span className="remote-settings-note">{images.length ? `${images.length} 个可用` : "无可用凭据"}</span>}
+        <Button variant="outline" onClick={() => setImageEndpointOpen(true)}><Icon name="sliders-horizontal" />端点</Button>
+      </div> : <span className="remote-settings-note">{images.length ? `${images.length} 个可用` : "电脑端设置"}</span>}
     </SettingRow>
+    <ImageEndpointDialog open={imageEndpointOpen} onOpenChange={setImageEndpointOpen} config={imageSettings.data} onSaved={() => { void imageSettings.refetch(); void refreshCapabilities(); }} />
     <SettingRow title="分类器模型" description={classifiers.length ? classifiers.map(model => `${model.provider}/${model.id}`).join("、") : "可用 Jev 或 llama.cpp 分类器模型运行 codemode 中的 models.classify()。"}><span className="remote-settings-note">{classifiers.length ? `${classifiers.length} 个可用` : "无可用凭据"}</span></SettingRow>
     <SettingRow title="缓存预热" description="长工具调用期间保活可缓存的 prompt 前缀，按避免的缓存未命中成本决定是否刷新。写入 ~/.pi/agent/settings.json。">
       {desktop ? <Select aria-label="缓存预热" value={typeof guiSettings.data?.settings.cacheWarming === "string" ? guiSettings.data.settings.cacheWarming : ""} onChange={event => void writeSetting("cacheWarming", event.target.value || null)}><option value="">跟随 Pi 默认（运行中）</option><option value="streaming">运行中</option><option value="idle">运行中与空闲</option><option value="off">关闭</option></Select> : <span className="remote-settings-note">{CACHE_WARMING_LABELS[capabilities?.settings?.cacheWarming ?? ""] ?? "—"}</span>}

@@ -368,9 +368,45 @@ export async function computerUseConfig():Promise<ComputerUseConfig> { if(!works
 export async function saveComputerUseConfig(patch:Partial<Pick<ComputerUseConfig,'decisionModel'|'cloudflareAccountId'|'systemoneBaseUrl'>>):Promise<ComputerUseConfig> { if(!workspaceBackend()) throw new Error('电脑操作请在电脑端设置'); return invoke<ComputerUseConfig>('save_computer_use_config',{config:patch}) }
 export async function saveComputerUseCloudflareToken(token?:string):Promise<{hasToken:boolean}> { if(!workspaceBackend()) throw new Error('Cloudflare Token 请在电脑端设置'); return invoke<{hasToken:boolean}>('save_computer_use_cloudflare_token',{token:token?.trim()||null}) }
 export async function testComputerUseDecision():Promise<ComputerUseTestResult> { if(!workspaceBackend()) throw new Error('电脑操作请在电脑端设置'); return invoke<ComputerUseTestResult>('test_computer_use_decision') }
-export type ImageConfig={model:string;resolution:string;aspect:string}
+/**
+ * The image-generation endpoint, as the extension resolves it.
+ *
+ * Pi's own provider config cannot describe an image model — its model schema has
+ * no `type` discriminant — so this file is where the endpoint, its models and its
+ * size presets live, and `gui-extension.ts` merges it over the built-in Ark
+ * defaults. Every key other than the derived ones is optional, and an absent key
+ * means "use the built-in", which is why an unconfigured install still works.
+ */
+export type ImageConfig = {
+  provider?: { id: string; name?: string; baseUrl?: string }
+  models?: { id: string; name?: string }[]
+  sizes?: Record<string, Record<string, string>>
+  defaults?: { model?: string; resolution?: string; aspect?: string }
+  /** Whether the file says anything at all. */
+  configured: boolean
+  /** Whether Pi can resolve a key for the configured (or built-in) provider. */
+  hasApiKey: boolean
+  /** The provider used when the file names none. */
+  defaultProviderId: string
+}
+/**
+ * A patch, not a replacement: an absent key keeps what is stored and `null`
+ * clears it, so changing the default model cannot delete the endpoint beside it.
+ */
+export type ImageConfigPatch = {
+  provider?: ImageConfig["provider"] | null
+  models?: ImageConfig["models"] | null
+  sizes?: ImageConfig["sizes"] | null
+  defaults?: ImageConfig["defaults"] | null
+  /** The flat single-default form the settings page sends. */
+  model?: string
+  resolution?: string
+  aspect?: string
+}
 export async function imageConfig():Promise<ImageConfig> { if(!workspaceBackend()) throw new Error('图片模型请在电脑端设置'); return invoke<ImageConfig>('image_config') }
-export async function saveImageConfig(patch:Partial<ImageConfig>):Promise<ImageConfig> { if(!workspaceBackend()) throw new Error('图片模型请在电脑端设置'); return invoke<ImageConfig>('save_image_config',{config:patch}) }
+export async function saveImageConfig(patch:ImageConfigPatch):Promise<ImageConfig> { if(!workspaceBackend()) throw new Error('图片模型请在电脑端设置'); return invoke<ImageConfig>('save_image_config',{config:patch}) }
+/** The key goes to Pi's auth.json under the provider id, like every other key. */
+export async function saveImageApiKey(provider:string,apiKey:string|null):Promise<{provider:string;hasApiKey:boolean}> { if(!workspaceBackend()) throw new Error('图片密钥请在电脑端设置'); return invoke('save_image_api_key',{provider,apiKey}) }
 export async function loadMessages(target=useWorkspace.getState().cwd){
  // 几百条消息的会话，get_messages 的响应就是几 MB，会被电脑端切成多帧发过来；
  // 30s 的上限让“会话大”和“链路卡住了”变成同一个结果，所以给它更长的预算。

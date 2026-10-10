@@ -102,7 +102,7 @@ function capabilities(pi:ExtensionAPI,ctx:ExtensionContext){
   return {
     tools:{total:tools.length,active:active.size,exposure,codemode:tools.some(tool=>tool.name==='codemode'),toolSearch:tools.some(tool=>tool.name==='tool_search'),mcpTools:mcp.reduce((total,server)=>total+server.tools.length,0)},
     mcp,
-    media:{image,classifier,imageOptions:{resolutions:ARK_RESOLUTIONS,aspects:ARK_ASPECTS}},
+    media:{image,classifier,imageOptions:imageOptionsFromSettings()},
     virtualModels:virtualModelInventory(ctx),
     settings:settings?{cacheWarming:settings.cacheWarming??null,codemode:settings.codemode??null,defaultTools:settings.defaultTools??null,extensions:settings.extensions??null}:null,
   }
@@ -147,22 +147,98 @@ export function writeMediaFile(dataBase64:string,index:number,mimeType:string):s
   writeFileSync(path,Buffer.from(dataBase64,'base64'))
   return path
 }
-/** Volcengine Ark speaks the plain OpenAI images endpoint. Pi ships only the
- * OpenRouter image API, so Ark is registered here as an extension provider;
- * Pi resolves the key from auth.json like it does for every other provider. */
-const ARK_BASE_URL='https://ark.cn-beijing.volces.com/api/v3'
-const ARK_IMAGE_MODELS=[{id:'doubao-seedream-5-0-flash-260915',name:'Seedream 5.0 Flash'},{id:'doubao-seedream-5-0-260128',name:'Seedream 5.0 Lite'},{id:'doubao-seedream-4-5-251128',name:'Seedream 4.5'},{id:'doubao-seedream-4-0-20260415',name:'Seedream 4.0'}]
-const DEFAULT_IMAGE_RESOLUTION='2K'
+/** The provider `gui-extension.ts` registers when nothing is configured.
+ *
+ * Ark speaks the plain OpenAI images endpoint. Pi ships only the OpenRouter
+ * image API, so this is registered here as an extension provider and Pi resolves
+ * the key from `auth.json` like it does for every other provider. */
+export const ARK_IMAGE_PROVIDER={id:'volcengine',name:'火山方舟',baseUrl:'https://ark.cn-beijing.volces.com/api/v3'}
+export const ARK_IMAGE_MODELS=[{id:'doubao-seedream-5-0-flash-260915',name:'Seedream 5.0 Flash'},{id:'doubao-seedream-5-0-260128',name:'Seedream 5.0 Lite'},{id:'doubao-seedream-4-5-251128',name:'Seedream 4.5'},{id:'doubao-seedream-4-0-20260415',name:'Seedream 4.0'}]
+export const DEFAULT_IMAGE_RESOLUTION='2K'
 /** Ark preset sizes per resolution and aspect ratio. The model picks the ratio
  * itself when no aspect is requested, so a bare resolution is also valid. */
-const ARK_IMAGE_SIZES:Record<string,Record<string,string>>={
+export const ARK_IMAGE_SIZES:Record<string,Record<string,string>>={
   '1K':{'1:1':'1024x1024','4:3':'1152x864','3:4':'864x1152','16:9':'1280x720','9:16':'720x1280','3:2':'1248x832','2:3':'832x1248','21:9':'1512x648'},
   '2K':{'1:1':'2048x2048','4:3':'2304x1728','3:4':'1728x2304','16:9':'2848x1600','9:16':'1600x2848','3:2':'2496x1664','2:3':'1664x2496','21:9':'3136x1344'},
   '3K':{'1:1':'3072x3072','4:3':'3456x2592','3:4':'2592x3456','16:9':'4096x2304','9:16':'2304x4096','3:2':'3744x2496','2:3':'2496x3744','21:9':'4704x2016'},
   '4K':{'1:1':'4096x4096','4:3':'4704x3520','3:4':'3520x4704','16:9':'5504x3040','9:16':'3040x5504','3:2':'4992x3328','2:3':'3328x4992','21:9':'6240x2656'},
 }
-const ARK_RESOLUTIONS=Object.keys(ARK_IMAGE_SIZES)
-const ARK_ASPECTS=Object.keys(ARK_IMAGE_SIZES[DEFAULT_IMAGE_RESOLUTION])
+
+/**
+ * Everything the image tool runs against, after the stored config is merged over
+ * the built-in Ark defaults.
+ *
+ * Pi's own provider config cannot describe an image model at all — its model
+ * schema has no `type` discriminant — so the endpoint, its models and its size
+ * presets are stored in `~/.pi/agent/image.json` (`src-tauri/src/image_config.rs`
+ * validates and writes it) and merged here. Every key of that file is optional,
+ * which is what makes an unconfigured install behave exactly as it did before
+ * the file could name a provider.
+ */
+export type ImageSettings={
+  provider:{id:string;name:string;baseUrl:string}
+  models:{id:string;name?:string}[]
+  sizes:Record<string,Record<string,string>>
+  defaults:{model?:string;resolution:string;aspect?:string}
+}
+
+const isProviderId=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9._-]{1,64}$/.test(value)
+const isUrl=(value:unknown):value is string=>typeof value==='string'&&/^https?:\/\/[^\s]+$/.test(value)
+const text=(value:unknown):string|undefined=>typeof value==='string'&&value.trim()?value.trim():undefined
+
+/**
+ * Resolve what the tool runs against. Pure, so the merge is testable without a
+ * file, a provider or a network.
+ *
+ * The forgiving parts are deliberate. A default that names a model the list no
+ * longer has is dropped rather than kept and failed on at generation time: the
+ * config is edited by hand as well as by a form, and a stale default is a
+ * smaller problem than an error in the middle of a request.
+ */
+export function resolveImageSettings(stored:unknown):ImageSettings{
+  const raw=(stored&&typeof stored==='object'?stored:{}) as Record<string,unknown>
+  const provider=(raw.provider&&typeof raw.provider==='object'?raw.provider:{}) as Record<string,unknown>
+  const defaults=(raw.defaults&&typeof raw.defaults==='object'?raw.defaults:{}) as Record<string,unknown>
+  const models=Array.isArray(raw.models)
+    ? raw.models.flatMap((entry)=>{const id=text((entry as Record<string,unknown>)?.id);return id?[{id,name:text((entry as Record<string,unknown>)?.name)}]:[]})
+    : []
+  const sizes=raw.sizes&&typeof raw.sizes==='object'
+    ? Object.fromEntries(Object.entries(raw.sizes as Record<string,unknown>).flatMap(([resolution,aspects])=>{
+        if(!aspects||typeof aspects!=='object')return []
+        const map=Object.fromEntries(Object.entries(aspects as Record<string,unknown>).flatMap(([aspect,size])=>{const value=text(size);return value?[[aspect,value]]:[]}))
+        return Object.keys(map).length?[[resolution,map]]:[]
+      }))
+    : {}
+  const effective:ImageSettings={
+    provider:{
+      id:isProviderId(provider.id)?provider.id:ARK_IMAGE_PROVIDER.id,
+      name:text(provider.name)??ARK_IMAGE_PROVIDER.name,
+      baseUrl:(isUrl(provider.baseUrl)?provider.baseUrl:ARK_IMAGE_PROVIDER.baseUrl).replace(/\/+$/,''),
+    },
+    models:models.length?models:ARK_IMAGE_MODELS,
+    sizes:Object.keys(sizes).length?sizes:ARK_IMAGE_SIZES,
+    defaults:{resolution:DEFAULT_IMAGE_RESOLUTION},
+  }
+  const resolutions=Object.keys(effective.sizes)
+  // The flat keys are what this file held before it could name a provider, and
+  // what the settings page wrote until it grew the nested form. Nested wins.
+  const wantedModel=text(defaults.model)??text(raw.model)
+  const wantedResolution=text(defaults.resolution)??text(raw.resolution)
+  const wantedAspect=text(defaults.aspect)??text(raw.aspect)
+  const resolution=resolutions.includes(wantedResolution??'')?wantedResolution!:(resolutions.includes(DEFAULT_IMAGE_RESOLUTION)?DEFAULT_IMAGE_RESOLUTION:resolutions[0]!)
+  effective.defaults.resolution=resolution
+  if(wantedAspect&&Object.hasOwn(effective.sizes[resolution]??{},wantedAspect))effective.defaults.aspect=wantedAspect
+  if(wantedModel&&effective.models.some(model=>model.id===wantedModel))effective.defaults.model=wantedModel
+  return effective
+}
+
+const IMAGE_CONFIG_PATH=join(homedir(),'.pi/agent/image.json')
+/** Preferences written by 设置 → Pi 1.0 能力 → 图片模型. */
+function readImageSettings():ImageSettings{
+  try{return resolveImageSettings(JSON.parse(readFileSync(IMAGE_CONFIG_PATH,'utf8')))}
+  catch{return resolveImageSettings(null)}
+}
+
 /** Ark takes reference images as lowercase data URLs, up to 14 per request. */
 const REFERENCE_MIME:Record<string,string>={png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp'}
 const REFERENCE_MAX_BYTES=10*1024*1024
@@ -174,74 +250,97 @@ function referenceImage(path:string,cwd:string){
   if(bytes.byteLength>REFERENCE_MAX_BYTES)throw new Error(`参考图超过 10MB：${path}`)
   return {type:'image' as const,data:bytes.toString('base64'),mimeType}
 }
-/** Preferences written by 设置 → 图片模型. Absent keys keep the tool defaults. */
-const IMAGE_CONFIG_PATH=join(homedir(),'.pi/agent/image.json')
-function readImageConfig():{model?:string;resolution?:string;aspect?:string}{
-  const pick=(raw:Record<string,unknown>,key:string)=>{const value=raw[key];return typeof value==='string'&&value.trim()?value.trim():undefined}
-  try{
-    const raw=JSON.parse(readFileSync(IMAGE_CONFIG_PATH,'utf8')) as Record<string,unknown>
-    return {model:pick(raw,'model'),resolution:pick(raw,'resolution'),aspect:pick(raw,'aspect')}
-  }catch{return {}}
-}
-async function generateImages(model:any,context:any,options:any){
-  const parts=(context?.input??[]) as {type:string;text?:string;data?:string;mimeType?:string}[]
+
+/**
+ * The one request an OpenAI-images endpoint is asked for.
+ *
+ * Pure, and that is the point: the URL, the body and how a reference image rides
+ * along are the parts that fail silently against a new endpoint, so they are
+ * pinned by tests instead of only exercised by a real call.
+ */
+export function imageGenerationRequest(settings:ImageSettings,id:string,parts:{type:string;text?:string;data?:string;mimeType?:string}[],size:unknown){
   const prompt=parts.filter(part=>part.type==='text').map(part=>part.text??'').join('\n').trim()
-  // Reference images ride along as data URLs; Ark reads them as the source image,
-  // which is what makes image-to-image work instead of plain text-to-image.
+  // Reference images ride along as data URLs; the endpoint reads them as the
+  // source image, which is what makes image-to-image work instead of plain
+  // text-to-image.
   const image=parts.filter(part=>part.type==='image'&&part.data).map(part=>`data:${part.mimeType};base64,${part.data}`)
-  const body:Record<string,unknown>={model:model.id,prompt,response_format:'b64_json',size:options?.metadata?.size??DEFAULT_IMAGE_RESOLUTION,watermark:false}
+  const body:Record<string,unknown>={model:id,prompt,response_format:'b64_json',size:typeof size==='string'&&size?size:settings.defaults.resolution,watermark:false}
   if(image.length)body.image=image
-  const response=await (options?.fetch??fetch)(`${ARK_BASE_URL}/images/generations`,{
+  return {url:`${settings.provider.baseUrl}/images/generations`,body}
+}
+
+async function generateImages(model:any,context:any,options:any){
+  // The model carries the endpoint Pi composed for it; the setting is the
+  // fallback for a call that reaches us without one.
+  const settings=readImageSettings()
+  const withModel:ImageSettings=typeof model?.baseUrl==='string'&&model.baseUrl?{...settings,provider:{...settings.provider,baseUrl:model.baseUrl.replace(/\/+$/,'')}}:settings
+  const {url,body}=imageGenerationRequest(withModel,model.id,context?.input??[],options?.metadata?.size)
+  const response=await (options?.fetch??fetch)(url,{
     method:'POST',
     headers:{Authorization:`Bearer ${options?.apiKey}`,'Content-Type':'application/json'},
     body:JSON.stringify(body),
     signal:options?.signal,
   })
   const payload=await response.json() as {data?:{b64_json:string;output_format:string}[];error?:{message?:string}}
-  if(!response.ok)throw new Error(payload?.error?.message??`Ark 返回 ${response.status}`)
+  if(!response.ok)throw new Error(payload?.error?.message??`图片端点返回 ${response.status}`)
   const first=payload.data?.[0]
-  if(!first?.b64_json)throw new Error('Ark 没有返回图片数据')
-  // Ark only produces PNG or JPEG.
+  if(!first?.b64_json)throw new Error('图片端点没有返回图片数据')
   const mimeType=first.output_format==='png'?'image/png':'image/jpeg'
   return {api:model.api,provider:model.provider,model:model.id,output:[{type:'image',data:first.b64_json,mimeType}],stopReason:'stop',timestamp:Date.now()}
 }
-const IMAGE_TOOL_SCHEMA={
-  type:'object',
-  properties:{
-    prompt:{type:'string',description:'图片描述，越具体越好（主体、风格、光线、构图）。'},
-    model:{type:'string',description:`可选图片模型 id，默认 ${ARK_IMAGE_MODELS[0].id}。可用：${ARK_IMAGE_MODELS.map(model=>model.id).join('、')}`},
-    resolution:{type:'string',enum:ARK_RESOLUTIONS,description:`分辨率，默认 ${DEFAULT_IMAGE_RESOLUTION}。可用性看模型：4.0 支持 1K/2K/4K，4.5 支持 2K/4K，5.0 支持 2K/3K/4K。`},
-    aspect:{type:'string',enum:ARK_ASPECTS,description:'画幅比例。不传则让模型根据 prompt 自己决定。'},
-    references:{type:'array',items:{type:'string'},minItems:1,maxItems:14,description:'可选：本地参考图路径（相对项目或绝对路径，最多 14 张）。传了就按参考图生成/修改，用于图生图。'},
-  },
-  required:['prompt'],
-  additionalProperties:false,
-} as const
+
+/** The resolution and aspect choices the settings page offers.
+ *
+ * Reported from the same resolved settings the tool uses, so the page can never
+ * offer a resolution the endpoint has no preset for.
+ */
+export function imageOptionsFromSettings(settings:ImageSettings=readImageSettings()){
+  const resolutions=Object.keys(settings.sizes)
+  return {resolutions,aspects:[...new Set(resolutions.flatMap(resolution=>Object.keys(settings.sizes[resolution]??{})))]}
+}
+
+/** The tool schema, built from whatever the settings resolved to. */
+export function imageToolSchema(settings:ImageSettings){
+  const {resolutions,aspects}=imageOptionsFromSettings(settings)
+  return {
+    type:'object',
+    properties:{
+      prompt:{type:'string',description:'图片描述，越具体越好（主体、风格、光线、构图）。'},
+      model:{type:'string',description:`可选图片模型 id，默认 ${settings.defaults.model??settings.models[0]?.id??''}。可用：${settings.models.map(model=>model.id).join('、')}`},
+      resolution:{type:'string',enum:resolutions,description:`分辨率，默认 ${settings.defaults.resolution}。`},
+      aspect:{type:'string',enum:aspects,description:'画幅比例。不传则让模型根据 prompt 自己决定。'},
+      references:{type:'array',items:{type:'string'},minItems:1,maxItems:14,description:'可选：本地参考图路径（相对项目或绝对路径，最多 14 张）。传了就按参考图生成/修改，用于图生图。'},
+    },
+    required:['prompt'],
+    additionalProperties:false,
+  } as const
+}
 export function registerImages(pi:ExtensionAPI):void{
-  pi.registerProvider('volcengine',{
-    name:'火山方舟',
-    baseUrl:ARK_BASE_URL,
+  const settings=readImageSettings()
+  pi.registerProvider(settings.provider.id,{
+    name:settings.provider.name,
+    baseUrl:settings.provider.baseUrl,
     api:'openai-images',
     authHeader:true,
     images:{'openai-images':{generateImages}},
-    models:ARK_IMAGE_MODELS.map(model=>({...model,type:'image' as const,api:'openai-images',input:['text','image'],output:['image'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0}})),
+    models:settings.models.map(model=>({...model,type:'image' as const,api:'openai-images',input:['text','image'],output:['image'],cost:{input:0,output:0,cacheRead:0,cacheWrite:0}})),
   })
   pi.registerTool({
     name:'generate_image',
     label:'生成图片',
-    description:'用火山方舟 Seedream 根据文字生成图片，并把图片直接返回给用户。传 references 时按参考图生成。',
+    description:`用 ${settings.provider.name} 的图片模型根据文字生成图片，并把图片直接返回给用户。传 references 时按参考图生成。`,
     promptGuidelines:['用户要求图片、插画、海报、图标、配图时，直接用 generate_image 并传入详细的 prompt；不要为此使用 codemode。','用户给了参考图（发来图片文件、或说明了本地图片路径）时，把路径放进 references 做图生图；参考图必须是本地文件路径，不支持远程 URL。'],
-    parameters:IMAGE_TOOL_SCHEMA,
+    parameters:imageToolSchema(settings),
     async execute(_toolCallId:string,params:unknown,signal:AbortSignal|undefined,_onUpdate:unknown,ctx:any){
       const input=params as {prompt:string;model?:string;resolution?:string;aspect?:string;references?:string[]}
-      const config=readImageConfig()
-      const resolution=input.resolution??config.resolution??DEFAULT_IMAGE_RESOLUTION
-      const aspect=input.aspect??config.aspect
-      // The tool schema constrains resolution/aspect to the table above.
-      const size=aspect?ARK_IMAGE_SIZES[resolution][aspect]:resolution
+      const effective=readImageSettings()
+      const resolution=input.resolution??effective.defaults.resolution
+      const aspect=input.aspect??effective.defaults.aspect
+      // The tool schema constrains resolution/aspect to the configured table.
+      const size=aspect?effective.sizes[resolution]?.[aspect]:resolution
       const parts=[{type:'text' as const,text:input.prompt},...(input.references??[]).map(path=>referenceImage(path,ctx.cwd))]
       const available=await ctx.modelRegistry.getAvailableOfType('image') as {provider:string;id:string}[]
-      const wanted=input.model??config.model
+      const wanted=input.model??effective.defaults.model
       const model=wanted?available.find(candidate=>candidate.id===wanted):available[0]
       if(!model)throw new Error(wanted?`没有可用的图片模型 ${wanted}`:'没有可用的图片模型')
       const result=await ctx.modelRegistry.generateImages(model,{input:parts},{signal,metadata:{size}})

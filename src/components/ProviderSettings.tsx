@@ -407,7 +407,7 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
   // An image-only provider has no chat model to switch to; its rows pick the
   // model the generate_image tool uses instead.
   const imageProvider = models.length > 0 && models.every(model => model.type === "image");
-  const currentImageModel = imageSettings.data?.model || models.find(model => model.type === "image")?.id || "";
+  const currentImageModel = imageSettings.data?.defaults?.model || models.find(model => model.type === "image")?.id || "";
   async function setDefaultImageModel(model: ProviderModel) {
     try {
       await saveImageConfig({ model: model.id });
@@ -463,7 +463,7 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
                 </div>
                 {!imageProvider ? <Button variant="outline" disabled={!!busy} onClick={() => void probe()}><Icon name="arrows-clockwise" />{busy === "probe" ? "刷新中…" : "刷新模型"}</Button> : null}
               </header>
-            {imageProvider && <p className="provider-models-note">这些模型供 generate_image 使用；端点与模型列表由图片工具内置，不受此处的 Base URL 影响。</p>}
+            {imageProvider && <p className="provider-models-note">这些模型供 generate_image 使用。图片工具的端点、模型与密钥在「设置 → Pi 1.0 能力 → 图片模型 → 端点」里配置，不读取这里的 Base URL。</p>}
             <label className="provider-model-search"><Icon name="magnifying-glass" /><Input aria-label="搜索模型名称或 ID" value={search} onChange={event => update({ search: event.target.value })} placeholder="搜索模型名称或 ID" /></label>
             <div className="provider-model-list provider-settings-list">
               {visibleModels.map(model => { const inputs = modelModalities(model, "input"); const outputs = modelModalities(model, "output"); return <Disclosure key={model.id} title={<span className="provider-model-title"><span className="provider-model-name"><ModelLogo modelId={model.id} size={19} /><strong>{modelDisplayName(model)}</strong>{model.type === "image" && <span className="provider-model-badge">图片</span>}</span>{typeof model.context_window === "number" ? (<span className="provider-model-context">{formatContextLength(model.context_window)}<small> tokens</small></span>) : null}<ModelModalities values={inputs} /><ModelModalities values={outputs} /></span>}><ModelDetails model={model} disabled={imageProvider ? !!busy : (!!busy || running || !cwd)} onUse={() => void applyModel(model)} imageDefault={imageProvider ? { currentId: currentImageModel, onUse: model => void setDefaultImageModel(model) } : undefined} /></Disclosure>; })}

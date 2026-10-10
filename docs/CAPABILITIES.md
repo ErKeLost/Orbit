@@ -35,7 +35,7 @@
 | MCP 服务器（stdio / streamable HTTP） | 设置 → Pi 1.0 能力：Rust 读写 `~/.pi/agent/mcp.json`（写入前备份，密钥值只留在磁盘，列表只暴露 key 名与 OAuth 登录名）；连接状态、工具数量和 exposure 来自扩展的 `pi.getMcpServers()` 与工具 namespace。会话内临时注册用 `pi.registerMcpServer()`；OAuth 登录仍走 `/mcp` 或原始终端 |
 | Codemode 与 Tool Search | 设置开关通过 `gui-tools-set` 激活这两个内置扩展工具；`codemode` 与 `tool_search` 在 Pi 1.0 中是 `model-only` 暴露，未激活时不计入 prompt 工具集。`codemode.mode`（on/only）由设置写入 settings.json |
 | 工具暴露分类 | `gui-capabilities` 报告 direct / model-only / codemode / deferred / hidden 的数量；MCP 服务器可逐个切换 exposure（写入 `mcp.json`） |
-| 图片生成与分类器模型 | `gui-media` 用 `getModelsOfType()` + `hasConfiguredAuth()` 列出可用图片/分类器模型；codemode 脚本可用 `models.generateImages()`、`models.classify()`，GUI 触发的生成结果写入 `~/.pi/agent/orbit-media/` 并提示路径 |
+| 图片生成与分类器模型 | `gui-media` 用 `getModelsOfType()` + `hasConfiguredAuth()` 列出可用图片/分类器模型；codemode 脚本可用 `models.generateImages()`、`models.classify()`，GUI 触发的生成结果写入 `~/.pi/agent/orbit-media/` 并提示路径。出图端点（provider / Base URL / 模型 / 密钥）在设置里可配，见下节 |
 | 虚拟（路由）模型 | 扩展调用 `pi.registerVirtualModel()`；`/gui-virtual-model register` 接收数据驱动的路由规则，continuation/retry 默认粘在上一次成功回答的物理模型上以保缓存；`gui-virtual-models` 列出已注册项 |
 | 缓存预热与 Codemode 设置 | 设置写入 `~/.pi/agent/settings.json` 的白名单键（`cacheWarming`、`codemode`），Rust 侧先校验取值；非白名单键直接拒绝 |
 | 分支摘要导航 | 会话树同时提供普通导航和 `navigateTree({ summarize: true })` |
@@ -93,8 +93,21 @@ codemode 的沙盒是 `@earendil-works/pi-codemode`：QuickJS（`quickjs-wasi`�
 
 `bundle-pi.mjs` 的 `buildFormat` 因此升到 5；`scripts/smoke-pi.mjs` 也在隔离资源目录上复跑同一校验。
 
-### 图片模型（2026-10-03）
+### 图片模型（2026-10-03，2026-10-10 改为可配置）
 
-Pi 只有 `openrouter-images` 一个内置图片 API（OpenRouter 的 chat completions + `modalities`）；`models.json` 里的模型一律被 `modelFromJson()` 归一成 chat，无法定义图片模型。因此图片模型只能由扩展通过 `pi.registerProvider({ api, models: [{ type: "image" }], images })` 注册。
+Pi 只有 `openrouter-images` 一个内置图片 API（OpenRouter 的 chat completions + `modalities`）；`models.json` 里的模型一律被 `modelFromJson()` 归一成 chat（`ModelDefinitionSchema` 没有 `type` 判别字段），无法定义图片模型。因此图片模型只能由扩展通过 `pi.registerProvider({ api, models: [{ type: "image" }], images })` 注册。
 
-本机只用火山方舟（`https://ark.cn-beijing.volces.com/api/v3`，OpenAI 式 `POST /images/generations`），所以 `gui-extension.ts` 注册一个 `volcengine` provider：三个 Seedream 模型（`doubao-seedream-5-0-flash-260915` / `-5-0-pro-260628` / `-4-0-20260415`）与一个 `openai-images` 出图实现，请求 `response_format: "b64_json"`。密钥按 Pi 常规从 `~/.pi/agent/auth.json` 的 `volcengine` 读取，扩展不保存密钥。`gui-media` 与 codemode 的 `models.generateImages()` 都走这条路径。
+这句“只能在扩展里注册”决定了配置放在哪里：providers 页管的是 `models.json`，而它根本表达不了一个图片模型，所以**出图端点是一个单独的配置文件** `~/.pi/agent/image.json`（`src-tauri/src/image_config.rs` 校验与写入），由扩展在注册时合并到内置默认之上。三个性质是这套设计成立的前提：
+
+- **每个键都可选。** 缺少的键 = 保留内置值，所以没配过的安装和以前完全一样；只填一半就只改它点名的那些东西。
+- **一次写入是一个 patch。** 设置页一次只改一个字段，所以存默认模型不能把旁边的端点删掉。缺键 = 保持，显式 `null` = 清除。
+- **文件里没有凭据。** 密钥照 Pi 常规放 `~/.pi/agent/auth.json`，按配置里的 provider id 取；配置文件本身明文存储，不放 key。
+
+内置默认是火山方舟（`https://ark.cn-beijing.volces.com/api/v3`，OpenAI 式 `POST /images/generations`，请求 `response_format: "b64_json"`），默认模型列表是四个 Seedream：`doubao-seedream-5-0-flash-260915` / `-5-0-260128` / `-4-5-251128` / `-4-0-20260415`；默认分辨率/画幅表（1K/2K/3K/4K × 8 种比例）也是内置的，可用 `sizes` 整体覆盖。密钥从 `auth.json` 按 provider id 读取，扩展不保存密钥。
+
+入口分两处，按职责划分：
+
+- **设置 → Pi 1.0 能力 → 图片模型**：默认模型、默认分辨率、默认画幅，以及「端点」对话框（provider id / 名称 / Base URL / API Key / 模型列表）。
+- **providers 页的「图片模型」区**：只负责选默认模型；它显示的 Base URL 不参与出图，页面上的说明会指向上面那处。
+
+写入 `image.json` 或 `auth.json` 后需要**重连项目**（扩展在注册时才读这份配置）。`gui-media` 与 codemode 的 `models.generateImages()` 都走这条路径。

@@ -40,7 +40,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
-use crate::{automations, bridge, git, github_inbox, gitlab, media, notes, pty_term, search};
+use crate::{automations, bridge, git, github_inbox, gitlab, image_config, media, notes, pty_term, search};
 #[cfg(target_os = "macos")]
 use crate::ax;
 
@@ -173,8 +173,15 @@ pub const REMOTE_COMMANDS: &[&str] = &[
     "save_computer_use_config",
     "save_computer_use_cloudflare_token",
     "test_computer_use_decision",
+    // The image-generation endpoint, as data. Pi's own provider config cannot
+    // hold an image model — its model schema has no `type` discriminant — so this
+    // file is where the provider, its models and its size presets live, and the
+    // extension merges it over its built-in Ark defaults. The key is not in the
+    // file: it goes to Pi's `auth.json` under the configured provider id, like
+    // every other key, which is what `save_image_api_key` writes.
     "image_config",
     "save_image_config",
+    "save_image_api_key",
     // macOS only, like the module that implements it: the accessibility
     // snapshot computer use reads.
     "ax_observe",
@@ -656,8 +663,11 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
             bridge::save_computer_use_cloudflare_token(opt::<String>(&args, "token")?)
         }
         "test_computer_use_decision" => json(bridge::test_computer_use_decision().await?),
-        "image_config" => bridge::image_config(),
-        "save_image_config" => bridge::save_image_config(required(&args, "config")?),
+        "image_config" => image_config::image_config().await,
+        "save_image_config" => image_config::save_image_config(required(&args, "config")?).await,
+        "save_image_api_key" => {
+            json(image_config::save_image_api_key(text(&args, "provider")?, opt::<String>(&args, "apiKey")?).await?)
+        }
         // The accessibility snapshot: still desktop-owned, but a paired phone is
         // allowed to read it because computer use is the feature that needs it.
         #[cfg(target_os = "macos")]

@@ -22,6 +22,7 @@ mod bridge;
 mod git;
 mod github_inbox;
 mod gitlab;
+mod image_config;
 mod media;
 mod pty_term;
 mod search;
@@ -242,8 +243,6 @@ pub fn run() {
             bridge::computer_use_config,
             bridge::save_computer_use_config,
             bridge::save_computer_use_cloudflare_token,
-            bridge::image_config,
-            bridge::save_image_config,
             bridge::test_computer_use_decision,
             bridge::clipboard_file_paths,
             bridge::read_file_attachment,
@@ -313,6 +312,9 @@ pub fn run() {
             gitlab::gitlab_work_item_thread,
             gitlab::gitlab_work_item_comment,
             gitlab::gitlab_mr_diff,
+            image_config::image_config,
+            image_config::save_image_config,
+            image_config::save_image_api_key,
             media::media_meta,
             media::read_media_file,
             pty_term::pty_spawn,

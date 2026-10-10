@@ -952,74 +952,6 @@ pub fn save_computer_use_cloudflare_token(token: Option<String>) -> Result<Value
     Ok(json!({ "hasToken": cloudflare_api_token().is_some() }))
 }
 
-fn image_config_path() -> Result<PathBuf, String> {
-    Ok(agent_dir()?.join("image.json"))
-}
-
-/// Image-generation preferences. Missing keys stay absent so the image tool can
-/// keep its own defaults; the file is the only place these are stored.
-fn read_image_config() -> Value {
-    if let Ok(path) = image_config_path() {
-        if let Ok(text) = fs::read_to_string(&path) {
-            if let Ok(stored) = serde_json::from_str::<Value>(&text) {
-                return stored;
-            }
-        }
-    }
-    json!({})
-}
-
-fn image_config_view() -> Value {
-    let config = read_image_config();
-    let field = |key: &str| {
-        config
-            .get(key)
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string()
-    };
-    json!({
-        "model": field("model"),
-        "resolution": field("resolution"),
-        "aspect": field("aspect"),
-    })
-}
-
-#[tauri::command]
-pub fn image_config() -> Result<Value, String> {
-    Ok(image_config_view())
-}
-
-/// Persist image preferences. Only the three known keys are accepted, and empty
-/// strings are stored as-is so the UI can express "use the built-in default".
-#[tauri::command]
-pub fn save_image_config(config: Value) -> Result<Value, String> {
-    let mut current = read_image_config();
-    if !current.is_object() {
-        current = json!({});
-    }
-    if let Some(object) = config.as_object() {
-        for key in ["model", "resolution", "aspect"] {
-            if let Some(value) = object.get(key) {
-                current[key] = match value {
-                    Value::String(text) => Value::String(text.trim().to_string()),
-                    other => other.clone(),
-                };
-            }
-        }
-    }
-    let path = image_config_path()?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败：{e}"))?;
-    }
-    fs::write(
-        &path,
-        serde_json::to_string_pretty(&current).map_err(|e| e.to_string())? + "\n",
-    )
-    .map_err(|e| format!("写入图片配置失败：{e}"))?;
-    Ok(image_config_view())
-}
-
 /// One real round trip against the selected backend. This is the "能用么"
 /// button: it exercises the exact request shape gui_task sends (SystemOne
 /// questions) and reports latency, model, answer and token usage.
@@ -2217,7 +2149,50 @@ fn write_provider_store(dir: &std::path::Path, store: &Value) -> Result<(), Stri
     Ok(())
 }
 
-fn stored_api_key(auth: &Value, provider: &str) -> Option<String> {
+/// Write, or clear, one provider's key in Pi's `auth.json`.
+///
+/// The location, the entry shape and the file mode are one decision, so they
+/// live in one function: the Providers page and the image page both store keys
+/// here, and neither should be able to disagree with the other about what Pi
+/// will later read.
+///
+/// `None` or blank deletes the entry. Callers that mean "leave it alone" say so
+/// themselves — `save_provider` does, because clearing a key there is what
+/// deleting the provider is for.
+pub(crate) fn store_provider_api_key(provider: &str, api_key: Option<&str>) -> Result<(), String> {
+    let dir = agent_dir()?;
+    fs::create_dir_all(&dir).map_err(|e| format!("无法创建 Pi 配置目录：{e}"))?;
+    let auth_path = dir.join("auth.json");
+    let mut auth = if auth_path.exists() {
+        read_json_file(auth_path.clone(), "Pi auth.json")?
+    } else {
+        json!({})
+    };
+    match api_key.map(str::trim).filter(|key| !key.is_empty()) {
+        Some(key) => {
+            auth[provider] = json!({"type":"api_key","key":key});
+        }
+        None => {
+            let Some(object) = auth.as_object_mut() else {
+                return Err("Pi auth.json 不是对象".into());
+            };
+            object.remove(provider);
+        }
+    }
+    fs::write(
+        &auth_path,
+        serde_json::to_string_pretty(&auth).map_err(|e| e.to_string())? + "\n",
+    )
+    .map_err(|e| format!("写入 Pi auth.json 失败：{e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&auth_path, fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
+pub(crate) fn stored_api_key(auth: &Value, provider: &str) -> Option<String> {
     auth.get(provider)
         .and_then(|item| item.get("key"))
         .and_then(Value::as_str)
@@ -2410,23 +2385,10 @@ pub async fn save_provider(
     )
     .map_err(|e| format!("写入 Pi models.json 失败：{e}"))?;
     if let Some(key) = api_key.as_ref().filter(|value| !value.trim().is_empty()) {
-        let auth_path = dir.join("auth.json");
-        let mut auth = if auth_path.exists() {
-            read_json_file(auth_path.clone(), "Pi auth.json")?
-        } else {
-            json!({})
-        };
-        auth[&provider] = json!({"type":"api_key","key":key});
-        fs::write(
-            &auth_path,
-            serde_json::to_string_pretty(&auth).map_err(|e| e.to_string())? + "\n",
-        )
-        .map_err(|e| format!("写入 Pi auth.json 失败：{e}"))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&auth_path, fs::Permissions::from_mode(0o600));
-        }
+        // Deliberately not `store_provider_api_key(&provider, None)` for a blank
+        // key: an empty field on the Providers page means "leave the stored key
+        // alone", and clearing one there is what deleting the provider is for.
+        store_provider_api_key(&provider, Some(key))?;
     }
     let mut store = load_provider_store(&dir)?;
     let providers = store
