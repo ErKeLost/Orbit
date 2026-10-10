@@ -69,6 +69,9 @@ export function PromptOutline({ messages, scope }: { messages: DisplayMessage[];
     const scroller = scope.current;
     const row = scroller?.querySelector<HTMLElement>(`[data-prompt-anchor="${CSS.escape(id)}"]`);
     if (!scroller || !row) return;
+    // The transcript scrolls to the bottom on each streaming update until a
+    // wheel-up event occurs. Send one, so the jump stays.
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -1 }));
     const delta = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
     scroller.scrollTop = Math.max(0, scroller.scrollTop + delta - 8);
   };

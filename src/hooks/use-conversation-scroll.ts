@@ -1,221 +1,365 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { isLowPerf } from "../lib/perf-tier";
-
-/** 距底部多少像素以内算“在底部”。 */
-/** 用户输入（滚轮/触摸/按键）后多久内发生的滚动算“用户滚动”。 */
-const SCROLL_UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { innerScrollerTakes, useLockOverscroll } from "../shared/hooks/useLockOverscroll";
 
 /**
- * 流式输出自动跟随（stick-to-bottom）。
+ * 会话滚动，逐行照搬 Orbit（monocode `AgentTranscript.tsx`）的模型：
  *
- * - `following` 是唯一的跟随开关：内容变高时，只要在跟随就直接贴底（不用
- *   smooth，避免动画中途被判定为“离开底部”）。
- * - 只有用户主动向上滚（滚轮、触摸、按键、拖滚动条）才停止跟随；内容自己
- *   长高、程序化滚动、平滑滚动动画都不会关掉跟随。
- * - 用户滚回底部附近即恢复跟随。
- * - 监听内容区尺寸（ResizeObserver）+ DOM/文本变化（MutationObserver），
- *   图片/代码块渲染后撑高也能跟上。
- * - `userUnpinned` 只在用户自己滚离底部时为 true：程序化定位（发送后把新轮
- *   锚到顶部的 pauseFollow + 对齐滚动）会把 following/atBottom 置 false，但那
- *   不是用户离开底部，「跳到最新」按钮（!atBottom && userUnpinned）不该弹出。
+ * - `stickToBottom` 是唯一的跟随开关。内容变化（提交、ResizeObserver）时只要
+ *   在跟随就贴底；只有真实输入（向上滚轮、上翻按键、拖滚动条、手指下拉）才放手。
+ * - 发送一条新消息（`lastUserId` 变化）一律重新跟随并贴底。最后一轮带
+ *   `.transcript-turn-anchor`（min-height = `--transcript-viewport`，至少一屏高），
+ *   贴底之后屏幕里只剩这一轮，提示语自然就在可视区顶部——不量距离、不暂停跟随。
+ * - 「跳到最新」= 不在跟随 且 内容可滚动。
  */
-export function useConversationScroll(options: { /** 置 true 时贴底逻辑整体挂起（发送后的锚定窗口期），避免乐观追加先把视图拽到底部。 */ holdStickRef?: RefObject<boolean> } = {}) {
-  const holdStickRef = options.holdStickRef;
-  const ref = useRef<HTMLDivElement>(null);
-  const followingRef = useRef(true);
-  const [atBottom, setAtBottomState] = useState(true);
-  const atBottomRef = useRef(true);
-  const setAtBottom = useCallback((value: boolean) => {
-    if (atBottomRef.current === value) return;
-    atBottomRef.current = value;
-    setAtBottomState(value);
+const WHEEL_HOLD_MS = 150;
+
+export function useConversationScroll({
+  lastUserId,
+  content,
+  busy,
+  onJumpChange,
+}: {
+  lastUserId: string | null;
+  /** 会话内容；每次变化（流式提交）在布局阶段跟随一次。 */
+  content: unknown;
+  busy: boolean;
+  /** 必须是稳定引用。 */
+  onJumpChange: (show: boolean) => void;
+}) {
+  const lockOverscroll = useLockOverscroll<HTMLDivElement>();
+  const scroller = useRef<HTMLDivElement | null>(null);
+  const [scrollerEl, setScrollerEl] = useState<HTMLDivElement | null>(null);
+  const stickToBottom = useRef(true);
+  const showJumpRef = useRef(false);
+  const distanceFromBottom = useRef(0);
+  const lastScrollTop = useRef(0);
+  const pointerScrolling = useRef(false);
+  const wheelHold = useRef(0);
+
+  const setShowJump = useCallback(
+    (show: boolean) => {
+      if (showJumpRef.current === show) return;
+      showJumpRef.current = show;
+      onJumpChange(show);
+    },
+    [onJumpChange],
+  );
+
+  const syncPinned = useCallback(
+    (el: HTMLElement) => {
+      // Rendering can shrink and regrow the transcript before observers run,
+      // leaving a browser-clamped offset above the new bottom. An offset alone
+      // cannot identify manual scrolling. Input handlers release the pin.
+      if (stickToBottom.current && !pointerScrolling.current) {
+        lastScrollTop.current = el.scrollTop;
+        distanceFromBottom.current = 0;
+        setShowJump(false);
+        return;
+      }
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      // Content growth changes the distance without moving the reader. A
+      // queued event from a previous pin must not unpin (or re-pin) the view.
+      // A taller viewport or shorter transcript can also clamp the previous
+      // offset to the new bottom; that is a layout adjustment, not a scroll up.
+      stickToBottom.current = followsAfterScroll(el, lastScrollTop.current, stickToBottom.current);
+      lastScrollTop.current = el.scrollTop;
+      distanceFromBottom.current = distance;
+      setShowJump(!stickToBottom.current && el.scrollHeight > el.clientHeight);
+    },
+    [setShowJump],
+  );
+
+  const rememberScroll = useCallback((el: HTMLElement) => {
+    lastScrollTop.current = el.scrollTop;
+    distanceFromBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight;
   }, []);
-  const [userUnpinned, setUserUnpinnedState] = useState(false);
-  const userUnpinnedRef = useRef(false);
-  const setUserUnpinned = useCallback((value: boolean) => {
-    if (userUnpinnedRef.current === value) return;
-    userUnpinnedRef.current = value;
-    setUserUnpinnedState(value);
-  }, []);
+
+  const pinTranscript = useCallback(
+    (el: HTMLElement | null) => {
+      if (!el) return;
+      pinToBottom(el);
+      rememberScroll(el);
+    },
+    [rememberScroll],
+  );
+
+  const followTranscript = useCallback(
+    (el: HTMLElement | null) => {
+      if (!el) return;
+      // The browser can apply a manual scroll before dispatching its event.
+      // Reconcile that offset before a streaming commit or observer pins it.
+      syncPinned(el);
+      // A gesture whose direction is not known yet may already be scrolling
+      // off the main thread. Pinning now would snap it back to the end.
+      if (stickToBottom.current && performance.now() >= wheelHold.current) pinTranscript(el);
+    },
+    [pinTranscript, syncPinned],
+  );
+
+  const jumpToBottom = useCallback(() => {
+    stickToBottom.current = true;
+    distanceFromBottom.current = 0;
+    setShowJump(false);
+    const el = scroller.current;
+    syncTranscriptViewport(el);
+    pinTranscript(el);
+  }, [pinTranscript, setShowJump]);
+
+  const setScroller = useCallback(
+    (el: HTMLDivElement | null) => {
+      scroller.current = el;
+      setScrollerEl(el);
+      lockOverscroll(el);
+    },
+    [lockOverscroll],
+  );
 
   useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    let lastScrollTop = element.scrollTop;
-    let followFrame = 0;
-    // 用户是不是正在用手指/触控板拖动。意图只从输入手势来，不从滚动方向猜：
-    // 回合结束补高度差、锚定对齐、输入框长高都会产生向上位移，那不是“用户离开底部”。
-    let touching = false;
-
-    const stickToBottom = () => {
-      // 锚定窗口期（刚发送、等锚定接管）不贴底：先把视图拽到底再拉回顶部
-      // 就是你能看见的那一下抖动。
-      if (holdStickRef?.current) return;
-      const target = element.scrollHeight - element.clientHeight;
-      // 已经贴底时不再写 scrollTop：写操作会派发 scroll 事件并让下一次
-      // 布局失效，长会话下每帧白跑一次。
-      if (element.scrollTop < target) element.scrollTop = target;
-      lastScrollTop = element.scrollTop;
-    };
-    // 内容变化：跟随中就在下一帧贴底。独立的 frame，滚动事件不会取消它。
-    const onContentChange = () => {
-      if (followFrame) return;
-      followFrame = requestAnimationFrame(() => {
-        followFrame = 0;
-        if (followingRef.current) {
-          stickToBottom();
-          setAtBottom(true);
-        } else {
-          // 没跟随时不写 scrollTop，但内容长高/变矮都会改变几何位置：
-          // 回合折叠可能把视口钳到底部（按钮该消失），新内容长在下面（该出现）。
-          setAtBottom(isAtBottom(element));
-        }
-      });
-    };
-
-    // Orbit's `followsAfterScroll`: following restarts only when genuine
-    // downward movement actually reaches the end. Layout clamping, no movement,
-    // and a small reversal inside the bottom margin all keep the position —
-    // which is what leaves an anchored prompt still.
+    if (!scrollerEl) return;
     const onScroll = () => {
-      const movement = element.scrollTop - lastScrollTop;
-      followingRef.current = followsAfterScroll(element, lastScrollTop, followingRef.current);
-      lastScrollTop = element.scrollTop;
-      // atBottom 是几何事实，不等于 following：内容收缩把 scrollTop 钳到底部、
-      // 或亚像素残差让最后一次下滚差一两像素到不了门槛时，人已经在底上。
-      const bottom = isAtBottom(element);
-      setAtBottom(bottom);
-      // 回到最新内容就收起按钮；向上滑动（触摸）算离开底部。
-      if (bottom) setUserUnpinned(false);
-      else if (touching && movement < 0) setUserUnpinned(true);
+      if (scrollerEl.isConnected && scrollerEl.clientHeight > 0) syncPinned(scrollerEl);
     };
-
-    const onWheel = (event: WheelEvent) => {
-      // 向上滚一下立即停止跟随，避免下一帧又被贴回底部“抢滚动”。
-      if (event.deltaY < 0 && element.scrollTop > 0 && !scrollableAncestorCanConsume(event.target, element, event.deltaY)) {
-        followingRef.current = false;
-        setAtBottom(false);
-        setUserUnpinned(true);
+    let release: ReturnType<typeof setTimeout> | undefined;
+    let heldScrollTop: number | undefined;
+    const pauseFollowing = () => {
+      stickToBottom.current = false;
+      setShowJump(scrollerEl.scrollHeight > scrollerEl.clientHeight);
+    };
+    const holdFollowing = () => {
+      heldScrollTop ??= scrollerEl.scrollTop;
+      wheelHold.current = performance.now() + WHEEL_HOLD_MS;
+      clearTimeout(release);
+      release = setTimeout(() => {
+        if (!scrollerEl.isConnected) return;
+        if (heldScrollTop !== undefined && scrollerEl.scrollTop < heldScrollTop && !scrollClampedToBottom(scrollerEl, heldScrollTop))
+          pauseFollowing();
+        heldScrollTop = undefined;
+        followTranscript(scrollerEl);
+      }, WHEEL_HOLD_MS);
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (innerScrollerTakes(scrollerEl, e)) return;
+      if (e.deltaY < 0) {
+        pauseFollowing();
+      } else if (e.deltaY === 0) {
+        // A trackpad gesture can open with an event that carries no
+        // direction, and the rest of it may reach us after the scroll has
+        // moved. Hold the pin until its upward events can release it.
+        holdFollowing();
       }
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (SCROLL_UP_KEYS.has(event.key) || (event.key === " " && event.shiftKey)) setUserUnpinned(true);
     };
     const onPointerDown = (event: PointerEvent) => {
-      // 命中滚动容器本身 = 拖它的滚动条，是用户在手动滚动。
-      if (event.target === element) {
-        followingRef.current = false;
-        setAtBottom(false);
-        setUserUnpinned(true);
+      if (event.pointerType !== "touch") pointerScrolling.current = true;
+      if (event.target === scrollerEl) pauseFollowing();
+    };
+    const onPointerUp = () => {
+      if (pointerScrolling.current && scrollerEl.isConnected) syncPinned(scrollerEl);
+      pointerScrolling.current = false;
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || target.closest("input, textarea, select"))) return;
+      if (event.key !== "ArrowUp" && event.key !== "PageUp" && event.key !== "Home" && !(event.key === " " && event.shiftKey)) return;
+      if (!innerScrollerTakes(scrollerEl, { target, deltaX: 0, deltaY: -1 })) pauseFollowing();
+    };
+    let touchY: number | undefined;
+    const onTouchStart = (event: TouchEvent) => {
+      touchY = event.touches[0]?.clientY;
+      holdFollowing();
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      const next = event.touches[0]?.clientY;
+      if (touchY !== undefined && next !== undefined && next > touchY) {
+        if (!innerScrollerTakes(scrollerEl, { target: event.target, deltaX: 0, deltaY: touchY - next })) pauseFollowing();
+      }
+      touchY = next;
+    };
+    scrollerEl.addEventListener("scroll", onScroll, { passive: true });
+    scrollerEl.addEventListener("wheel", onWheel, { passive: true });
+    scrollerEl.addEventListener("pointerdown", onPointerDown, { passive: true });
+    document.addEventListener("pointerup", onPointerUp, { passive: true });
+    document.addEventListener("pointercancel", onPointerUp, { passive: true });
+    scrollerEl.addEventListener("keydown", onKeyDown);
+    scrollerEl.addEventListener("touchstart", onTouchStart, { passive: true });
+    scrollerEl.addEventListener("touchmove", onTouchMove, { passive: true });
+    return () => {
+      clearTimeout(release);
+      scrollerEl.removeEventListener("scroll", onScroll);
+      scrollerEl.removeEventListener("wheel", onWheel);
+      scrollerEl.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("pointerup", onPointerUp);
+      document.removeEventListener("pointercancel", onPointerUp);
+      pointerScrolling.current = false;
+      scrollerEl.removeEventListener("keydown", onKeyDown);
+      scrollerEl.removeEventListener("touchstart", onTouchStart);
+      scrollerEl.removeEventListener("touchmove", onTouchMove);
+    };
+  }, [scrollerEl, followTranscript, setShowJump, syncPinned]);
+
+  // A new prompt always follows again: pinned to the end, the pane-tall
+  // anchored turn puts that prompt at the top of the view.
+  useLayoutEffect(() => {
+    stickToBottom.current = true;
+    setShowJump(false);
+    const el = scroller.current;
+    syncTranscriptViewport(el);
+    pinTranscript(el);
+  }, [lastUserId, scrollerEl, pinTranscript, setShowJump]);
+
+  useLayoutEffect(() => {
+    if (!stickToBottom.current) return;
+    const el = scroller.current;
+    syncTranscriptViewport(el);
+    followTranscript(el);
+  }, [content, busy, followTranscript]);
+
+  useLayoutEffect(() => {
+    const el = scrollerEl;
+    const inner = el?.firstElementChild;
+    if (!el || !inner) return;
+    const onResize = () => {
+      if (!el.isConnected) return;
+      syncTranscriptViewport(el);
+      followTranscript(el);
+    };
+    const observer = new ResizeObserver(onResize);
+    observer.observe(inner);
+    observer.observe(el);
+    onResize();
+    return () => observer.disconnect();
+  }, [scrollerEl, followTranscript]);
+
+  useTurnScrollAnchor(scrollerEl, stickToBottom, rememberScroll);
+
+  return { scroller, scrollerEl, setScroller, jumpToBottom } as const;
+}
+
+/**
+ * Hold the reader's place while turns above the viewport change height. The
+ * scroller opts out of native scroll anchoring, so late markdown, image or
+ * disclosure sizing above the viewport needs an explicit correction.
+ */
+function useTurnScrollAnchor(el: HTMLDivElement | null, stickToBottom: RefObject<boolean>, onAdjust: (el: HTMLElement) => void) {
+  useLayoutEffect(() => {
+    const inner = el?.querySelector("[data-transcript-content]");
+    if (!el || !inner) return;
+    const heights = new WeakMap<Element, number>();
+    const resize = new ResizeObserver((entries) => {
+      if (!el.isConnected) return;
+      const viewportTop = el.getBoundingClientRect().top;
+      let shift = 0;
+      let precedingDelta = 0;
+      const byTurn = new Map(entries.map((entry) => [entry.target, entry]));
+      // Entries can arrive out of order. Later turns already include the
+      // height corrections of earlier turns in their new layout position.
+      for (const turn of inner.children) {
+        const entry = byTurn.get(turn);
+        if (!entry) continue;
+        const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+        const previous = heights.get(entry.target);
+        heights.set(entry.target, height);
+        if (previous === undefined || stickToBottom.current) continue;
+        // Only turns that sat wholly above the view. A turn the reader is
+        // looking at grows downward from where they are reading.
+        const top = entry.target.getBoundingClientRect().top - precedingDelta;
+        if (top + previous <= viewportTop) shift += height - previous;
+        precedingDelta += height - previous;
+      }
+      if (shift) {
+        el.scrollTop += shift;
+        onAdjust(el);
+      }
+    });
+    let observed = new WeakSet<Element>();
+    const observeTurns = () => {
+      for (const turn of inner.children) {
+        if (observed.has(turn) || !turn.classList.contains("transcript-turn")) continue;
+        observed.add(turn);
+        resize.observe(turn);
       }
     };
-    const onTouchStart = () => { touching = true; };
-    const onTouchEnd = () => { touching = false; };
-
-    element.addEventListener("scroll", onScroll, { passive: true });
-    element.addEventListener("wheel", onWheel, { passive: true });
-    element.addEventListener("touchstart", onTouchStart, { passive: true });
-    element.addEventListener("touchend", onTouchEnd, { passive: true });
-    element.addEventListener("touchcancel", onTouchEnd, { passive: true });
-    element.addEventListener("keydown", onKeyDown);
-    element.addEventListener("pointerdown", onPointerDown);
-
-    const resizeObserver = new ResizeObserver(onContentChange);
-    resizeObserver.observe(element);
-    const observeContent = () => { for (const child of Array.from(element.children)) resizeObserver.observe(child); };
-    observeContent();
-    // 只观察滚动容器的直接子节点。内容高度变化由上面的 ResizeObserver 负责
-    // （消息行就是直接子节点），因此不再需要 subtree + characterData：流式时
-    // 每个字符都会产生一条 mutation 记录，整棵会话 DOM 的记录数组（几万条）
-    // 会在每帧被遍历一次，是长会话下的主要停顿来源之一。
-    const mutationObserver = new MutationObserver(() => {
-      observeContent();
-      onContentChange();
+    const mutations = new MutationObserver((records) => {
+      // Removal is rare (a rewind or edit), so start over rather than hold
+      // detached turns. Re-observed turns report the height already stored.
+      if (records.some((record) => record.removedNodes.length > 0)) {
+        resize.disconnect();
+        observed = new WeakSet();
+      }
+      observeTurns();
     });
-    mutationObserver.observe(element, { childList: true });;
-
-    stickToBottom();
+    mutations.observe(inner, { childList: true });
+    observeTurns();
     return () => {
-      cancelAnimationFrame(followFrame);
-      element.removeEventListener("scroll", onScroll);
-      element.removeEventListener("wheel", onWheel);
-      element.removeEventListener("touchstart", onTouchStart);
-      element.removeEventListener("touchend", onTouchEnd);
-      element.removeEventListener("touchcancel", onTouchEnd);
-      element.removeEventListener("keydown", onKeyDown);
-      element.removeEventListener("pointerdown", onPointerDown);
-
-      resizeObserver.disconnect();
-      mutationObserver.disconnect();
+      mutations.disconnect();
+      resize.disconnect();
     };
-  }, [setAtBottom, setUserUnpinned]);
-
-
-  const settleFrameRef = useRef(0);
-  useEffect(() => () => cancelAnimationFrame(settleFrameRef.current), []);
-  // 稳定引用：作为 onSubmitted 传给 memo 过的 ChatComposer，
-  // 避免 Chat 每次流式重渲染都把回调换新、击穿 memo。
-  // 发送时调用：新消息要等 React（含 deferred 渲染）提交后才有高度，所以不能只滚一次，
-  // 也不能用 smooth（动画期间内容还在长，会停在半路）。进入跟随状态后在约 1s 内
-  // 每帧贴底；用户向上滚动（followingRef 被关）就立即放手。
-  const scrollToBottom = useCallback(() => {
-    const element = ref.current;
-    if (!element) return;
-    if (holdStickRef?.current) return;
-    followingRef.current = true;
-    setAtBottom(true);
-    setUserUnpinned(false);
-    cancelAnimationFrame(settleFrameRef.current);
-    // 低配机器缩短到 400ms：足够覆盖乐观预览的首次渲染，又不让每帧强制布局持续太久；
-    // 之后的增长由 ResizeObserver 驱动的 stickToBottom 接管。
-    const until = performance.now() + (isLowPerf ? 400 : 1000);
-    const settle = () => {
-      if (!followingRef.current) return;
-      const target = element.scrollHeight - element.clientHeight;
-      if (element.scrollTop < target) element.scrollTop = target;
-      if (performance.now() < until) settleFrameRef.current = requestAnimationFrame(settle);
-    };
-    settle();
-  }, [setAtBottom, setUserUnpinned]);
-
-  /**
-   * Stop following without moving: used while a sent prompt is anchored.
-   * 程序化暂停，不算用户离开底部：不动 userUnpinned，否则刚发送的消息
-   * （锚定在顶部、下方是拉伸的空白回合区）就会弹出「跳到最新」按钮。
-   */
-  const pauseFollow = useCallback(() => {
-    followingRef.current = false;
-    setAtBottom(false);
-    cancelAnimationFrame(settleFrameRef.current);
-  }, [setAtBottom]);
-
-  return { ref, atBottom, userUnpinned, scrollToBottom, pauseFollow } as const;
+  }, [el, stickToBottom, onAdjust]);
 }
 
-/** Orbit's rules for whether a scroll event restarts following. */
-function followsAfterScroll(element: HTMLElement, previousTop: number, following: boolean): boolean {
-  const movement = element.scrollTop - previousTop;
-  if (movement === 0 || scrollClampedToBottom(element, previousTop)) return following;
-  return movement > 0 && isAtBottom(element);
+const PROMPT_RISE_MS = 560;
+// Keep in sync with the prompt-turn-reveal animation in orbit-theme.css.
+const PROMPT_REVEAL_MS = 320;
+const PROMPT_FADE_MS = 480;
+// Where the prompt starts, as a fraction of the viewport height from the top.
+const PROMPT_RISE_FROM = 0.3;
+
+/** Fades the prompt in while sliding it from the upper viewport to its row. */
+export function riseIntoAnchor(scroller: HTMLElement | null, blockId: string) {
+  const row = scroller?.querySelector<HTMLElement>(`[data-prompt-anchor="${CSS.escape(blockId)}"]`);
+  if (!scroller || !row || typeof row.animate !== "function") return;
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+  const view = scroller.getBoundingClientRect();
+  const dy = view.top + view.height * PROMPT_RISE_FROM - row.getBoundingClientRect().top;
+  if (dy <= 1) return;
+  const animation = row.animate([{ transform: `translateY(${dy}px)` }, { transform: "translateY(0)" }], {
+    duration: PROMPT_RISE_MS,
+    easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+  });
+  // The fade gets its own gentler curve; on the rise's sharp ease-out it
+  // would be over before the eye catches it.
+  const fade = row.animate([{ opacity: 0 }, { opacity: 1 }], { duration: PROMPT_FADE_MS, easing: "ease-out" });
+  // The rest of the turn waits until the prompt lands, then fades in.
+  // 我们的分组是一条消息一组，Orbit 的「一轮」对应锚定包裹层。
+  const turn = row.closest<HTMLElement>("[data-transcript-anchor]");
+  let revealTimer: ReturnType<typeof setTimeout> | undefined;
+  turn?.setAttribute("data-prompt-rise", "rising");
+  animation.onfinish = () => {
+    turn?.setAttribute("data-prompt-rise", "revealing");
+    revealTimer = setTimeout(() => turn?.removeAttribute("data-prompt-rise"), PROMPT_REVEAL_MS);
+  };
+  return () => {
+    animation.cancel();
+    fade.cancel();
+    clearTimeout(revealTimer);
+    turn?.removeAttribute("data-prompt-rise");
+  };
 }
 
-/** 几何意义的“在底部”，容差盖住亚像素滚动位置（缩放、分数行高）。 */
-function isAtBottom(element: HTMLElement): boolean {
-  return element.scrollHeight - element.scrollTop - element.clientHeight <= 2;
+function followsAfterScroll(el: HTMLElement, previousTop: number, following: boolean): boolean {
+  const movement = el.scrollTop - previousTop;
+  if (movement === 0 || scrollClampedToBottom(el, previousTop)) return following;
+  // A small downward reversal while reading inside the bottom margin must
+  // not restart following. Resume only when the reader reaches the end.
+  return movement > 0 && el.scrollHeight - el.scrollTop - el.clientHeight <= 1;
 }
 
-function scrollClampedToBottom(element: HTMLElement, previousTop: number): boolean {
-  const bottom = Math.max(0, element.scrollHeight - element.clientHeight);
-  return previousTop > bottom && Math.abs(element.scrollTop - bottom) < 1;
+function scrollClampedToBottom(el: HTMLElement, previousTop: number): boolean {
+  const bottom = Math.max(0, el.scrollHeight - el.clientHeight);
+  return previousTop > bottom && Math.abs(el.scrollTop - bottom) < 1;
 }
 
-/** 滚轮发生在内部可滚动区域（代码块、工具输出）且它还能继续向该方向滚时，外层不会滚动。 */
-function scrollableAncestorCanConsume(target: EventTarget | null, root: HTMLElement, deltaY: number): boolean {
-  for (let node = target instanceof Element ? target : null; node && node !== root; node = node.parentElement) {
-    if (!(node instanceof HTMLElement) || node.scrollHeight <= node.clientHeight) continue;
-    const overflowY = getComputedStyle(node).overflowY;
-    if (overflowY !== "auto" && overflowY !== "scroll") continue;
-    if (deltaY < 0 ? node.scrollTop > 0 : node.scrollTop + node.clientHeight < node.scrollHeight) return true;
-  }
-  return false;
+function pinToBottom(el: HTMLElement | null) {
+  if (!el) return;
+  el.scrollTop = el.scrollHeight;
+}
+
+/** Keep the live turn's min-height in lockstep with the visible transcript. */
+function syncTranscriptViewport(el: HTMLElement | null) {
+  if (!el || el.clientHeight <= 0) return;
+  const inner = el.firstElementChild as HTMLElement | null;
+  const pad = inner ? Number.parseFloat(getComputedStyle(inner).paddingBottom) || 0 : 0;
+  const next = `${Math.max(0, el.clientHeight - pad)}px`;
+  if (el.style.getPropertyValue("--transcript-viewport") === next) return;
+  el.style.setProperty("--transcript-viewport", next);
 }

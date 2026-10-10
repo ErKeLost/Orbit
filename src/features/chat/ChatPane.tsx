@@ -7,12 +7,12 @@ import type { AgentNode } from "../../lib/agents";
 import { groupDisplayMessages, reuseGroups, type Transcript } from "../../lib/protocol";
 import { readTurnDurations, saveTurnDurations, turnDurationId } from "../../lib/turn-duration";
 import { useProjects } from "../../lib/projects";
-import { useConversationScroll } from "../../hooks/use-conversation-scroll";
+import { riseIntoAnchor, useConversationScroll } from "../../hooks/use-conversation-scroll";
+import { TranscriptJumpToBottom, useTranscriptJumpVisibility } from "./TranscriptJumpToBottom";
 import { useSelectionHighlight } from "../../hooks/use-selection-highlight";
 import { useTranscriptSelection } from "./useTranscriptSelection";
 import { TranscriptSelectionMenu } from "./TranscriptSelectionMenu";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
-import { ChevronDown } from "../../shared/ui/icons";
 import { AgentActivityFeed } from "../../components/agents/AgentActivityFeed";
 import { GalaxyDotBackground } from "../background/GalaxyDotBackground";
 import { TerminalDock } from "../terminal/TerminalDock";
@@ -93,6 +93,9 @@ function ChatBackground() {
   );
 }
 
+/** 发送后的定位由 lastUserId 变化驱动（Orbit 同款），输入框不需要通知。 */
+const noop = () => undefined;
+
 export function ChatPane() {
   const project = useWorkspace((state) => state.cwd);
   const runtimeTarget = useWorkspace((state) => state.runtimeTarget);
@@ -100,18 +103,34 @@ export function ChatPane() {
   const statuses = useWorkspace((state) => state.statuses);
   const connection = useWorkspace((state) => state.connection);
   const transcript = useFrameStream();
-  const holdStickRef = useRef(false);
-  // 发送那一刻置位（onSubmitted 在乐观追加渲染前同步调用），锚定接管后由
-  // rAF 与 settle 清除；窗口期内贴底逻辑整体挂起，避免先拽到底再拉回来。
-  const beginAnchoredSend = useCallback(() => {
-    holdStickRef.current = true;
-  }, []);
-  const { ref, atBottom, userUnpinned, scrollToBottom, pauseFollow } = useConversationScroll({ holdStickRef });
+  const busy = transcript.running || transcript.submitted;
+  // Orbit 的 `lastUserBlockId`：换了一条新提示就重新跟随、贴底。用户消息条数
+  // 作键——乐观预览被真正投递的消息替换时 id 会变，但那还是同一条提示。
+  const userTurns = useMemo(() => transcript.messages.reduce((count, item) => (item.message.role === "user" ? count + 1 : count), 0), [transcript.messages]);
+  const lastUserId = userTurns > 0 ? String(userTurns) : null;
+  const jumpVisibility = useTranscriptJumpVisibility();
+  const { scroller: ref, scrollerEl, setScroller, jumpToBottom } = useConversationScroll({
+    lastUserId,
+    content: transcript.messages,
+    busy,
+    onJumpChange: jumpVisibility.setVisible,
+  });
+  // Stretch the last turn after a send while this pane stays mounted. A remount
+  // is a new visit: it uses the true transcript height so the latest reply sits
+  // near the composer instead of a hole of empty space (Orbit `anchorTurn`).
+  const [anchorTurn, setAnchorTurn] = useState(busy);
+  const seenUserTurns = useRef(userTurns);
+  if (userTurns !== seenUserTurns.current) {
+    // 只有「多了一条提示」才是发送；切会话/重连 hydrate 一次换进整段历史不算。
+    const sent = !transcript.loading && userTurns === seenUserTurns.current + 1;
+    seenUserTurns.current = userTurns;
+    if (sent && !anchorTurn) setAnchorTurn(true);
+  }
   // WKWebView 会把原生选区的间隙涂满选区色；挂载后聊天区改用 Custom
   // Highlight API 只重绘文字（样式见 orbit.css 的 custom-selection-highlight）。
   useSelectionHighlight(ref);
   // 选中回答文字后弹出浮动复制条（Orbit 同款交互）。
-  const { selection: textSelection, dismissSelection: dismissTextSelection } = useTranscriptSelection(ref.current, true);
+  const { selection: textSelection, dismissSelection: dismissTextSelection } = useTranscriptSelection(scrollerEl, true);
   const sessionFile = useWorkspace((state) => state.state?.sessionFile) ?? persistedSessionFile(project);
   const dockPosition = useShell((state) => state.terminalPosition);
   const dockOpen = useShell((state) => state.terminalOpen);
@@ -162,22 +181,6 @@ export function ChatPane() {
     saveTurnDurations(sessionFile, completed);
   }, [groups, sessionFile, transcript.running]);
 
-  // Orbit's `syncTranscriptViewport`: publish the usable pane height, which
-  // `.transcript-turn-anchor` consumes as its minimum height.
-  useEffect(() => {
-    const scroller = ref.current;
-    if (!scroller) return;
-    const sync = () => {
-      const inner = scroller.querySelector<HTMLElement>("[data-transcript-content]");
-      const pad = inner ? Number.parseFloat(getComputedStyle(inner).paddingBottom) || 0 : 0;
-      scroller.style.setProperty("--transcript-viewport", `${Math.max(0, scroller.clientHeight - pad)}px`);
-    };
-    sync();
-    const observer = new ResizeObserver(sync);
-    observer.observe(scroller);
-    return () => observer.disconnect();
-  }, [ref]);
-
   const openAgent = useCallback((agent: AgentNode) => {
     if (agent.sessionPath) void changeSession({ type: "switch_session", sessionPath: agent.sessionPath }).catch(report);
   }, []);
@@ -196,62 +199,27 @@ export function ChatPane() {
   }, [transcript.messages]);
   const activeHasOutput = transcript.running && activeGroup >= 0 && groups[activeGroup]?.items[0]?.message.role !== "user";
   const waiting = transcript.submitted || (transcript.running && !activeHasOutput) || transcript.compacting;
-  // While a turn runs, the prompt owning the newest user block anchors the pane.
-  const anchorFrom = transcript.running
+  // After a send, the turn owning the newest prompt is stretched to a pane.
+  const anchorFrom = anchorTurn
     ? groups.reduce((found, group, index) => (group.items[0]?.message.role === "user" ? index : found), -1)
     : -1;
-  // Orbit's `useTurnScrollAnchor` equivalent: when the anchored turn stops
-  // stretching, its height collapses — put the difference back into scrollTop
-  // so the reader's view does not jump.
-  const lastUserMessage = [...transcript.messages].reverse().find((item) => item.message.role === "user");
-  const lastUserMessageId = lastUserMessage?.id ?? null;
-  const promptOffset = useRef<number | null>(null);
-  const wasRunning = useRef(transcript.running);
+
+  // A sent prompt rises from the upper screen into its anchored spot at the
+  // top. On mount this only plays for a session's first send.
+  const introducePrompt = useRef({ anchor: false });
+  introducePrompt.current = { anchor: anchorTurn };
+  const introducedPromptMount = useRef(false);
   useLayoutEffect(() => {
-    const scroller = ref.current;
-    const row = scroller && lastUserMessage
-      ? scroller.querySelector<HTMLElement>(`[data-prompt-anchor="${CSS.escape(lastUserMessage.id)}"]`)
-      : null;
-    if (transcript.running) {
-      // Track where the prompt sits while the turn is stretched.
-      if (scroller && row) promptOffset.current = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-      wasRunning.current = true;
-      return;
-    }
-    const settled = wasRunning.current;
-    wasRunning.current = false;
-    if (!settled || !scroller || !row || promptOffset.current == null) return;
-    const now = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-    scroller.scrollTop += now - promptOffset.current;
-    promptOffset.current = null;
-    holdStickRef.current = false;
-  });
-
-  // A sent prompt aligns to the top of the pane and following stops: the answer
-  // grows into the pane-tall anchored turn below it, and the view stays put.
-  useEffect(() => {
-    if (!transcript.running || anchorFrom < 0) return;
-    const scroller = ref.current;
-    if (!scroller) return;
-    const frame = requestAnimationFrame(() => {
-      const box = scroller.querySelector<HTMLElement>("[data-transcript-anchor]");
-      if (!box) return;
-      pauseFollow();
-      const delta = box.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-      scroller.scrollTop = Math.max(0, scroller.scrollTop + delta - 8);
-      holdStickRef.current = false;
-      // 这一次滚动就是锚定本身，不是漂移：立刻把 prompt 锚定后的位置写回
-      // promptOffset。否则一个没有任何中间流提交的短轮（1s 的空回复就够）
-      // 结束时，settle 回写用的还是锚定前贴底的旧偏移，会把刚发出去的
-      // 消息又滚回底部去。
-      const row = lastUserMessageId
-        ? scroller.querySelector<HTMLElement>(`[data-prompt-anchor="${CSS.escape(lastUserMessageId)}"]`)
-        : null;
-      if (row) promptOffset.current = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [anchorFrom, lastUserMessageId, pauseFollow, ref, transcript.running]);
-
+    const mounting = !introducedPromptMount.current;
+    introducedPromptMount.current = true;
+    if (!lastUserId || !introducePrompt.current.anchor) return;
+    if (mounting && !(busy && userTurns === 1)) return;
+    const row = [...transcript.messages].reverse().find((item) => item.message.role === "user");
+    if (!row) return;
+    return riseIntoAnchor(ref.current, row.id);
+    // Only a new prompt starts the motion; later renders must not replay it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastUserId]);
   const runningLabel = transcript.compacting ? "正在压缩上下文" : transcript.phase && transcript.phase !== "就绪" ? transcript.phase : "Working…";
   const dockVertical = dockPosition === "top" || dockPosition === "bottom";
   const dock = dockOpen && terminalAvailable ? <TerminalDock cwd={project} open /> : null;
@@ -271,7 +239,7 @@ export function ChatPane() {
   if (groups.length === 0 && !waiting) {
     return (
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <EmptySession cwd={project} onSubmitted={beginAnchoredSend} />
+        <EmptySession cwd={project} onSubmitted={noop} />
       </div>
     );
   }
@@ -300,7 +268,7 @@ export function ChatPane() {
         </div>
       ) : null}
       <div className="@container relative min-h-0 flex-1 transcript-composer-fade">
-        <div ref={ref} className="agent-transcript h-full overflow-y-auto overscroll-none font-mono text-[13px] leading-5 [overflow-anchor:none]">
+        <div ref={setScroller} className="agent-transcript h-full overflow-y-auto overscroll-none font-mono text-[13px] leading-5 [overflow-anchor:none]">
           {/* Orbit's chat transcript: top-aligned content whose newest turn
               reserves a pane of height (`transcript-turn-anchor`), so a prompt
               sent with the transcript pinned to the bottom sits at the top. */}
@@ -327,25 +295,12 @@ export function ChatPane() {
           </div>
         </div>
         <PromptOutline messages={transcript.messages} scope={ref} />
-        {/* 只在用户自己滚离底部时出现；发送后锚定到顶部的程序化定位不算。 */}
-        {!atBottom && userUnpinned ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-5 z-30 flex justify-center">
-            <button
-              type="button"
-              title="跳到最新"
-              aria-label="跳到最新"
-              onClick={() => { holdStickRef.current = false; scrollToBottom(); }}
-              className="pointer-events-auto grid size-6 place-items-center rounded-full bg-accent text-white shadow-lg hover:bg-accent/85"
-            >
-              <ChevronDown className="size-4" strokeWidth={2} />
-            </button>
-          </div>
-        ) : null}
+        <TranscriptJumpToBottom visibility={jumpVisibility} onJump={jumpToBottom} />
         <TranscriptSelectionMenu selection={textSelection} onDismiss={dismissTextSelection} />
       </div>
       {Object.entries(statuses).flatMap(([key, value]) => (!key.startsWith("gui-") && value ? [<div key={key} className="extension-status">{key}: {value}</div>] : []))}
       {/* Sending anchors the turn to the top instead of pinning to the bottom. */}
-      <Composer onSubmitted={beginAnchoredSend} />
+      <Composer onSubmitted={noop} />
       </div>
       {dockPosition === "bottom" || dockPosition === "right" ? dock : null}
     </div>
