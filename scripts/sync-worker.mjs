@@ -46,7 +46,18 @@ copyFileSync(source, target)
 // Rust's linker signs the arm64 executable ad-hoc. Keep that embedded
 // signature: Tauri seals Resources in the app bundle but does not sign an
 // executable copied there. An unsigned worker is killed before its first RPC.
+// The x86_64 linker does NOT sign (only arm64 requires it), so an Intel
+// build arrives unsigned: ad-hoc sign it here. arm64 signatures are untouched.
 const codesignTimeout = Number(process.env.ORBIT_CODESIGN_TIMEOUT_MS ?? 15_000)
+const signed = spawnSync("/usr/bin/codesign", ["--verify", "--strict", target], {
+  stdio: "ignore", timeout: codesignTimeout,
+})
+if (signed.status !== 0) {
+  console.log("[sync-worker] ax_control 未签名（x86_64 链接器不签名），执行 ad-hoc 签名")
+  execFileSync("/usr/bin/codesign", ["--force", "--sign", "-", target], {
+    stdio: "inherit", timeout: codesignTimeout,
+  })
+}
 execFileSync("/usr/bin/codesign", ["--verify", "--strict", target], {
   stdio: "inherit", timeout: codesignTimeout,
 })
