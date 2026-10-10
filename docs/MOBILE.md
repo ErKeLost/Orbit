@@ -215,14 +215,16 @@ Three things are not commands, so they cannot be mirrored by name:
   `pty.exit` and the phone re-emits them locally (`src/lib/remote-pty.ts`), so the
   dock is one component on both surfaces. `open_pi_terminal` still opens a real
   terminal window on the desktop from the phone when a full TUI is wanted.
-* **Media previews.** Images, audio, video and PDFs are served to the desktop
-  webview through the asset protocol, which a phone cannot reach; metadata
-  (`media_meta`) works, and the phone's file view states that the preview is
-  desktop-only instead of drawing a broken image. That protocol's scope is
-  `requireLiteralLeadingDot: false`, because generated media lives under
-  `~/.pi/agent/orbit-media` and the unix default refuses to match a pattern
-  across a dot-prefixed directory. The real fix for the phone is to read the
-  bytes over the paired socket.
+* **Media previews.** The desktop streams images, audio, video and PDFs through
+  Tauri's asset protocol, which is "this webview reads this machine's disk" and
+  therefore means nothing on a phone: the file is not there and the relay only
+  forwards the pairing socket. A phone asks for the bytes over that socket
+  instead (`read_media_file`), capped at `media::MAX_REMOTE_MEDIA_BYTES` = 24 MB,
+  a number `lib/media-preview.ts` mirrors so the phone can skip a request whose
+  answer it already knows; past the cap the view says so and points at the
+  desktop. That protocol's scope is `requireLiteralLeadingDot: false`, because
+  generated media lives under `~/.pi/agent/orbit-media` and the unix default
+  refuses to match a pattern across a dot-prefixed directory.
 * **Editing a project's own metadata** (rename, extra roots) and importing a
   session file: the first needs a `project.update` request, the second opens a
   picker on the device that is holding the phone.

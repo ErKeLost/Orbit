@@ -18,6 +18,20 @@ export function mediaKind(path: string): MediaKind | null {
 
 export const mediaMeta = (path: string) => invoke<MediaMeta | null>("media_meta", { path });
 
+/** The bytes themselves, as base64, for a screen that cannot reach the disk. */
+export type MediaBytes = { mime: string; data: string };
+
+/**
+ * `media_meta`'s counterpart when the file is on another machine.
+ *
+ * The desktop never calls this: it points at the asset protocol and lets the
+ * WebView stream the file. A phone has no such address — the path belongs to the
+ * Host — so it asks for the bytes over the pairing socket instead. Capped by
+ * `media::MAX_REMOTE_MEDIA_BYTES`, which the phone mirrors to skip a request it
+ * knows the answer to (`lib/media-preview.ts`).
+ */
+export const readMediaFile = (path: string) => invoke<MediaBytes>("read_media_file", { path });
+
 export function useMediaMeta(path: string, kind: MediaKind | null) {
   return useQuery({ queryKey: ["media", path], queryFn: () => mediaMeta(path), enabled: kind != null, staleTime: 30_000 });
 }

@@ -58,6 +58,11 @@ pub const REMOTE_COMMANDS: &[&str] = &[
     "search_files",
     "search_sessions",
     "media_meta",
+    // Bytes, not just metadata: the asset protocol is "this webview reads this
+    // machine's disk", which a phone has no equivalent of. Capped by
+    // `media::MAX_REMOTE_MEDIA_BYTES`; the desktop keeps using the asset
+    // protocol and is not affected by that cap.
+    "read_media_file",
     // `clipboard_file_paths`, `read_file_attachment` and `save_media_file` are
     // deliberately absent: their paths come from a picker or a clipboard on the
     // device in front of the user, so on a phone they describe the *phone's*
@@ -210,6 +215,7 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
         ),
         "search_sessions" => json(search::search_sessions(text(&args, "query")?).await?),
         "media_meta" => json(media::media_meta(text(&args, "path")?).await?),
+        "read_media_file" => json(media::read_media_file(text(&args, "path")?).await?),
         // --- git -----------------------------------------------------------
         "git_diff_stats" => json(git::git_diff_stats(text(&args, "cwd")?).await?),
         "git_changed_files" => json(git::git_changed_files(text(&args, "cwd")?).await?),

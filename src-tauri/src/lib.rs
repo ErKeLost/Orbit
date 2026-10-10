@@ -314,6 +314,7 @@ pub fn run() {
             gitlab::gitlab_work_item_comment,
             gitlab::gitlab_mr_diff,
             media::media_meta,
+            media::read_media_file,
             pty_term::pty_spawn,
             pty_term::pty_write,
             pty_term::pty_resize,

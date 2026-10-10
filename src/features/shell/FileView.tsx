@@ -9,7 +9,8 @@ import { saveFileDraft } from "../../lib/file-save";
 import { CodeEditor } from "./CodeEditor";
 import { useWorkspace } from "../../lib/store";
 import { toast } from "../../shared/ui/toast";
-import { formatBytes, mediaKind, useMediaMeta, type MediaKind } from "../../lib/media";
+import { formatBytes, mediaKind, readMediaFile, useMediaMeta, type MediaKind } from "../../lib/media";
+import { base64ToBytes, planMediaPreview } from "../../lib/media-preview";
 import { Markdown } from "../../components/Markdown";
 import { splitMarkdownFrontmatter } from "../../shared/lib/markdownFrontmatter";
 import { MarkdownViewShell, useMarkdownMode } from "../chat/MarkdownModeToggle";
@@ -19,35 +20,64 @@ import { SurfaceTabs } from "./SurfaceTabs";
 import { useActiveWorkspace } from "./shellStore";
 import { GitFileDiffView } from "../source-control/ui/GitFileDiffView";
 
-/** The noun a preview would use, so the phone's message names the kind. */
-const MEDIA_LABEL: Record<MediaKind, string> = { image: "图片", audio: "音频", video: "视频", pdf: "PDF" };
+/** Refusing to preview, or a fetch that failed: the same shape either way. */
+function MediaNotice({ message, path }: { message: string; path: string }) {
+  return (
+    <div className="flex w-full max-w-sm flex-col items-center gap-3 rounded-xl border border-content/10 bg-content/4 px-6 py-8 text-center">
+      <ImagePlus className="size-8 text-content/25" strokeWidth={1.5} />
+      <p className="text-[13px] leading-5 text-content/70">{message}</p>
+      <p className="break-all font-mono text-[11px] leading-4 text-content/40">{path}</p>
+    </div>
+  );
+}
+
+/**
+ * One object URL per payload, revoked when it is replaced or the view goes away.
+ *
+ * The bytes arrive as base64 because the wire has no binary frame small enough
+ * to be worth one; a `Blob` is what `<img>`/`<video>`/`<embed>` can actually
+ * point at. An object URL pins its bytes for as long as the document lives, and
+ * a phone has nowhere to put them, so the revocation is not optional.
+ */
+function useMediaObjectUrl(payload: { mime: string; data: string } | undefined): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (payload === undefined) return;
+    const next = URL.createObjectURL(new Blob([base64ToBytes(payload.data)], { type: payload.mime }));
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [payload]);
+  return url;
+}
 
 function MediaView({ file, kind, remote }: { file: { path: string; name: string }; kind: MediaKind; remote: boolean }) {
   const meta = useMediaMeta(file.path, kind);
-  // The asset protocol streams the bytes; nothing is base64'd over IPC.
-  const src = convertFileSrc(file.path);
-  // The asset protocol is "this webview reads this machine's disk". A paired
-  // phone has no such file, and the bytes are not mirrored over the socket yet
-  // (docs/MOBILE.md), so `src` there only ever resolves to a broken image. Say
-  // what is true instead of showing one.
-  if (remote) {
-    return (
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-auto bg-content/2 p-6">
-        <div className="flex w-full max-w-sm flex-col items-center gap-3 rounded-xl border border-content/10 bg-content/4 px-6 py-8 text-center">
-          <ImagePlus className="size-8 text-content/25" strokeWidth={1.5} />
-          <p className="text-[13px] leading-5 text-content/70">手机端暂不支持预览{MEDIA_LABEL[kind]}，请在电脑上查看。</p>
-          <p className="break-all font-mono text-[11px] leading-4 text-content/40">{file.path}</p>
-        </div>
-        <p className="shrink-0 font-mono text-[11px] text-content/40">
-          {file.name}
-          {meta.data ? ` · ${meta.data.mime} · ${formatBytes(meta.data.size)}` : meta.isFetching ? " · 读取中…" : ""}
-        </p>
-      </div>
-    );
-  }
+  // The asset protocol is "this webview reads this machine's disk", so it is the
+  // whole answer on the desktop and no answer at all on a phone; the phone takes
+  // the bytes over the pairing socket instead. See `lib/media-preview.ts`.
+  const plan = planMediaPreview({ remote, kind, size: meta.data?.size ?? null });
+  const bytes = useQuery({
+    queryKey: ["media-bytes", file.path],
+    queryFn: () => readMediaFile(file.path),
+    enabled: plan.mode === "socket",
+    staleTime: 30_000,
+  });
+  // Unconditional, like every hook here: `plan` moves from `socket` to
+  // `blocked` when `media_meta` answers, so a hook call that followed it would
+  // change the hook order between renders.
+  const objectUrl = useMediaObjectUrl(bytes.data);
+  const src = plan.mode === "asset" ? convertFileSrc(file.path) : objectUrl;
+  const notice =
+    plan.mode === "blocked" ? plan.message
+    : bytes.isError ? String(bytes.error)
+    : null;
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-auto bg-content/2 p-6">
-      {kind === "image" ? (
+      {notice !== null ? (
+        <MediaNotice message={notice} path={file.path} />
+      ) : src == null ? (
+        <Loader className="size-5 animate-spin text-content/30" />
+      ) : kind === "image" ? (
         <button
           type="button"
           title="点击放大"
