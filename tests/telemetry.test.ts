@@ -16,12 +16,13 @@ test('failed or cancelled compaction never displays a successful token reduction
  const failed=observe(started,{type:'compaction_end',reason:'manual',result:null,errorMessage:'quota'},3)
  expect(cancelled.compaction?.status).toBe('cancelled');expect(failed.compaction?.status).toBe('error');expect(failed.compaction?.estimatedTokensAfter).toBeUndefined()
 })
-test('Pi full patch is preferred over its display diff; write is not falsely marked as a new file',()=>{
+test('Pi full patch is preferred; write shows added contents without claiming an old-file snapshot',()=>{
  expect(getChange('edit',{path:'x.ts'},{details:{patch:'--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n-a\n+b',diff:'not a patch'}})?.kind).toBe('patch')
  expect(getChange('edit',{path:'x.ts'},{details:{diff:'+changed'}})).toBeNull()
- expect(getChange('write',{path:'x.ts',content:'new'},{})).toEqual({kind:'file',name:'x.ts',contents:'new',label:'写入内容'})
+ expect(getChange('write',{path:'x.ts',content:'new'},{})).toEqual({kind:'snippet',name:'x.ts',before:'',after:'new',label:'写入内容（全部新增）'})
+ expect(getToolCodePresentation('write',{path:'x.ts',content:'new'},'done').result).toMatchObject({kind:'snippet',before:'',after:'new'})
 })
-test('tool code presentations use diffs for read, bash, and edit without rendering oversized payloads',()=>{
+test('read and bash use plain code; edit and patches use diffs without oversized payloads',()=>{
  expect(getToolCodePresentation('read',{path:'src/app.ts'},'const value = 1')).toMatchObject({result:{kind:'file',name:'src/app.ts',label:false}})
  expect(getToolCodePresentation('bash',{command:'cargo test'},'ok')).toEqual({request:{kind:'file',contents:'cargo test',name:'command.sh',label:'命令'},result:{kind:'file',contents:'ok',name:'terminal-output.log',label:'结果'}})
  const patch='--- a/src/app.ts\n+++ b/src/app.ts\n@@ -1 +1 @@\n-old\n+new'

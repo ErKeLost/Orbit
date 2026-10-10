@@ -70,7 +70,7 @@ export function getChange(toolName: string, args: unknown, result: unknown): Cha
   }
   if (/(^|[_-])write([_-]|$)|^write$/.test(normalized)) {
     const contents = text(input, ["content", "contents"]);
-    if (withinPreviewLimit(contents)) return { kind: "file", contents, name, label: "写入内容" };
+    if (withinPreviewLimit(contents)) return { kind: "snippet", before: "", after: contents, name, label: "写入内容（全部新增）" };
   }
   return null;
 }
