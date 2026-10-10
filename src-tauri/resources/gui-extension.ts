@@ -175,11 +175,35 @@ export const ARK_IMAGE_SIZES:Record<string,Record<string,string>>={
  * which is what makes an unconfigured install behave exactly as it did before
  * the file could name a provider.
  */
+/**
+ * 一种生成能力的规格。参数项的值可以不是字面量，而是「从哪来」：
+ * `sizes` 取该模型自己的尺寸表，`catalog` 取该 kind 的模型列表。
+ */
+export type MediaParamSpec={
+  from?:'sizes'|'catalog'
+  type?:'string'|'integer'|'number'|'boolean'
+  enum?:string[]
+  min?:number
+  max?:number
+  default?:unknown
+  description?:string
+}
+
+export type MediaKindSpec={
+  label?:string
+  /** 调用怎么发，不是生成什么。`sync` 直接回字节；`async-task` 起任务再轮询。 */
+  recipe:'sync'|'async-task'
+  output?:{ext?:string;dir?:string}
+  params:Record<string,MediaParamSpec>
+}
+
 export type ImageSettings={
   provider:{id:string;name:string;baseUrl:string}
   models:{id:string;name?:string}[]
   sizes:Record<string,Record<string,string>>
   defaults:{model?:string;resolution:string;aspect?:string}
+  /** 能力表。缺省时退回内置的 `image` 一条，所以老配置行为不变。 */
+  kinds:Record<string,MediaKindSpec>
 }
 
 const isProviderId=(value:unknown):value is string=>typeof value==='string'&&/^[A-Za-z0-9._-]{1,64}$/.test(value)
@@ -202,6 +226,7 @@ export function resolveImageSettings(stored:unknown):ImageSettings{
   const models=Array.isArray(raw.models)
     ? raw.models.flatMap((entry)=>{const id=text((entry as Record<string,unknown>)?.id);return id?[{id,name:text((entry as Record<string,unknown>)?.name)}]:[]})
     : []
+  const parsedKinds=parseKinds(raw.kinds)
   const sizes=raw.sizes&&typeof raw.sizes==='object'
     ? Object.fromEntries(Object.entries(raw.sizes as Record<string,unknown>).flatMap(([resolution,aspects])=>{
         if(!aspects||typeof aspects!=='object')return []
@@ -218,6 +243,7 @@ export function resolveImageSettings(stored:unknown):ImageSettings{
     models:models.length?models:ARK_IMAGE_MODELS,
     sizes:Object.keys(sizes).length?sizes:ARK_IMAGE_SIZES,
     defaults:{resolution:DEFAULT_IMAGE_RESOLUTION},
+    kinds:Object.keys(parsedKinds).length?parsedKinds:BUILTIN_KINDS,
   }
   const resolutions=Object.keys(effective.sizes)
   // The flat keys are what this file held before it could name a provider, and
@@ -230,6 +256,61 @@ export function resolveImageSettings(stored:unknown):ImageSettings{
   if(wantedAspect&&Object.hasOwn(effective.sizes[resolution]??{},wantedAspect))effective.defaults.aspect=wantedAspect
   if(wantedModel&&effective.models.some(model=>model.id===wantedModel))effective.defaults.model=wantedModel
   return effective
+}
+
+/** 没配 `kinds` 时的内置能力表 —— 一条，和这个功能只有图片时的行为逐字一致。 */
+export const BUILTIN_KINDS:Record<string,MediaKindSpec>={
+  image:{
+    label:'图片',
+    recipe:'sync',
+    output:{ext:'png',dir:'orbit-media'},
+    params:{
+      model:{from:'catalog',default:''},
+      resolution:{from:'sizes',default:DEFAULT_IMAGE_RESOLUTION},
+      aspect:{from:'sizes',default:''},
+    },
+  },
+}
+
+const RECIPES=['sync','async-task'] as const
+
+function parseKinds(value:unknown):Record<string,MediaKindSpec>{
+  if(!value||typeof value!=='object')return {}
+  const out:Record<string,MediaKindSpec>={}
+  for(const [kind,raw] of Object.entries(value as Record<string,unknown>)){
+    if(!raw||typeof raw!=='object')continue
+    const spec=raw as Record<string,unknown>
+    const recipe=typeof spec.recipe==='string'&&(RECIPES as readonly string[]).includes(spec.recipe)
+      ? spec.recipe as MediaKindSpec['recipe']
+      : null
+    if(!recipe)continue
+    const params:Record<string,MediaParamSpec>={}
+    if(spec.params&&typeof spec.params==='object'){
+      for(const [name,item] of Object.entries(spec.params as Record<string,unknown>)){
+        if(!item||typeof item!=='object')continue
+        const raw=item as Record<string,unknown>
+        const clean:MediaParamSpec={}
+        if(raw.from==='sizes'||raw.from==='catalog')clean.from=raw.from
+        if(['string','integer','number','boolean'].includes(String(raw.type)))clean.type=raw.type as MediaParamSpec['type']
+        if(Array.isArray(raw.enum))clean.enum=raw.enum.filter((v):v is string=>typeof v==='string')
+        if(typeof raw.min==='number')clean.min=raw.min
+        if(typeof raw.max==='number')clean.max=raw.max
+        if('default' in raw)clean.default=raw.default
+        if(typeof raw.description==='string')clean.description=raw.description
+        params[name]=clean
+      }
+    }
+    const output=spec.output&&typeof spec.output==='object'?spec.output as Record<string,unknown>:{}
+    out[kind]={
+      ...(typeof spec.label==='string'&&spec.label.trim()?{label:spec.label.trim()}:{}),
+      recipe,
+      ...(typeof output.ext==='string'||typeof output.dir==='string'
+        ?{output:{...(typeof output.ext==='string'?{ext:output.ext}:{}),...(typeof output.dir==='string'?{dir:output.dir}:{})}}
+        :{}),
+      params,
+    }
+  }
+  return out
 }
 
 const IMAGE_CONFIG_PATH=join(homedir(),'.pi/agent/image.json')
