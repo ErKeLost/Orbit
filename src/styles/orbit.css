@@ -342,7 +342,9 @@ html:not(.theme-light) .agent-markdown .shiki span {
   }
 
   .mobile-composer-dock {
-    padding-bottom: max(6px, var(--safe-bottom));
+    /* `--keyboard-inset` is 0 whenever the native side already shrank the
+       WebView, so the two never add up. */
+    padding-bottom: max(6px, var(--safe-bottom), var(--keyboard-inset, 0px));
   }
 
   .mobile-drawer {

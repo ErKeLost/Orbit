@@ -14,6 +14,7 @@ import { SessionSidebar } from "./SessionSidebar";
 import { TitleIconButton } from "./chrome";
 import { useActiveWorkspace, useShell } from "./shellStore";
 import { compactTitle } from "../../lib/session-visual";
+import { observeKeyboardInset } from "../../lib/keyboard-inset";
 import { mergeProjectSessions, useProjectSessions } from "../../hooks/use-project-sessions";
 
 /**
@@ -57,6 +58,11 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
   useEffect(() => {
     useShell.getState().setSidebarTab("sessions");
   }, []);
+  // The keyboard covers the composer on Android unless something shrinks the
+  // shell; `MainActivity` pads the WebView, and this publishes the same number
+  // for the shells that resize the visual viewport instead. See
+  // `src/lib/keyboard-inset.ts` for why the two never overlap.
+  useEffect(() => observeKeyboardInset(), []);
 
   return (
     <div className="mobile-shell flex h-full min-h-0 flex-col bg-background-base text-content">

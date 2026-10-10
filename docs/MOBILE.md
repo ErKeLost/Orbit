@@ -40,6 +40,27 @@ the same injection path and the same accessibility grant as `gui_task`. The
 computer is the executor for every action; the phone sends normalized
 coordinates and never learns about Retina scaling or display arrangement.
 
+## The keyboard and the composer
+
+An Android WebView is never resized for the on-screen keyboard on its own. The
+activity draws edge-to-edge (`MainActivity.enableEdgeToEdge`) and Android 15+
+stopped resizing the window when the IME appears, so a 100%-tall shell keeps its
+full height and the composer sits *under* the keyboard.
+
+`MainActivity.onWebViewCreate` pads the WebView's parent — the activity's
+content frame, which is where wry's `setContentView` puts it — by the IME inset.
+That is what resizes the WebView, so the page's layout viewport becomes the area
+the user can actually see and no JavaScript has to know where the keyboard is.
+Only the IME inset is applied: the system bars stay with `env(safe-area-inset-*)`
+in CSS, and padding both would double the gap whenever the keyboard is closed.
+
+`src/lib/keyboard-inset.ts` publishes the same number as `--keyboard-inset` for
+shells that resize the *visual* viewport instead (iOS, the `?preview=mobile`
+browser preview). The two cannot overlap: once the native half has shrunk the
+WebView, the web half measures a shrunken viewport and reports 0.
+`tests/keyboard-inset.test.ts` pins that arithmetic, including the threshold that
+keeps browser chrome from being mistaken for a keyboard.
+
 ## Runtime boundary
 
 ```text
