@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Switch } from "../UI";
 import { Icon } from "../Icon";
@@ -8,6 +8,13 @@ import { imageConfig, refreshCapabilities, report, saveImageConfig, type ImageCo
 import { useWorkspace } from "../../lib/store";
 import { availableMediaModels, parseCapabilities } from "../../lib/capabilities";
 import "../..//styles/provider-page.css";
+
+const BUILTIN_IMAGE_MODELS = [
+  { id: "doubao-seedream-5-0-flash-260915", name: "Seedream 5.0 Flash" },
+  { id: "doubao-seedream-5-0-260128", name: "Seedream 5.0 Lite" },
+  { id: "doubao-seedream-4-5-251128", name: "Seedream 4.5" },
+  { id: "doubao-seedream-4-0-20260415", name: "Seedream 4.0" },
+] as const;
 
 /**
  * 第三方接入：一个端点，和它提供的能力。
@@ -72,12 +79,39 @@ function CapabilityRow({
 
 export function IntegrationsPanel() {
   const desktop = useWorkspace((state) => state.runtimeTarget === "desktop");
+  const online = useWorkspace((state) => state.connection === "online");
   const capabilities = parseCapabilities(useWorkspace((state) => state.statuses?.capabilities));
   const config = useQuery({ queryKey: ["pi", "image-config"], queryFn: imageConfig, enabled: desktop });
   const [endpointOpen, setEndpointOpen] = useState(false);
 
-  const models = availableMediaModels(capabilities?.media.image ?? []);
-  const kinds = Object.entries(config.data?.kinds ?? {});
+  // Capabilities are published by Pi's extension, not by image_config. Refresh
+  // them when this page is entered so the model selector does not depend on
+  // having visited General or on a status event emitted before mount.
+  useEffect(() => {
+    if (desktop && online) void refreshCapabilities().catch(report);
+  }, [desktop, online]);
+
+  const discoveredModels = availableMediaModels(capabilities?.media.image ?? []);
+  const configuredModels = (config.data?.models ?? []).map((model) => ({
+    provider: config.data?.provider?.id ?? config.data?.defaultProviderId ?? "volcengine",
+    id: model.id,
+    name: model.name,
+    available: config.data?.hasApiKey === true,
+  }));
+  // The extension intentionally falls back to Ark's built-in catalog and one
+  // image capability when image.json has no explicit lists. Mirror that
+  // resolved shape here; otherwise the page shows 0/0 and renders an empty
+  // select even though generate_image can already use the built-ins.
+  const models = discoveredModels.length
+    ? discoveredModels
+    : configuredModels.length
+      ? configuredModels
+      : BUILTIN_IMAGE_MODELS.map((model) => ({
+        provider: config.data?.provider?.id ?? config.data?.defaultProviderId ?? "volcengine",
+        ...model,
+        available: config.data?.hasApiKey === true,
+      }));
+  const kinds = Object.entries(config.data?.kinds ?? { image: { label: "图片", enabled: true } });
 
   async function write(patch: Parameters<typeof saveImageConfig>[0], announce: string) {
     try {
@@ -95,7 +129,7 @@ export function IntegrationsPanel() {
     write({ kinds: { ...(config.data?.kinds ?? {}), [kind]: { ...spec, enabled } } }, enabled ? `已启用 ${spec.label ?? kind}` : `已关闭 ${spec.label ?? kind}`);
 
   return (
-    <section className="provider-settings" aria-label="第三方接入">
+    <section className="provider-settings integrations-settings" aria-label="第三方接入">
       <div className="provider-detail">
         <header className="provider-detail-header">
           <span className="provider-detail-mark">

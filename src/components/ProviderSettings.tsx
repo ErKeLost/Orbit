@@ -435,7 +435,7 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
   const visibleModels = useMemo(() => models.filter((model) => `${model.id} ${modelDisplayName(model)}`.toLowerCase().includes(search.toLowerCase())), [models, search]);
   const selectDefaultModel = (id: string) => update({ defaultModelId: id });
   return (
-    <section className="provider-settings">
+    <section className="provider-settings provider-settings-editor">
       <aside className="provider-browser" aria-label="已添加的 Provider">
         <ProviderSearch ariaLabel="搜索供应商" placeholder="搜索供应商" value={providerSearch} onChange={setProviderSearch} />
         <div className="provider-browser-list">
