@@ -45,10 +45,33 @@
         --color-background-base: hsl(var(--theme-hue) var(--theme-saturation) var(--background-lightness));
       }
       html.theme-light { --background-lightness: 97%; }
-      html, body { margin: 0; background: var(--color-background-base); }
+      html, body, #boot-splash { margin: 0; background: var(--color-background-base); }
+
+      /* 借鉴 monocode：不透过的启动覆盖层，在任何 JS 运行前就能画出 logo，
+         React 挂载后淡出。窗口立即可见也不会闪白屏或桌面背景。 */
+      #boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+        transition: opacity 0.16s ease;
+      }
+      #boot-splash.boot-splash-out { opacity: 0; }
+      #boot-splash img {
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
+        display: block;
+      }
     </style>
   </head>
   <body>
+    <div id="boot-splash" aria-hidden="true">
+      <img src="/favicon.png" alt="" />
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

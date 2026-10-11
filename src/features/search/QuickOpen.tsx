@@ -95,12 +95,12 @@ function QuickOpenOverlay({ onClose }: { onClose: () => void }) {
 
   type Row =
     | { kind: "file"; key: string; label: string; path: string; relative: string; line: number | null }
-    | { kind: "command"; key: string; label: string; run: () => void }
+    | { kind: "command"; key: string; label: string; icon: IconComponent; run: () => void }
     | { kind: "project"; key: string; label: string; path: string };
 
   const rows = useMemo<Row[]>(() => {
     if (commandMode) {
-      return matchedCommands.map((command) => ({ kind: "command", key: command.id, label: command.label, run: command.run }));
+      return matchedCommands.map((command) => ({ kind: "command" as const, key: command.id, label: command.label, icon: command.icon, run: command.run }));
     }
     return [
       ...fileHits.map((hit) => ({ kind: "file" as const, key: `${hit.path}:${hit.line ?? 0}`, label: hit.relative, path: hit.path, relative: hit.relative, line: hit.line })),

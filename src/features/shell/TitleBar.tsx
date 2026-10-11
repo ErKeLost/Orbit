@@ -1,6 +1,6 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { useWorkspace } from "../../lib/store";
-import { setTitleTabDrop, useTitleTabDrop } from "./paneDrop";
+import { useTitleTabDrop } from "./paneDrop";
 import { PanelLeft, Plus, Settings, Terminal, X } from "../../shared/ui/icons";
 import { IS_MAC, MOD, TitleIconButton } from "./chrome";
 import { useWorkspaceTabs } from "./use-workspace-tabs";

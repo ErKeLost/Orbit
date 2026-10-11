@@ -1,12 +1,11 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { readTextFile } from "../../lib/git";
 import { onFilesInvalidated, watchFilePath } from "../files/model/fileWatch";
 import { setDraftFor, useDrafts } from "../../lib/drafts";
 import { saveFileDraft } from "../../lib/file-save";
-import { CodeEditor } from "./CodeEditor";
 import { useWorkspace } from "../../lib/store";
 import { toast } from "../../shared/ui/toast";
 import { formatBytes, mediaKind, readMediaFile, useMediaMeta, type MediaKind } from "../../lib/media";
@@ -24,6 +23,13 @@ import { GitFileDiffView } from "../source-control/ui/GitFileDiffView";
 import { CommitDiffView } from "../source-control/ui/CommitDiffView";
 import { WorkingTreeDiffView } from "../source-control/ui/WorkingTreeDiffView";
 
+/** CodeMirror 全家桶只在真的打开文件编辑时才加载，不进首屏 chunk。 */
+const CodeEditor = lazy(() => import("./CodeEditor").then((m) => ({ default: m.CodeEditor })));
+const EditorFallback = (
+  <div className="grid h-full place-items-center text-content/40">
+    <Loader className="size-4 animate-spin" />
+  </div>
+);
 /** Refusing to preview, or a fetch that failed: the same shape either way. */
 function MediaNotice({ message, path }: { message: string; path: string }) {
   return (
@@ -249,7 +255,7 @@ export function FileView({
       {file?.commit ? (
         <CommitDiffView cwd={cwd} sha={file.commit.sha} />
       ) : file?.changes && file.diff ? (
-        <WorkingTreeDiffView cwd={cwd} kind={file.diff} />
+        <WorkingTreeDiffView cwd={cwd} focusKind={file.diff} />
       ) : diff ? (
         <GitFileDiffView cwd={cwd} path={file.path} kind={diff} />
       ) : isDirectory ? (
@@ -273,13 +279,15 @@ export function FileView({
             </div>
           }
           source={
-            <CodeEditor
-              key={`${file.path}:source`}
-              value={draft ?? contents.data}
-              fileName={file.name}
-              onChange={(text) => setDraftFor(file.path, text)}
-              onSave={() => void save()}
-            />
+            <Suspense fallback={EditorFallback}>
+              <CodeEditor
+                key={`${file.path}:source`}
+                value={draft ?? contents.data}
+                fileName={file.name}
+                onChange={(text) => setDraftFor(file.path, text)}
+                onSave={() => void save()}
+              />
+            </Suspense>
           }
         />
       ) : (
@@ -289,13 +297,15 @@ export function FileView({
           ) : contents.isError ? (
             <p className="px-4 py-3 text-[12px] text-content/50">{String(contents.error)}</p>
           ) : (
-            <CodeEditor
-              key={file.path}
-              value={draft ?? contents.data ?? ""}
-              fileName={file.name}
-              onChange={(text) => setDraftFor(file.path, text)}
-              onSave={() => void save()}
-            />
+            <Suspense fallback={EditorFallback}>
+              <CodeEditor
+                key={file.path}
+                value={draft ?? contents.data ?? ""}
+                fileName={file.name}
+                onChange={(text) => setDraftFor(file.path, text)}
+                onSave={() => void save()}
+              />
+            </Suspense>
           )}
         </div>
       )}
