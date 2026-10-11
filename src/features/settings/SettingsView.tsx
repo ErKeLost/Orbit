@@ -6,7 +6,7 @@ import { PageHeader } from "../../shared/ui/controls";
 import { RotateCcw, Search } from "../../shared/ui/icons";
 import { Popover } from "../../shared/ui/Popover";
 import { ALL_SECTIONS } from "./SettingsNav";
-import { IS_MAC } from "../shell/chrome";
+import { IS_MAC, TrafficLightSpacer } from "../shell/chrome";
 import { sectionOf } from "./SettingsNav";
 import { AppearancePage } from "./AppearancePage";
 import { SkillsPage } from "./SkillsPage";
@@ -109,6 +109,7 @@ export function SettingsView() {
   return (
     <div role="region" aria-label="设置" data-app-settings className="flex min-h-0 min-w-0 flex-1 flex-col text-content">
       <div className="flex h-10 shrink-0 select-none items-center border-b border-stroke" data-tauri-drag-region="deep">
+        <TrafficLightSpacer />
         <div className="flex min-w-0 flex-1 items-center gap-2 px-3 text-[13px]">
           <span className="shrink-0 text-content/45">设置</span>
           <span aria-hidden className="shrink-0 text-content/25">/</span>

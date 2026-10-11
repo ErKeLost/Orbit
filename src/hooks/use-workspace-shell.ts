@@ -283,6 +283,12 @@ export function useWorkspaceShortcuts(
         event.preventDefault();
         useWorkspace.getState().set({ panel: "search" });
       }
+      if (event.key.toLowerCase() === "p") {
+        // monocode 的 ⌘P：转到文件 / `>` 命令的浮层。
+        event.preventDefault();
+        const shell = useShell.getState();
+        shell.setQuickOpen(!shell.quickOpen);
+      }
       if (event.key.toLowerCase() === "f" && event.shiftKey) {
         // VS Code's other half of search: ⌘F finds in the open file (the
         // editor owns that key itself), ⌘⇧F searches the whole workspace.

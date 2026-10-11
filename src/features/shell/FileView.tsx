@@ -21,6 +21,8 @@ import { useActiveWorkspace, useShell } from "./shellStore";
 import { DirectoryView } from "./DirectoryView";
 import { usePathMeta } from "../../lib/path-meta";
 import { GitFileDiffView } from "../source-control/ui/GitFileDiffView";
+import { CommitDiffView } from "../source-control/ui/CommitDiffView";
+import { WorkingTreeDiffView } from "../source-control/ui/WorkingTreeDiffView";
 
 /** Refusing to preview, or a fetch that failed: the same shape either way. */
 function MediaNotice({ message, path }: { message: string; path: string }) {
@@ -169,20 +171,23 @@ export function FileView({
   const pane = useActiveWorkspace((workspace) => workspace.panes[paneId]);
   const file = pane?.files.find((item) => item.path === pane.activeFile) ?? pane?.files[0] ?? null;
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
+  // 审阅标签页（单文件 diff、整版变更、历史提交）都是合成路径，后面没有
+  // 真实文件，磁盘相关的 stat / 读取 / 监听全部跳过。
+  const review = file != null && (file.diff != null || file.changes != null || file.commit != null);
   // A diff tab is a read-only view of a working-tree comparison, not a file.
   const diff = file?.diff;
-  const kind = file && !diff ? mediaKind(file.path) : null;
+  const kind = file && !review ? mediaKind(file.path) : null;
   // 目录不是「恰好没有扩展名的媒体」：扩展名里根本没有这个信息，只有 stat 有。
   // 所以每一条路径都问一次磁盘，同时接受标签页带过来的答案（树本来就知道那是
   // 文件夹），磁盘仍然是否决权更高的那个。
   //
   // 顺序是刻意的：不阻塞地先发一次文本读取，让常见情况（打开源码文件）不必等
   // 一次往返；只有目录会白跑那一趟，而目录本来就不常从聊天里的路径块打开。
-  const stat = usePathMeta(file && !diff ? file.path : null, !diff);
+  const stat = usePathMeta(file && !review ? file.path : null, !review);
   const isDirectory = stat.data?.isDir ?? file?.isDir ?? false;
   const missing = stat.isSuccess && stat.data === null;
   // 只对真正的文件读文本：目录读下去只会得到 `EISDIR (os error 21)`。
-  const textEnabled = file != null && kind == null && diff == null && !isDirectory;
+  const textEnabled = file != null && !review && kind == null && !isDirectory;
   const markdown = file ? isMarkdownPath(file.path) : false;
   // Like Orbit, markdown documents open as preview and remember the mode per file.
   const [mode, setMode] = useMarkdownMode(file?.path ?? "", "preview");
@@ -241,7 +246,11 @@ export function FileView({
       {/* Orbit keeps a pane's tabs inside the pane (`FilePane` → `SurfaceTabs`),
           so the file name sits above the content it belongs to. */}
       <SurfaceTabs paneId={paneId} showGrip={showGrip} onPaneDragStart={onPaneDragStart} />
-      {diff ? (
+      {file?.commit ? (
+        <CommitDiffView cwd={cwd} sha={file.commit.sha} />
+      ) : file?.changes && file.diff ? (
+        <WorkingTreeDiffView cwd={cwd} kind={file.diff} />
+      ) : diff ? (
         <GitFileDiffView cwd={cwd} path={file.path} kind={diff} />
       ) : isDirectory ? (
         <DirectoryView
@@ -290,7 +299,7 @@ export function FileView({
           )}
         </div>
       )}
-      <div className={`flex h-7 shrink-0 items-center gap-2 border-t border-stroke px-3 font-mono text-[11px] text-content/45 ${diff ? "hidden" : ""}`}>
+      <div className={`flex h-7 shrink-0 items-center gap-2 border-t border-stroke px-3 font-mono text-[11px] text-content/45 ${review ? "hidden" : ""}`}>
         <span className="min-w-0 truncate">{relative}</span>
         {remote && dirty ? (
           <button

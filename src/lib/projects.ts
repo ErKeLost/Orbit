@@ -4,6 +4,58 @@ export type Project = {
   path: string
   name: string
   roots?: string[]
+  /** 项目外观（monocode 的每项目外观）：色板索引 / 自定义色 / 置顶 / Logo 图片。 */
+  colorIndex?: number
+  customColor?: string
+  pinned?: boolean
+  logoPath?: string
+  /** 存在即已归档：不出现在项目列表，可从「已归档」里恢复。 */
+  archivedAt?: number
+}
+
+/** Chrome 风格项目色板；[0] 是「未设置」的灰。 */
+export const PROJECT_PALETTE = [
+  "hsl(210 8% 58%)",
+  "hsl(211 92% 62%)",
+  "hsl(12 80% 58%)",
+  "hsl(45 90% 55%)",
+  "hsl(142 55% 50%)",
+  "hsl(330 70% 62%)",
+  "hsl(280 55% 62%)",
+  "hsl(175 55% 48%)",
+  "hsl(25 85% 58%)",
+] as const
+
+/** 未设置颜色时的稳定派生色：同一路径永远同一颜色。 */
+export function derivedProjectColor(path: string): string {
+  let hash = 0
+  for (let index = 0; index < path.length; index++) {
+    hash = (hash * 31 + path.charCodeAt(index)) >>> 0
+  }
+  return PROJECT_PALETTE[(hash % (PROJECT_PALETTE.length - 1)) + 1]
+}
+
+/** 项目颜色：显式设置优先，否则返回 null（调用方决定用默认还是派生色）。 */
+export function projectColor(project: Project): string | null {
+  if (project.customColor && /^#[0-9a-fA-F]{6}$/.test(project.customColor)) return project.customColor
+  if (project.colorIndex != null && project.colorIndex >= 1 && project.colorIndex < PROJECT_PALETTE.length) {
+    return PROJECT_PALETTE[project.colorIndex]
+  }
+  return null
+}
+
+/** 置顶优先的稳定排序。 */
+export function sortPinnedFirst(projects: Project[]): Project[] {
+  return [...projects].sort((a, b) => Number(b.pinned ?? false) - Number(a.pinned ?? false))
+}
+
+/** 在列表里的项目 = 未归档。 */
+export function activeProjects(projects: Project[]): Project[] {
+  return projects.filter(project => project.archivedAt == null)
+}
+
+export function archivedProjects(projects: Project[]): Project[] {
+  return projects.filter(project => project.archivedAt != null)
 }
 
 const PROJECTS_KEY = "pi-gui.projects.v1"
@@ -34,6 +86,12 @@ function normalizeProject(project: Project): Project {
     path,
     name: project.name.trim() || path.split("/").filter(Boolean).at(-1) || "/",
     ...(roots.length > 1 ? { roots } : {}),
+    // 外观字段（颜色 / Logo / 置顶）原样保留，未设置就不写入。
+    ...(project.colorIndex != null ? { colorIndex: project.colorIndex } : {}),
+    ...(project.customColor ? { customColor: project.customColor } : {}),
+    ...(project.pinned ? { pinned: true } : {}),
+    ...(project.logoPath ? { logoPath: project.logoPath } : {}),
+    ...(project.archivedAt != null ? { archivedAt: project.archivedAt } : {}),
   }
 }
 

@@ -26,6 +26,12 @@ export type SidebarTab = "sessions" | "files" | "changes";
 export type CollapsedRailMode = "compact" | "hidden";
 export type DockPosition = "bottom" | "top" | "left" | "right";
 export type OpenFile = { path: string; name: string; preview: boolean; /** Set on a diff tab: the working-tree comparison it shows. */ diff?: "staged" | "unstaged"; /**
+   * Set on an all-changes review tab: every staged/unstaged file in one view.
+   * The path is synthetic (`changes:<kind>`); there is no real file behind it.
+   */ changes?: true; /**
+   * Set on a commit review tab: one historical commit's files and diffs.
+   * The path is synthetic (`commit:<sha>`).
+   */ commit?: { sha: string; shortSha: string; subject: string }; /**
    * Known on a folder opened from the tree or a listing, so the pane does not
    * have to ask the disk before it knows not to read a directory as text.
    * `lib/path-meta` stays the authority; this only avoids the first round trip.
@@ -179,6 +185,9 @@ type ShellState = Persisted & {
   fileOpenSeq: number;
   projectRailOpen: boolean;
   sessionSidebarOpen: boolean;
+  /** monocode 风格的 ⌘P 快速打开浮层（转到文件 / `>` 命令）。 */
+  quickOpen: boolean;
+  setQuickOpen: (open: boolean) => void;
   sidebarTab: SidebarTab;
   terminalPosition: DockPosition;
   terminalSize: number;
@@ -202,14 +211,17 @@ type ShellState = Persisted & {
   /** Split a session pane and open a new session in it (Orbit ⌘D / ⌘⇧D). */
   splitSessionPane: (paneId: string, dir: "right" | "down") => string | null;
   bindSessionConnection: (paneId: string, connectionId: string) => void;
-  /** Move a pane out into a workspace of its own (Orbit `onDetachPane`). */
-  detachPaneToWorkspace: (paneId: string) => WorkspaceTab | null;
+  /** Move a pane out into a workspace of its own (Orbit `onDetachPane`).
+   *  给出 targetTabId/position 时插到那个工作区标签页的前后（monocode 的
+   *  标题栏插入行为），否则加在当前标签页后面。 */
+  detachPaneToWorkspace: (paneId: string, targetTabId?: string, position?: "before" | "after") => WorkspaceTab | null;
   bindWorkspaceConnection: (id: string, connectionId: string) => void;
   setWorkspaceCwd: (id: string, cwd: string) => void;
   focusPane: (paneId: string) => void;
   /** Open a file in the focused editor pane, splitting one off when there is none.
-   * `diff` opens the tab as a working-tree diff instead of an editable file. */
-  openFile: (path: string, options?: { pin?: boolean; pane?: string; diff?: "staged" | "unstaged"; isDir?: boolean }) => void;
+   * `diff` opens the tab as a working-tree diff instead of an editable file;
+   * `changes`/`commit` open the review tabs (synthetic paths, no real file). */
+  openFile: (path: string, options?: { pin?: boolean; pane?: string; diff?: "staged" | "unstaged"; isDir?: boolean; changes?: true; commit?: { sha: string; shortSha: string; subject: string }; name?: string }) => void;
   pinFile: (path: string, pane?: string) => void;
   closeFile: (path: string, pane?: string) => void;
   focusFile: (path: string | null, pane?: string) => void;
@@ -294,6 +306,8 @@ export const useShell = create<ShellState>((set, get) => {
     fileOpenSeq: 0,
     projectRailOpen: readBool(PROJECT_RAIL_KEY, true),
     sessionSidebarOpen: readBool(SESSION_SIDEBAR_KEY, true),
+    quickOpen: false,
+    setQuickOpen: (open) => set({ quickOpen: open }),
     sidebarTab: (() => {
       try {
         const value = localStorage.getItem(SIDEBAR_TAB_KEY);
@@ -353,7 +367,7 @@ export const useShell = create<ShellState>((set, get) => {
       persist({ workspaces, activeWorkspaceId });
     },
 
-    detachPaneToWorkspace: (paneId) => {
+    detachPaneToWorkspace: (paneId, targetTabId, position) => {
       const state = get();
       const index = activeIndex(state);
       const source = state.workspaces[index];
@@ -383,7 +397,12 @@ export const useShell = create<ShellState>((set, get) => {
       };
       const workspaces = [...state.workspaces];
       workspaces[index] = sourceNext;
-      workspaces.splice(index + (ids.length > 1 ? 1 : 0), 0, workspace);
+      let insertAt = index + (ids.length > 1 ? 1 : 0);
+      if (targetTabId) {
+        const target = workspaces.findIndex((item) => item.id === targetTabId);
+        if (target >= 0) insertAt = position === "after" ? target + 1 : target;
+      }
+      workspaces.splice(insertAt, 0, workspace);
       set({ workspaces, activeWorkspaceId: workspace.id });
       persist({ workspaces, activeWorkspaceId: workspace.id });
       return workspace;
@@ -438,12 +457,16 @@ export const useShell = create<ShellState>((set, get) => {
       const index = activeIndex(state);
       const workspace = state.workspaces[index];
       const found = findFile(workspace, path);
+      const review = {
+        ...(options?.changes ? { changes: true as const } : {}),
+        ...(options?.commit ? { commit: options.commit } : {}),
+      };
       if (found) {
         patchActive((current) => {
           const pane = current.panes[found.paneId];
           const files = pane.files.map((file) =>
             file.path === path
-              ? { ...file, preview: options?.pin ? false : file.preview, diff: options?.diff, ...(options?.isDir ? { isDir: true } : {}) }
+              ? { ...file, preview: options?.pin ? false : file.preview, diff: options?.diff, ...(options?.isDir ? { isDir: true } : {}), ...(options?.name ? { name: options.name } : {}), ...review }
               : file,
           );
           return { ...current, panes: { ...current.panes, [found.paneId]: { files, activeFile: path } }, activePane: found.paneId };
@@ -452,7 +475,7 @@ export const useShell = create<ShellState>((set, get) => {
       }
       const requested = options?.pane && workspace.panes[options.pane] ? options.pane : null;
       const target = requested ?? (workspace.panes[workspace.activePane] ? workspace.activePane : Object.keys(workspace.panes)[0] ?? null);
-      const entry: OpenFile = { path, name: fileName(path), preview: !options?.pin, ...(options?.diff ? { diff: options.diff } : {}), ...(options?.isDir ? { isDir: true } : {}) };
+      const entry: OpenFile = { path, name: options?.name ?? fileName(path), preview: !options?.pin, ...(options?.diff ? { diff: options.diff } : {}), ...(options?.isDir ? { isDir: true } : {}), ...review };
       if (target) {
         patchActive((current) => {
           const pane = current.panes[target];

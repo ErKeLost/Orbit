@@ -134,8 +134,8 @@
 }
 
 .remote-host-status-dot[data-online="true"] {
-  border-color: var(--color-content);
-  background: var(--color-content);
+  border-color: var(--color-accent);
+  background: var(--color-accent);
 }
 
 .remote-host-details {

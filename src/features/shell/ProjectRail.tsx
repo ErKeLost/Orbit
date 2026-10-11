@@ -1,7 +1,19 @@
 import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useWorkspace, type Panel } from "../../lib/store";
-import { mergeProjects, projectExtraRoots, projectRoots, useProjects, type Project } from "../../lib/projects";
+import {
+  derivedProjectColor,
+  activeProjects,
+  archivedProjects,
+  mergeProjects,
+  projectColor,
+  projectExtraRoots,
+  projectRoots,
+  sortPinnedFirst,
+  useProjects,
+  type Project,
+} from "../../lib/projects";
 import { connect, desktopRuntime, forgetProject, report, setSessionRoots } from "../../lib/rpc";
 import { runRemoteHostOperation } from "../../lib/remote-runtime";
 import { ProjectDirectoryPicker } from "./ProjectDirectoryPicker";
@@ -12,29 +24,28 @@ import { useDragResize } from "../../shared/hooks/useDragResize";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { Popover } from "../../shared/ui/Popover";
 import { Shimmer } from "../../shared/ui/Shimmer";
-import { MenuItem, MenuSeparator, PointMenu } from "../../shared/ui/controls";
+import { MenuItem } from "../../shared/ui/controls";
 import { toast } from "../../shared/ui/toast";
 import {
+  Archive,
   Inbox as InboxIcon,
   ArrowDownCircle,
-  Copy,
   Folder,
   FolderOpen,
   FolderPlus,
   FolderTree,
   Loader,
   MoreHorizontal,
-  Pencil,
   Plus,
   Search,
   Settings,
   SmartPhone,
   File,
-  Trash2 as Trash,
   Zap,
   type IconComponent,
 } from "../../shared/ui/icons";
 import { DevModeSlot, DiffStat, IS_MAC, MOD, ResizeHandle, TabVisitNav } from "./chrome";
+import { ProjectContextMenu } from "./ProjectContextMenu";
 import { useShell } from "./shellStore";
 import { ProjectEditorDialog } from "./ProjectEditorDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -147,6 +158,7 @@ function ProjectCard({
   const stats = useGitDiffStats(project.path, statsEnabled).data;
   const additions = stats?.additions ?? 0;
   const deletions = stats?.deletions ?? 0;
+  const color = projectColor(project);
   const roots = projectRoots(project);
   const labelClassName = "min-w-0 flex-1 truncate text-sm font-medium leading-tight";
   return (
@@ -178,10 +190,17 @@ function ProjectCard({
         aria-current={selected ? "true" : undefined}
         className="flex min-w-0 flex-1 cursor-default items-center gap-2 text-left transition-[padding] duration-150 group-hover:pr-6 motion-reduce:transition-none"
       >
-        {selected ? (
-          <FolderOpen className="size-4 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden />
+        {/* Logo 图片优先，否则文件夹图标（选中 = 打开态）；每个项目有稳定的派生色。 */}
+        {project.logoPath ? (
+          <img src={convertFileSrc(project.logoPath)} alt="" className="size-4 shrink-0 rounded object-cover" />
         ) : (
-          <Folder className="size-4 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden />
+          <span className="shrink-0" style={{ color: color ?? derivedProjectColor(project.path) }}>
+            {selected ? (
+              <FolderOpen className="size-4 opacity-70" strokeWidth={1.75} aria-hidden />
+            ) : (
+              <Folder className="size-4 opacity-70" strokeWidth={1.75} aria-hidden />
+            )}
+          </span>
         )}
         {busy ? (
           <Shimmer as="span" duration={1.4} className={labelClassName}>{project.name}</Shimmer>
@@ -247,6 +266,44 @@ function UpdateFooter() {
   );
 }
 
+/** 已归档项目：折叠在底部，展开后可逐个恢复（monocode 的 Archive 精简版）。 */
+function ArchivedFooter({ projects }: { projects: Project[] }) {
+  const { update } = useProjects();
+  const [open, setOpen] = useState(false);
+  if (projects.length === 0) return null;
+  return (
+    <div className="shrink-0 px-2 pb-1">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(value => !value)}
+        className={`flex h-7 w-full items-center gap-1 rounded-md px-2 text-left ${open ? "bg-content/5" : "hover:bg-content/5"}`}
+      >
+        <Archive className="size-3.5 shrink-0 text-content/45" strokeWidth={1.75} />
+        <span className="min-w-0 flex-1 truncate text-[12px] text-content/50">已归档</span>
+        <span className="shrink-0 rounded-full bg-content/8 px-1.5 text-[10px] tabular-nums text-content/50">{projects.length}</span>
+      </button>
+      {open ? (
+        <div className="mt-0.5 flex flex-col gap-px">
+          {projects.map(project => (
+            <div key={project.path} className="group flex h-7 items-center gap-1.5 rounded-md px-2 hover:bg-content/5">
+              <span className="min-w-0 flex-1 truncate text-[12px] text-content/60" title={project.path}>{project.name}</span>
+              <button
+                type="button"
+                title="恢复项目"
+                onClick={() => update({ ...project, archivedAt: undefined })}
+                className="shrink-0 rounded px-1.5 text-[11px] text-content/50 hover:bg-content/10 hover:text-content"
+              >
+                恢复
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 const NAV: { id: Panel; label: string; icon: IconComponent }[] = [
   { id: "inbox", label: "收件箱", icon: InboxIcon },
   { id: "notes", label: "笔记", icon: File },
@@ -282,9 +339,13 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
   });
 
   const visibleProjects = useMemo(
-    () => mergeProjects(projects, cwd && workspaceMode === "project" ? [cwd] : []),
+    () =>
+      sortPinnedFirst(
+        activeProjects(mergeProjects(projects, cwd && workspaceMode === "project" ? [cwd] : [])),
+      ),
     [cwd, projects, workspaceMode],
   );
+  const hidden = useMemo(() => archivedProjects(projects), [projects]);
   const projectIds = useMemo(() => visibleProjects.map((project) => project.path), [visibleProjects]);
   const onReorderProjects = (ids: string[]) => reorder(ids);
   const projectSortable = useAnimatedReorder(projectIds, onReorderProjects, "y");
@@ -418,6 +479,7 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
           </div>
 
           <UpdateFooter />
+          <ArchivedFooter projects={hidden} />
           <div className="flex shrink-0 flex-col gap-px p-2">
             <RailAction
               label="设置"
@@ -431,12 +493,14 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
       )}
 
       {menu ? (
-        <PointMenu x={menu.x} y={menu.y} label="项目选项" onClose={() => setMenu(null)}>
-          <MenuItem icon={<Pencil strokeWidth={1.75} />} onClick={() => { setEditing(menu.project); setMenu(null); }}>编辑项目</MenuItem>
-          <MenuItem icon={<Copy strokeWidth={1.75} />} onClick={() => { void navigator.clipboard.writeText(menu.project.path); setMenu(null); }}>复制路径</MenuItem>
-          <MenuSeparator />
-          <MenuItem danger icon={<Trash strokeWidth={1.75} />} onClick={() => { setRemoving(menu.project); setMenu(null); }}>移除项目</MenuItem>
-        </PointMenu>
+        <ProjectContextMenu
+          project={menu.project}
+          x={menu.x}
+          y={menu.y}
+          onEdit={setEditing}
+          onRemove={setRemoving}
+          onClose={() => setMenu(null)}
+        />
       ) : null}
       {editing ? (
         <ProjectEditorDialog

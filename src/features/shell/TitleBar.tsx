@@ -1,5 +1,6 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { useWorkspace } from "../../lib/store";
+import { setTitleTabDrop, useTitleTabDrop } from "./paneDrop";
 import { PanelLeft, Plus, Settings, Terminal, X } from "../../shared/ui/icons";
 import { IS_MAC, MOD, TitleIconButton } from "./chrome";
 import { useWorkspaceTabs } from "./use-workspace-tabs";
@@ -47,12 +48,15 @@ function WorkspaceTabItem({
   onOpen,
   onClose,
   closable,
+  dropHint,
 }: {
   workspace: { id: string; cwd: string; connectionId: string };
   active: boolean;
   onOpen: () => void;
   onClose: () => void;
   closable: boolean;
+  /** 面板正被拖到这个标签页的前/后（monocode 的插入提示）。 */
+  dropHint?: "before" | "after";
 }) {
   const snapshot = useConnectionSnapshot(workspace.connectionId);
   const label = workspaceSessionTitle(workspace, snapshot);
@@ -61,6 +65,13 @@ function WorkspaceTabItem({
       data-title-tab-id={workspace.id}
       className="group relative flex h-7.5 w-52 min-w-28 shrink items-center"
     >
+      {dropHint ? (
+        <span
+          aria-hidden
+          data-pane-tab-drop-hint
+          className={`pointer-events-none absolute inset-y-1 z-50 w-0.5 rounded-full bg-accent shadow-[0_0_8px_var(--color-accent)] ${dropHint === "before" ? "left-0" : "right-0"}`}
+        />
+      ) : null}
       <button
         type="button"
         role="tab"
@@ -107,6 +118,8 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
   const workspaces = useShell((state) => state.workspaces);
   const activeWorkspaceId = useShell((state) => state.activeWorkspaceId);
   const tabs = useWorkspaceTabs();
+  // 面板拖到标题栏时的插入提示（monocode 的 paneToTabDrop）。
+  const paneToTabDrop = useTitleTabDrop();
 
   return (
     <header className="flex h-10 shrink-0 select-none items-stretch border-b border-stroke" data-tauri-drag-region="deep">
@@ -143,6 +156,7 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
             onOpen={() => void tabs.open(workspace.id)}
             onClose={() => void tabs.close(workspace.id)}
             closable={workspaces.length > 1}
+            dropHint={paneToTabDrop?.targetTabId === workspace.id ? paneToTabDrop.position : undefined}
           />
         ))}
         <button

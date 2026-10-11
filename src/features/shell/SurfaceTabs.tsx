@@ -8,7 +8,7 @@ import { useTabCloseMotion } from "../../shared/hooks/useTabCloseMotion";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { TabLabel } from "../../shared/ui/TabLabel";
 import { MenuItem, MenuSeparator, PointMenu } from "../../shared/ui/controls";
-import { GripVertical, FileDiff, X } from "../../shared/ui/icons";
+import { ChevronLeft, ChevronRight, Copy, ExternalLink, File, FolderOpen, FolderTree, GripVertical, FileDiff, Square, X } from "../../shared/ui/icons";
 import { TabWidthMotion } from "./ClosingTab";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { IS_MAC } from "./chrome";
@@ -135,6 +135,12 @@ export function SurfaceTabs({
           if (file.path !== menuFile.path) closeFile(file.path, paneId);
         }
         focusFile(menuFile.path, paneId);
+        return;
+      case "close-right":
+        for (const file of files.slice(files.indexOf(menuFile) + 1)) closeFile(file.path, paneId);
+        return;
+      case "close-left":
+        for (const file of files.slice(0, files.indexOf(menuFile))) closeFile(file.path, paneId);
         return;
       case "open-default":
         void openPath(menuFile.path).catch(report);
@@ -301,21 +307,27 @@ export function SurfaceTabs({
       {trailing}
       {menu && menuFile ? (
         <PointMenu x={menu.x} y={menu.y} label="文件标签操作" onClose={() => setMenu(null)}>
-          <MenuItem danger onClick={() => runMenuAction("close")}>
+          <MenuItem danger icon={<X className="size-3.5" strokeWidth={1.75} />} onClick={() => runMenuAction("close")}>
             关闭
           </MenuItem>
-          <MenuItem disabled={files.length < 2} onClick={() => runMenuAction("close-others")}>
+          <MenuItem disabled={files.length < 2} icon={<Square className="size-3" strokeWidth={1.75} />} onClick={() => runMenuAction("close-others")}>
             关闭其他
           </MenuItem>
+          <MenuItem disabled={files.indexOf(menuFile) >= files.length - 1} icon={<ChevronRight className="size-3.5" strokeWidth={1.75} />} onClick={() => runMenuAction("close-right")}>
+            关闭右侧标签
+          </MenuItem>
+          <MenuItem disabled={files.indexOf(menuFile) <= 0} icon={<ChevronLeft className="size-3.5" strokeWidth={1.75} />} onClick={() => runMenuAction("close-left")}>
+            关闭左侧标签
+          </MenuItem>
           <MenuSeparator />
-          <MenuItem onClick={() => runMenuAction("open-default")}>用默认应用打开</MenuItem>
-          <MenuItem onClick={() => runMenuAction("reveal")}>
+          <MenuItem icon={<ExternalLink className="size-3.5" strokeWidth={1.75} />} onClick={() => runMenuAction("open-default")}>用默认应用打开</MenuItem>
+          <MenuItem icon={<FolderOpen className="size-3.5" strokeWidth={1.75} />} onClick={() => runMenuAction("reveal")}>
             {IS_MAC ? "在访达中显示" : "在文件管理器中显示"}
           </MenuItem>
           <MenuSeparator />
-          <MenuItem onClick={() => runMenuAction("copy-path")}>复制路径</MenuItem>
-          <MenuItem onClick={() => runMenuAction("copy-relative-path")}>复制相对路径</MenuItem>
-          <MenuItem onClick={() => runMenuAction("copy-name")}>复制文件名</MenuItem>
+          <MenuItem icon={<Copy className="size-3.5" strokeWidth={1.75} />} onClick={() => runMenuAction("copy-path")}>复制路径</MenuItem>
+          <MenuItem icon={<FolderTree className="size-3.5" strokeWidth={1.75} />} onClick={() => runMenuAction("copy-relative-path")}>复制相对路径</MenuItem>
+          <MenuItem icon={<File className="size-3.5" strokeWidth={1.75} />} onClick={() => runMenuAction("copy-name")}>复制文件名</MenuItem>
         </PointMenu>
       ) : null}
     </div>

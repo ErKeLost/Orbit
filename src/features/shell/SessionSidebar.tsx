@@ -257,6 +257,8 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
   const setProjectRailOpen = useShell((state) => state.setProjectRailOpen);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<{ path: string; kind: "staged" | "unstaged" } | null>(null);
+  // Graph 里选中的提交，高亮 + 与右侧的 commit 审阅标签页互相对应。
+  const [selectedSha, setSelectedSha] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const project = workspaceMode === "project" && cwd && cwd !== homeDir ? cwd : "";
@@ -310,6 +312,7 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
             enabled={visible && tab === "changes" && online}
             selectedPath={selected?.path}
             selectedKind={selected?.kind}
+            selectedSha={selectedSha ?? undefined}
             onOpenFile={(path, kind, pin) => {
               // A plain click opens the diff as its own tab; a double click opens
               // the editable file instead.
@@ -319,8 +322,25 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
                 openFile(path, { pin: true, diff: kind });
               }
             }}
-            onOpenAllChanges={() => undefined}
-            onOpenCommit={() => undefined}
+            onOpenAllChanges={(kind) => {
+              setSelected(null);
+              setSelectedSha(null);
+              openFile(`changes:${kind}`, {
+                pin: true,
+                diff: kind,
+                changes: true,
+                name: kind === "staged" ? "已暂存的变更" : "未暂存的变更",
+              });
+            }}
+            onOpenCommit={(commit, pin) => {
+              setSelected(null);
+              setSelectedSha(commit.sha);
+              openFile(`commit:${commit.sha}`, {
+                pin: pin ?? true,
+                commit: { sha: commit.sha, shortSha: commit.shortSha, subject: commit.subject },
+                name: commit.subject,
+              });
+            }}
           />
         ) : (
           <p className="px-3 py-2 text-[12px] text-content/50">没有项目文件夹</p>

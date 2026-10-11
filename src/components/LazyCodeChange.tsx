@@ -8,7 +8,7 @@ function fallbackText(change: Change) {
   return change.kind === "patch" ? change.patch : change.kind === "snippet" ? change.after : change.contents;
 }
 
-/** 只在打开增删 diff 时加载 @pierre/diffs；read / 命令等普通内容直接用 Shiki。 */
+/** 只在打开增删 diff 时加载 diff 视图；read / 命令等普通内容直接用 Shiki。 */
 export function CodeChange(props: { change: Change; compact?: boolean; wrap?: boolean }) {
   if (props.change.kind === "file") {
     return (

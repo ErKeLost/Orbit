@@ -11,6 +11,7 @@ import { Panel } from "./components/Panels";
 import { flushForegroundEvents } from "./lib/rpc";
 import { ProjectRail } from "./features/shell/ProjectRail";
 import { CompactRail } from "./features/shell/CompactRail";
+import { QuickOpen } from "./features/search/QuickOpen";
 import { SessionSidebar } from "./features/shell/SessionSidebar";
 import { TitleBar } from "./features/shell/TitleBar";
 import { FileView } from "./features/shell/FileView";
@@ -24,7 +25,7 @@ import { AutomationsView } from "./features/automations/AutomationsView";
 import { useAutomationScheduler } from "./features/automations/useAutomationScheduler";
 import { PaneDropHint, PaneSash, SessionPaneHeader } from "./features/shell/PaneChrome";
 import { layoutLeaves, layoutSashes, setSplitRatio as setSplitRatioLayout, type LayoutNode } from "./features/shell/paneLayout";
-import { paneDropFromPoint, useTabDrop, type PaneDrop } from "./features/shell/paneDrop";
+import { paneDropFromPoint, setTitleTabDrop, titleTabDropFromPoint, useTabDrop, type PaneDrop } from "./features/shell/paneDrop";
 import { useWorkspaceTabs } from "./features/shell/use-workspace-tabs";
 import { SessionScope } from "./features/shell/session-scope";
 import { closeWorkspaceConnection } from "./lib/rpc";
@@ -94,6 +95,8 @@ function WorkArea() {
 
   // Orbit's `PaneTree` drag: track the pointer, hit-test the live panes and
   // resolve the target edge when the pointer is released.
+  // monocode 的 DRAG_THRESHOLD：移动超过 5px 才算拖拽，避免点击把手就闪提示。
+  const DRAG_THRESHOLD = 5;
   const paneDragStart = (fromId: string) => (event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0 || !split) return;
     event.preventDefault();
@@ -101,18 +104,29 @@ function WorkArea() {
     const handle = event.currentTarget;
     handle.setPointerCapture(pointerId);
     const restoreSelection = suppressTextSelection();
-    setGrabbing(true);
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let active = false;
     let lastX = event.clientX;
     let lastY = event.clientY;
     const move = (ev: globalThis.PointerEvent) => {
+      if (!active) {
+        if (Math.hypot(ev.clientX - startX, ev.clientY - startY) < DRAG_THRESHOLD) return;
+        active = true;
+        setGrabbing(true);
+      }
       lastX = ev.clientX;
       lastY = ev.clientY;
       const element = document.elementFromPoint(lastX, lastY);
       if (element?.closest("[data-title-tab-strip]")) {
         setDetaching(fromId);
         setPaneDrag(null);
+        // monocode 的精细插入：面板拖到某个工作区标签页上时，提示会插到它的前/后。
+        const titleTab = titleTabDropFromPoint(lastX, lastY);
+        setTitleTabDrop(titleTab ? { fromId, ...titleTab } : null);
         return;
       }
+      setTitleTabDrop(null);
       setDetaching(null);
       const over = paneDropFromPoint(lastX, lastY);
       setPaneDrag(over && over.id !== fromId ? { fromId, overId: over.id, edge: over.edge } : null);
@@ -126,13 +140,17 @@ function WorkArea() {
       setGrabbing(false);
       setPaneDrag(null);
       setDetaching(null);
+      setTitleTabDrop(null);
       if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
-      if (!commit) return;
-      // Orbit's `onDetachPane`: a pane dropped on the title strip becomes a
-      // workspace tab of its own.
+      if (!commit || !active) return;
+      // Orbit 的 `onDetachPane`: a pane dropped on the title strip becomes a
+      // workspace tab of its own; 指在某个标签页上时插到它的前/后。
       const element = document.elementFromPoint(lastX, lastY);
       if (element?.closest("[data-title-tab-strip]")) {
-        const workspace = useShell.getState().detachPaneToWorkspace(fromId);
+        const titleTab = titleTabDropFromPoint(lastX, lastY);
+        const workspace = titleTab
+          ? useShell.getState().detachPaneToWorkspace(fromId, titleTab.targetTabId, titleTab.position)
+          : useShell.getState().detachPaneToWorkspace(fromId);
         if (workspace) void tabs.open(workspace.id, { fresh: true });
         return;
       }
@@ -163,7 +181,14 @@ function WorkArea() {
   if (panel === "automations") return <AutomationsView />;
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <TitleBar railsHidden={!projectRailOpen && !sessionSidebarOpen} />
+      {/* 红绿灯归属：展开栏开着→展开栏头部让位；侧栏可见→侧栏头部让位；
+          全屏面板（移动端/笔记，侧栏被藏）→ 标题栏自己让位。 */}
+      <TitleBar
+        railsHidden={
+          !projectRailOpen &&
+          (!sessionSidebarOpen || panel === "mobile-access" || panel === "notes")
+        }
+      />
       <MetricsSync />
       {panel === "chat" ? (
         <div ref={paneContainerRef} className="relative min-h-0 min-w-0 flex-1">
@@ -305,13 +330,14 @@ export default function App() {
       <div className="flex min-h-0 min-w-0 flex-1">
         {projectRailOpen ? (
           <ProjectRail visible onSearch={openSearch} />
-        ) : collapsedRailMode === "compact" && !chromeless ? (
+        ) : collapsedRailMode === "compact" ? (
           <CompactRail />
         ) : null}
         {withSessions ? (
           <SessionSidebar visible={sessionSidebarOpen && !chromeless} railVisible={projectRailOpen} onSearch={openSearch} />
         ) : null}
         <WorkArea />
+        <QuickOpen />
       </div>
       <ScreenOverlay />
     </div>

@@ -29,6 +29,7 @@ import { Group, Row, SecondaryButton, Select, Slider, TextArea, TextField, Toggl
 import { ConfirmDialog } from "../shell/ConfirmDialog";
 import { ProjectInitial } from "../shell/ProjectInitial";
 import { toast } from "../../shared/ui/toast";
+import { TrafficLightSpacer } from "../shell/chrome";
 import {
   AlertCircle,
   Check,
@@ -244,6 +245,7 @@ export function AutomationsView() {
   return (
     <div role="region" aria-label="Automations" className="flex min-h-0 min-w-0 flex-1 flex-col text-content">
       <div className="flex h-10 shrink-0 select-none items-center gap-2 border-b border-stroke px-3" data-tauri-drag-region="deep">
+        <TrafficLightSpacer />
         <Zap className="size-4 shrink-0 text-content/60" strokeWidth={1.75} />
         <span className="text-[13px] font-medium">自动化</span>
       </div>

@@ -35,16 +35,17 @@ function CapabilityRow({
   onToggle: (enabled: boolean) => void;
   onPickModel: (id: string) => void;
 }) {
-  // 参数项里 `from: "catalog"` 的那一个就是这个能力的模型选择器 —— 今天只有 `model`。
-  const catalogParam = Object.entries(spec.params ?? {}).find(([, param]) => param.from === "catalog")?.[0];
+  // 参数表里 `from: "catalog"` 的那一个就是这个能力的模型选择器 —— 今天只有 `model`。
+  // 没有参数表时也照样可切：写入的是顶层默认模型（运行时读的就是它）。
   const enabled = spec.enabled !== false;
+  const showSelect = enabled && models.length > 0;
   return (
     <div className="provider-row">
       <span className="provider-row-label">{spec.label ?? kind}</span>
       <span className="provider-row-value" title={`generate_${kind}`}>
         {`generate_${kind}`}
       </span>
-      {catalogParam && enabled ? (
+      {showSelect ? (
         <select
           aria-label={`${spec.label ?? kind} 默认模型`}
           className="provider-kind-select"
@@ -144,6 +145,24 @@ export function IntegrationsPanel() {
                   <Icon name="shield-check" />
                   {config.data?.hasApiKey ? "凭据已保存在本地" : "未保存 API Key"}
                 </span>
+              </div>
+              <div className="provider-row">
+                <span className="provider-row-label">默认模型</span>
+                <select
+                  aria-label="默认出图模型"
+                  className="provider-kind-select"
+                  value={config.data?.defaults?.model ?? ""}
+                  disabled={!desktop}
+                  onChange={(event) => void write({ model: event.target.value }, "默认模型已切换")}
+                >
+                  <option value="">（未设置）</option>
+                  {models.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name ?? model.id}
+                    </option>
+                  ))}
+                </select>
+                <span className="provider-connection-note">generate_image 缺省用它，调用时也可单独指定</span>
               </div>
               <div className="provider-row">
                 <span className="provider-row-label">Base URL</span>

@@ -305,7 +305,18 @@ function GeneratedImage({ src, knownAspect, prompt }: { src: string | null; know
   }, [src]);
   const aspect = measured ?? knownAspect;
   if (aspect === undefined) return null;
-  return <GridReveal src={src} aspect={aspect} alt={prompt ?? "生成的图片"} caption={prompt} />;
+  // 限宽展示：横向图不超 416px，竖向图按比例收窄（高度不超 416px），
+  // 极端长图设下限避免缩没了。保持原始宽高比，不拉伸。
+  const factor = Math.min(Math.max(aspect, 0.4), 1);
+  return (
+    <GridReveal
+      src={src}
+      aspect={aspect}
+      alt={prompt ?? "生成的图片"}
+      caption={prompt}
+      style={{ width: `min(100%, ${Math.round(416 * factor)}px)` }}
+    />
+  );
 }
 
 function StepRow({ step, tools }: { step: TurnStep; tools: Record<string, Tool> }) {

@@ -4,6 +4,7 @@ import { changeSession, connect, persistedSessionFile, report } from "../../lib/
 import { useProjects } from "../../lib/projects";
 import { MIN_QUERY, useFileSearch, useSessionSearch, type SearchFileHit, type SearchSessionHit } from "../../lib/search";
 import { useShell } from "../shell/shellStore";
+import { TrafficLightSpacer } from "../shell/chrome";
 import { FileTypeIcon } from "../shell/FileTypeIcon";
 import { ProjectInitial } from "../shell/ProjectInitial";
 import { Loader, MessageSquare, Search as SearchIcon } from "../../shared/ui/icons";
@@ -26,21 +27,66 @@ function Section({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
-function Row({ icon, title, meta, onClick }: { icon: React.ReactNode; title: React.ReactNode; meta?: React.ReactNode; onClick: () => void }) {
+type FlatRow =
+  | { kind: "project"; key: string; path: string; name: string }
+  | { kind: "session"; key: string; hit: SearchSessionHit }
+  | { kind: "file"; key: string; hit: SearchFileHit };
+
+/** 在文本里高亮查询词（大小写不敏感）；monocode 用 fuzzy positions，这里后端没给位置。 */
+function MatchText({ text, query }: { text: string; query: string }) {
+  const needle = query.trim();
+  if (!needle) return <>{text}</>;
+  const lower = text.toLowerCase();
+  const target = needle.toLowerCase();
+  const at = lower.indexOf(target);
+  if (at < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, at)}
+      <mark className="bg-transparent font-semibold text-accent">{text.slice(at, at + target.length)}</mark>
+      {text.slice(at + target.length)}
+    </>
+  );
+}
+
+function Row({
+  icon,
+  title,
+  meta,
+  active,
+  innerRef,
+  onClick,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: React.ReactNode;
+  meta?: React.ReactNode;
+  active?: boolean;
+  innerRef?: (el: HTMLButtonElement | null) => void;
+  onClick: () => void;
+  /** 会话命中的消息摘要（monocode 的 message preview）。 */
+  children?: React.ReactNode;
+}) {
   return (
     <button
+      ref={innerRef}
       type="button"
       onClick={onClick}
-      className="flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] leading-none text-content hover:bg-content/5 focus-visible:bg-selection focus-visible:outline-none"
+      className={`flex min-h-9 w-full flex-col justify-center gap-0.5 rounded-lg px-2 py-1 text-left text-[13px] leading-none focus-visible:outline-none ${
+        active ? "bg-selection text-content" : "text-content hover:bg-content/5"
+      }`}
     >
-      <span className="grid size-4 shrink-0 place-items-center">{icon}</span>
-      <span className="min-w-0 flex-1 truncate">{title}</span>
-      {meta ? <span className="min-w-0 max-w-[45%] shrink-0 truncate font-mono text-[11px] text-content/40">{meta}</span> : null}
+      <span className="flex min-w-0 items-center gap-2">
+        <span className="grid size-4 shrink-0 place-items-center">{icon}</span>
+        <span className="min-w-0 flex-1 truncate">{title}</span>
+        {meta ? <span className="min-w-0 max-w-[45%] shrink-0 truncate font-mono text-[11px] text-content/40">{meta}</span> : null}
+      </span>
+      {children ? <span className="block pl-6 text-[11px] leading-4 text-content/45">{children}</span> : null}
     </button>
   );
 }
 
-/** Orbit's Search view: one query box, four filters, grouped results. */
+/** Orbit's Search view: one query box, four filters, grouped results, ↑↓/Enter 导航。 */
 export function SearchView() {
   const cwd = useWorkspace((state) => state.cwd);
   const homeDir = useWorkspace((state) => state.homeDir);
@@ -49,7 +95,9 @@ export function SearchView() {
   const [raw, setRaw] = useState("");
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<Tab>("all");
+  const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     input.current?.focus();
@@ -76,6 +124,28 @@ export function SearchView() {
   const hasQuery = query.length >= MIN_QUERY;
   const nothing = hasQuery && !searching && !files.isError && !sessions.isError && fileHits.length + sessionHits.length + matchedProjects.length === 0;
 
+  const rows = useMemo<FlatRow[]>(() => {
+    const list: FlatRow[] = [];
+    if (tab === "all" || tab === "projects") {
+      for (const item of matchedProjects) list.push({ kind: "project", key: item.path, path: item.path, name: item.name });
+    }
+    if (tab === "all" || tab === "sessions") {
+      for (const hit of sessionHits) list.push({ kind: "session", key: hit.path, hit });
+    }
+    if (tab === "all" || tab === "files") {
+      for (const hit of fileHits) list.push({ kind: "file", key: `${hit.path}:${hit.line ?? 0}`, hit });
+    }
+    return list;
+  }, [tab, matchedProjects, sessionHits, fileHits]);
+
+  useEffect(() => {
+    setActive(0);
+  }, [raw, tab]);
+
+  useEffect(() => {
+    scrollRef.current?.querySelector<HTMLElement>("[data-active='true']")?.scrollIntoView({ block: "nearest" });
+  }, [active, rows.length]);
+
   const openFile = (hit: SearchFileHit) => {
     // The file pane lives beside the chat, so leaving Search is part of opening.
     useWorkspace.getState().set({ panel: "chat" });
@@ -85,10 +155,35 @@ export function SearchView() {
     useWorkspace.getState().set({ panel: "chat" });
     void changeSession({ type: "switch_session", sessionPath: hit.path }).catch(report);
   };
+  const activate = (row: FlatRow) => {
+    if (row.kind === "file") openFile(row.hit);
+    else if (row.kind === "session") openSession(row.hit);
+    else {
+      useWorkspace.getState().set({ panel: "chat" });
+      void connect(row.path, "project").catch(report);
+    }
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActive((value) => Math.min(rows.length - 1, value + 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActive((value) => Math.max(0, value - 1));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      const row = rows[active];
+      if (row) activate(row);
+    }
+  };
+
+  let rowIndex = -1;
 
   return (
     <div role="region" aria-label="搜索" className="flex min-h-0 min-w-0 flex-1 flex-col text-content">
       <div className="flex h-10 shrink-0 select-none items-center border-b border-stroke" data-tauri-drag-region="deep">
+        <TrafficLightSpacer />
         <label className="flex min-w-0 flex-1 items-center gap-2 px-3 text-content/50">
           <SearchIcon className="size-3.5 shrink-0" strokeWidth={1.75} />
           <input
@@ -99,9 +194,11 @@ export function SearchView() {
               if (event.key === "Escape") {
                 event.preventDefault();
                 useWorkspace.getState().set({ panel: "chat" });
+                return;
               }
+              onKeyDown(event);
             }}
-            placeholder="搜索一切…"
+            placeholder="搜索一切…（↑↓ 选择，↩ 打开）"
             aria-label="搜索文件和会话"
             className="min-w-0 flex-1 select-text bg-transparent text-[13px] text-content outline-none placeholder:text-content/40"
           />
@@ -123,7 +220,7 @@ export function SearchView() {
         ))}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-none p-2">
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-none p-2">
         {!hasQuery ? <EmptyState /> : null}
         {hasQuery && nothing ? <p className="px-2 py-1.5 text-[12px] text-content/50">没有结果</p> : null}
         {files.isError ? <p className="px-2 py-1.5 text-[12px] text-red-400">{String(files.error)}</p> : null}
@@ -131,51 +228,79 @@ export function SearchView() {
         <div className="flex flex-col gap-3">
           {(tab === "all" || tab === "projects") && matchedProjects.length > 0 ? (
             <Section label="项目">
-              {matchedProjects.map((item) => (
-                <Row
-                  key={item.path}
-                  icon={<ProjectInitial name={item.path} className="size-3.5 shrink-0" />}
-                  title={item.name}
-                  meta={item.path}
-                  onClick={() => {
-                    useWorkspace.getState().set({ panel: "chat" });
-                    void connect(item.path, "project").catch(report);
-                  }}
-                />
-              ))}
+              {matchedProjects.map((item) => {
+                rowIndex += 1;
+                const index = rowIndex;
+                return (
+                  <Row
+                    key={item.path}
+                    active={index === active}
+                    innerRef={(el) => {
+                      if (el && index === active) el.dataset.active = "true";
+                    }}
+                    icon={<ProjectInitial name={item.path} className="size-3.5 shrink-0" />}
+                    title={<MatchText text={item.name} query={query} />}
+                    meta={item.path}
+                    onClick={() => {
+                      useWorkspace.getState().set({ panel: "chat" });
+                      void connect(item.path, "project").catch(report);
+                    }}
+                  />
+                );
+              })}
             </Section>
           ) : null}
 
           {(tab === "all" || tab === "sessions") && sessionHits.length > 0 ? (
             <Section label="会话">
-              {sessionHits.map((hit) => (
-                <Row
-                  key={hit.path}
-                  icon={<MessageSquare className="size-3.5 text-content/50" strokeWidth={1.75} />}
-                  title={hit.title || "未命名会话"}
-                  meta={hit.path === persistedSessionFile(cwd) ? "当前" : undefined}
-                  onClick={() => openSession(hit)}
-                />
-              ))}
+              {sessionHits.map((hit) => {
+                rowIndex += 1;
+                const index = rowIndex;
+                return (
+                  <Row
+                    key={hit.path}
+                    active={index === active}
+                    innerRef={(el) => {
+                      if (el && index === active) el.dataset.active = "true";
+                    }}
+                    icon={<MessageSquare className="size-3.5 text-content/50" strokeWidth={1.75} />}
+                    title={<MatchText text={hit.title || "未命名会话"} query={query} />}
+                    meta={hit.path === persistedSessionFile(cwd) ? "当前" : undefined}
+                    onClick={() => openSession(hit)}
+                  >
+                    {hit.snippet ? <MatchText text={hit.snippet} query={query} /> : null}
+                  </Row>
+                );
+              })}
             </Section>
           ) : null}
 
           {(tab === "all" || tab === "files") && fileHits.length > 0 ? (
             <Section label="文件">
-              {fileHits.map((hit) => (
-                <Row
-                  key={`${hit.path}:${hit.line ?? 0}`}
-                  icon={<FileTypeIcon name={hit.relative.split("/").at(-1) ?? hit.relative} isDir={false} size={14} />}
-                  title={
-                    <span className="flex min-w-0 items-baseline gap-2">
-                      <span className="min-w-0 truncate">{hit.relative}</span>
-                      {hit.snippet ? <span className="min-w-0 truncate text-[11px] text-content/40">{hit.snippet}</span> : null}
-                    </span>
-                  }
-                  meta={hit.line ? `:${hit.line}` : undefined}
-                  onClick={() => openFile(hit)}
-                />
-              ))}
+              {fileHits.map((hit) => {
+                rowIndex += 1;
+                const index = rowIndex;
+                return (
+                  <Row
+                    key={`${hit.path}:${hit.line ?? 0}`}
+                    active={index === active}
+                    innerRef={(el) => {
+                      if (el && index === active) el.dataset.active = "true";
+                    }}
+                    icon={<FileTypeIcon name={hit.relative.split("/").at(-1) ?? hit.relative} isDir={false} size={14} />}
+                    title={
+                      <span className="flex min-w-0 items-baseline gap-2">
+                        <span className="min-w-0 truncate">
+                          <MatchText text={hit.relative} query={query} />
+                        </span>
+                        {hit.snippet && hit.kind === "content" ? <span className="min-w-0 truncate text-[11px] text-content/40"><MatchText text={hit.snippet} query={query} /></span> : null}
+                      </span>
+                    }
+                    meta={hit.line ? `:${hit.line}` : undefined}
+                    onClick={() => openFile(hit)}
+                  />
+                );
+              })}
             </Section>
           ) : null}
         </div>

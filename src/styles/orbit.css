@@ -24,7 +24,7 @@
   -webkit-user-select: text;
 }
 
-/* ---- @pierre/diffs surfaces (tool cards, file view) ---------------------- */
+/* ---- Diff / 文件审阅表面（工具卡片、文件视图）---- */
 
 .code-change {
   min-width: 0;
@@ -52,21 +52,10 @@
   color: color-mix(in srgb, var(--color-content) 55%, transparent);
 }
 
-.code-change diffs-container {
-  display: block;
-  max-height: 520px;
-  overflow: auto;
-  --diffs-font-size: 12px;
-  --diffs-font-family: var(--font-mono);
-  --diffs-bg: transparent;
-}
-
-.file-view diffs-container {
-  display: block;
-  --diffs-font-size: 13px;
-  --diffs-line-height: 22px;
-  --diffs-font-family: var(--font-mono);
-  --diffs-bg: transparent;
+/* 嵌在卡片里的 unified diff：内层自己出滚动条，虚拟化会找到这个滚动根。 */
+.unified-diff-embed .unified-diff {
+  font-size: 12px;
+  font-family: var(--font-mono);
 }
 
 .diff-fallback,
@@ -402,7 +391,7 @@ html[data-page-visible="false"] * {
   background: transparent;
 }
 
-.file-view .code-change diffs-container {
+.file-view .unified-diff-embed {
   max-height: none;
 }
 
@@ -1316,3 +1305,4 @@ html.theme-light [data-composer-box] {
     transparent 1px 7px
   );
 }
+
