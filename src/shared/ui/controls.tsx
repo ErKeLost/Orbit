@@ -447,23 +447,9 @@ export function Group({
 }
 
 /** One settings row (Orbit `Row`). */
-export function Row({
-  label,
-  description,
-  anchorId,
-  children,
-}: {
-  label: ReactNode;
-  description?: ReactNode;
-  /** 设置搜索的行级锚点：`data-setting-id`，搜索命中后滚动定位用。 */
-  anchorId?: string;
-  children?: ReactNode;
-}) {
+export function Row({ label, description, children }: { label: ReactNode; description?: ReactNode; children?: ReactNode }) {
   return (
-    <div
-      data-setting-id={anchorId}
-      className="flex items-start gap-6 border-b border-content/5 px-4 py-3.5 last:border-b-0"
-    >
+    <div className="flex items-start gap-6 border-b border-content/5 px-4 py-3.5 last:border-b-0">
       <div className="min-w-0 flex-1">
         <div className="text-[13px] font-medium text-content">{label}</div>
         {description ? <div className="mt-1 text-[12px] leading-relaxed text-content/45">{description}</div> : null}

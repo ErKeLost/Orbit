@@ -129,20 +129,6 @@ async function ensureSessionMetadata(id:string){
 }
 const snapshotListeners=new Map<string,Set<()=>void>>()
 function notifySnapshot(id:string){const set=snapshotListeners.get(id);if(!set)return;for(const listener of[...set])listener()}
-// 流式批处理（monocode）：会话流式输出时每条消息都会 patch 一次快照；
-// 把前台 store 写入与监听通知合并到 ~30fps，未变化的读侧不会拿到新引用。
-const snapshotFlushTimers=new Map<string,number>()
-function flushSnapshotNow(id:string){
- const timer=snapshotFlushTimers.get(id)
- if(timer!=null){clearTimeout(timer);snapshotFlushTimers.delete(id)}
- notifySnapshot(id)
- const latest=snapshots.get(id)
- if(latest&&useWorkspace.getState().connectionId===id)useWorkspace.getState().set(latest)
-}
-function scheduleSnapshotFlush(id:string){
- if(snapshotFlushTimers.has(id))return
- snapshotFlushTimers.set(id,window.setTimeout(()=>flushSnapshotNow(id),34))
-}
 function patch(id:string,value:Partial<Snapshot>){
  // 用户刚点了切换、Pi 还没确认的模型优先：重连期间回来的 `get_state` 是重启后的
  // 旧模型，直接写进 store 会把刚选好的那个顶回旧值（“等了十秒自己变”）。
@@ -150,10 +136,9 @@ function patch(id:string,value:Partial<Snapshot>){
  const resolved=pending&&value.state?{...value,state:withPendingModel(value.state,pending)}:value
  const previous=current(id),next={...previous,...resolved}
  if(previous.state?.sessionFile&&previous.state.sessionFile!==next.state?.sessionFile&&sessionOwners.get(previous.state.sessionFile)===id)sessionOwners.delete(previous.state.sessionFile)
- snapshots.set(id,next);if(next.state?.sessionFile)sessionOwners.set(next.state.sessionFile,id);scheduleSnapshotFlush(id)
+ snapshots.set(id,next);if(next.state?.sessionFile)sessionOwners.set(next.state.sessionFile,id);if(useWorkspace.getState().connectionId===id)useWorkspace.getState().set(resolved);notifySnapshot(id)
  const activityChanged=previous.transcript.running!==next.transcript.running||previous.transcript.compacting!==next.transcript.compacting||previous.state?.sessionFile!==next.state?.sessionFile||firstUserTitle(previous.transcript)!==firstUserTitle(next.transcript)
  if(activityChanged)syncLiveSessions()
- if(previous.transcript.running&&!next.transcript.running){const sessionFile=next.state?.sessionFile;const cwd=connections.get(id)?.cwd;if(sessionFile&&cwd)window.dispatchEvent(new CustomEvent('orbit-turn-settled',{detail:{cwd,sessionFile}}))}
  if(previous.state?.sessionFile!==next.state?.sessionFile&&next.state?.sessionFile)invalidateSessionList(id)
 }
 function failPending(project:string,message:string){for(const [id,p]of pending){if(p.project!==project)continue;clearTimeout(p.timeout);p.reject(new Error(message));pending.delete(id)}}
@@ -301,11 +286,6 @@ export async function ensureSessionModes(target=useWorkspace.getState().cwd){
  */
 export async function sendPrompt(command:RpcCommand,target=useWorkspace.getState().cwd,wasRunning=useWorkspace.getState().transcript.running){
  try{
-  // 回合检查点：真实用户消息（非 /gui-* 内部命令）发出前捕获工作区快照。
-  if(command.type==='prompt'&&!command.message.startsWith('/')){
-   const sessionFile=current(route(target)).state?.sessionFile
-   if(sessionFile)window.dispatchEvent(new CustomEvent('orbit-turn-started',{detail:{cwd:target,sessionFile}}))
-  }
   const result=await request<{disposition?:string}>(command,45000,target)
   if(!wasRunning&&result?.disposition!=='started')useWorkspace.getState().event({type:'prompt_settled'})
   return result

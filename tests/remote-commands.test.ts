@@ -82,9 +82,6 @@ const EXCLUDED: Record<string, string> = {
   screen_displays: "the screen channel is captured and subscribed, not called",
   screen_request_permission: "screen-recording consent is given at the desktop",
   screen_stop: "the screen channel is captured and subscribed, not called",
-  git_checkpoint_capture: "captures this machine's working tree",
-  git_checkpoint_diff: "reads this machine's git objects",
-  git_checkpoint_restore: "writes this machine's working tree",
 }
 
 describe("remote command boundary", () => {

@@ -1,6 +1,6 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { readTextFile } from "../../lib/git";
 import { onFilesInvalidated, watchFilePath } from "../files/model/fileWatch";
@@ -31,61 +31,6 @@ const EditorFallback = (
   </div>
 );
 /** Refusing to preview, or a fetch that failed: the same shape either way. */
-/**
- * 视频预览（monocode 0.12 的增强集）：原生控制条 + 尺寸/时长/大小/格式元信息，
- * 标签页或窗口隐藏时自动暂停，关闭时释放 src。
- */
-function VideoPlayer({ src, path, mimeType }: { src: string; path: string; mimeType?: string }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [meta, setMeta] = useState<{ width: number; height: number; duration: number } | null>(null);
-  const stat = usePathMeta(path, true);
-  const ext = (path.split(".").pop() ?? "").toUpperCase();
-
-  // 页面或标签页不可见时暂停，回到前台不自动重播（不打扰）。
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-    const pause = () => video.pause();
-    document.addEventListener("visibilitychange", pause);
-    window.addEventListener("blur", pause);
-    return () => {
-      document.removeEventListener("visibilitychange", pause);
-      window.removeEventListener("blur", pause);
-    };
-  }, []);
-
-  const formatTime = (seconds: number) => {
-    if (!Number.isFinite(seconds)) return "–:––";
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${String(s).padStart(2, "0")}`;
-  };
-
-  const sizeLabel = stat.data?.size ? formatBytes(stat.data.size) : null;
-  const format = (mimeType?.split("/")[1] ?? (ext || "video")).replace("quicktime", "mov").toUpperCase();
-
-  return (
-    <div className="flex max-h-full max-w-full flex-col items-center gap-2">
-      <video
-        ref={videoRef}
-        src={src}
-        controls
-        playsInline
-        onLoadedMetadata={(event) => {
-          const video = event.currentTarget;
-          setMeta({ width: video.videoWidth, height: video.videoHeight, duration: video.duration });
-        }}
-        className="max-h-[64vh] max-w-full rounded-xl border border-content/10 bg-black"
-      />
-      <p className="shrink-0 font-mono text-[11px] text-content/45">
-        {meta ? `${meta.width}×${meta.height} · ` : ""}
-        {meta ? `${formatTime(meta.duration)} · ` : ""}
-        {[format, sizeLabel].filter(Boolean).join(" · ")}
-      </p>
-    </div>
-  );
-}
-
 function MediaNotice({ message, path }: { message: string; path: string }) {
   return (
     <div className="flex w-full max-w-sm flex-col items-center gap-3 rounded-xl border border-content/10 bg-content/4 px-6 py-8 text-center">
@@ -162,7 +107,7 @@ function MediaView({ file, kind, remote }: { file: { path: string; name: string 
           <audio src={src} controls className="w-full" />
         </div>
       ) : kind === "video" ? (
-        <VideoPlayer src={src} path={file.path} mimeType={meta.data?.mime} />
+        <video src={src} controls className="max-h-[70vh] max-w-full rounded-xl border border-content/10 bg-black" />
       ) : (
         <object data={src} type="application/pdf" className="h-full w-full rounded-xl border border-content/10">
           <p className="p-4 text-[13px] text-content/50">此浏览器无法内嵌预览 PDF。</p>
