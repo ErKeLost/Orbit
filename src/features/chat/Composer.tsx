@@ -25,6 +25,7 @@ import { useComposerTokens } from "./composerTokens";
 import { expandMentionLabels, type MentionFile } from "./fileMentions";
 import { ContextMeter } from "./ContextMeter";
 import { WorkspaceRoots } from "./WorkspaceRoots";
+import { ProjectPicker } from "./ProjectPicker";
 import { ExtensionDialog } from "../../components/panels/ExtensionDialog";
 
 type ImageAttachment = { kind: "image"; id: string; name: string; mimeType: string; blob: Blob };
@@ -527,6 +528,10 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
             <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-lg bg-accent/8 text-[12px] text-content/70">拖放文件以附加</div>
           ) : null}
           <div className="flex min-w-0 items-center gap-2.5 overflow-hidden px-3 pt-2.5">
+            {/* 新会话（首页）：头部带范围选择器，发送前就能切项目 / 不在文件夹里工作
+                （Codex 的「项目 | 环境 | 分支」形式）。会话开始后（centered=false）
+                撤下选择器——中途切范围等于打断会话。 */}
+            {centered ? <ProjectPicker disabled={running} /> : null}
             {projectFolder ? <WorkspaceRoots projectFolder={projectFolder} disabled={running} /> : null}
             <div className="ml-auto flex shrink-0 items-center">
               <ContextMeter usage={context} compacting={compacting} />

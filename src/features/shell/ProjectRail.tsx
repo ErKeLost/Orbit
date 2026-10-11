@@ -1,7 +1,8 @@
-import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useWorkspace, type Panel } from "../../lib/store";
+import type { Session } from "../../lib/protocol";
 import {
   derivedProjectColor,
   activeProjects,
@@ -14,8 +15,13 @@ import {
   useProjects,
   type Project,
 } from "../../lib/projects";
-import { connect, desktopRuntime, forgetProject, report, setSessionRoots } from "../../lib/rpc";
+import { changeSession, connect, desktopRuntime, forgetProject, report, setSessionRoots } from "../../lib/rpc";
+import { openWorkspaceScope } from "../../lib/workspace-scope";
 import { runRemoteHostOperation } from "../../lib/remote-runtime";
+import { useProjectSessionGroups } from "../../hooks/use-project-sessions";
+import { sessionGlyph, sessionRelativeTime, sessionTitle } from "../../lib/session-visual";
+import { projectName as pathProjectName } from "../../shared/lib/paths";
+import { Icon } from "../../components/Icon";
 import { ProjectDirectoryPicker } from "./ProjectDirectoryPicker";
 import { installDesktopUpdate, useDesktopUpdate } from "../../lib/desktop-update";
 import { useGitDiffStats } from "../../lib/git";
@@ -28,6 +34,7 @@ import { MenuItem } from "../../shared/ui/controls";
 import { toast } from "../../shared/ui/toast";
 import {
   Archive,
+  ChevronDown,
   Inbox as InboxIcon,
   ArrowDownCircle,
   Folder,
@@ -35,6 +42,7 @@ import {
   FolderPlus,
   FolderTree,
   Loader,
+  MessageSquare,
   MoreHorizontal,
   Plus,
   Search,
@@ -45,6 +53,7 @@ import {
   type IconComponent,
 } from "../../shared/ui/icons";
 import { DevModeSlot, DiffStat, IS_MAC, MOD, ResizeHandle, TabVisitNav } from "./chrome";
+import { TerminalSpinner } from "./TerminalSpinner";
 import { ProjectContextMenu } from "./ProjectContextMenu";
 import { useShell } from "./shellStore";
 import { ProjectEditorDialog } from "./ProjectEditorDialog";
@@ -101,7 +110,7 @@ function RailSearch({ onClick, active }: { onClick?: () => void; active?: boolea
   );
 }
 
-function SectionHeader({ label, onAdd }: { label: string; onAdd?: () => void }) {
+function SectionHeader({ label, onAdd, extraItem }: { label: string; onAdd?: () => void; extraItem?: { label: string; icon: ReactNode; onClick: () => void } }) {
   const anchor = useRef<HTMLButtonElement>(null);
   const [menu, setMenu] = useState(false);
   return (
@@ -126,6 +135,11 @@ function SectionHeader({ label, onAdd }: { label: string; onAdd?: () => void }) 
               <MenuItem icon={<FolderPlus strokeWidth={1.75} />} onClick={() => { setMenu(false); onAdd(); }}>
                 打开文件夹…
               </MenuItem>
+              {extraItem ? (
+                <MenuItem icon={extraItem.icon} onClick={() => { setMenu(false); extraItem.onClick(); }}>
+                  {extraItem.label}
+                </MenuItem>
+              ) : null}
             </Popover>
           ) : null}
         </>
@@ -304,6 +318,43 @@ function ArchivedFooter({ projects }: { projects: Project[] }) {
   );
 }
 
+/** 项目栏里的会话行：标题 + 所属项目，右侧是运行状态或相对时间。 */
+function RailSessionCard({
+  session,
+  projectLabel,
+  active,
+  running,
+  onSelect,
+}: {
+  session: Session;
+  projectLabel: string;
+  active: boolean;
+  running: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={`${sessionTitle(session)}\n${projectLabel}`}
+      data-session-card={session.path}
+      aria-current={active ? "true" : undefined}
+      onClick={onSelect}
+      className={`flex w-full cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-left ${
+        active ? "bg-selection-strong text-content" : "opacity-70 hover:bg-content/5 hover:opacity-100"
+      }`}
+    >
+      <Icon name={sessionGlyph(session.icon)} className="size-3.5 shrink-0 text-content/50" />
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="truncate text-[12.5px] font-medium leading-tight">{sessionTitle(session)}</span>
+        <span className="truncate text-[10.5px] leading-tight text-content/45">{projectLabel}</span>
+      </span>
+      <span className="flex shrink-0 items-center text-[10.5px] tabular-nums text-content/40">
+        {running ? <TerminalSpinner className="inline-block w-3 select-none text-center text-[11px] leading-none text-accent" /> : sessionRelativeTime(session.modified)}
+      </span>
+    </button>
+  );
+}
+
 const NAV: { id: Panel; label: string; icon: IconComponent }[] = [
   { id: "inbox", label: "收件箱", icon: InboxIcon },
   { id: "notes", label: "笔记", icon: File },
@@ -318,12 +369,17 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
   const workspaceMode = useWorkspace((state) => state.workspaceMode);
   const homeDir = useWorkspace((state) => state.homeDir);
   const liveSessions = useWorkspace((state) => state.liveSessions);
+  const currentSessionFile = useWorkspace((state) => state.state?.sessionFile);
   const { projects, add, update, remove, reorder } = useProjects();
   const width = useShell((state) => state.projectRailWidth);
   const setWidth = useShell((state) => state.setProjectRailWidth);
   const setProjectRailOpen = useShell((state) => state.setProjectRailOpen);
   const [busyProject, setBusyProject] = useState("");
   const [picker, setPicker] = useState(false);
+  // 会话区块的展开状态：和其它 shell 偏好一样存 localStorage，重启后保持。
+  const [sessionsOpen, setSessionsOpen] = useState(() => {
+    try { return localStorage.getItem("orbit.shell.railSessions") !== "false"; } catch { return true; }
+  });
   const runtimeTarget = useWorkspace((state) => state.runtimeTarget);
   const [menu, setMenu] = useState<{ project: Project; x: number; y: number } | null>(null);
   const [editing, setEditing] = useState<Project | null>(null);
@@ -355,17 +411,85 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
     [liveSessions],
   );
 
+  /** 会话区块的扫描范围：注册的项目 + 主目录（「不在文件夹里工作」的会话）。 */
+  const sessionRoots = useMemo(() => {
+    const roots = visibleProjects.map((project) => project.path);
+    if (homeDir && !roots.includes(homeDir)) roots.push(homeDir);
+    return roots;
+  }, [visibleProjects, homeDir]);
+  const sessionGroups = useProjectSessionGroups(sessionRoots);
+
+  /** 跨项目的最近会话（含还没落盘的活跃会话），新到旧；不设上限，列表随项目栏滚动。 */
+  const railSessions = useMemo(() => {
+    type RailSession = { session: Session; project: string };
+    const entries: RailSession[] = [];
+    const seen = new Set<string>();
+    for (const group of sessionGroups) {
+      const listed = group.query.data ?? [];
+      const listedPaths = new Set(listed.map((session) => session.path));
+      for (const live of liveSessions) {
+        if (live.cwd !== group.cwd || !live.path || listedPaths.has(live.path) || seen.has(live.path)) continue;
+        seen.add(live.path);
+        entries.push({
+          session: {
+            path: live.path,
+            id: live.path,
+            cwd: live.cwd,
+            firstMessage: live.title,
+            messageCount: 0,
+            modified: new Date().toISOString(),
+          },
+          project: live.cwd,
+        });
+      }
+      for (const session of listed) {
+        if (seen.has(session.path)) continue;
+        seen.add(session.path);
+        entries.push({ session, project: group.cwd });
+      }
+    }
+    entries.sort((a, b) => Date.parse(b.session.modified) - Date.parse(a.session.modified));
+    return entries;
+  }, [sessionGroups, liveSessions]);
+
+  /** 会话所属项目的展示名；主目录不是注册项目，单独给它名字。 */
+  const projectLabel = (path: string) => {
+    if (homeDir && path === homeDir) return "主目录";
+    return projects.find((project) => project.path === path)?.name ?? pathProjectName(path);
+  };
+
+  async function openSession(session: Session) {
+    useWorkspace.getState().set({ panel: "chat" });
+    // 和侧栏的会话列表一样：先确保那个项目的 pi 进程在跑，再切会话。
+    const mode = homeDir && session.cwd === homeDir ? "home" : "project";
+    const workspace = useWorkspace.getState();
+    if (workspace.cwd !== session.cwd || workspace.workspaceMode !== mode || workspace.connection !== "online") {
+      await connect(session.cwd, mode);
+    }
+    await changeSession({ type: "switch_session", sessionPath: session.path });
+  }
+
+  async function chooseHome() {
+    if (!homeDir) {
+      report("还没有找到主目录");
+      return;
+    }
+    useWorkspace.getState().set({ panel: "chat" });
+    setBusyProject(homeDir);
+    try {
+      await openWorkspaceScope(homeDir, "home");
+    } catch (error) {
+      report(error);
+    } finally {
+      setBusyProject("");
+    }
+  }
+
   async function chooseProject(path: string) {
     useWorkspace.getState().set({ panel: "chat" });
-    // Tapping the project that is already selected is still a request to *use*
-    // it; bailing out unconditionally meant a tap on a project whose connection
-    // had dropped did nothing at all. Only a live connection is a no-op.
-    if (path === cwd && workspaceMode === "project" && useWorkspace.getState().connection === "online") return;
     setBusyProject(path);
     try {
-      await connect(path, "project");
-      const project = useProjects.getState().projects.find((item) => item.path === path);
-      if (project) await setSessionRoots(projectExtraRoots(project));
+      await openWorkspaceScope(path, "project");
     } catch (error) {
       report(error);
     } finally {
@@ -449,6 +573,15 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
             <div className="mb-2 shrink-0">
               <SectionHeader
                 label="项目"
+                extraItem={
+                  homeDir
+                    ? {
+                        label: "不在文件夹里工作",
+                        icon: <MessageSquare strokeWidth={1.75} />,
+                        onClick: () => void chooseHome(),
+                      }
+                    : undefined
+                }
                 onAdd={
                   runtimeTarget === "mobile"
                     ? () => setPicker(true)
@@ -476,6 +609,44 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
                 ))}
               </div>
             </div>
+
+            {railSessions.length > 0 ? (
+              <div className="mb-2 shrink-0">
+                <button
+                  type="button"
+                  aria-expanded={sessionsOpen}
+                  aria-label={sessionsOpen ? "收起会话列表" : "展开会话列表"}
+                  onClick={() => {
+                    try { localStorage.setItem("orbit.shell.railSessions", String(!sessionsOpen)); } catch { /* storage unavailable */ }
+                    setSessionsOpen((value) => !value);
+                  }}
+                  className="flex h-7 w-full items-center gap-1 px-3 pb-1.5 text-left"
+                >
+                  <ChevronDown
+                    className={`size-3 shrink-0 text-content/50 transition-transform ${sessionsOpen ? "" : "-rotate-90"}`}
+                    strokeWidth={1.75}
+                  />
+                  <span className="min-w-0 flex-1 truncate px-0.5 text-xs leading-5 text-content/50">会话</span>
+                  <span className="shrink-0 rounded-full bg-content/8 px-1.5 text-[10px] tabular-nums leading-4 text-content/50">
+                    {railSessions.length}
+                  </span>
+                </button>
+                {sessionsOpen ? (
+                  <div className="flex flex-col gap-px px-2">
+                    {railSessions.map(({ session, project }) => (
+                      <RailSessionCard
+                        key={session.path}
+                        session={session}
+                        projectLabel={projectLabel(project)}
+                        active={session.path === currentSessionFile}
+                        running={Boolean(liveSessions.find((live) => live.path === session.path)?.running)}
+                        onSelect={() => void openSession(session).catch(report)}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <UpdateFooter />

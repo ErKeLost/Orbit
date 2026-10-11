@@ -1,3 +1,23 @@
+/** 卡片标题：会话名优先，其次第一条消息，都没有就是「新会话」。 */
+export function sessionTitle(session: { name?: string; firstMessage: string }) {
+  return (session.name || session.firstMessage || "新会话").replace(/\s+/g, " ").trim();
+}
+
+/** 列表右侧的短相对时间（now / 5m / 3h / 2d / 日期），会话侧栏和项目栏共用。 */
+export function sessionRelativeTime(iso: string) {
+  const time = Date.parse(iso);
+  if (!Number.isFinite(time)) return "";
+  const seconds = Math.max(0, Math.round((Date.now() - time) / 1000));
+  if (seconds < 60) return "now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.round(hours / 24);
+  if (days < 7) return `${days}d`;
+  return new Date(time).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 export function compactTitle(label?: string, fallback = "新会话", limit = 24) {
   const text = (label ?? "").replace(/\s+/g, " ").trim();
   if (!text) return fallback;

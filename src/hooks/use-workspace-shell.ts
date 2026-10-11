@@ -219,6 +219,12 @@ export function useWorkspaceBootstrap() {
     const storedPath = localStorage.getItem("pi-gui.cwd");
     const savedProjects = useProjects.getState().projects;
     if (!storedPath && savedProjects.length === 0) {
+      // 全新启动：没有项目也没有历史时，直接落在主目录对话（home 模式），
+      // 不把用户挡在「还没有项目」的空状态前。主目录找不到时才保持空态。
+      if (discovery.data.home) {
+        void connect(discovery.data.home, "home").catch(report);
+        return;
+      }
       useWorkspace.getState().set({ cwd: "", workspaceMode: "project" });
       return;
     }

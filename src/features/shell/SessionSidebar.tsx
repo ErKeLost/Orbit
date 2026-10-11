@@ -11,7 +11,7 @@ import { MenuItem, MenuSeparator, PointMenu } from "../../shared/ui/controls";
 import { toast } from "../../shared/ui/toast";
 import { CircleAlert, Copy, GitBranch, ListFilter, MessageSquare, Plus, Search, Trash2 as Trash } from "../../shared/ui/icons";
 import { Icon } from "../../components/Icon";
-import { sessionGlyph } from "../../lib/session-visual";
+import { sessionGlyph, sessionRelativeTime, sessionTitle } from "../../lib/session-visual";
 import { DevModeSlot, IS_MAC, MOD, ResizeHandle, TabVisitNav, TitleIconButton } from "./chrome";
 import { useShell, type SidebarTab } from "./shellStore";
 import { FileTree } from "./FileTree";
@@ -26,24 +26,6 @@ const SIDEBAR_MAX = 420;
 function relativeTo(cwd: string, path: string) {
   const root = cwd.replace(/\/+$/, "");
   return path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
-}
-
-function relativeTime(iso: string) {
-  const time = Date.parse(iso);
-  if (!Number.isFinite(time)) return "";
-  const seconds = Math.max(0, Math.round((Date.now() - time) / 1000));
-  if (seconds < 60) return "now";
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.round(hours / 24);
-  if (days < 7) return `${days}d`;
-  return new Date(time).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function sessionTitle(session: Session) {
-  return (session.name || session.firstMessage || "新会话").replace(/\s+/g, " ").trim();
 }
 
 function SessionCard({
@@ -96,7 +78,7 @@ function SessionCard({
                   <span>Working...</span>
                 </>
               ) : (
-                <span>{relativeTime(session.modified)}</span>
+                <span>{sessionRelativeTime(session.modified)}</span>
               )}
             </span>
           </span>

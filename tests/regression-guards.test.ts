@@ -60,6 +60,7 @@ describe("durable state", () => {
       "orbit.terminal.position": "cosmetic dock placement, defaults to bottom",
       "orbit.terminal.open": "cosmetic visibility, defaults to closed",
       "orbit.shell.collapsedRail": "cosmetic rail style, defaults to compact",
+      "orbit.shell.railSessions": "cosmetic: whether the rail's session list is expanded, defaults to open",
     }
 
     const written = new Set<string>()
