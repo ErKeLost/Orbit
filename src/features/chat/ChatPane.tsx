@@ -20,7 +20,6 @@ import { useShell } from "../shell/shellStore";
 import { useAppearance } from "../../lib/appearance";
 import { ErrorRow, InitialWorking, TranscriptGroupView, TranscriptSkeleton, type TranscriptGroup } from "./Transcript";
 import { Composer } from "./Composer";
-import { CheckpointBanner } from "./CheckpointBanner";
 import { PromptOutline } from "./PromptOutline";
 
 const groupCache = new WeakMap<object, ReturnType<typeof groupDisplayMessages>>();
@@ -300,7 +299,6 @@ export function ChatPane() {
         <TranscriptSelectionMenu selection={textSelection} onDismiss={dismissTextSelection} />
       </div>
       {Object.entries(statuses).flatMap(([key, value]) => (!key.startsWith("gui-") && value ? [<div key={key} className="extension-status">{key}: {value}</div>] : []))}
-      <CheckpointBanner sessionFile={sessionFile} />
       {/* Sending anchors the turn to the top instead of pinning to the bottom. */}
       <Composer onSubmitted={noop} />
       </div>
