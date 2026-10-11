@@ -498,11 +498,15 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
     [online, submit],
   );
 
-  // 语音输入：录音 → speech.json 配置的转写端点 → 文字追加进草稿。失败只报
-  // 一次 toast（SpeechInput 会吞掉 onAudioRecorded 的异常，反馈在这里给）。
+  // 语音输入：录音 → speech.json 配置的转写端点 → 文字追加进草稿。没检测到人声
+  // 是「再说一次」而不是故障，不给 report（那会再弹一个红色错误 toast）。
   const transcribeRecording = useCallback(async (blob: Blob) => {
     try {
-      const { text } = await transcribeAudio(await encodeBlobToBase64(blob), blob.type || "audio/webm");
+      const { text, noSpeech } = await transcribeAudio(await encodeBlobToBase64(blob), blob.type || "audio/webm");
+      if (noSpeech) {
+        toast.warning("没听到你说话", { description: "点开后正常说一句话再点停止；仍然失败就检查系统麦克风输入设备", showTimestamp: false });
+        return "";
+      }
       return text;
     } catch (error) {
       report(error);

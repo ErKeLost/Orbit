@@ -461,7 +461,7 @@ export async function saveSpeechConfig(patch:Partial<SpeechConfig>):Promise<Spee
 /** Access Token / API Key 落在 auth.json 的 provider 条目下，与其它凭据同一处。 */
 export async function saveSpeechApiKey(provider:string|undefined,apiKey:string|null):Promise<{provider:string;hasCredential:boolean}> { if(!workspaceBackend()) throw new Error('语音识别密钥请在电脑端设置'); return invoke('save_speech_api_key',{provider:provider??null,apiKey}) }
 /** 录音 base64 → 文字。传输方式由 speech.json 决定（火山语音 / OpenAI 兼容端点）。 */
-export async function transcribeAudio(audioBase64:string,mimeType:string):Promise<{text:string;transport:string}> { if(!workspaceBackend()) throw new Error('语音输入请在电脑端使用'); return invoke<{text:string;transport:string}>('transcribe_audio',{audioBase64,mimeType}) }
+export async function transcribeAudio(audioBase64:string,mimeType:string):Promise<{text:string;transport:string;noSpeech?:boolean}> { if(!workspaceBackend()) throw new Error('语音输入请在电脑端使用'); return invoke<{text:string;transport:string;noSpeech?:boolean}>('transcribe_audio',{audioBase64,mimeType}) }
 export async function loadMessages(target=useWorkspace.getState().cwd){
  // 几百条消息的会话，get_messages 的响应就是几 MB，会被电脑端切成多帧发过来；
  // 30s 的上限让“会话大”和“链路卡住了”变成同一个结果，所以给它更长的预算。

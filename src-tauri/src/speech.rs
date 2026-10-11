@@ -368,7 +368,7 @@ async fn transcribe_volcengine(
         .unwrap_or_default()
         .trim()
         .to_owned();
-    Ok(json!({"text": transcript, "transport": "volcengine-speech"}))
+    Ok(json!({"text": transcript, "noSpeech": transcript.is_empty(), "transport": "volcengine-speech"}))
 }
 
 /// OpenAI-compatible `/audio/transcriptions`: multipart form, Bearer key from
@@ -432,6 +432,13 @@ async fn transcribe_openai_compat(
     let status = response.status();
     let text = response.text().await.unwrap_or_default();
     if !status.is_success() {
+        // A recording with no detectable speech is a "try again", not an error:
+        // stepfun answers 400 {"message":"no speech found"} for clicks, breaths
+        // and muted mics alike, and surfacing that as a red toast would read as
+        // the feature being broken when the fix is just talking into the mic.
+        if text.contains("no speech") {
+            return Ok(json!({"text": "", "noSpeech": true, "transport": "openai-compat"}));
+        }
         return Err(format!("语音识别失败（{status}）：{}", truncate(&text)));
     }
     let parsed: Value = serde_json::from_str(&text)
@@ -442,7 +449,7 @@ async fn transcribe_openai_compat(
         .unwrap_or_default()
         .trim()
         .to_owned();
-    Ok(json!({"text": transcript, "transport": "openai-compat", "model": model}))
+    Ok(json!({"text": transcript, "noSpeech": transcript.is_empty(), "transport": "openai-compat", "model": model}))
 }
 
 fn truncate(text: &str) -> String {
