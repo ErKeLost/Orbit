@@ -47,8 +47,7 @@
       html.theme-light { --background-lightness: 97%; }
       html, body, #boot-splash { margin: 0; background: var(--color-background-base); }
 
-      /* 借鉴 monocode：不透过的启动覆盖层，在任何 JS 运行前就能画出 logo，
-         React 挂载后淡出。窗口立即可见也不会闪白屏或桌面背景。 */
+      /* 启动覆盖层在 React 首帧完成后淡出，避免初始化期间闪白屏。 */
       #boot-splash {
         position: fixed;
         inset: 0;
@@ -60,18 +59,10 @@
         transition: opacity 0.16s ease;
       }
       #boot-splash.boot-splash-out { opacity: 0; }
-      #boot-splash img {
-        width: 72px;
-        height: 72px;
-        object-fit: contain;
-        display: block;
-      }
     </style>
   </head>
   <body>
-    <div id="boot-splash" aria-hidden="true">
-      <img src="/favicon.png" alt="" />
-    </div>
+    <div id="boot-splash" aria-hidden="true"></div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
