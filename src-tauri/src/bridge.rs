@@ -1705,7 +1705,8 @@ fn pi_model_from_meta(entry: &Value) -> Option<Value> {
 }
 
 pub(crate) fn agent_dir() -> Result<PathBuf, String> {
-    Ok(home_dir()?.join(".pi/agent"))
+    // 与 SDK getAgentDir() 同源：尊重 PI_CODING_AGENT_DIR，否则 ~/.pi/agent。
+    crate::sessions::agent_dir()
 }
 
 pub(crate) fn sessions_dir() -> Result<PathBuf, String> {
@@ -3134,16 +3135,16 @@ pub fn pi_disconnect(app: AppHandle, project: String, state: State<'_, Bridge>) 
 }
 #[tauri::command]
 pub async fn list_sessions(app: AppHandle, cwd: String) -> Result<Value, String> {
+    // 原生会话索引：不再 spawn Node + 全量跑两遍 SDK，直接单遍扫 JSONL +
+    // (mtime, size) 增量缓存。新建/切换会话后的刷新从秒级降到毫秒级。
+    let _ = &app;
     tauri::async_runtime::spawn_blocking(move || {
         let path = project(&cwd)?;
-        let runtime = RuntimePaths::resolve(&app, &path)?;
-        let sdk = runtime.pi.parent().ok_or("Invalid Pi path")?.join("index.js");
-        // SDK SessionManager.list is the documented session index, not a guessed JSONL parser.
-        let code = "const {pathToFileURL}=require('node:url'); (async()=>{const {SessionManager}=await import(pathToFileURL(process.argv[1]).href);const sessions=await SessionManager.list(process.argv[2]);const result=sessions.map(({allMessagesText,...session})=>{let icon;try{const entries=SessionManager.open(session.path).getEntries();const meta=[...entries].reverse().find(entry=>entry.type==='custom'&&entry.customType==='pi-gui-session-meta');if(meta?.data&&typeof meta.data.icon==='string')icon=meta.data.icon}catch{}return {...session,...(icon?{icon}:{})}});console.log(JSON.stringify(result));})().catch(()=>process.exit(1));";
-        let output = Command::new(runtime.node).args(["-e",code]).arg(sdk).arg(path).output().map_err(|e|e.to_string())?;
-        if !output.status.success() { return Err("Pi SDK 无法读取会话列表".into()); }
-        serde_json::from_slice(&output.stdout).map_err(|e|e.to_string())
-    }).await.map_err(|e|e.to_string())?
+        let sessions = crate::sessions::list_project_sessions(&path)?;
+        Ok(Value::Array(sessions.iter().map(crate::sessions::summary_to_value).collect()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -3200,15 +3201,16 @@ pub async fn clear_sessions(state: State<'_, Bridge>) -> Result<Value, String> {
 }
 #[tauri::command]
 pub async fn session_turn_durations(app: AppHandle, session_path: String) -> Result<Value, String> {
+    let _ = &app;
     tauri::async_runtime::spawn_blocking(move || {
-        let root = sessions_dir()?.canonicalize().map_err(|_| "Pi 会话目录不可用".to_string())?;
-        let target = PathBuf::from(&session_path).canonicalize().map_err(|_| "会话文件不存在".to_string())?;
+        let root = crate::sessions::sessions_root()
+            ?.canonicalize()
+            .map_err(|_| "Pi 会话目录不可用".to_string())?;
+        let target = PathBuf::from(&session_path)
+            .canonicalize()
+            .map_err(|_| "会话文件不存在".to_string())?;
         if target.extension().and_then(|value| value.to_str()) != Some("jsonl") || !target.starts_with(&root) { return Err("只能读取 Pi 会话目录中的 JSONL 文件".into()); }
-        let code = r#"const fs=require('node:fs');const out={};let turn=null;const flush=()=>{if(turn?.id&&Number.isFinite(turn.start)&&Number.isFinite(turn.end)&&turn.end>=turn.start)out[turn.id]=turn.end-turn.start;turn=null};for(const line of fs.readFileSync(process.argv[1],'utf8').split('\n')){if(!line.trim())continue;let entry;try{entry=JSON.parse(line)}catch{continue}if(entry.type!=='message'||!entry.message)continue;const role=entry.message.role;const at=Date.parse(entry.timestamp);if(role==='user'){flush();turn={start:at,end:null,id:null};continue}if(role!=='assistant'||!turn)continue;if(!turn.id){const stamp=entry.message.timestamp;if(Number.isFinite(stamp))turn.id=`timestamp:${stamp}`;else{const call=Array.isArray(entry.message.content)&&entry.message.content.find(part=>part?.type==='toolCall'&&part.id);if(call)turn.id=`tool:${call.id}`}}if(Number.isFinite(at))turn.end=at}flush();process.stdout.write(JSON.stringify(out));"#;
-        let runtime = RuntimePaths::resolve(&app, &home_dir()?)?;
-        let output = Command::new(runtime.node).args(["-e", code]).arg(&target).output().map_err(|error| error.to_string())?;
-        if !output.status.success() { return Err("Pi 会话耗时读取失败".into()); }
-        serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
+        crate::sessions::turn_durations(&target)
     }).await.map_err(|error| error.to_string())?
 }
 #[tauri::command]

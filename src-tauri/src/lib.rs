@@ -19,6 +19,7 @@ pub mod disclaim;
 /// report that they are unavailable instead of failing to build.
 mod screen;
 mod bridge;
+mod sessions;
 mod git;
 mod github_inbox;
 mod gitlab;
