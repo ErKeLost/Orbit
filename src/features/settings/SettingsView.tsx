@@ -1,13 +1,13 @@
-import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useWorkspace } from "../../lib/store";
 import { useAppearance } from "../../lib/appearance";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { PageHeader } from "../../shared/ui/controls";
 import { RotateCcw, Search } from "../../shared/ui/icons";
 import { Popover } from "../../shared/ui/Popover";
-import { ALL_SECTIONS } from "./SettingsNav";
 import { IS_MAC, TrafficLightSpacer } from "../shell/chrome";
 import { sectionOf } from "./SettingsNav";
+import { jumpToSetting, searchSettings } from "./model/settings";
 import { AppearancePage } from "./AppearancePage";
 import { SkillsPage } from "./SkillsPage";
 import { ChatPage } from "./ChatPage";
@@ -28,12 +28,11 @@ function DesktopOnly({ what }: { what: string }) {
   );
 }
 
-/** Orbit `SettingsSearch`: jumps to any section by name. */
+/** Orbit `SettingsSearch`：按关键词搜到具体设置行，跳页并滚动定位。 */
 function SettingsSearch() {
   const [query, setQuery] = useState("");
   const anchor = useRef<HTMLLabelElement>(null);
-  const needle = query.trim().toLowerCase();
-  const matches = needle ? ALL_SECTIONS.filter((section) => `${section.label} ${section.description}`.toLowerCase().includes(needle)) : [];
+  const results = useMemo(() => searchSettings(query), [query]);
   return (
     <div className="flex shrink-0 items-center gap-1.5 pr-2" data-tauri-drag-region="false">
       <label ref={anchor} className="flex h-7 w-48 items-center gap-2 rounded-md border border-content/10 px-2 text-content/45 focus-within:border-content/20">
@@ -46,22 +45,21 @@ function SettingsSearch() {
           className="min-w-0 flex-1 bg-transparent text-[12px] text-content outline-none placeholder:text-content/35"
         />
       </label>
-      {needle ? (
+      {query.trim() ? (
         <Popover anchor={anchor} side="bottom" align="end" width={260} onDismiss={() => setQuery("")} className="overflow-y-auto p-1">
-          {matches.length === 0 ? <p className="px-2 py-1.5 text-[12px] text-content/45">没有匹配的设置</p> : null}
-          {matches.map((section) => (
+          {results.length === 0 ? <p className="px-2 py-1.5 text-[12px] text-content/45">没有匹配的设置</p> : null}
+          {results.map((result) => (
             <button
-              key={section.id}
+              key={`${result.section}:${result.settingId ?? "section"}`}
               type="button"
               onClick={() => {
-                useWorkspace.getState().set({ settingsPage: section.id });
+                jumpToSetting(result.section, result.settingId);
                 setQuery("");
               }}
               className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-content hover:bg-content/5"
             >
-              <section.icon className="size-3.5 shrink-0 text-content/50" strokeWidth={1.75} />
-              <span className="min-w-0 flex-1 truncate">{section.label}</span>
-              <span className="shrink-0 text-[11px] text-content/40">{section.description.split(/[。，,]/)[0]}</span>
+              <span className="min-w-0 flex-1 truncate">{result.label}</span>
+              <span className="shrink-0 text-[11px] text-content/40">{result.sectionLabel}</span>
             </button>
           ))}
         </Popover>
