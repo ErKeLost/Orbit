@@ -16,7 +16,7 @@ import { SessionSidebar } from "./features/shell/SessionSidebar";
 import { TitleBar } from "./features/shell/TitleBar";
 import { FileView } from "./features/shell/FileView";
 import { MobileShell } from "./features/shell/MobileShell";
-import { useActiveWorkspace, useShell } from "./features/shell/shellStore";
+import { useActiveWorkspace, useShell, isHomeWorkspace } from "./features/shell/shellStore";
 import { ChatPane } from "./features/chat/ChatPane";
 import { SettingsView } from "./features/settings/SettingsView";
 import { InboxView } from "./features/inbox/InboxView";
@@ -59,6 +59,7 @@ function WorkArea() {
   const setSplitRatio = useShell((state) => state.setSplitRatio);
   const focusedPane = useActiveWorkspace((workspace) => workspace.activePane);
   const sessions = useActiveWorkspace((workspace) => workspace.sessions);
+  const homeWorkspace = useActiveWorkspace(isHomeWorkspace);
   const closePane = useShell((state) => state.closePane);
   const tabs = useWorkspaceTabs();
   // A sash drag previews through a local tree and only writes on release.
@@ -234,7 +235,10 @@ function WorkArea() {
                           onPaneDragStart={paneDragStart(entry.id)}
                         />
                       ) : null}
-                      <ChatPane key={sessions[entry.id].connectionId || connectionId || cwd} />
+                      <ChatPane
+                        key={sessions[entry.id].connectionId || connectionId || cwd}
+                        onSubmitted={homeWorkspace ? tabs.promoteHome : undefined}
+                      />
                     </div>
                   </SessionScope>
                 ) : panes[entry.id] ? (

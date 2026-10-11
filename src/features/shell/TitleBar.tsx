@@ -1,10 +1,10 @@
-import { useCallback, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
 import { useWorkspace } from "../../lib/store";
 import { useTitleTabDrop } from "./paneDrop";
 import { PanelLeft, Plus, Settings, Terminal, X } from "../../shared/ui/icons";
 import { IS_MAC, MOD, TitleIconButton } from "./chrome";
 import { useWorkspaceTabs } from "./use-workspace-tabs";
-import { useShell } from "./shellStore";
+import { isHomeWorkspace, useShell, type WorkspaceTab } from "./shellStore";
 import { compactTitle } from "../../lib/session-visual";
 import { connectionSnapshot, firstUserTitle, subscribeSnapshot } from "../../lib/rpc";
 import type { Snapshot } from "../../lib/rpc";
@@ -124,22 +124,25 @@ function WorkspaceTabItem({
  */
 export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
   const terminalOpen = useShell((state) => state.terminalOpen);
-  const workspaces = useShell((state) => state.workspaces);
+  // The hidden home workspace is not a tab: it only appears as the 首页 once
+  // every tab has been closed.
+  const allWorkspaces = useShell((state) => state.workspaces);
+  const workspaces = useMemo(() => allWorkspaces.filter((workspace) => !isHomeWorkspace(workspace)), [allWorkspaces]);
   const activeWorkspaceId = useShell((state) => state.activeWorkspaceId);
   const tabs = useWorkspaceTabs();
   // 面板拖到标题栏时的插入提示（monocode 的 paneToTabDrop）。
   const paneToTabDrop = useTitleTabDrop();
-  const [menu, setMenu] = useState<{ workspace: (typeof workspaces)[number]; x: number; y: number } | null>(null);
+  const [menu, setMenu] = useState<{ workspace: WorkspaceTab; x: number; y: number } | null>(null);
 
   const closeOthers = async (workspaceId: string) => {
-    const others = useShell.getState().workspaces.filter((item) => item.id !== workspaceId);
+    const others = useShell.getState().workspaces.filter((item) => item.id !== workspaceId && !isHomeWorkspace(item));
     setMenu(null);
     for (const item of others) await tabs.close(item.id);
     await tabs.open(workspaceId);
   };
 
   const closeRight = async (workspaceId: string) => {
-    const items = useShell.getState().workspaces;
+    const items = useShell.getState().workspaces.filter((item) => !isHomeWorkspace(item));
     const index = items.findIndex((item) => item.id === workspaceId);
     if (index < 0) return;
     setMenu(null);
@@ -182,7 +185,7 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
             onOpen={() => void tabs.open(workspace.id)}
             onClose={() => void tabs.close(workspace.id)}
             onContextMenu={(event) => setMenu({ workspace, x: event.clientX, y: event.clientY })}
-            closable={workspaces.length > 1}
+            closable
             dropHint={paneToTabDrop?.targetTabId === workspace.id ? paneToTabDrop.position : undefined}
           />
         ))}
@@ -221,7 +224,7 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
           <MenuSeparator />
           <MenuItem disabled={workspaces.length < 2} onClick={() => void closeOthers(menu.workspace.id)}>关闭其他会话</MenuItem>
           <MenuItem disabled={workspaces.findIndex((item) => item.id === menu.workspace.id) >= workspaces.length - 1} onClick={() => void closeRight(menu.workspace.id)}>关闭右侧会话</MenuItem>
-          <MenuItem disabled={workspaces.length < 2} danger onClick={() => { const id = menu.workspace.id; setMenu(null); void tabs.close(id); }}>关闭会话</MenuItem>
+          <MenuItem danger onClick={() => { const id = menu.workspace.id; setMenu(null); void tabs.close(id); }}>关闭会话</MenuItem>
         </PointMenu>
       ) : null}
     </header>

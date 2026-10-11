@@ -805,7 +805,7 @@ export async function answerDialog(request:UiRequest,answer:{value?:string;confi
 export function hasWorkspaceConnection(id: string) { return Boolean(id) && connections.has(id) }
 export function workspaceConnectionIds() { return [...connections.keys()] }
 /** Start a workspace's pi process without stealing the project's route. */
-export async function openWorkspaceConnection(cwd: string, id: string, options?: { sessionPath?: string; restoreLast?: boolean }) {
+export async function openWorkspaceConnection(cwd: string, id: string, options?: { sessionPath?: string; restoreLast?: boolean; keepTranscript?: boolean }) {
  await startConnection(cwd, id, options)
 }
 /** Make an existing connection the active projection again. */

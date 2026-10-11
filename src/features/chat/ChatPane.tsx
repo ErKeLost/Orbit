@@ -96,7 +96,11 @@ function ChatBackground() {
 /** 发送后的定位由 lastUserId 变化驱动（Orbit 同款），输入框不需要通知。 */
 const noop = () => undefined;
 
-export function ChatPane() {
+/**
+ * `onSubmitted` 由壳层传入：首页工作区在发出第一条消息后要升格成真正的标签页。
+ * 会话内的 ChatPane 不传，落到 `noop`。
+ */
+export function ChatPane({ onSubmitted }: { onSubmitted?: () => void } = {}) {
   const project = useWorkspace((state) => state.cwd);
   const runtimeTarget = useWorkspace((state) => state.runtimeTarget);
   const agents = useWorkspace((state) => state.agents);
@@ -239,7 +243,7 @@ export function ChatPane() {
   if (groups.length === 0 && !waiting) {
     return (
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <EmptySession cwd={project} onSubmitted={noop} />
+        <EmptySession cwd={project} onSubmitted={onSubmitted ?? noop} />
       </div>
     );
   }
@@ -300,7 +304,7 @@ export function ChatPane() {
       </div>
       {Object.entries(statuses).flatMap(([key, value]) => (!key.startsWith("gui-") && value ? [<div key={key} className="extension-status">{key}: {value}</div>] : []))}
       {/* Sending anchors the turn to the top instead of pinning to the bottom. */}
-      <Composer onSubmitted={noop} />
+      <Composer onSubmitted={onSubmitted ?? noop} />
       </div>
       {dockPosition === "bottom" || dockPosition === "right" ? dock : null}
     </div>

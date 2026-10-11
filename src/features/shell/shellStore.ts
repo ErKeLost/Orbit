@@ -90,16 +90,31 @@ function newWorkspaceId() {
   return `ws-${crypto.randomUUID().slice(0, 8)}`;
 }
 
-export function newWorkspaceTab(cwd: string): WorkspaceTab {
+export function newWorkspaceTab(cwd: string, connectionId = ""): WorkspaceTab {
   return {
     id: newWorkspaceId(),
     cwd,
-    connectionId: "",
+    connectionId,
     layout: leaf(CHAT_PANE_ID),
     panes: {},
-    sessions: { [CHAT_PANE_ID]: { connectionId: "" } },
+    sessions: { [CHAT_PANE_ID]: { connectionId } },
     activePane: CHAT_PANE_ID,
   };
+}
+
+/**
+ * The hidden 「新会话」工作区：没有 pi 进程的 tab，只在所有标签页关掉之后
+ * 撑起首页（EmptySession）。它有自己的连接 id（`<cwd>#home`），由
+ * `useWorkspaceTabs.open` 开成一个全新的空会话，所以它永远不是某个旧会话的副本。
+ */
+export const HOME_WORKSPACE_ID = "home";
+
+export function newHomeWorkspace(cwd: string): WorkspaceTab {
+  return { ...newWorkspaceTab(cwd), id: HOME_WORKSPACE_ID };
+}
+
+export function isHomeWorkspace(workspace: WorkspaceTab | undefined): boolean {
+  return workspace?.id === HOME_WORKSPACE_ID;
 }
 
 /** Next free session pane id; the first one is always `chat`. */
@@ -206,8 +221,10 @@ type ShellState = Persisted & {
   setSessionSidebarWidth: (width: number) => void;
   /** Switch the visible workspace; the caller activates its pi connection. */
   activateWorkspace: (id: string) => void;
-  newWorkspace: (cwd?: string) => WorkspaceTab;
+  newWorkspace: (cwd?: string, connectionId?: string) => WorkspaceTab;
   closeWorkspace: (id: string) => void;
+  /** 首页工作区发出第一条消息后，把它升格成一个真正的会话标签页。 */
+  promoteHomeWorkspace: () => void;
   /** Split a session pane and open a new session in it (Orbit ⌘D / ⌘⇧D). */
   splitSessionPane: (paneId: string, dir: "right" | "down") => string | null;
   bindSessionConnection: (paneId: string, connectionId: string) => void;
@@ -243,9 +260,14 @@ const initial = typeof window === "undefined"
 if (!initial.activeWorkspaceId) initial.activeWorkspaceId = initial.workspaces[0].id;
 
 function persist(state: Persisted) {
+  // 首页工作区不入库：重开应用时按正常流程恢复上一次的会话标签页，不记住「全关了」。
+  const real = state.workspaces.filter((workspace) => workspace.id !== HOME_WORKSPACE_ID);
+  const activeWorkspaceId = real.some((workspace) => workspace.id === state.activeWorkspaceId)
+    ? state.activeWorkspaceId
+    : (real[0]?.id ?? "");
   write(WORKSPACES_KEY, JSON.stringify({
-    activeWorkspaceId: state.activeWorkspaceId,
-    workspaces: state.workspaces.map(({ id, cwd, layout, panes, sessions, activePane }) => ({ id, cwd, layout, panes, sessions, activePane })),
+    activeWorkspaceId,
+    workspaces: real.map(({ id, cwd, layout, panes, sessions, activePane }) => ({ id, cwd, layout, panes, sessions, activePane })),
   }));
 }
 
@@ -345,9 +367,9 @@ export const useShell = create<ShellState>((set, get) => {
       persist({ workspaces: state.workspaces, activeWorkspaceId });
     },
 
-    newWorkspace: (cwd) => {
+    newWorkspace: (cwd, connectionId) => {
       const state = get();
-      const workspace = newWorkspaceTab(cwd ?? state.workspaces[activeIndex(state)].cwd);
+      const workspace = newWorkspaceTab(cwd ?? state.workspaces[activeIndex(state)].cwd, connectionId);
       const workspaces = [...state.workspaces, workspace];
       set({ workspaces, activeWorkspaceId: workspace.id });
       persist({ workspaces, activeWorkspaceId: workspace.id });
@@ -356,15 +378,38 @@ export const useShell = create<ShellState>((set, get) => {
 
     closeWorkspace: (id) => {
       const state = get();
-      if (state.workspaces.length < 2) return;
+      // 首页工作区不是标签页，不能关；关掉最后一个标签页时它会被自动补出来。
+      if (id === HOME_WORKSPACE_ID) return;
       const index = state.workspaces.findIndex((workspace) => workspace.id === id);
       if (index < 0) return;
-      const workspaces = state.workspaces.filter((workspace) => workspace.id !== id);
-      const activeWorkspaceId = state.activeWorkspaceId === id
-        ? workspaces[Math.min(index, workspaces.length - 1)].id
-        : state.activeWorkspaceId;
+      const removed = state.workspaces[index];
+      let workspaces = state.workspaces.filter((workspace) => workspace.id !== id);
+      // 所有标签页都关掉了：留一个隐藏的首页工作区，内容走 EmptySession。
+      if (!workspaces.some((workspace) => workspace.id === HOME_WORKSPACE_ID)) {
+        const real = workspaces.filter((workspace) => workspace.id !== HOME_WORKSPACE_ID);
+        if (real.length === 0) workspaces = [...workspaces, newHomeWorkspace(removed.cwd)];
+      }
+      let activeWorkspaceId = state.activeWorkspaceId;
+      if (activeWorkspaceId === id) {
+        const real = workspaces.filter((workspace) => workspace.id !== HOME_WORKSPACE_ID);
+        activeWorkspaceId = real[Math.min(index, real.length - 1)]?.id ?? HOME_WORKSPACE_ID;
+      }
+      if (!workspaces.some((workspace) => workspace.id === activeWorkspaceId)) {
+        activeWorkspaceId = workspaces[0].id;
+      }
       set({ workspaces, activeWorkspaceId });
       persist({ workspaces, activeWorkspaceId });
+    },
+
+    promoteHomeWorkspace: () => {
+      const state = get();
+      const index = state.workspaces.findIndex((workspace) => workspace.id === HOME_WORKSPACE_ID);
+      if (index < 0 || state.activeWorkspaceId !== HOME_WORKSPACE_ID) return;
+      const workspaces = [...state.workspaces];
+      const id = newWorkspaceId();
+      workspaces[index] = { ...workspaces[index], id };
+      set({ workspaces, activeWorkspaceId: id });
+      persist({ workspaces, activeWorkspaceId: id });
     },
 
     detachPaneToWorkspace: (paneId, targetTabId, position) => {
