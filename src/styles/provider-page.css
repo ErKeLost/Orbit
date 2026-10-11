@@ -826,6 +826,16 @@
   color: var(--color-content);
 }
 
+/* 嵌在设置页（SettingsView）里：这个形态没有左栏，详情单列占满。
+   之前按「264px 左栏 + 详情」的两列 grid 渲染，详情被塞进第一列挤成一条。 */
+.settings-page .provider-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: min(100%, 760px);
+  margin-inline: auto;
+}
+
 /* ── Narrow settings container: the rail folds above the detail ──────────── */
 
 @container settings (width < 720px) {

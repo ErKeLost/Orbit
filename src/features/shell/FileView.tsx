@@ -13,7 +13,7 @@ import { base64ToBytes, planMediaPreview } from "../../lib/media-preview";
 import { Markdown } from "../../components/Markdown";
 import { splitMarkdownFrontmatter } from "../../shared/lib/markdownFrontmatter";
 import { MarkdownViewShell, useMarkdownMode } from "../chat/MarkdownModeToggle";
-import { ChevronDown, ChevronRight, ImagePlus, Loader } from "../../shared/ui/icons";
+import { ChevronDown, ChevronRight, ImagePlus, Loader, Pause, Play } from "../../shared/ui/icons";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { SurfaceTabs } from "./SurfaceTabs";
 import { useActiveWorkspace, useShell } from "./shellStore";
@@ -96,6 +96,93 @@ function MediaNotice({ message, path }: { message: string; path: string }) {
   );
 }
 
+function formatAudioTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+}
+
+/** A compact player that keeps the file preview in Orbit's visual language. */
+function AudioPlayer({ src, name, mime, size }: { src: string; name: string; mime?: string; size?: number }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [time, setTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPlaying(false);
+    setTime(0);
+    setDuration(0);
+    setError(null);
+  }, [src]);
+
+  const toggle = async () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      try {
+        await audio.play();
+        setPlaying(true);
+      } catch {
+        setError("音频无法播放，请检查文件格式或编码");
+      }
+    } else {
+      audio.pause();
+      setPlaying(false);
+    }
+  };
+
+  return (
+    <div className="flex w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-content/10 bg-content/[0.045] shadow-[0_18px_60px_color-mix(in_srgb,var(--color-content)_8%,transparent)]">
+      <audio
+        ref={audioRef}
+        src={src}
+        preload="metadata"
+        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
+        onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onEnded={() => { setPlaying(false); setTime(0); }}
+        onError={() => setError("音频无法加载，请检查文件格式或文件是否完整")}
+        className="hidden"
+      />
+      <div className="flex items-center gap-4 px-5 py-5">
+        <div className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-xl bg-gradient-to-br from-accent/80 via-accent/35 to-content/10 text-content shadow-inner">
+          <span className="absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_30%_20%,white_0,transparent_55%)]" />
+          <span className="relative text-3xl font-serif leading-none">♪</span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[14px] font-medium text-content" title={name}>{name}</p>
+          <p className="mt-1 truncate font-mono text-[11px] text-content/40">{[mime?.split("/").at(-1)?.toUpperCase(), size == null ? null : formatBytes(size)].filter(Boolean).join(" · ")}</p>
+          <div className="mt-4 flex items-center gap-2">
+            <span className="w-9 shrink-0 text-right font-mono text-[10px] tabular-nums text-content/45">{formatAudioTime(time)}</span>
+            <input
+              type="range"
+              min={0}
+              max={duration || 0}
+              step={0.01}
+              value={Math.min(time, duration || 0)}
+              aria-label="音频进度"
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                if (audioRef.current) audioRef.current.currentTime = next;
+                setTime(next);
+              }}
+              className="audio-progress h-1.5 min-w-0 flex-1 accent-[var(--color-accent)]"
+            />
+            <span className="w-9 shrink-0 font-mono text-[10px] tabular-nums text-content/45">{formatAudioTime(duration)}</span>
+          </div>
+        </div>
+        <button type="button" onClick={() => void toggle()} aria-label={playing ? "暂停音频" : "播放音频"} className="grid size-10 shrink-0 place-items-center rounded-full bg-content text-background-base transition-transform hover:scale-105 active:scale-95">
+          {playing ? <Pause className="size-4" strokeWidth={2} /> : <Play className="size-4 translate-x-px" strokeWidth={2} />}
+        </button>
+      </div>
+      {error ? <p className="border-t border-content/10 px-5 py-2.5 text-[11px] text-red-300">{error}</p> : null}
+    </div>
+  );
+}
+
 /**
  * One object URL per payload, revoked when it is replaced or the view goes away.
  *
@@ -157,10 +244,7 @@ function MediaView({ file, kind, remote }: { file: { path: string; name: string 
           <img src={src} alt={file.name} draggable={false} className="max-h-[60vh] max-w-full rounded-lg object-contain" />
         </button>
       ) : kind === "audio" ? (
-        <div className="flex w-full max-w-md flex-col items-center gap-4 rounded-xl border border-content/10 bg-content/4 px-6 py-8">
-          <ImagePlus className="size-8 text-content/25" strokeWidth={1.5} />
-          <audio src={src} controls className="w-full" />
-        </div>
+        <AudioPlayer src={src} name={file.name} mime={meta.data?.mime} size={meta.data?.size} />
       ) : kind === "video" ? (
         <VideoPlayer src={src} path={file.path} mimeType={meta.data?.mime} />
       ) : (

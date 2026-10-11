@@ -398,11 +398,14 @@ impl RuntimePaths {
         let home = home_dir()?;
         let agent_dir = home.join(".pi/agent");
         let sessions_dir = agent_dir.join("sessions");
+        // `resource_dir()` is unavailable in some Tauri dev runners (it
+        // returns the opaque `unknown path` error). Resolve the same directory
+        // through the resource base first, then keep the packaged-app fallback.
         let resources_dir = app
             .path()
-            .resource_dir()
-            .map_err(|error| format!("无法定位 Orbit resources：{error}"))?
-            .join("resources");
+            .resolve("resources", BaseDirectory::Resource)
+            .or_else(|_| app.path().resource_dir().map(|path| path.join("resources")))
+            .map_err(|error| format!("无法定位 Orbit resources：{error}"))?;
         let host_node = bundled_node_path(app)?;
         let node_version = node_version(&host_node)?;
         let node = orbit_process_node(host_node.clone(), app, &node_version)?;
@@ -440,11 +443,10 @@ impl RuntimePaths {
         ] {
             require_file(path, label)?;
         }
-        #[cfg(target_os = "macos")]
-        require_file(
-            &resources_dir.join("computer-use/ax_control"),
-            "Accessibility worker",
-        )?;
+        // Computer Use is optional. A dev checkout may not have run the native
+        // worker build yet, but that must never prevent ordinary Pi sessions
+        // from connecting; the feature reports its own unavailable state when
+        // the user actually enables it.
         require_dir(&node_modules, "Node modules")?;
         let pi_version = pi_version(&node, &pi)
             .ok_or_else(|| "Orbit 内置 Pi runtime 无法启动，请重新安装应用".to_string())?;

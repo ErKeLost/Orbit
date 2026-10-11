@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
 import { useWorkspace } from "../../lib/store";
 import { useTitleTabDrop } from "./paneDrop";
 import { PanelLeft, Plus, Settings, Terminal, X } from "../../shared/ui/icons";
@@ -8,6 +8,7 @@ import { useShell } from "./shellStore";
 import { compactTitle } from "../../lib/session-visual";
 import { connectionSnapshot, firstUserTitle, subscribeSnapshot } from "../../lib/rpc";
 import type { Snapshot } from "../../lib/rpc";
+import { MenuItem, MenuSeparator, PointMenu } from "../../shared/ui/controls";
 
 /** Tab label: the project's folder name, like Orbit's workspace tabs. */
 function workspaceLabel(cwd: string) {
@@ -47,6 +48,7 @@ function WorkspaceTabItem({
   active,
   onOpen,
   onClose,
+  onContextMenu,
   closable,
   dropHint,
 }: {
@@ -54,6 +56,7 @@ function WorkspaceTabItem({
   active: boolean;
   onOpen: () => void;
   onClose: () => void;
+  onContextMenu: (event: ReactMouseEvent<HTMLElement>) => void;
   closable: boolean;
   /** 面板正被拖到这个标签页的前/后（monocode 的插入提示）。 */
   dropHint?: "before" | "after";
@@ -63,6 +66,11 @@ function WorkspaceTabItem({
   return (
     <div
       data-title-tab-id={workspace.id}
+      data-tauri-drag-region="false"
+      onContextMenu={(event) => {
+        event.preventDefault();
+        onContextMenu(event);
+      }}
       className="group relative flex h-7.5 w-52 min-w-28 shrink items-center"
     >
       {dropHint ? (
@@ -75,6 +83,7 @@ function WorkspaceTabItem({
       <button
         type="button"
         role="tab"
+        data-tauri-drag-region="false"
         aria-selected={active}
         title={label}
         onClick={onOpen}
@@ -120,6 +129,23 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
   const tabs = useWorkspaceTabs();
   // 面板拖到标题栏时的插入提示（monocode 的 paneToTabDrop）。
   const paneToTabDrop = useTitleTabDrop();
+  const [menu, setMenu] = useState<{ workspace: (typeof workspaces)[number]; x: number; y: number } | null>(null);
+
+  const closeOthers = async (workspaceId: string) => {
+    const others = useShell.getState().workspaces.filter((item) => item.id !== workspaceId);
+    setMenu(null);
+    for (const item of others) await tabs.close(item.id);
+    await tabs.open(workspaceId);
+  };
+
+  const closeRight = async (workspaceId: string) => {
+    const items = useShell.getState().workspaces;
+    const index = items.findIndex((item) => item.id === workspaceId);
+    if (index < 0) return;
+    setMenu(null);
+    for (const item of items.slice(index + 1)) await tabs.close(item.id);
+    await tabs.open(workspaceId);
+  };
 
   return (
     <header className="flex h-10 shrink-0 select-none items-stretch border-b border-stroke" data-tauri-drag-region="deep">
@@ -155,6 +181,7 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
             active={workspace.id === activeWorkspaceId}
             onOpen={() => void tabs.open(workspace.id)}
             onClose={() => void tabs.close(workspace.id)}
+            onContextMenu={(event) => setMenu({ workspace, x: event.clientX, y: event.clientY })}
             closable={workspaces.length > 1}
             dropHint={paneToTabDrop?.targetTabId === workspace.id ? paneToTabDrop.position : undefined}
           />
@@ -188,6 +215,15 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
           </TitleIconButton>
         ) : null}
       </div>
+      {menu ? (
+        <PointMenu x={menu.x} y={menu.y} label="工作区操作" onClose={() => setMenu(null)}>
+          <MenuItem onClick={() => { setMenu(null); void tabs.create(menu.workspace.cwd); }}>新建会话</MenuItem>
+          <MenuSeparator />
+          <MenuItem disabled={workspaces.length < 2} onClick={() => void closeOthers(menu.workspace.id)}>关闭其他会话</MenuItem>
+          <MenuItem disabled={workspaces.findIndex((item) => item.id === menu.workspace.id) >= workspaces.length - 1} onClick={() => void closeRight(menu.workspace.id)}>关闭右侧会话</MenuItem>
+          <MenuItem disabled={workspaces.length < 2} danger onClick={() => { const id = menu.workspace.id; setMenu(null); void tabs.close(id); }}>关闭会话</MenuItem>
+        </PointMenu>
+      ) : null}
     </header>
   );
 }
