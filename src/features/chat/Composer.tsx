@@ -4,7 +4,7 @@ import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useWorkspace } from "../../lib/store";
 import { perfMarkSend } from "../../lib/perf-log";
-import { ensureSessionModes, recallQueue, report, sendPrompt, setComputerUseMode, setMultiAgentMode, steerFollowUp, stop } from "../../lib/rpc";
+import { ensureSessionModes, recallQueue, report, sendPrompt, setComputerUseMode, setMultiAgentMode, steerFollowUp, stop, transcribeAudio } from "../../lib/rpc";
 import { useSessionTarget } from "../shell/use-session-target";
 import { base64ToBlob } from "../../lib/image-bytes";
 import { encodeBlobToBase64, encodeClipboardImage } from "../../lib/image-encode";
@@ -24,6 +24,7 @@ import { ComposerHighlight } from "./ComposerHighlight";
 import { useComposerTokens } from "./composerTokens";
 import { expandMentionLabels, type MentionFile } from "./fileMentions";
 import { ContextMeter } from "./ContextMeter";
+import { SpeechInput } from "../../components/ai-elements/speech-input";
 import { WorkspaceRoots } from "./WorkspaceRoots";
 import { ProjectPicker } from "./ProjectPicker";
 import { ExtensionDialog } from "../../components/panels/ExtensionDialog";
@@ -497,6 +498,28 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
     [online, submit],
   );
 
+  // 语音输入：录音 → speech.json 配置的转写端点 → 文字追加进草稿。失败只报
+  // 一次 toast（SpeechInput 会吞掉 onAudioRecorded 的异常，反馈在这里给）。
+  const transcribeRecording = useCallback(async (blob: Blob) => {
+    try {
+      const { text } = await transcribeAudio(await encodeBlobToBase64(blob), blob.type || "audio/webm");
+      return text;
+    } catch (error) {
+      report(error);
+      toast.warning("语音转写失败", { description: error instanceof Error ? error.message : String(error) });
+      return "";
+    }
+  }, []);
+
+  const appendTranscript = useCallback((text: string) => {
+    if (!text) return;
+    const field = draftRef.current;
+    const current = field?.value() ?? "";
+    const spacer = current && !/\s$/.test(current) ? " " : "";
+    const next = `${current}${spacer}${text}`;
+    field?.setText(next, next.length);
+  }, []);
+
   const usage = stats?.contextUsage;
   const context = usage && usage.tokens != null && usage.contextWindow ? { used: usage.tokens, window: usage.contextWindow } : undefined;
   const queueVisible = queue.steering.length + queue.followUp.length > 0;
@@ -666,6 +689,12 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
                   <CursorMagicSelection className="size-3.5" strokeWidth={1.75} />
                 </ToolButton>
               ) : null}
+              <SpeechInput
+                title="语音输入"
+                aria-label="语音输入"
+                onAudioRecorded={transcribeRecording}
+                onTranscriptionChange={appendTranscript}
+              />
               <ComposerAction
                 busy={running}
                 disabled={!online}

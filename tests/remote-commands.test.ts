@@ -85,6 +85,12 @@ const EXCLUDED: Record<string, string> = {
   git_checkpoint_capture: "captures this machine's working tree",
   git_checkpoint_diff: "reads this machine's git objects",
   git_checkpoint_restore: "writes this machine's working tree",
+  // 语音转写在桌面今天就是仅本机的：读写这台机器的 speech.json / auth.json，
+  // 转写请求也从桌面的网络发出。镜像到手机等手机端麦克风权限打通后再说。
+  speech_config: "reads the desktop's speech.json; the phone has no agent dir",
+  save_speech_config: "writes the desktop's speech.json",
+  save_speech_api_key: "writes the desktop's auth.json",
+  transcribe_audio: "desktop voice input; the phone has no mic permission plumbing yet",
 }
 
 describe("remote command boundary", () => {

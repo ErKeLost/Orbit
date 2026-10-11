@@ -24,6 +24,7 @@ mod git;
 mod github_inbox;
 mod gitlab;
 mod image_config;
+mod speech;
 mod media;
 mod pty_term;
 mod search;
@@ -320,6 +321,10 @@ pub fn run() {
             image_config::image_config,
             image_config::save_image_config,
             image_config::save_image_api_key,
+            speech::speech_config,
+            speech::save_speech_config,
+            speech::save_speech_api_key,
+            speech::transcribe_audio,
             media::media_meta,
             media::read_media_file,
             pty_term::pty_spawn,

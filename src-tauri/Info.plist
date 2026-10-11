@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- Tauri merges this into the bundled Info.plist (config-schema: "Tauri
+         also looks for a Info.plist file in the same directory as the Tauri
+         configuration file"). Without the mic purpose string, macOS kills the
+         app the first time the composer's SpeechInput calls getUserMedia. -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Orbit 需要访问麦克风，把你说的话转写成文字填入输入框。录音仅用于语音转写。</string>
+  </dict>
+</plist>

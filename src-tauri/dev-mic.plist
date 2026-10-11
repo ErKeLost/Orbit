@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- Linked into the dev binary's __TEXT,__info_plist section (see the
+         RUSTFLAGS in the dev workflow). `tauri dev` runs a bare executable, so
+         the bundled Info.plist merge never applies and the first getUserMedia
+         call gets the app killed by TCC unless the binary itself carries the
+         usage string. Bundled builds read Info.plist instead. -->
+    <key>CFBundleName</key>
+    <string>Orbit</string>
+    <key>CFBundleIdentifier</key>
+    <string>ai.pi.gui</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Orbit 需要访问麦克风，把你说的话转写成文字填入输入框。录音仅用于语音转写。</string>
+  </dict>
+</plist>
