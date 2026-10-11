@@ -449,7 +449,13 @@ fn truncate(text: &str) -> String {
     if text.len() <= 400 {
         text.to_owned()
     } else {
-        format!("{}…", &text[..text.floor_char_boundary(400)])
+        // `floor_char_boundary` is newer than this repo's MSRV, so walk back to
+        // one by hand: 400 bytes, or the last valid UTF-8 edge before it.
+        let mut cut = 400;
+        while cut > 0 && !text.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        format!("{}…", &text[..cut])
     }
 }
 
