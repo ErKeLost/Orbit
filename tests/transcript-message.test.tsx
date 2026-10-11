@@ -62,7 +62,7 @@ describe("turn projection", () => {
     expect(turn.answer).toEqual([]);
   });
 
-  test("streaming tail prose reads as the answer; narration before a tool call stays in the fold", () => {
+  test("only a settled final message becomes the answer; live narration stays in the fold while streaming", () => {
     const live: DisplayMessage[] = [
       { id: "a1", message: { role: "assistant", stopReason: "toolUse", content: [
         { type: "text", text: "第一段小结" },
@@ -70,9 +70,33 @@ describe("turn projection", () => {
       ] } },
       { id: "a2", message: { role: "assistant", content: [{ type: "text", text: "第二段小结，还在流式输出" }] } },
     ];
-    const turn = projectTurn(live, phaseTools, true);
-    expect(turn.answer.map((step) => step.text)).toEqual(["第二段小结，还在流式输出"]);
-    expect(turn.work.some((step) => step.text === "第一段小结")).toBe(true);
+    // 未收到 message_end 的 tail 不提升：提前提升会在 toolcall 到达时把正文
+    // 从全尺寸 markdown 掉回折叠区（闪烁）。
+    const streamingTurn = projectTurn(live, phaseTools, true);
+    expect(streamingTurn.answer).toEqual([]);
+    expect(streamingTurn.work.some((step) => step.text === "第一段小结")).toBe(true);
+    expect(streamingTurn.work.some((step) => step.text === "第二段小结，还在流式输出")).toBe(true);
+
+    // 消息结束且无工具调用 → 才是最终总结。
+    const settledTurn = projectTurn(
+      live.map((item, index) => (index === live.length - 1 ? { ...item, settled: true } : item)),
+      phaseTools,
+      true,
+    );
+    expect(settledTurn.answer.map((step) => step.text)).toEqual(["第二段小结，还在流式输出"]);
+    expect(settledTurn.work.some((step) => step.text === "第一段小结")).toBe(true);
+  });
+
+  test("a settled streaming message that ends on a tool call never promotes its prose", () => {
+    const live: DisplayMessage[] = [
+      { id: "s1", settled: true, message: { role: "assistant", stopReason: "toolUse", content: [
+        { type: "text", text: "中间叙述，后面还有工具" },
+        { type: "toolCall", id: "test", name: "bash", arguments: { command: "bun test" } },
+      ] } },
+    ];
+    const turn = projectTurn(live, { ...phaseTools, test: { ...phaseTools.test, running: true } }, true);
+    expect(turn.answer).toEqual([]);
+    expect(turn.work.some((step) => step.text === "中间叙述，后面还有工具")).toBe(true);
   });
 
   test("successful image generations lift out of the work fold as content", () => {

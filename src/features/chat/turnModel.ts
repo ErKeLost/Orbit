@@ -145,6 +145,12 @@ export function projectTurn(
   const stoppedCleanly =
     !last?.message.errorMessage && (!last?.message.stopReason || last.message.stopReason === "stop");
   const lastHasTool = steps.some((step) => step.messageIndex === lastIndex && step.kind === "tool");
+  // 流式中的消息只有收到 message_end（settled）才允许参与 answer 收缩：
+  // 工具调用紧跟最后一个 text token 到达（毫秒级），所以“已结束且无工具”的消息
+  // 一定是最终总结；提前提升会让中间叙述先全尺寸渲染、toolcall 一到又掉回折叠，
+  // 也就是正文在 chat 里闪一下的那个回归。非流式（历史/静态渲染）没有该标记时
+  // 视为已结束，行为不变。
+  const settled = streaming ? last?.settled === true : (last?.settled ?? true);
 
   // The answer is the run of notes at the very end of the final message, as
   // long as no tool call follows them. While streaming, the live tail prose
@@ -161,7 +167,7 @@ export function projectTurn(
   const imageKeys = new Set(imageSteps.map((step) => step.key));
   const workRest = steps.filter((step) => !imageKeys.has(step.key));
   let split = workRest.length;
-  if ((stoppedCleanly || streaming) && !lastHasTool) {
+  if (settled && stoppedCleanly && !lastHasTool) {
     while (split > 0) {
       const step = workRest[split - 1];
       if (step.messageIndex !== lastIndex) break;

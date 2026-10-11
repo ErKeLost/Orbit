@@ -3,7 +3,7 @@ export type { RpcSessionState, RpcCommand, RpcExtensionUIRequest } from '@earend
 export type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
 export type Part = { type: string; text?: string; thinking?: string; thinkingComplete?: boolean; data?: string; mimeType?: string; url?: string; id?: string; name?: string; arguments?: Record<string, Json>; argsText?: string }
 export type PiMessage = { role: string; content?: string | Part[]; command?: string; output?: string; summary?: string; display?: boolean; timestamp?: number; toolCallId?: string; toolName?: string; isError?: boolean; details?: unknown; usage?: ToolUsage; errorMessage?: string; stopReason?: string; exitCode?: number; cancelled?: boolean; truncated?: boolean; fullOutputPath?: string }
-export type DisplayMessage = { id: string; message: PiMessage; startedAt?: number; elapsedMs?: number }
+export type DisplayMessage = { id: string; message: PiMessage; startedAt?: number; elapsedMs?: number; settled?: boolean }
 export type DisplayMessageGroup = { id: string; items: DisplayMessage[]; indexes: number[] }
 export type ToolUsage = { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost?: { total?: number } }
 export type ToolImage = { data: string; mimeType: string }
@@ -248,7 +248,7 @@ export function hydrate(messages: PiMessage[]): Transcript {
     if(raw.role==='custom' && raw.display===false)continue
     const message=normalizeMessage(raw)
     if (message.role === 'toolResult' && message.toolCallId) state.tools[message.toolCallId] = {name: message.toolName ?? 'tool', result: toolResultText(message.content), details:toolCodeDetails(message.toolName??'tool',message.details), images:toolResultImages(message.content), image:toolImageInfo(message.toolName??'tool',message), running: false, isError: message.isError, usage: message.usage as ToolUsage|undefined}
-    else state.messages.push({ id: `history-${state.messages.length}-${message.timestamp ?? 0}`, message })
+    else state.messages.push({ id: `history-${state.messages.length}-${message.timestamp ?? 0}`, message, settled: message.role === 'assistant' })
   }
   return state
 }
@@ -362,7 +362,11 @@ export function reduceEvent(previous: Transcript, event: Event): Transcript {
         }
       }
       if(index >= 0) {
-        state.messages = [...state.messages]; state.messages[index] = {...state.messages[index],message}
+        state.messages = [...state.messages]
+        // settled = 这条消息已经收到 message_end。流式中的 tail 是否是最终总结只能
+        // 在消息结束后判定（toolcall 紧跟最后一个 text token，间隔毫秒级），
+        // 提前提升会让正文先全尺寸渲染、工具调用一到又掉回折叠区 —— 就是那个闪烁。
+        state.messages[index] = {...state.messages[index],message,settled: state.messages[index].settled || message.role === 'assistant'}
       }
       if(message.errorMessage) state.error=message.errorMessage
       return state
