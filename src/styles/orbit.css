@@ -243,9 +243,13 @@
   font: inherit;
 }
 
-/* Shiki dual-theme tokens: light uses inline colors, dark swaps to the var. */
-html:not(.theme-light) .agent-markdown .shiki,
-html:not(.theme-light) .agent-markdown .shiki span {
+/* Shiki dual-theme tokens: light keeps the inline colours, dark swaps to the
+ * `--shiki-dark*` variables. Every shiki surface needs this — chat fences
+ * (`.code-block`), tool cards / file previews (`.file-highlighter`) — so the
+ * rule is global instead of scoped to `.agent-markdown`, where tool-result
+ * cards were left on vitesse-light's white background in dark mode. */
+html:not(.theme-light) .shiki,
+html:not(.theme-light) .shiki span {
   color: var(--shiki-dark) !important;
   background-color: transparent !important;
   font-style: var(--shiki-dark-font-style) !important;
