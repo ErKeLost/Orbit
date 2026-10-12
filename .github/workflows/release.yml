@@ -49,18 +49,15 @@ jobs:
             os: macos-15
             args: --target aarch64-apple-darwin
             rust_targets: aarch64-apple-darwin
-          # Intel Macs that Ventura left behind (2015–2017 models) can reach
-          # Monterey at most, so dropping x86_64 drops those users entirely —
-          # not a slower build of the same app, no build at all.
-          #
-          # It runs on an Intel runner on purpose rather than cross-compiling
-          # from the arm64 one: `sync-node-runtime` bundles the Node for
-          # `process.arch`, so an arm64 host would ship an arm64 Node inside an
-          # Intel app. `sync-worker` already follows `TAURI_ENV_TARGET`.
-          - name: macOS Intel
-            os: macos-15-intel
-            args: --target x86_64-apple-darwin
-            rust_targets: x86_64-apple-darwin
+          # Intel 包暂时停发：bundle_dmg.sh 在 intel runner 上连续两版失败
+          # （v0.6.70 / 此前 43m 编译成功后 DMG 布局挂掉）。需要恢复时把下面
+          # 这段注释放回来。注意必须保留 Intel runner（而不是 arm64 交叉编译）：
+          # `sync-node-runtime` 按 `process.arch` 打包 Node，arm64 宿主会把
+          # arm64 的 Node 塞进 Intel 应用里。
+          # - name: macOS Intel
+          #   os: macos-15-intel
+          #   args: --target x86_64-apple-darwin
+          #   rust_targets: x86_64-apple-darwin
           - name: Linux x86_64
             os: ubuntu-22.04
             args: ""
