@@ -1,8 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { activeProjects, derivedProjectColor, sortPinnedFirst, useProjects } from "../../lib/projects";
+import { activeProjects, derivedProjectColor, normalizeProjectPath, projectRoots, sortPinnedFirst, useProjects } from "../../lib/projects";
 import { desktopRuntime, report } from "../../lib/rpc";
-import { openWorkspaceScope } from "../../lib/workspace-scope";
+import { useWorkspaceTabs } from "../shell/use-workspace-tabs";
 import { useWorkspace } from "../../lib/store";
 import { Folder, FolderPlus, Loader, MessageSquare } from "../../shared/ui/icons";
 import { MenuItem, MenuSeparator } from "../../shared/ui/controls";
@@ -22,6 +22,7 @@ export function ProjectPicker({ disabled }: { disabled: boolean }) {
   const homeDir = useWorkspace((state) => state.homeDir);
   const projects = useProjects((state) => state.projects);
   const anchor = useRef<HTMLButtonElement>(null);
+  const tabs = useWorkspaceTabs();
   const [menu, setMenu] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -34,7 +35,7 @@ export function ProjectPicker({ disabled }: { disabled: boolean }) {
     setMenu(false);
     setBusy(true);
     try {
-      await openWorkspaceScope(path, mode);
+      await tabs.openScope(path, mode);
     } catch (error) {
       report(error);
     } finally {
@@ -48,11 +49,23 @@ export function ProjectPicker({ disabled }: { disabled: boolean }) {
       report("请在电脑端选择文件夹");
       return;
     }
-    const selected = await open({ directory: true, multiple: false, title: "打开项目", defaultPath: cwd || undefined });
+    // Pi 支持一个项目多个 app root：多选时第一个当项目根，其余作为附加目录。
+    const selected = await open({ directory: true, multiple: true, title: "打开文件夹（可多选）", defaultPath: cwd || undefined });
     if (!selected) return;
-    const path = ((Array.isArray(selected) ? selected[0] : selected) as string).replace(/\/+$/, "") || "/";
-    useProjects.getState().add([path]);
-    await pick(path, "project");
+    const paths = (Array.isArray(selected) ? selected : [selected])
+      .map((path) => normalizeProjectPath(path as string))
+      .filter(Boolean);
+    if (!paths.length) return;
+    const [primary, ...extra] = paths;
+    const store = useProjects.getState();
+    const existing = store.projects.find((project) => project.path === primary);
+    const roots = projectRoots({ path: primary, name: existing?.name ?? "", roots: [...(existing?.roots ?? []), ...extra] });
+    store.update({
+      path: primary,
+      name: existing?.name ?? primary.split("/").filter(Boolean).at(-1) ?? "/",
+      roots,
+    });
+    await pick(primary, "project");
   }
 
   return (
