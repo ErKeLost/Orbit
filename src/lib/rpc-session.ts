@@ -1,0 +1,235 @@
+import type { RpcCommand } from "@earendil-works/pi-coding-agent";
+import { invoke } from "./native";
+import { useWorkspace } from "./store";
+import { findBranchEntry, type BranchEntry } from "./session-branch";
+import { reduceEvent, transcriptLoading, type PiMessage, type UiRequest } from "./protocol";
+import { emptyTelemetry } from "./telemetry";
+import { runRemoteHostOperation } from "./remote-runtime";
+import {
+  cachedTranscript,
+  connections,
+  connectionsFor,
+  current,
+  forgetCachedTranscript,
+  fresh,
+  loadMessages,
+  patch,
+  projectActive,
+  projectDisconnected,
+  queryClient,
+  reconnectingProjects,
+  refresh,
+  request,
+  route,
+  sendCommand,
+  sessionOwners,
+  snapshot,
+  snapshots,
+  syncConfiguredProjectRoots,
+  syncLiveSessions,
+} from "./rpc-core";
+import { activateConnection, closeConnection, connect, startConnection } from "./rpc-connection";
+import { mobileRuntime, native, report, workspaceBackend } from "./runtime";
+
+/** Session-level commands: open / switch / retire a session, send prompts,
+ *  steer a running turn, and the queue. */
+export async function sendPrompt(command:RpcCommand,target=useWorkspace.getState().cwd,wasRunning=useWorkspace.getState().transcript.running){
+ try{
+  // 回合检查点：真实用户消息（非 /gui-* 内部命令）发出前捕获工作区快照。
+  if(command.type==='prompt'&&!command.message.startsWith('/')){
+   const sessionFile=current(route(target)).state?.sessionFile
+   if(sessionFile)window.dispatchEvent(new CustomEvent('orbit-turn-started',{detail:{cwd:target,sessionFile}}))
+  }
+  const result=await request<{disposition?:string}>(command,45000,target)
+  if(!wasRunning&&result?.disposition!=='started')useWorkspace.getState().event({type:'prompt_settled'})
+  return result
+ }catch(error){
+  if(!wasRunning)useWorkspace.getState().event({type:'prompt_settled'})
+  throw error
+ }
+}
+export async function listSessions(project:string){if(mobileRuntime())return runRemoteHostOperation<import('./protocol').Session[]>({name:'session.list',cwd:project});if(!native)return [];return invoke<import('./protocol').Session[]>('list_sessions',{cwd:project})}
+export async function deleteSession(sessionPath:string):Promise<void> { if(mobileRuntime()){await runRemoteHostOperation<null>({name:'session.delete',sessionPath});return}if(!native) throw new Error('删除会话需要桌面应用'); return invoke<void>('delete_session',{sessionPath}) }
+export async function clearSessionHistory():Promise<number> {
+ if(!workspaceBackend()) throw new Error('清空会话历史请在电脑端执行')
+ const workspace=useWorkspace.getState(),cwd=workspace.cwd,workspaceMode=workspace.workspaceMode
+ await Promise.all([...connections.keys()].map(id=>closeConnection(id,'会话历史已清空')))
+ projectActive.clear();snapshots.clear();sessionOwners.clear();syncLiveSessions()
+ const result=await invoke<{removed?:number}>('clear_sessions')
+ queryClient.removeQueries({predicate:query=>query.queryKey[0]==='pi'&&query.queryKey[1]==='sessions'})
+ useWorkspace.getState().set({...fresh(),cwd,connectionId:'',workspaceMode})
+ return typeof result?.removed==='number'?result.removed:0
+}
+export async function retireSession(sessionPath:string){
+ const cwd=useWorkspace.getState().cwd,owner=sessionOwners.get(sessionPath),wasActive=owner?useWorkspace.getState().connectionId===owner:useWorkspace.getState().state?.sessionFile===sessionPath
+ if(mobileRuntime()&&wasActive){await changeSession({type:'new_session'});await deleteSession(sessionPath);sessionOwners.delete(sessionPath);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]});return}
+ if(owner&&connections.has(owner))await closeConnection(owner,'会话已关闭')
+ await deleteSession(sessionPath);sessionOwners.delete(sessionPath);forgetCachedTranscript(sessionPath)
+ if(!wasActive)return
+ const remaining=connectionsFor(cwd)[0]
+ if(remaining){activateConnection(remaining,cwd);return}
+ useWorkspace.getState().set({...fresh(),cwd,connectionId:cwd,panel:'chat'})
+ await startConnection(cwd,cwd)
+}
+export async function getSessionTurnDurations(sessionPath:string):Promise<Record<string,number>> { if(mobileRuntime())return runRemoteHostOperation<Record<string,number>>({name:'session.turnDurations',sessionPath});if(!native) return {}; return invoke<Record<string,number>>('session_turn_durations',{sessionPath}) }
+export async function recallQueue(target=useWorkspace.getState().cwd){const id=route(target),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id);const s=current(id);patch(id,{draft:[s.draft,...cleared.steering,...cleared.followUp].filter(Boolean).join('\n'),transcript:reduceEvent(s.transcript,{type:'queued_preview_clear'})})}
+/** Promote one queued follow-up into the running turn as a steer (Orbit's "Steer"). */
+export async function steerFollowUp(text:string,target=useWorkspace.getState().cwd){
+ const id=route(target),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id)
+ let promoted=false
+ for(const message of cleared.steering)await request({type:'steer',message},30000,id)
+ for(const message of cleared.followUp){
+  if(!promoted&&message===text){promoted=true;await request({type:'steer',message},30000,id)}
+  else await request({type:'follow_up',message},30000,id)
+ }
+}
+/**
+ * Pause: cut the turn that is running, keep the queued steering messages going.
+ *
+ * Pi's `abort` does not touch either queue, but the texts of a pending queue can
+ * only be read by `clear_queue` (there is no read-only queue command), so the
+ * order is: harvest the queue, abort, then replay — the first message as a plain
+ * prompt to start the next turn, the rest as `steer` so they land in the same
+ * turn. The agent loop polls the steering queue when the run starts (agent-loop
+ * "Check for steering messages at start"), so they keep moving up into the
+ * conversation instead of being dumped back into the draft.
+ *
+ * `steer` is used for the tail rather than `prompt` with a streaming behavior:
+ * it is accepted whether or not the new turn has started streaming yet, so the
+ * replay can never trip "Agent is already processing".
+ *
+ * Follow-ups are not replayed — they return to the draft so that stop still
+ * means something actually stops.
+ */
+export async function stop(target=useWorkspace.getState().cwd){
+ const id=route(target)
+ const cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id)
+ await request({type:'abort'},60000,id)
+ patch(id,{transcript:reduceEvent(current(id).transcript,{type:'queued_preview_clear'})})
+ const steering=cleared.steering.filter(text=>text.trim())
+ const returned:string[]=[]
+ if(steering.length){
+  let delivered=0
+  try{
+   await sendPrompt({type:'prompt',message:steering[0]},id,false);delivered=1
+   for(const message of steering.slice(1)){await request({type:'steer',message},30000,id);delivered+=1}
+  }
+  // 只把没投出去的部分退回草稿：成功了再退会变成重复消息。
+  catch(error){returned.push(...steering.slice(delivered));report(error)}
+ }
+ const draft=[...returned,...cleared.followUp].filter(text=>text.trim())
+ if(draft.length){const s=current(id);patch(id,{draft:[s.draft,...draft].filter(Boolean).join('\n')})}
+ await refresh(id)
+}
+export async function changeSession(command:RpcCommand){
+ try {
+  return await changeSessionOnce(command)
+ } catch (error) {
+  // A stale worker after a restart or project switch: reconnect and retry once.
+  const workspace=useWorkspace.getState()
+  if (!projectDisconnected(error) || mobileRuntime() || !workspace.cwd) throw error
+  const cwd=workspace.cwd
+  let task=reconnectingProjects.get(cwd)
+  if(!task){
+   task=connect(cwd,workspace.workspaceMode).finally(()=>reconnectingProjects.delete(cwd))
+   reconnectingProjects.set(cwd,task)
+  }
+  await task
+  return changeSessionOnce(command)
+ }
+}
+const SESSION_SWITCH_COMMANDS=new Set(['switch_session','new_session','clone','fork'])
+/** 骨架屏置位：只在这条连接确实要跑一次 loadMessages 时才调，否则没人会把它收回来。 */
+const markSessionLoading=(id:string)=>patch(id,{transcript:transcriptLoading(current(id).transcript,true)})
+/**
+ * 换掉整份 transcript：先上骨架屏再 loadMessages。会话树切分支这种『不换 session
+ * 但内容整体换掉』的入口走这里，loadMessages 自己会（成功或失败）把骨架屏收起来。
+ */
+export async function reloadMessages(target=useWorkspace.getState().cwd){const id=route(target);markSessionLoading(id);return loadMessages(id)}
+async function changeSessionOnce(command:RpcCommand){
+ const cwd=useWorkspace.getState().cwd,active=route(cwd),running=current(active).transcript.running
+ if(command.type==='switch_session'){
+  if(useWorkspace.getState().state?.sessionFile===command.sessionPath){useWorkspace.getState().set({panel:'chat'});return}
+  const owner=sessionOwners.get(command.sessionPath)
+  // 这个会话的遥接已经活着（快照里有消息），切过去是瞬时的，不上骨架屏。
+  if(owner&&connections.has(owner)){activateConnection(owner,cwd);await syncConfiguredProjectRoots(cwd,owner);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]});return}
+ }
+ const switching=SESSION_SWITCH_COMMANDS.has(String(command.type))
+ // 正在跑的那一轮会切到一条新连接上（旧连接留在快照里继续跑），加载发生在
+ // 新连接上，所以这时不能在 active 上置位：没人会去收回它。
+ const swapsConnection=(command.type==='new_session'||command.type==='switch_session')&&running&&!mobileRuntime()
+ // 开过的会话有正文缓存：先直接画出来（无骨架屏），再去后台确认。
+ const cached=command.type==='switch_session'?cachedTranscript(command.sessionPath):undefined
+ if(switching&&!swapsConnection){
+  if(cached)patch(active,{transcript:cached,error:null})
+  else markSessionLoading(active)
+ }
+ try{
+  if(mobileRuntime()){
+   const result=await request<{cancelled?:boolean;text?:string}>(command,60000,active)
+   if(result?.cancelled)throw new Error('扩展取消了会话切换')
+   patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null})
+   if(useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'})
+   await loadMessages(active)
+   if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,active)
+   await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
+   return
+  }
+  if((command.type==='new_session'||command.type==='switch_session')&&running){
+   const id=`${cwd}#${crypto.randomUUID()}`
+   snapshots.set(active,snapshot())
+   useWorkspace.getState().set({...fresh(),cwd,connectionId:id,panel:'chat'})
+   await startConnection(cwd,id,command.type==='switch_session'?{sessionPath:command.sessionPath}:undefined)
+   if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,id)
+   await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]});return
+  }
+  const result=await request<{cancelled?:boolean;text?:string}>(command,60000,active);if(result?.cancelled)throw new Error('扩展取消了会话切换');patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null});if(useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'});await loadMessages(active);if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,active);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
+ }
+ catch(error){
+  // 取消/失败时手动收起骨架屏：这条路径不会走到 loadMessages 的 hydrate。
+  for(const id of new Set([active,useWorkspace.getState().connectionId]))patch(id,{transcript:transcriptLoading(current(id).transcript,false)})
+  throw error
+ }
+}
+const branchingConnections = new Set<string>()
+export async function branchFromMessage(message: PiMessage) {
+ const workspace=useWorkspace.getState(),cwd=workspace.cwd,id=route(cwd)
+ if(workspace.connection!=='online'||current(id).transcript.running||current(id).transcript.compacting)throw new Error('请等待当前回复结束后再分支')
+ if(branchingConnections.has(id))throw new Error('正在创建分支，请稍候')
+ branchingConnections.add(id)
+ const sourceFile=current(id).state?.sessionFile
+ let cloned=false
+ try {
+  const entries=await request<{entries:BranchEntry[];leafId:string|null}>({type:'get_entries'},30000,id)
+  const entryId=findBranchEntry(entries.entries,entries.leafId,message)
+  if(current(id).state?.sessionFile!==sourceFile||current(id).transcript.running)throw new Error('当前会话已变化，请重试')
+  const result=await request<{cancelled?:boolean}>({type:'clone'},60000,id)
+  if(result.cancelled)throw new Error('扩展取消了创建分支')
+  cloned=true
+  // Navigate only in the clone so the original conversation keeps its current leaf.
+  await request({type:'prompt',message:`/gui-tree ${JSON.stringify({id:entryId,summarize:false})}`},60000,id)
+  const branch=await request<{leafId:string|null}>({type:'get_entries'},30000,id)
+  if(branch.leafId!==entryId)throw new Error('未能定位到所选回复，已创建的副本可在会话列表中查看')
+  patch(id,{error:null,telemetry:emptyTelemetry(),draft:'',dialogs:[],statuses:{},widgets:{},agents:null})
+  if(useWorkspace.getState().connectionId===id)useWorkspace.getState().set({panel:'chat'})
+ } catch(error) {
+  if(cloned&&sourceFile) {
+   const restored=await request<{cancelled?:boolean}>({type:'switch_session',sessionPath:sourceFile},60000,id)
+   if(restored.cancelled)throw new Error('分支操作失败，且扩展取消了返回原会话；请从侧栏选择原会话')
+  }
+  throw error
+ } finally {
+  try {
+   if(cloned)await loadMessages(id)
+   await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
+   await queryClient.invalidateQueries({queryKey:['pi','tree',cwd]})
+  } finally { branchingConnections.delete(id) }
+ }
+}
+export async function answerDialog(request:UiRequest,answer:{value?:string;confirmed?:boolean;cancelled?:boolean},target?:string){const id=(target&&connections.has(target)?target:useWorkspace.getState().connectionId)||route();await sendCommand(id,{type:'extension_ui_response',id:request.id,...answer});patch(id,{dialogs:current(id).dialogs.filter(item=>item.id!==request.id)})}
+
+/* ------------------------------------------------------------------ *
+ * Workspace tabs (Orbit `workspaceTabGroups`): each workspace owns one
+ * pi RPC process and its own pane tree. These wrappers keep the connection
+ * table private to this module.
+ * ------------------------------------------------------------------ */
