@@ -11,6 +11,7 @@ import {
 } from "react";
 import { useMarkdownMode } from "../../chat/MarkdownModeToggle";
 import { Markdown as AgentMarkdown } from "../../../components/Markdown";
+import { mdxToMarkdown } from "../../../shared/lib/mdxLite";
 import { MarkdownSourceEditor } from "../../chat/MarkdownSourceEditor";
 import { SearchableProjectPicker } from "../../projects/ui/SearchableProjectPicker";
 import { useDragResize } from "../../../shared/hooks/useDragResize";
@@ -495,6 +496,8 @@ function NoteEditor({
   const [edits, setEdits] = useState<Edits>({});
   const title = edits.title ?? note.title;
   const body = edits.body ?? note.body;
+  // 预览同样过一层 MDX 折叠：粘贴进来的 docs 片段里的 <Tip>/<img> 能正常渲染。
+  const noteMarkdown = useMemo(() => mdxToMarkdown(body), [body]);
   const tags = edits.tags ?? note.tags;
   // Keep only an unsaved choice locally so completed moves survive reopening.
   const [projectChange, setProjectChange] = useState<{ path: string } | null>(
@@ -893,7 +896,7 @@ function NoteEditor({
               }}
             />
           ) : body.trim() ? (
-            <AgentMarkdown content={body} />
+            <AgentMarkdown content={noteMarkdown} />
           ) : (
             <p className="text-[13px] text-content/45">No description</p>
           )}

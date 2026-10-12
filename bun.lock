@@ -51,6 +51,8 @@
         "rehype-katex": "^7.0.1",
         "remark-gfm": "^4.0.1",
         "remark-math": "^6.0.0",
+        "remark-mdx": "^3.1.1",
+        "remark-stringify": "^11.0.0",
         "shadcn": "^4.21.0",
         "shiki": "4.4.3",
         "vega": "^6.4.0",

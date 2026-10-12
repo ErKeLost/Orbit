@@ -12,6 +12,7 @@ import { formatBytes, mediaKind, readMediaFile, useMediaMeta, type MediaKind } f
 import { base64ToBytes, planMediaPreview } from "../../lib/media-preview";
 import { Markdown } from "../../components/Markdown";
 import { splitMarkdownFrontmatter } from "../../shared/lib/markdownFrontmatter";
+import { mdxToMarkdown } from "../../shared/lib/mdxLite";
 import { MarkdownViewShell, useMarkdownMode } from "../chat/MarkdownModeToggle";
 import { ChevronDown, ChevronRight, ImagePlus, Loader, Pause, Play } from "../../shared/ui/icons";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
@@ -284,6 +285,9 @@ function isMarkdownPath(path: string): boolean {
 /** Orbit's `MarkdownDocumentPreview`: rendered body with folded frontmatter. */
 function MarkdownDocumentPreview({ text }: { text: string }) {
   const { metadata, body } = useMemo(() => splitMarkdownFrontmatter(text), [text]);
+  // docs 站点存档是 MDX：<Tip>/<Frame>/<img> 会被渲染器按字面打印，先折叠成
+  // 等价 markdown（纯 markdown 原样通过，聊天流不经过这里）。
+  const markdown = useMemo(() => mdxToMarkdown(body), [body]);
   return (
     <>
       {metadata !== null ? (
@@ -296,7 +300,7 @@ function MarkdownDocumentPreview({ text }: { text: string }) {
           <pre className="whitespace-pre-wrap break-words border-t border-stroke px-3 py-2 font-mono text-[12px] leading-5 text-content/70">{metadata}</pre>
         </details>
       ) : null}
-      <Markdown content={body} />
+      <Markdown content={markdown} />
     </>
   );
 }
