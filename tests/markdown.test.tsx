@@ -4,6 +4,8 @@ import { Markdown, preloadMath } from "../src/components/Markdown";
 
 await preloadMath();
 
+const FENCE = "```";
+
 describe("shared Markdown renderer", () => {
   test("renders GFM tables and KaTeX through LobeHub Streamdown", () => {
     const html = renderToStaticMarkup(
@@ -70,6 +72,14 @@ describe("shared Markdown renderer", () => {
     expect(html).toContain("<pre>");
     expect(html).toContain("flowchart LR");
     expect(html).not.toContain("class=\"mermaid\"");
+  });
+
+  test("diagram fences (dot/echarts/vega) keep source until the client upgrades them", () => {
+    for (const fence of ["dot\ndigraph { a -> b }", "echarts\n{\"xAxis\":{\"type\":\"category\"}}", "vega-lite\n{\"mark\":\"bar\"}"]) {
+      const html = renderToStaticMarkup(<Markdown content={FENCE + fence + "\n" + FENCE} />);
+      expect(html).toContain("markdown-diagram-shell");
+      expect(html).toContain("<pre>");
+    }
   });
 
   test("renders GFM task lists, strikethrough, quotes and autolinks", () => {

@@ -55,18 +55,127 @@ const MERMAID_OPTIONS: RenderOptions = {
   transparent: true,
 };
 
+/* ------------------------------------------------------------------ *
+ * 图表围栏：mermaid 之外的格式。全部离线渲染（桌面应用不依赖 CDN），
+ * 每个库按需动态加载——不出现对应围栏就永远不进包。
+ * ------------------------------------------------------------------ */
+
+const DIAGRAM_LANGUAGES = new Set(["dot", "graphviz", "gv", "echarts", "vega", "vega-lite", "vl", "svg"]);
+
+/** 渲染目标：离屏挂载 → 量出 SVG 字符串 → 卸载。 */
+async function withOffscreenHost(render: (host: HTMLDivElement) => Promise<void>) {
+  const host = document.createElement("div");
+  host.style.cssText = "position:absolute;left:-99999px;top:0;width:720px;height:420px;";
+  document.body.appendChild(host);
+  try {
+    await render(host);
+    return host.innerHTML;
+  } finally {
+    host.remove();
+  }
+}
+
+async function renderDot(source: string) {
+  const { instance } = await import("@viz-js/viz");
+  const svg = await (await instance()).renderSVGElement(source);
+  return svg.outerHTML;
+}
+
+async function renderECharts(source: string) {
+  const echarts = await import("echarts");
+  return withOffscreenHost(async (host) => {
+    const dark = document.documentElement.classList.contains("theme-dark");
+    const chart = echarts.init(host, dark ? "dark" : undefined, { renderer: "svg" });
+    chart.setOption(JSON.parse(source));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  });
+}
+
+async function renderVega(source: string, mode: "vega" | "vega-lite") {
+  const embed = (await import("vega-embed")).default;
+  return withOffscreenHost(async (host) => {
+    const spec = JSON.parse(source);
+    if (mode === "vega-lite" && !spec.$schema) spec.$schema = "https://vega.github.io/schema/vega-lite/v6.json";
+    const result = await embed(host, spec, { renderer: "svg", actions: false });
+    result.finalize();
+  });
+}
+
+/** SVG 围栏走 <img>，不把外部 SVG 直接注入文档。 */
+const SVG_BLOCKED = /<script[\s>]/i;
+
+const Diagram = memo<{ code: string; language: string }>(({ code, language }) => {
+  const [svg, setSvg] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setSvg("");
+    setError("");
+    const key = language.toLowerCase();
+    const run = key === "dot" || key === "graphviz" || key === "gv"
+      ? renderDot(code)
+      : key === "echarts"
+        ? renderECharts(code)
+        : key === "svg"
+          ? Promise.resolve(SVG_BLOCKED.test(code) ? "" : code)
+          : renderVega(code, key === "vl" || key === "vega-lite" ? "vega-lite" : "vega");
+    run
+      .then((result) => { if (!cancelled) setSvg(result); })
+      .catch((reason) => { if (!cancelled) setError(String(reason instanceof Error ? reason.message : reason)); });
+    return () => { cancelled = true; };
+  }, [code, language]);
+
+  if (error) {
+    return (
+      <div className="markdown-diagram-error" role="alert">
+        <p>这张 {language} 图渲染失败：</p>
+        <pre><code>{error}</code></pre>
+        <pre><code>{code}</code></pre>
+      </div>
+    );
+  }
+  if (!svg) {
+    return (
+      <pre>
+        <code>{code}</code>
+      </pre>
+    );
+  }
+  if (diagramKey(language) === "svg") {
+    return <img className="markdown-diagram-svg" alt="" src={`data:image/svg+xml;utf8,${encodeURIComponent(svg)}`} />;
+  }
+  return <div className="markdown-diagram" dangerouslySetInnerHTML={{ __html: svg }} />;
+});
+
+const diagramKey = (language: string) => language.toLowerCase();
+
 const Mermaid = memo<{ code: string; settleDelay: number }>(({ code, settleDelay }) => {
   const settled = useSettled(code, settleDelay);
   const [svg, setSvg] = useState("");
 
   // 图表库是几 MB 的依赖，只有真的出现 mermaid 代码块时才加载。
+  // beautiful-mermaid 覆盖 flowchart/sequence 等常用六类；gantt/mindmap/pie 等
+  // 其余类型落到本地打包的 mermaid（离线可用，不依赖 CDN）。
   useEffect(() => {
     if (!settled) return;
     let cancelled = false;
     void import("beautiful-mermaid")
       .then(({ renderMermaidSVG }) => {
-        if (cancelled) return;
-        setSvg(renderMermaidSVG(settled, MERMAID_OPTIONS));
+        const drawn = renderMermaidSVG(settled, MERMAID_OPTIONS);
+        if (!drawn) throw new Error("unsupported");
+        return drawn;
+      })
+      .catch(async () => {
+        const mermaid = (await import("mermaid")).default;
+        const dark = document.documentElement.classList.contains("theme-dark");
+        mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "default" });
+        const id = `mermaid-fallback-${Math.random().toString(36).slice(2)}`;
+        const { svg: drawn } = await mermaid.render(id, settled);
+        return drawn;
+      })
+      .then((drawn) => {
+        if (!cancelled) setSvg(drawn ?? "");
       })
       .catch(() => {
         if (!cancelled) setSvg("");
@@ -309,6 +418,10 @@ export function Pre({
   const body =
     language === "mermaid" ? (
       <Mermaid code={code} settleDelay={settleDelay} />
+    ) : language && DIAGRAM_LANGUAGES.has(language) ? (
+      <div className="markdown-diagram-shell" dir="ltr">
+        <Diagram code={code} language={language} />
+      </div>
     ) : language ? (
       <Highlighted code={code} language={language} settleDelay={settleDelay} />
     ) : (
