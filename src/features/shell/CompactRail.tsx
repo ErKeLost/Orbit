@@ -2,7 +2,8 @@ import { useMemo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useWorkspace } from "../../lib/store";
 import { activeProjects, derivedProjectColor, projectColor, sortPinnedFirst, useProjects } from "../../lib/projects";
-import { changeSession, connect, report } from "../../lib/rpc";
+import { connect, report } from "../../lib/rpc";
+import { useWorkspaceTabs } from "../shell/use-workspace-tabs";
 import { useGitDiffStats } from "../../lib/git";
 import {
   FileDiff,
@@ -113,14 +114,12 @@ export function CompactRail() {
     useWorkspace.getState().set({ panel: panel === id ? "chat" : id });
   };
 
+  const tabs = useWorkspaceTabs();
+
   const newSession = () => {
     useWorkspace.getState().set({ panel: "chat" });
-    void (async () => {
-      // Pi 只在活的 worker 上接受新会话，掉线时先重连。
-      const state = useWorkspace.getState();
-      if (state.connection !== "online" && state.cwd) await connect(state.cwd, "project");
-      await changeSession({ type: "new_session" });
-    })().catch(report);
+    // 新会话落首页：不替换当前连接，正在跑的会话继续在后台。
+    void tabs.create().catch(report);
   };
 
   return (

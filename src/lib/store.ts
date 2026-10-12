@@ -8,7 +8,8 @@ export type Panel = 'chat' | 'sessions' | 'tree' | 'commands' | 'settings' | 'mo
 export type SettingsPage = 'general' | 'appearance' | 'chat' | 'skills' | 'inbox' | 'providers' | 'computer-use' | 'screen' | 'sessions' | 'tree' | 'pi-tools' | 'changes' | 'integrations' | 'keybindings'
 export type WorkspaceMode = 'project' | 'home'
 export type RuntimeTarget = 'unknown' | 'browser' | 'desktop' | 'mobile'
-export type LiveSession = { path: string; cwd: string; title: string; running: boolean }
+/** One session that has a live pi connection, foreground or background. */
+export type LiveSession = { path: string; cwd: string; connectionId?: string; title: string; running: boolean; needsInput?: boolean }
 export type Workspace = {
   telemetry:Telemetry; inspector:boolean; transcript: Transcript; state: RpcSessionState | null; connection: 'offline' | 'connecting' | 'online';
   runtimeTarget:RuntimeTarget; runtimePlatform:string; remoteTheme:RemoteTheme|null; remoteMachineName:string; cwd:string; connectionId:string; homeDir:string; workspaceMode:WorkspaceMode; piVersion:string; panel:Panel; settingsPage:SettingsPage; error:string | null; draft:string;

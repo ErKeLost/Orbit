@@ -36,6 +36,13 @@ export type WorkspaceTab = {
   cwd: string;
   /** Pi RPC process bound to this workspace (empty until it is opened). */
   connectionId: string;
+  /**
+   * The session file this tab shows. Outlives the process: a hibernated tab (its
+   * connection reclaimed, or restored after a restart) is revived from it.
+   */
+  sessionPath?: string;
+  /** Last known session title, for the tab label while it has no live process. */
+  title?: string;
   layout: LayoutNode;
   panes: Record<string, PaneState>;
   /** Session panes: leaf id → the connection that pane shows (Orbit leaves). */

@@ -107,12 +107,14 @@ type ShellState = {
   setSidebarTab: (tab: SidebarTab) => void;
   setProjectRailWidth: (width: number) => void;
   setSessionSidebarWidth: (width: number) => void;
+  /** Patch one workspace's own fields (sessionPath/title/binding) in place. */
+  updateWorkspace: (id: string, patch: Partial<Pick<WorkspaceTab, "sessionPath" | "title" | "cwd" | "connectionId">>) => void;
   /** Switch the visible workspace; the caller activates its pi connection. */
   activateWorkspace: (id: string) => void;
-  newWorkspace: (cwd?: string, connectionId?: string) => WorkspaceTab;
+  newWorkspace: (cwd?: string, connectionId?: string, options?: { background?: boolean }) => WorkspaceTab;
   closeWorkspace: (id: string) => void;
-  /** 首页工作区发出第一条消息后，把它升格成一个真正的会话标签页。 */
-  promoteHomeWorkspace: () => void;
+  /** 首页工作区发出第一条消息后，把它升格成一个真正的会话标签页。返回新标签的 id。 */
+  promoteHomeWorkspace: () => string | null;
   /** Split a session pane and open a new session in it (Orbit ⌘D / ⌘⇧D). */
   splitSessionPane: (paneId: string, dir: "right" | "down") => string | null;
   bindSessionConnection: (paneId: string, connectionId: string) => void;
@@ -205,19 +207,27 @@ export const useShell = create<ShellState>((set, get) => {
     setProjectRailWidth: (width) => { write(PROJECT_RAIL_WIDTH_KEY, String(width)); set({ projectRailWidth: width }); },
     setSessionSidebarWidth: (width) => { write(SESSION_SIDEBAR_WIDTH_KEY, String(width)); set({ sessionSidebarWidth: width }); },
 
+    updateWorkspace: (id, patch) => {
+      const state = get();
+      const workspaces = state.workspaces.map((workspace) =>
+        workspace.id === id ? { ...workspace, ...patch } : workspace);
+      set({ workspaces });
+    },
+
     activateWorkspace: (activeWorkspaceId) => {
       const state = get();
       if (!state.workspaces.some((workspace) => workspace.id === activeWorkspaceId)) return;
       set({ activeWorkspaceId });
     },
 
-    newWorkspace: (cwd, connectionId) => {
+    newWorkspace: (cwd, connectionId, options) => {
       const state = get();
       // connectionId 一并建好：新建的标签页绝不能先以空连接渲染一下，
       // 否则 SessionScope 会回退到当前投影（首页/上一个会话）闪一下。
       const workspace = newWorkspaceTab(cwd ?? state.workspaces[activeIndex(state)].cwd, connectionId);
       const workspaces = insertTab(state.workspaces, workspace);
-      set({ workspaces, activeWorkspaceId: workspace.id });
+      // background：自动化/子任务在后台开自己的会话，绝不抢用户正在看的标签页。
+      set({ workspaces, ...(options?.background ? {} : { activeWorkspaceId: workspace.id }) });
       return workspace;
     },
 
@@ -239,15 +249,16 @@ export const useShell = create<ShellState>((set, get) => {
 
     promoteHomeWorkspace: () => {
       const state = get();
-      if (state.activeWorkspaceId !== HOME_WORKSPACE_ID) return;
+      if (state.activeWorkspaceId !== HOME_WORKSPACE_ID) return null;
       const home = state.workspaces.find((workspace) => workspace.id === HOME_WORKSPACE_ID);
-      if (!home) return;
+      if (!home) return null;
       // 首页第一条消息 → 变成真正的标签页（连同它已有的面板树一起），
       // 后面再补一个干净的首页。
       const tab: WorkspaceTab = { ...home, id: newWorkspaceId() };
       const rest = state.workspaces.filter((workspace) => workspace.id !== HOME_WORKSPACE_ID);
       const workspaces = [...rest, tab, newHomeWorkspace(home.cwd)];
       set({ workspaces, activeWorkspaceId: tab.id });
+      return tab.id;
     },
 
     detachPaneToWorkspace: (paneId, targetTabId, position) => {

@@ -2,7 +2,8 @@ import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useR
 import { useQuery } from "@tanstack/react-query";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useWorkspace, useWorkspaceStore } from "../../lib/store";
-import { changeSession, getSessionTurnDurations, persistedSessionFile, report } from "../../lib/rpc";
+import { getSessionTurnDurations, persistedSessionFile, report } from "../../lib/rpc";
+import { useWorkspaceTabs } from "../shell/use-workspace-tabs";
 import type { AgentNode } from "../../lib/agents";
 import { groupDisplayMessages, reuseGroups, type Transcript } from "../../lib/protocol";
 import { readTurnDurations, saveTurnDurations, turnDurationId } from "../../lib/turn-duration";
@@ -188,9 +189,11 @@ export function ChatPane({ onSubmitted }: { onSubmitted?: () => void } = {}) {
     saveTurnDurations(sessionFile, completed);
   }, [groups, sessionFile, transcript.running]);
 
+  const tabs = useWorkspaceTabs();
   const openAgent = useCallback((agent: AgentNode) => {
-    if (agent.sessionPath) void changeSession({ type: "switch_session", sessionPath: agent.sessionPath }).catch(report);
-  }, []);
+    // 子 agent 会话开成独立标签页：当前会话（可能正在跑）不受影响。
+    if (agent.sessionPath) void tabs.openSession({ path: agent.sessionPath }).catch(report);
+  }, [tabs]);
   const activity = agents && (agents.active.length > 0 || agents.recent.length > 0) ? <AgentActivityFeed snapshot={agents} onOpenAgent={openAgent} /> : undefined;
 
   const activeGroup = groups.findIndex((group) => group.indexes.includes(transcript.active));

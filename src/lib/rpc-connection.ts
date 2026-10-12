@@ -45,6 +45,7 @@ import {
   syncSessionModes,
   syncedModes,
   type Snapshot,
+  activeTarget,
 } from "./rpc-core";
 import { mobileRuntime, native } from "./runtime";
 
@@ -208,7 +209,7 @@ export function setDesktopScope(cwd:string,workspaceMode:WorkspaceMode){
  useWorkspace.getState().set({cwd:path,workspaceMode})
  return path
 }
-export async function requestWithRecovery<T=unknown>(command:RpcCommand,timeoutMs=30000,target=useWorkspace.getState().cwd):Promise<T>{
+export async function requestWithRecovery<T=unknown>(command:RpcCommand,timeoutMs=30000,target=activeTarget()):Promise<T>{
  try{return await request<T>(command,timeoutMs,target)}catch(error){
   const workspace=useWorkspace.getState()
   if(!projectDisconnected(error)||mobileRuntime()||workspace.connectionId!==target||!workspace.cwd)throw error

@@ -1,7 +1,7 @@
 import { invoke } from "./native";
 import { useWorkspace } from "./store";
 import { runRemoteHostOperation } from "./remote-runtime";
-import { request } from "./rpc-core";
+import { activeTarget, request } from "./rpc-core";
 import { mobileRuntime, native, workspaceBackend } from "./runtime";
 
 /** Rust commands that are not connection state: providers, models, MCP,
@@ -44,10 +44,10 @@ export type GuiSettings={path:string;settings:{cacheWarming:string|null;codemode
 export async function getGuiSettings():Promise<GuiSettings> { if(!workspaceBackend()) throw new Error('Pi 设置请在电脑端修改'); return invoke<GuiSettings>('get_gui_settings') }
 export async function setGuiSetting(key:'cacheWarming'|'codemode',value:unknown):Promise<{key:string;value:unknown}> { if(!workspaceBackend()) throw new Error('Pi 设置请在电脑端修改'); return invoke<{key:string;value:unknown}>('set_gui_setting',{key,value}) }
 /** Ask the GUI extension to recompute and republish its capability snapshots. */
-export async function refreshCapabilities(target=useWorkspace.getState().cwd){await request({type:'prompt',message:'/gui-capabilities'},30000,target)}
+export async function refreshCapabilities(target=activeTarget()){await request({type:'prompt',message:'/gui-capabilities'},30000,target)}
 /** Session-scoped MCP registration through the built-in MCP extension. */
-export async function registerSessionMcpServer(name:string,config:Record<string,unknown>,target=useWorkspace.getState().cwd){return request({type:'prompt',message:`/gui-mcp ${JSON.stringify({action:'add',name,config})}`},30000,target)}
-export async function unregisterSessionMcpServer(name:string,target=useWorkspace.getState().cwd){return request({type:'prompt',message:`/gui-mcp ${JSON.stringify({action:'remove',name})}`},30000,target)}
+export async function registerSessionMcpServer(name:string,config:Record<string,unknown>,target=activeTarget()){return request({type:'prompt',message:`/gui-mcp ${JSON.stringify({action:'add',name,config})}`},30000,target)}
+export async function unregisterSessionMcpServer(name:string,target=activeTarget()){return request({type:'prompt',message:`/gui-mcp ${JSON.stringify({action:'remove',name})}`},30000,target)}
 export async function setProjectTrustMode(mode:ProjectTrustMode):Promise<ProjectTrustMode> { if(!workspaceBackend()) throw new Error('项目权限请在电脑端设置'); return invoke<ProjectTrustMode>('set_project_trust_mode',{mode}) }
 export async function computerUseKeyStatus():Promise<{hasKey:boolean}> { if(!workspaceBackend()) throw new Error('Jev Key 请在电脑端设置'); return invoke<{hasKey:boolean}>('computer_use_key_status') }
 export async function saveComputerUseKey(apiKey?:string):Promise<{hasKey:boolean}> { if(!workspaceBackend()) throw new Error('Jev Key 请在电脑端设置'); return invoke<{hasKey:boolean}>('save_computer_use_key',{apiKey:apiKey?.trim()||null}) }

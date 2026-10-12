@@ -78,7 +78,14 @@ export function pendingModel(target:string){return pendingModels.get(projectKey(
 const REMOTE_CONNECTION_KEY='orbit.remote.connection.v1'
 const fresh=():Snapshot=>({transcript:emptyTranscript(),telemetry:emptyTelemetry(),state:null,connection:'offline',error:null,draft:'',dialogs:[],notices:[],statuses:{},widgets:{},agents:null})
 function snapshot():Snapshot{const s=useWorkspace.getState();return {transcript:s.transcript,telemetry:s.telemetry,state:s.state,connection:s.connection,error:s.error,draft:s.draft,dialogs:s.dialogs,notices:s.notices,statuses:s.statuses,widgets:s.widgets,agents:s.agents}}
-function route(target=useWorkspace.getState().cwd){return projectActive.get(target)??target}
+/**
+ * The connection a call acts on when the caller does not say: the one the shell
+ * is projecting. Never the bare project path — a project can have many live
+ * connections (one per session), and "the project" is not a session.
+ */
+function activeTarget(){const s=useWorkspace.getState();return s.connectionId||s.cwd}
+/** A connection id resolves to itself; only a bare project path goes through the project route. */
+function route(target=activeTarget()){return connections.has(target)?target:projectActive.get(target)??target}
 function connectionsFor(cwd:string){return [...connections.entries()].flatMap(([id,meta])=>meta.cwd===cwd?[id]:[])}
 function readSessionFiles():Record<string,string>{try{return JSON.parse(localStorage.getItem(SESSION_FILES_KEY)??localStorage.getItem(LEGACY_SESSION_FILES_KEY)??'{}')}catch{return {}}}
 function persistSession(cwd:string,sessionFile?:string){if(!sessionFile)return;const files=readSessionFiles();files[cwd]=sessionFile;localStorage.setItem(SESSION_FILES_KEY,JSON.stringify(files))}
@@ -105,16 +112,16 @@ function scanFirstUserTitle(transcript:Workspace['transcript']){
  }
  return ''
 }
-function sameLiveSessions(a:LiveSession[],b:LiveSession[]){return a.length===b.length&&a.every((item,index)=>item.path===b[index]?.path&&item.cwd===b[index]?.cwd&&item.title===b[index]?.title&&item.running===b[index]?.running)}
+function sameLiveSessions(a:LiveSession[],b:LiveSession[]){return a.length===b.length&&a.every((item,index)=>item.path===b[index]?.path&&item.cwd===b[index]?.cwd&&item.title===b[index]?.title&&item.running===b[index]?.running&&item.needsInput===b[index]?.needsInput&&item.connectionId===b[index]?.connectionId)}
 function syncLiveSessions(){
  const items:LiveSession[]=[],seen=new Set<string>()
  const ids=new Set([...snapshots.keys(),useWorkspace.getState().connectionId].filter(Boolean))
  for(const id of ids){
   const snap=current(id),path=snap.state?.sessionFile,cwd=connections.get(id)?.cwd??useWorkspace.getState().cwd
   if(!path||seen.has(path))continue
-  const running=snap.transcript.running||snap.transcript.compacting
-  if(!running&&!snap.transcript.messages.some(item=>item.message.role==='user'))continue
-  seen.add(path);items.push({path,cwd,title:firstUserTitle(snap.transcript)||'新会话',running})
+  const running=snap.transcript.running||snap.transcript.compacting,needsInput=snap.dialogs.length>0
+  if(!running&&!needsInput&&!snap.transcript.messages.some(item=>item.message.role==='user'))continue
+  seen.add(path);items.push({path,cwd,connectionId:id,title:firstUserTitle(snap.transcript)||'新会话',running,needsInput})
  }
  if(!sameLiveSessions(useWorkspace.getState().liveSessions,items))useWorkspace.getState().set({liveSessions:items})
 }
@@ -143,11 +150,16 @@ function patch(id:string,value:Partial<Snapshot>){
  const previous=current(id),next={...previous,...resolved}
  if(previous.state?.sessionFile&&previous.state.sessionFile!==next.state?.sessionFile&&sessionOwners.get(previous.state.sessionFile)===id)sessionOwners.delete(previous.state.sessionFile)
  snapshots.set(id,next);if(next.state?.sessionFile)sessionOwners.set(next.state.sessionFile,id);if(useWorkspace.getState().connectionId===id)useWorkspace.getState().set(resolved);notifySnapshot(id)
- const activityChanged=previous.transcript.running!==next.transcript.running||previous.transcript.compacting!==next.transcript.compacting||previous.state?.sessionFile!==next.state?.sessionFile||firstUserTitle(previous.transcript)!==firstUserTitle(next.transcript)
+ const activityChanged=previous.transcript.running!==next.transcript.running||previous.transcript.compacting!==next.transcript.compacting||previous.state?.sessionFile!==next.state?.sessionFile||previous.dialogs.length!==next.dialogs.length||firstUserTitle(previous.transcript)!==firstUserTitle(next.transcript)
  if(activityChanged)syncLiveSessions()
- if(previous.transcript.running&&!next.transcript.running){const sessionFile=next.state?.sessionFile;const cwd=connections.get(id)?.cwd;if(sessionFile&&cwd)window.dispatchEvent(new CustomEvent('orbit-turn-settled',{detail:{cwd,sessionFile}}))}
+ // 会话级生命周期事件：每条连接各自发，后台会话和前台会话一视同仁（通知、自动化回写、检查点都挂在这上面）。
+ const sessionFile=next.state?.sessionFile,cwd=connections.get(id)?.cwd
+ if(previous.transcript.running&&!next.transcript.running&&sessionFile&&cwd)window.dispatchEvent(new CustomEvent('orbit-turn-settled',{detail:{cwd,sessionFile,connectionId:id,title:firstUserTitle(next.transcript),error:next.transcript.error??null}}))
+ if(next.dialogs.length>previous.dialogs.length&&cwd)window.dispatchEvent(new CustomEvent('orbit-session-needs-input',{detail:{cwd,sessionFile:sessionFile??'',connectionId:id,title:firstUserTitle(next.transcript)}}))
  if(previous.state?.sessionFile!==next.state?.sessionFile&&next.state?.sessionFile)invalidateSessionList(id)
 }
+/** A UI-side transcript event (optimistic preview, settle) for one connection, not the shell's projection. */
+export function applyLocalEvent(id:string,event:Event){const s=current(id);patch(id,{transcript:reduceEvent(s.transcript,event),telemetry:observe(s.telemetry,event)})}
 function failPending(project:string,message:string){for(const [id,p]of pending){if(p.project!==project)continue;clearTimeout(p.timeout);p.reject(new Error(message));pending.delete(id)}}
 export function suspendRemoteConnection(message='电脑连接已断开，正在重连'){
  if(!mobileRuntime())return
@@ -235,7 +247,7 @@ function asRemoteCommand(command:Record<string,unknown>){return command as unkno
 function sendCommand(project:string,command:Record<string,unknown>){
  return mobileRuntime()?sendRemotePiCommand(project,asRemoteCommand(command)):invoke('pi_send',{project,command})
 }
-export function request<T=unknown>(command:RpcCommand,timeoutMs=30000,target=useWorkspace.getState().cwd):Promise<T>{
+export function request<T=unknown>(command:RpcCommand,timeoutMs=30000,target=activeTarget()):Promise<T>{
  const id=crypto.randomUUID(),project=route(target)
  return new Promise<T>((resolve,reject)=>{
   const timeout=setTimeout(()=>{pending.delete(id);reject(new Error(`Pi ${command.type} 响应超时`))},timeoutMs)
@@ -261,14 +273,14 @@ const syncSessionModes=async(target:string)=>{
  syncedModes.set(id,key)
 }
 /** 发送前调用：模式已同步过就直接返回，不再产生 RPC 往返。 */
-export async function ensureSessionModes(target=useWorkspace.getState().cwd){
+export async function ensureSessionModes(target=activeTarget()){
  const id=route(target)
  if(syncedModes.get(id)===modesKey(id))return
  await syncSessionModes(target)
 }
-export const setSessionRoots=(roots:string[],target=useWorkspace.getState().cwd)=>request({type:'prompt',message:`/gui-workspace-set ${JSON.stringify({roots})}`},30000,target)
+export const setSessionRoots=(roots:string[],target=activeTarget())=>request({type:'prompt',message:`/gui-workspace-set ${JSON.stringify({roots})}`},30000,target)
 export async function syncConfiguredProjectRoots(cwd:string,target=cwd){const project=useProjects.getState().projects.find(item=>item.path===cwd);if(project)await setSessionRoots(projectExtraRoots(project),target)}
-export async function refresh(target=useWorkspace.getState().cwd){
+export async function refresh(target=activeTarget()){
  const id=route(target),state=await request<RpcSessionState>({type:'get_state'},30000,id)
  // Pi 回的就是刚要求的那个模型 → 意图完成，之后全听 `get_state` 的。
  const key=projectKey(id),pending=pendingModels.get(key)
@@ -292,7 +304,7 @@ function rememberTranscript(sessionPath: string | undefined, transcript: Transcr
 export function cachedTranscript(sessionPath: string): Transcript | undefined { return transcriptCache.get(sessionPath) }
 export function forgetCachedTranscript(sessionPath: string) { transcriptCache.delete(sessionPath) }
 
-export async function loadMessages(target=useWorkspace.getState().cwd){
+export async function loadMessages(target=activeTarget()){
  // 几百条消息的会话，get_messages 的响应就是几 MB，会被电脑端切成多帧发过来；
  // 30s 的上限让“会话大”和“链路卡住了”变成同一个结果，所以给它更长的预算。
  const id=route(target)
@@ -338,6 +350,7 @@ export {
   fresh,
   snapshot,
   route,
+  activeTarget,
   connectionsFor,
   readSessionFiles,
   persistSession,

@@ -27,24 +27,29 @@ import {
   snapshots,
   syncConfiguredProjectRoots,
   syncLiveSessions,
+  activeTarget,
+  applyLocalEvent,
 } from "./rpc-core";
 import { activateConnection, closeConnection, connect, startConnection } from "./rpc-connection";
 import { mobileRuntime, native, report, workspaceBackend } from "./runtime";
 
 /** Session-level commands: open / switch / retire a session, send prompts,
  *  steer a running turn, and the queue. */
-export async function sendPrompt(command:RpcCommand,target=useWorkspace.getState().cwd,wasRunning=useWorkspace.getState().transcript.running){
+export async function sendPrompt(command:RpcCommand,target=activeTarget(),wasRunning?:boolean){
+ // 一切都落在这条连接自己的快照上：后台面板/分屏发消息，不会把乐观预览、等待位写进别的会话。
+ const id=route(target),running=wasRunning??current(id).transcript.running
+ const cwd=connections.get(id)?.cwd??useWorkspace.getState().cwd
  try{
   // 回合检查点：真实用户消息（非 /gui-* 内部命令）发出前捕获工作区快照。
   if(command.type==='prompt'&&!command.message.startsWith('/')){
-   const sessionFile=current(route(target)).state?.sessionFile
-   if(sessionFile)window.dispatchEvent(new CustomEvent('orbit-turn-started',{detail:{cwd:target,sessionFile}}))
+   const sessionFile=current(id).state?.sessionFile
+   if(sessionFile)window.dispatchEvent(new CustomEvent('orbit-turn-started',{detail:{cwd,sessionFile,connectionId:id}}))
   }
-  const result=await request<{disposition?:string}>(command,45000,target)
-  if(!wasRunning&&result?.disposition!=='started')useWorkspace.getState().event({type:'prompt_settled'})
+  const result=await request<{disposition?:string}>(command,45000,id)
+  if(!running&&result?.disposition!=='started')applyLocalEvent(id,{type:'prompt_settled'})
   return result
  }catch(error){
-  if(!wasRunning)useWorkspace.getState().event({type:'prompt_settled'})
+  if(!running)applyLocalEvent(id,{type:'prompt_settled'})
   throw error
  }
 }
@@ -68,13 +73,14 @@ export async function retireSession(sessionPath:string){
  if(!wasActive)return
  const remaining=connectionsFor(cwd)[0]
  if(remaining){activateConnection(remaining,cwd);return}
- useWorkspace.getState().set({...fresh(),cwd,connectionId:cwd,panel:'chat'})
- await startConnection(cwd,cwd)
+ const id=`${cwd}#${crypto.randomUUID()}`
+ useWorkspace.getState().set({...fresh(),cwd,connectionId:id,panel:'chat'})
+ await startConnection(cwd,id)
 }
 export async function getSessionTurnDurations(sessionPath:string):Promise<Record<string,number>> { if(mobileRuntime())return runRemoteHostOperation<Record<string,number>>({name:'session.turnDurations',sessionPath});if(!native) return {}; return invoke<Record<string,number>>('session_turn_durations',{sessionPath}) }
-export async function recallQueue(target=useWorkspace.getState().cwd){const id=route(target),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id);const s=current(id);patch(id,{draft:[s.draft,...cleared.steering,...cleared.followUp].filter(Boolean).join('\n'),transcript:reduceEvent(s.transcript,{type:'queued_preview_clear'})})}
+export async function recallQueue(target=activeTarget()){const id=route(target),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id);const s=current(id);patch(id,{draft:[s.draft,...cleared.steering,...cleared.followUp].filter(Boolean).join('\n'),transcript:reduceEvent(s.transcript,{type:'queued_preview_clear'})})}
 /** Promote one queued follow-up into the running turn as a steer (Orbit's "Steer"). */
-export async function steerFollowUp(text:string,target=useWorkspace.getState().cwd){
+export async function steerFollowUp(text:string,target=activeTarget()){
  const id=route(target),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id)
  let promoted=false
  for(const message of cleared.steering)await request({type:'steer',message},30000,id)
@@ -101,7 +107,7 @@ export async function steerFollowUp(text:string,target=useWorkspace.getState().c
  * Follow-ups are not replayed — they return to the draft so that stop still
  * means something actually stops.
  */
-export async function stop(target=useWorkspace.getState().cwd){
+export async function stop(target=activeTarget()){
  const id=route(target)
  const cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id)
  await request({type:'abort'},60000,id)
@@ -145,7 +151,7 @@ const markSessionLoading=(id:string)=>patch(id,{transcript:transcriptLoading(cur
  * 换掉整份 transcript：先上骨架屏再 loadMessages。会话树切分支这种『不换 session
  * 但内容整体换掉』的入口走这里，loadMessages 自己会（成功或失败）把骨架屏收起来。
  */
-export async function reloadMessages(target=useWorkspace.getState().cwd){const id=route(target);markSessionLoading(id);return loadMessages(id)}
+export async function reloadMessages(target=activeTarget()){const id=route(target);markSessionLoading(id);return loadMessages(id)}
 async function changeSessionOnce(command:RpcCommand){
  const cwd=useWorkspace.getState().cwd,active=route(cwd),running=current(active).transcript.running
  if(command.type==='switch_session'){

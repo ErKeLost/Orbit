@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useWorkspace } from "../../lib/store";
-import { changeSession, connect, report, sendPrompt } from "../../lib/rpc";
+import { connectionSnapshot, report } from "../../lib/rpc";
+import { workspaceTabs } from "../shell/use-workspace-tabs";
 import {
   automationRunUpdate,
   automationsClaimDue,
@@ -15,18 +16,15 @@ import { toast } from "../../shared/ui/toast";
 
 const TICK_MS = 30_000;
 /** Runs launched by this window, so the report can be written back on settle. */
-const inFlight = new Map<string, { automation: Automation; run: AutomationRun }>();
+const inFlight = new Map<string, { automation: Automation; run: AutomationRun; connectionId?: string }>();
 
 async function launch(automation: Automation, run: AutomationRun) {
-  const workspace = useWorkspace.getState();
-  if (workspace.cwd !== automation.cwd || workspace.connection !== "online") {
-    await connect(automation.cwd, "project");
-  }
-  await changeSession({ type: "new_session" });
-  await sendPrompt({ type: "prompt", message: automation.prompt }, automation.cwd, false);
-  const sessionId = useWorkspace.getState().state?.sessionId ?? undefined;
+  // 在自己的后台会话里跑：不劫持用户正在聊的会话，也不抢焦点。
+  const { openBackground } = workspaceTabs;
+  const connectionId = await openBackground(automation.cwd, { prompt: automation.prompt });
+  const sessionId = connectionSnapshot(connectionId)?.state?.sessionId ?? undefined;
   await automationRunUpdate(run.id, "running", sessionId, null);
-  inFlight.set(run.id, { automation, run: { ...run, status: "running", sessionId } });
+  inFlight.set(run.id, { automation, run: { ...run, status: "running", sessionId }, connectionId });
 }
 
 /**
@@ -39,6 +37,23 @@ export function useAutomationScheduler() {
   const runtimeTarget = useWorkspace((state) => state.runtimeTarget);
   const running = useWorkspace((state) => state.transcript.running);
   const error = useWorkspace((state) => state.transcript.error);
+
+  // 后台会话的完成回写：settled 事件带 connectionId，和前台 running 无关。
+  useEffect(() => {
+    if (runtimeTarget !== "desktop") return;
+    const settle = (event: Event) => {
+      const detail = (event as CustomEvent<{ connectionId?: string; error?: string | null }>).detail ?? {};
+      if (!detail.connectionId) return;
+      for (const [id, entry] of [...inFlight]) {
+        if (entry.connectionId !== detail.connectionId) continue;
+        inFlight.delete(id);
+        void automationRunUpdate(entry.run.id, detail.error ? "failed" : "succeeded", entry.run.sessionId ?? null, detail.error ?? null)
+          .catch(() => undefined);
+      }
+    };
+    window.addEventListener("orbit-turn-settled", settle);
+    return () => window.removeEventListener("orbit-turn-settled", settle);
+  }, [runtimeTarget]);
 
   // Crash recovery once per launch.
   useEffect(() => {
