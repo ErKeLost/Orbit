@@ -62,7 +62,7 @@ describe("turn projection", () => {
     expect(turn.answer).toEqual([]);
   });
 
-  test("only a settled final message becomes the answer; live narration stays in the fold while streaming", () => {
+  test("the live tail prose is promoted while streaming; earlier narration stays in the fold", () => {
     const live: DisplayMessage[] = [
       { id: "a1", message: { role: "assistant", stopReason: "toolUse", content: [
         { type: "text", text: "第一段小结" },
@@ -70,14 +70,12 @@ describe("turn projection", () => {
       ] } },
       { id: "a2", message: { role: "assistant", content: [{ type: "text", text: "第二段小结，还在流式输出" }] } },
     ];
-    // 未收到 message_end 的 tail 不提升：提前提升会在 toolcall 到达时把正文
-    // 从全尺寸 markdown 掉回折叠区（闪烁）。
+    // 最终回答要逐字出现：流式中（还未 message_end）尾部正文就提升到回答区。
     const streamingTurn = projectTurn(live, phaseTools, true);
-    expect(streamingTurn.answer).toEqual([]);
+    expect(streamingTurn.answer.map((step) => step.text)).toEqual(["第二段小结，还在流式输出"]);
     expect(streamingTurn.work.some((step) => step.text === "第一段小结")).toBe(true);
-    expect(streamingTurn.work.some((step) => step.text === "第二段小结，还在流式输出")).toBe(true);
 
-    // 消息结束且无工具调用 → 才是最终总结。
+    // message_end 之后依然无工具 → 还是最终总结，不回到折叠区。
     const settledTurn = projectTurn(
       live.map((item, index) => (index === live.length - 1 ? { ...item, settled: true } : item)),
       phaseTools,
@@ -85,6 +83,18 @@ describe("turn projection", () => {
     );
     expect(settledTurn.answer.map((step) => step.text)).toEqual(["第二段小结，还在流式输出"]);
     expect(settledTurn.work.some((step) => step.text === "第一段小结")).toBe(true);
+  });
+
+  test("a live message that ends on a tool call keeps its prose in the fold", () => {
+    const live: DisplayMessage[] = [
+      { id: "t1", message: { role: "assistant", content: [
+        { type: "text", text: "我先看一下入口" },
+        { type: "toolCall", id: "read", name: "read", arguments: { path: "src/app.ts" } },
+      ] } },
+    ];
+    const turn = projectTurn(live, { read: { name: "read", running: true } }, true);
+    expect(turn.answer).toEqual([]);
+    expect(turn.work.some((step) => step.text === "我先看一下入口")).toBe(true);
   });
 
   test("a settled streaming message that ends on a tool call never promotes its prose", () => {
@@ -166,7 +176,21 @@ describe("assistant turns", () => {
     expect(html).toContain("shimmer-text");
     expect(text(html)).toContain("Working");
     expect(html).toContain('data-fold-state="open"');
+    expect(html).toContain('data-open="true"');
     expect(html).not.toContain('aria-label="复制回复"');
+  });
+
+  test("streams an unanswered reply as full-size prose in the answer area", () => {
+    // 回归：之前要等 message_end 才把正文提升到回答区，整段回答就一次性出现
+    // （“不是流式输出了”）。流式中的尾部正文必须立即在回答区渲染 markdown。
+    const prose = "第一段流式正文，还在继续输出";
+    const html = render([{ id: "live-plain", message: { role: "assistant", content: [{ type: "text", text: prose }] } }], {}, true);
+    expect(text(html)).toContain(prose);
+    expect(html).toContain("agent-markdown");
+    expect(html).toContain("is-streaming");
+    expect(html).toContain('data-chat-message-role="assistant"');
+    // 正文在回答区，不在折叠过程区。
+    expect(html).not.toContain("zen-phase-body");
   });
 
   test("a plain reply has no work fold, only the answer and footer", () => {

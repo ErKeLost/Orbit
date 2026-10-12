@@ -332,12 +332,16 @@ function StepRow({ step, tools }: { step: TurnStep; tools: Record<string, Tool> 
 }
 
 /**
- * Orbit `ActivityPhaseGroup`. Phases stay folded by default — the headline
- * line (the agent's own narration) is the summary; steps only appear when the
- * line is opened, even while the phase is still streaming.
+ * Orbit `ActivityPhaseGroup`. Finished phases stay folded — the headline line
+ * (the agent's own narration) is the summary. The live phase, however, is
+ * opened by default: its body is the only place the streaming prose and the
+ * running tool rows exist (until `message_end` promotes the final answer out
+ * of the fold), so keeping it closed hid the output until the whole reply
+ * landed at once. The reader's own toggle still wins.
  */
 function PhaseGroup({ phase, tools, live }: { phase: Phase; tools: Record<string, Tool>; live: boolean }) {
-  const [open, setOpen] = useState(false);
+  const [override, setOverride] = useState<boolean | null>(null);
+  const open = override ?? live;
   const title = phaseTitle(phase, tools, live);
 
   if (!phase.headline && phase.steps.length === 1) {
@@ -358,13 +362,13 @@ function PhaseGroup({ phase, tools, live }: { phase: Phase; tools: Record<string
   if (phase.steps.length === 0) {
     return (
       <div className="flex min-w-0 flex-col">
-        <button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)} className="group flex w-full min-w-0 items-center gap-1.5 py-1 text-left">
+        <button type="button" aria-expanded={open} onClick={() => setOverride(!open)} className="group flex w-full min-w-0 items-center gap-1.5 py-1 text-left">
           <PhaseIcon kind={phase.kind} />
           {label}
         </button>
         {open && phase.headline?.text ? (
           <div className="pb-2 pl-5">
-            <Markdown content={phase.headline.text} />
+            <Markdown content={phase.headline.text} animated={live} />
           </div>
         ) : null}
       </div>
@@ -376,7 +380,7 @@ function PhaseGroup({ phase, tools, live }: { phase: Phase; tools: Record<string
         type="button"
         aria-expanded={open}
         aria-label={open ? `收起 ${title} 的步骤` : `展开 ${title} 的步骤`}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => setOverride(!open)}
         className="group flex w-full min-w-0 items-center gap-1.5 py-1 text-left"
       >
         <span className="relative flex size-3.5 shrink-0 items-center justify-center">
@@ -394,7 +398,7 @@ function PhaseGroup({ phase, tools, live }: { phase: Phase; tools: Record<string
             <div className="flex min-w-0 flex-col">
               {open && phase.headline?.text ? (
                 <div className="zen-phase-step py-1">
-                  <Markdown content={phase.headline.text} />
+                  <Markdown content={phase.headline.text} animated={live} />
                 </div>
               ) : null}
               {phase.steps.map((step) => (
