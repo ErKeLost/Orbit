@@ -1301,6 +1301,50 @@ html.theme-light [data-composer-box] {
   background: var(--color-stroke);
 }
 
+/*
+ * 首页（空会话）永远是同一张图：深色纸面上的星系，不跟着 light/dark 走。
+ * 否则 light 模式下白纸会从 6px 格子的缝里透出来，整幅银河变成白边的马赛克。
+ * 这里把首页子树钉回暗色主题的 token——底与墨都由暗色决定，从标题、
+ * composer 到底层画布一起保持一致。
+ */
+.orbit-galaxy-surface {
+  --background-lightness: var(--theme-dark-lightness);
+  --content-lightness: 92%;
+  --color-background-base: hsl(
+    var(--theme-hue) var(--theme-saturation) var(--theme-dark-lightness)
+  );
+  --color-content: hsl(var(--theme-hue) var(--theme-saturation) 92%);
+  --color-stroke: color-mix(in srgb, var(--color-content) 7%, transparent);
+  --color-selection-subtle: color-mix(
+    in srgb,
+    var(--color-content) 8%,
+    transparent
+  );
+  --color-selection: color-mix(
+    in srgb,
+    var(--color-content) 10%,
+    transparent
+  );
+  --color-selection-strong: color-mix(
+    in srgb,
+    var(--color-content) 12%,
+    transparent
+  );
+  --color-selection-hover: color-mix(
+    in srgb,
+    var(--color-content) 15%,
+    transparent
+  );
+  --color-selection-emphasis: color-mix(
+    in srgb,
+    var(--color-content) 20%,
+    transparent
+  );
+  color-scheme: dark;
+  background: var(--color-background-base);
+  color: var(--color-content);
+}
+
 /* 分栏 diff 里没有对应行的那一半：斜线纹理占位（Codex 同款）。 */
 .split-diff-void {
   background-image: repeating-linear-gradient(

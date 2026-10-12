@@ -68,7 +68,10 @@ function EmptySession({ cwd, onSubmitted }: { cwd: string; onSubmitted: () => vo
   const project = cwd && cwd !== homeDir ? (projects.find((item) => item.path === cwd)?.name ?? cwd.split(/[\\/]/).filter(Boolean).at(-1)) : null;
   const title = project ? `What should we work on in ${project}?` : "What should we work on?";
   return (
-    <div ref={lockOverscroll} className="relative flex h-full min-h-0 overflow-y-auto overscroll-none">
+    // `orbit-galaxy-surface` pins the whole home page to the dark theme: the
+    // plate is printed on dark paper with light ink, so it reads the same in
+    // light and dark mode instead of turning into white-edged squares.
+    <div ref={lockOverscroll} className="orbit-galaxy-surface relative flex h-full min-h-0 overflow-y-auto overscroll-none">
       <GalaxyDotBackground />
       <div className="pointer-events-none relative z-10 mx-auto flex w-full max-w-4xl flex-1 flex-col justify-center px-1.5 py-12">
         <div className="pointer-events-auto mb-4 px-2.5">

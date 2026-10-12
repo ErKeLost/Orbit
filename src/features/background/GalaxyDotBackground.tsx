@@ -41,8 +41,12 @@ function parseRgb(value: string, fallback: string) {
   return `${match[0]}, ${match[1]}, ${match[2]}`;
 }
 
-function contentRgb() {
-  return parseRgb(getComputedStyle(document.body).color, "235, 238, 241");
+function contentRgb(element?: Element | null) {
+  // Read the ink from the pane the backdrop fills, not from <body>: the empty
+  // session pins itself to the dark theme, so the galaxy keeps the same light
+  // ink even while the app is in light mode.
+  const target = element ?? document.body;
+  return parseRgb(getComputedStyle(target).color, "235, 238, 241");
 }
 
 /**
@@ -80,7 +84,7 @@ export function GalaxyDotBackground({
 
     let raf = 0;
     let lastFrame = 0;
-    let rgb = contentRgb();
+    let rgb = contentRgb(root);
     let pattern: CanvasPattern | null = null;
     let stars: GalaxyStar[] = [];
     let drift: GalaxyDrift = { x: 0, y: 0 };
@@ -229,7 +233,7 @@ export function GalaxyDotBackground({
 
     // Light/dark flips the ink colour, so the whole plate has to be re-stamped.
     const themeObserver = new MutationObserver(() => {
-      const next = contentRgb();
+      const next = contentRgb(root);
       if (next === rgb) return;
       rgb = next;
       layout();
