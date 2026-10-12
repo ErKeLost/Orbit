@@ -3,7 +3,7 @@ import { readKeepAwake, writeKeepAwake } from "../lib/desktop-integration";
 import { saveFileDraft } from "../lib/file-save";
 import { readStartupPanel } from "../lib/startup-panel";
 import { normalizeProjectPath, useProjects } from "../lib/projects";
-import { changeSession, connect, connectRemoteConnection, dispatchRemoteEvent, reloadMessages, report, suspendRemoteConnection } from "../lib/rpc";
+import { connect, connectRemoteConnection, dispatchRemoteEvent, reloadMessages, report, setDesktopScope, suspendRemoteConnection } from "../lib/rpc";
 import { detectRuntimeEnvironment } from "../lib/runtime-environment";
 import { useRuntimeDiscovery } from "../lib/runtime-diagnostics";
 import { notifyRemoteForeground, openRemoteRuntime, remoteHostSnapshot, storedPairingUri } from "../lib/remote-runtime";
@@ -15,6 +15,7 @@ import { findRemoteConnection, type RemoteConnection, type RemoteHostSnapshot } 
 import { useWorkspace } from "../lib/store";
 import { CHAT_PANE_ID, useShell } from "../features/shell/shellStore";
 import { useWorkspaceTabs } from "../features/shell/use-workspace-tabs";
+import { pressed } from "../lib/keybindings";
 
 let runtimeStarted = false;
 
@@ -159,7 +160,7 @@ export function useWorkspaceBootstrap() {
     if (runtimeTarget !== "desktop" || restoredHost.current) return;
     restoredHost.current = true;
     void restoreRemoteHost()
-      .then(info => { if (info) gooeyToast.success("移动访问已恢复", { description: `${info.advertisedAddress}:${info.port}`, showTimestamp: false }); })
+      .then(info => { if (info) gooeyToast.success("移动访问已恢复", { description: "手机可以继续扫码连接", showTimestamp: false }); })
       .catch(() => gooeyToast.warning("移动访问未能自动恢复", { description: "请在「移动端」里重新启用", showTimestamp: false }));
   }, [runtimeTarget]);
 
@@ -213,7 +214,7 @@ export function useWorkspaceBootstrap() {
     if (!discovery.data) return;
     useWorkspace.getState().set({ homeDir: discovery.data.home, piVersion: discovery.data.piVersion });
     if (localStorage.getItem("pi-gui.workspaceMode") === "home") {
-      void connect(discovery.data.home, "home").catch(report);
+      setDesktopScope(discovery.data.home, "home");
       return;
     }
     const storedPath = localStorage.getItem("pi-gui.cwd");
@@ -222,7 +223,7 @@ export function useWorkspaceBootstrap() {
       // 全新启动：没有项目也没有历史时，直接落在主目录对话（home 模式），
       // 不把用户挡在「还没有项目」的空状态前。主目录找不到时才保持空态。
       if (discovery.data.home) {
-        void connect(discovery.data.home, "home").catch(report);
+        setDesktopScope(discovery.data.home, "home");
         return;
       }
       useWorkspace.getState().set({ cwd: "", workspaceMode: "project" });
@@ -230,7 +231,7 @@ export function useWorkspaceBootstrap() {
     }
     const path = (storedPath ? normalizeProjectPath(storedPath) : "") || savedProjects[0]?.path || normalizeProjectPath(discovery.data.cwd);
     useProjects.getState().add([path]);
-    void connect(path, "project").catch(report);
+    setDesktopScope(path, "project");
   }, [discovery.data]);
 
   useEffect(() => {
@@ -244,28 +245,31 @@ export function useWorkspaceShortcuts(
   online: boolean,
   setSidebarOpen: Dispatch<SetStateAction<boolean>>,
 ) {
-  const { splitSession } = useWorkspaceTabs();
+  const { splitSession, create } = useWorkspaceTabs();
   const splitSessionRef = useRef(splitSession);
   splitSessionRef.current = splitSession;
+  const createSessionRef = useRef(create);
+  createSessionRef.current = create;
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key.toLowerCase() === "r") {
+      // 输入法组合中不抢键，否则会打断中文输入。
+      if (event.isComposing) return;
+      if (pressed("App: Reload", event)) {
         // Browser-style refresh: reloads the webview, so a dev rebuild is picked
         // up without quitting the app.
         event.preventDefault();
         window.location.reload();
       }
-      if (event.key === "n") {
+      if (pressed("Session: New", event)) {
         event.preventDefault();
-        if (online) void changeSession({ type: "new_session" }).catch(report);
+        if (online) void createSessionRef.current().catch(report);
       }
-      if (event.key.toLowerCase() === "w") {
+      if (pressed("Pane: Close", event) || pressed("Pane: Close Editors", event)) {
         // Orbit's ⌘W closes the focused pane (⌘⇧W closes every editor pane).
         const shell = useShell.getState();
         const workspace = shell.workspaces.find((item) => item.id === shell.activeWorkspaceId) ?? shell.workspaces[0];
         const editors = Object.keys(workspace.panes);
-        if (event.shiftKey) {
+        if (pressed("Pane: Close Editors", event)) {
           if (editors.length === 0) return;
           event.preventDefault();
           for (const id of editors) shell.closePane(id);
@@ -275,34 +279,34 @@ export function useWorkspaceShortcuts(
         event.preventDefault();
         shell.closePane(workspace.activePane);
       }
-      if (event.key.toLowerCase() === "d") {
+      if (pressed("Pane: Split Right", event) || pressed("Pane: Split Down", event)) {
         // Orbit's split-right / split-down: a new session beside this one.
         const shell = useShell.getState();
         const workspace = shell.workspaces.find((item) => item.id === shell.activeWorkspaceId) ?? shell.workspaces[0];
         if (splitSessionRef.current && workspace?.sessions[workspace.activePane]) {
           event.preventDefault();
-          void splitSessionRef.current(workspace.activePane, event.shiftKey ? "down" : "right");
+          void splitSessionRef.current(workspace.activePane, pressed("Pane: Split Down", event) ? "down" : "right");
         }
       }
-      if (event.key.toLowerCase() === "k") {
+      if (pressed("App: Search", event)) {
         // Search everything, like Orbit's ⌘K.
         event.preventDefault();
         useWorkspace.getState().set({ panel: "search" });
       }
-      if (event.key.toLowerCase() === "p") {
+      if (pressed("App: Quick Open", event)) {
         // monocode 的 ⌘P：转到文件 / `>` 命令的浮层。
         event.preventDefault();
         const shell = useShell.getState();
         shell.setQuickOpen(!shell.quickOpen);
       }
-      if (event.key.toLowerCase() === "f" && event.shiftKey) {
+      if (pressed("App: Find in Files", event)) {
         // VS Code's other half of search: ⌘F finds in the open file (the
         // editor owns that key itself), ⌘⇧F searches the whole workspace.
         event.preventDefault();
         useWorkspace.getState().set({ panel: "search" });
         return;
       }
-      if (event.key.toLowerCase() === "s") {
+      if (pressed("Session: Save File", event)) {
         // Save the focused editor pane. The editor binds ⌘S itself while it has
         // focus; this catches the case where the pane is focused but the caret
         // was in something else (a tab, the footer, the transcript).
@@ -315,19 +319,25 @@ export function useWorkspaceShortcuts(
         void saveFileDraft(path).catch(report);
         return;
       }
-      if (event.key.toLowerCase() === "j") {
+      if (pressed("Terminal: Toggle", event)) {
         // Toggle the built-in terminal dock (Orbit's ⌘J).
         event.preventDefault();
         const shell = useShell.getState();
         shell.setTerminalOpen(!shell.terminalOpen);
       }
-      if (event.key === ",") {
+      if (pressed("App: Settings", event)) {
         event.preventDefault();
         useWorkspace.getState().set({ panel: "settings", settingsPage: "general" });
       }
-      if (event.key.toLowerCase() === "b") {
+      if (pressed("App: Toggle Sidebar", event)) {
         event.preventDefault();
         setSidebarOpen(value => !value);
+      }
+      // 语音：三个命令都发同一个事件，SpeechInput 按当前状态执行。
+      if (pressed("Voice: Start", event) || pressed("Voice: Stop", event) || pressed("Voice: Toggle", event)) {
+        event.preventDefault();
+        const detail = pressed("Voice: Start", event) ? "start" : pressed("Voice: Stop", event) ? "stop" : "toggle";
+        window.dispatchEvent(new CustomEvent("orbit:voice", { detail }));
       }
     };
     window.addEventListener("keydown", handler);

@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import { currentShortcut, shortcutLabel } from "@/lib/keybindings";
 import { cn } from "@/lib/utils";
 import { MicIcon, SquareIcon } from "lucide-react";
 import type { ComponentProps } from "react";
@@ -89,6 +90,7 @@ const detectSpeechInputMode = (): SpeechInputMode => {
 
 export const SpeechInput = ({
   className,
+  title,
   onTranscriptionChange,
   onAudioRecorded,
   lang = "en-US",
@@ -107,6 +109,10 @@ export const SpeechInput = ({
   >(onTranscriptionChange);
   const onAudioRecordedRef =
     useRef<SpeechInputProps["onAudioRecorded"]>(onAudioRecorded);
+  // Ref-mirrored so the global voice shortcut can drive the current state
+  // without re-subscribing on every render.
+  const listeningRef = useRef(false);
+  const toggleRef = useRef<() => void>(() => {});
 
   // Keep refs in sync
   onTranscriptionChangeRef.current = onTranscriptionChange;
@@ -284,12 +290,34 @@ export const SpeechInput = ({
     }
   }, [mode, isListening, startMediaRecorder, stopMediaRecorder]);
 
+  listeningRef.current = isListening;
+  toggleRef.current = toggleListening;
+
+  // 语音快捷键（见 `lib/keybindings.ts`）：开始 / 结束 / 切换。
+  useEffect(() => {
+    const onVoice = (event: Event) => {
+      const detail = (event as CustomEvent<string>).detail;
+      if (detail === "start") {
+        if (!listeningRef.current) void startMediaRecorder();
+      } else if (detail === "stop") {
+        if (listeningRef.current) stopMediaRecorder();
+      } else {
+        toggleRef.current();
+      }
+    };
+    window.addEventListener("orbit:voice", onVoice);
+    return () => window.removeEventListener("orbit:voice", onVoice);
+  }, [startMediaRecorder, stopMediaRecorder]);
+
   // Determine if button should be disabled
   const isDisabled =
     mode === "none" ||
     (mode === "speech-recognition" && !isRecognitionReady) ||
     (mode === "media-recorder" && !onAudioRecorded) ||
     isProcessing;
+
+  const toggleShortcut = shortcutLabel(currentShortcut("Voice: Toggle"));
+  const buttonTitle = title ? `${title}${toggleShortcut ? ` (${toggleShortcut})` : ""}` : undefined;
 
   return (
     <div className="relative inline-flex items-center justify-center">
@@ -316,6 +344,7 @@ export const SpeechInput = ({
             "border-0 bg-accent text-white hover:bg-accent/90 hover:text-white",
           className
         )}
+        title={buttonTitle}
         disabled={isDisabled}
         onClick={toggleListening}
         {...props}

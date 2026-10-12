@@ -11,6 +11,7 @@ import { jumpToSetting, searchSettings } from "./model/settings";
 import { AppearancePage } from "./AppearancePage";
 import { SkillsPage } from "./SkillsPage";
 import { ChatPage } from "./ChatPage";
+import { KeybindingsPage } from "./KeybindingsPage";
 import { InboxSettings } from "../inbox/InboxView";
 
 const GeneralSettingsPanel = lazy(() => import("../../components/panels/GeneralSettingsPanel").then((m) => ({ default: m.GeneralSettingsPanel })));
@@ -95,6 +96,7 @@ export function SettingsView() {
   if (page === "general") content = <GeneralSettingsPanel />;
   else if (page === "appearance") content = <AppearancePage />;
   else if (page === "chat") content = <ChatPage />;
+  else if (page === "keybindings") content = <KeybindingsPage />;
   else if (page === "skills") content = <SkillsPage />;
   else if (page === "inbox") content = <InboxSettings />;
   else if (page === "providers") content = desktop ? <ProviderSettings /> : <DesktopOnly what=" Provider" />;

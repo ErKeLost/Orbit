@@ -6,6 +6,7 @@ import {
   CursorMagicSelection,
   DashboardSquare,
   Inbox,
+  Keyboard,
   Palette,
   Sparkles,
   SlidersHorizontal,
@@ -22,6 +23,7 @@ export const SETTINGS_GROUPS: { id: string; label: string; sections: SettingsSec
     sections: [
       { id: "general", label: "General", description: "运行位置、Pi 能力、移动访问与更新。", icon: SlidersHorizontal },
       { id: "appearance", label: "外观", description: "主题、色调、透明度、聊天背景与 Diff 颜色。", icon: Palette },
+      { id: "keybindings", label: "快捷键", description: "查看并自定义键盘快捷键，包括语音输入。", icon: Keyboard },
       { id: "screen", label: "屏幕", description: "手机端看到的电脑屏幕与小窗。", icon: DashboardSquare },
     ],
   },
