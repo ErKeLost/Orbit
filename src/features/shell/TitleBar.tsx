@@ -5,20 +5,22 @@ import { PanelLeft, Plus, Settings, Terminal, X } from "../../shared/ui/icons";
 import { IS_MAC, MOD, TitleIconButton } from "./chrome";
 import { useWorkspaceTabs } from "./use-workspace-tabs";
 import { isHomeWorkspace, useShell, type WorkspaceTab } from "./shellStore";
+import { currentShortcut, shortcutLabel } from "../../lib/keybindings";
 import { compactTitle } from "../../lib/session-visual";
 import { connectionSnapshot, firstUserTitle, subscribeSnapshot } from "../../lib/rpc";
 import type { Snapshot } from "../../lib/rpc";
 import { MenuItem, MenuSeparator, PointMenu } from "../../shared/ui/controls";
 
 /** Tab label: the project's folder name, like Orbit's workspace tabs. */
-function workspaceLabel(cwd: string) {
+function workspaceLabel(cwd: string, homeDir: string) {
   if (!cwd) return "工作区";
+  if (homeDir && cwd === homeDir) return "主目录";
   return cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? cwd;
 }
 
 /** The session's own name for a workspace's pi connection. */
-function workspaceSessionTitle(workspace: { cwd: string; connectionId: string }, snapshot: Snapshot | null) {
-  const folder = workspaceLabel(workspace.cwd);
+function workspaceSessionTitle(workspace: { cwd: string; connectionId: string }, snapshot: Snapshot | null, homeDir: string) {
+  const folder = workspaceLabel(workspace.cwd, homeDir);
   let name = "";
   try {
     const meta = snapshot?.statuses?.["gui-session-name"];
@@ -61,8 +63,12 @@ function WorkspaceTabItem({
   /** 面板正被拖到这个标签页的前/后（monocode 的插入提示）。 */
   dropHint?: "before" | "after";
 }) {
+  const homeDir = useWorkspace((state) => state.homeDir);
   const snapshot = useConnectionSnapshot(workspace.connectionId);
-  const label = workspaceSessionTitle(workspace, snapshot);
+  const label = workspaceSessionTitle(workspace, snapshot, homeDir);
+  // 还在连接、而且没有已知标题时，标签用骨架条，不要先闪一个目录名。
+  const titled = Boolean(snapshot?.state?.sessionName) || Boolean(snapshot && firstUserTitle(snapshot.transcript));
+  const loading = snapshot?.connection === "connecting" && !titled;
   return (
     <div
       data-title-tab-id={workspace.id}
@@ -91,7 +97,7 @@ function WorkspaceTabItem({
           active ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
         }`}
       >
-        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <span className="min-w-0 flex-1 truncate">{loading ? <span aria-hidden className="block h-3 w-20 animate-pulse rounded bg-content/15" /> : label}</span>
       </button>
       {closable ? (
         <button
@@ -138,7 +144,7 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
     const others = useShell.getState().workspaces.filter((item) => item.id !== workspaceId && !isHomeWorkspace(item));
     setMenu(null);
     for (const item of others) await tabs.close(item.id);
-    await tabs.open(workspaceId);
+    await tabs.show(workspaceId);
   };
 
   const closeRight = async (workspaceId: string) => {
@@ -147,7 +153,7 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
     if (index < 0) return;
     setMenu(null);
     for (const item of items.slice(index + 1)) await tabs.close(item.id);
-    await tabs.open(workspaceId);
+    await tabs.show(workspaceId);
   };
 
   return (
@@ -182,7 +188,7 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
             key={workspace.id}
             workspace={workspace}
             active={workspace.id === activeWorkspaceId}
-            onOpen={() => void tabs.open(workspace.id)}
+            onOpen={() => void tabs.show(workspace.id)}
             onClose={() => void tabs.close(workspace.id)}
             onContextMenu={(event) => setMenu({ workspace, x: event.clientX, y: event.clientY })}
             closable
@@ -193,8 +199,8 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
           type="button"
           data-no-drag
           data-tauri-drag-region="false"
-          title="新建工作区 (⌘T)"
-          aria-label="新建工作区"
+          title={`新建会话 (${shortcutLabel(currentShortcut("Session: New"))})`}
+          aria-label="新建会话"
           onClick={() => void tabs.create()}
           className="grid size-6.5 shrink-0 place-items-center rounded-md text-content/45 hover:bg-content/10 hover:text-content"
         >

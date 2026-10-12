@@ -2,21 +2,20 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import type { Session } from "../../lib/protocol";
 import { useWorkspace } from "../../lib/store";
 import { useProjects } from "../../lib/projects";
-import { changeSession, connect, queryClient, report, retireSession } from "../../lib/rpc";
+import { queryClient, report } from "../../lib/rpc";
 import { mergeProjectSessions, useProjectSessions } from "../../hooks/use-project-sessions";
 import { useGitBranches } from "../../lib/git";
 import { useDragResize } from "../../shared/hooks/useDragResize";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
-import { MenuItem, MenuSeparator, PointMenu } from "../../shared/ui/controls";
-import { toast } from "../../shared/ui/toast";
-import { CircleAlert, Copy, GitBranch, ListFilter, MessageSquare, Plus, Search, Trash2 as Trash } from "../../shared/ui/icons";
+import { CircleAlert, GitBranch, ListFilter, MessageSquare, Plus, Search } from "../../shared/ui/icons";
 import { Icon } from "../../components/Icon";
 import { sessionGlyph, sessionRelativeTime, sessionTitle } from "../../lib/session-visual";
 import { DevModeSlot, IS_MAC, MOD, ResizeHandle, TabVisitNav, TitleIconButton } from "./chrome";
 import { useShell, type SidebarTab } from "./shellStore";
 import { FileTree } from "./FileTree";
-import { ConfirmDialog } from "./ConfirmDialog";
 import { GitChangesPanel } from "../source-control/ui/GitChangesPanel";
+import { useSessionContextMenu } from "./SessionMenu";
+import { useWorkspaceTabs } from "./use-workspace-tabs";
 import { TerminalSpinner } from "./TerminalSpinner";
 
 const SIDEBAR_MIN = 220;
@@ -105,8 +104,6 @@ function SessionsList({ cwd, query }: { cwd: string; query: string }) {
   const projects = useProjects((state) => state.projects);
   const sessions = useProjectSessions(cwd);
   const branches = useGitBranches(cwd).data;
-  const [menu, setMenu] = useState<{ session: Session; x: number; y: number } | null>(null);
-  const [deleting, setDeleting] = useState<Session | null>(null);
   const merged = useMemo(() => mergeProjectSessions(cwd, sessions.data ?? [], liveSessions), [cwd, sessions.data, liveSessions]);
   const projectName = projects.find((project) => project.path === cwd)?.name ?? cwd.split("/").filter(Boolean).at(-1) ?? "";
   const branchLabel = branches?.current ? `${projectName}/${branches.current}` : projectName;
@@ -115,28 +112,14 @@ function SessionsList({ cwd, query }: { cwd: string; query: string }) {
     return needle ? merged.sessions.filter((session) => sessionTitle(session).toLowerCase().includes(needle)) : merged.sessions;
   }, [merged.sessions, query]);
 
-  async function open(session: Session) {
-    try {
-      const workspace = useWorkspace.getState();
-      if (workspace.cwd !== cwd || workspace.workspaceMode !== "project" || workspace.connection !== "online") await connect(cwd, "project");
-      await changeSession({ type: "switch_session", sessionPath: session.path });
-    } catch (error) {
-      report(error);
-    }
-  }
+  const tabs = useWorkspaceTabs();
+  const openSession = (session: Session) => void tabs.openSession(session).catch(report);
 
-  async function remove() {
-    if (!deleting) return;
-    const target = deleting;
-    try {
-      await retireSession(target.path);
-      setDeleting(null);
-      await queryClient.invalidateQueries({ queryKey: ["pi", "sessions", cwd] });
-      toast.success("会话已删除");
-    } catch (error) {
-      report(error);
-    }
-  }
+  const { openMenu, menuNode } = useSessionContextMenu({
+    onOpen: (session) => void openSession(session),
+    canDelete: (session) => merged.listedPaths.has(session.path),
+    onDeleted: () => void queryClient.invalidateQueries({ queryKey: ["pi", "sessions", cwd] }),
+  });
 
   if (sessions.isPending && !merged.sessions.length) return null;
   if (sessions.isError && !merged.sessions.length) return <p className="px-3 py-2 text-[12px] text-content/50">无法读取会话</p>;
@@ -164,33 +147,13 @@ function SessionsList({ cwd, query }: { cwd: string; query: string }) {
               working={Boolean(live?.running)}
               needsInput={active && dialogs > 0}
               branch={branchLabel}
-              onSelect={() => void open(session)}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                setMenu({ session, x: event.clientX, y: event.clientY });
-              }}
+              onSelect={() => void openSession(session)}
+              onContextMenu={(event) => openMenu(session, event)}
             />
           );
         })}
       </ul>
-      {menu ? (
-        <PointMenu x={menu.x} y={menu.y} label="会话操作" onClose={() => setMenu(null)}>
-          <MenuItem icon={<MessageSquare strokeWidth={1.75} />} onClick={() => { void open(menu.session); setMenu(null); }}>打开会话</MenuItem>
-          <MenuItem icon={<Copy strokeWidth={1.75} />} onClick={() => { void navigator.clipboard.writeText(sessionTitle(menu.session)); setMenu(null); }}>复制标题</MenuItem>
-          {merged.listedPaths.has(menu.session.path) ? (
-            <>
-              <MenuSeparator />
-              <MenuItem danger icon={<Trash strokeWidth={1.75} />} onClick={() => { setDeleting(menu.session); setMenu(null); }}>删除会话</MenuItem>
-            </>
-          ) : null}
-        </PointMenu>
-      ) : null}
-      {deleting ? (
-        <ConfirmDialog title="删除会话" confirmLabel="删除" danger onCancel={() => setDeleting(null)} onConfirm={() => void remove()}>
-          <p className="font-medium text-content">{sessionTitle(deleting)}</p>
-          <p className="mt-2 text-[12px] leading-relaxed text-content/55">会话文件会从 Pi 的会话目录中永久删除。</p>
-        </ConfirmDialog>
-      ) : null}
+      {menuNode}
     </>
   );
 }
@@ -245,18 +208,13 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const project = workspaceMode === "project" && cwd && cwd !== homeDir ? cwd : "";
   const resize = useDragResize({ min: SIDEBAR_MIN, max: () => SIDEBAR_MAX, defaultWidth: 272, initial: width, onCommit: setWidth });
+  const tabs = useWorkspaceTabs();
 
   useEffect(() => setQuery(""), [project]);
 
   const newSession = () => {
     useWorkspace.getState().set({ panel: "chat" });
-    void (async () => {
-      // Pi only accepts a new session over a live worker, so connect first if
-      // the connection dropped (app restart, project switch, closed settings).
-      const state = useWorkspace.getState();
-      if (state.connection !== "online" && state.cwd) await connect(state.cwd, "project");
-      await changeSession({ type: "new_session" });
-    })().catch(report);
+    void tabs.create().catch(report);
   };
 
   return (

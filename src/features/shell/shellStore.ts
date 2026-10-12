@@ -8,9 +8,30 @@ import {
   removePane,
   setSplitRatio as setSplitRatioLayout,
   siblingLeafId,
-  type LayoutNode,
   type PaneEdge,
 } from "./paneLayout";
+import {
+  activeIndex,
+  CHAT_PANE_ID,
+  detachFile,
+  fileName,
+  findFile,
+  HOME_WORKSPACE_ID,
+  insertTab,
+  newHomeWorkspace,
+  newWorkspaceId,
+  newWorkspaceTab,
+  nextEditorPaneId,
+  nextSessionPaneId,
+  type CollapsedRailMode,
+  type DockPosition,
+  type OpenFile,
+  type SidebarTab,
+  type WorkspaceTab,
+} from "./shellModel";
+
+export { CHAT_PANE_ID, HOME_WORKSPACE_ID, isHomeWorkspace, newHomeWorkspace, newWorkspaceTab } from "./shellModel";
+export type { CollapsedRailMode, DockPosition, OpenFile, PaneState, SidebarTab, WorkspaceTab } from "./shellModel";
 
 /**
  * Layout state for the Orbit-style shell. Pi state (connections,
@@ -22,43 +43,11 @@ import {
  * Orbit's `WorkspaceTab` minus the tab strip's own persistence concerns:
  * one pi connection, one tree.
  */
-export type SidebarTab = "sessions" | "files" | "changes";
-export type CollapsedRailMode = "compact" | "hidden";
-export type DockPosition = "bottom" | "top" | "left" | "right";
-export type OpenFile = { path: string; name: string; preview: boolean; /** Set on a diff tab: the working-tree comparison it shows. */ diff?: "staged" | "unstaged"; /**
-   * Set on an all-changes review tab: every staged/unstaged file in one view.
-   * The path is synthetic (`changes:<kind>`); there is no real file behind it.
-   */ changes?: true; /**
-   * Set on a commit review tab: one historical commit's files and diffs.
-   * The path is synthetic (`commit:<sha>`).
-   */ commit?: { sha: string; shortSha: string; subject: string }; /**
-   * Known on a folder opened from the tree or a listing, so the pane does not
-   * have to ask the disk before it knows not to read a directory as text.
-   * `lib/path-meta` stays the authority; this only avoids the first round trip.
-   */ isDir?: boolean };
-export type PaneState = { files: OpenFile[]; activeFile: string | null };
-
-/** The session pane's leaf id; editor panes use `editor:<n>`. */
-export const CHAT_PANE_ID = "chat";
-
-export type WorkspaceTab = {
-  id: string;
-  cwd: string;
-  /** Pi RPC process bound to this workspace (empty until it is opened). */
-  connectionId: string;
-  layout: LayoutNode;
-  panes: Record<string, PaneState>;
-  /** Session panes: leaf id → the connection that pane shows (Orbit leaves). */
-  sessions: Record<string, { connectionId: string }>;
-  activePane: string;
-};
-
 const PROJECT_RAIL_KEY = "orbit.shell.projectRail";
 const SESSION_SIDEBAR_KEY = "orbit.shell.sessionSidebar";
 const SIDEBAR_TAB_KEY = "orbit.shell.sidebarTab";
 const PROJECT_RAIL_WIDTH_KEY = "orbit.shell.projectRailWidth";
 const SESSION_SIDEBAR_WIDTH_KEY = "orbit.shell.sessionSidebarWidth";
-const WORKSPACES_KEY = "orbit.shell.workspaces";
 
 function readBool(key: string, fallback: boolean) {
   try {
@@ -82,110 +71,9 @@ function write(key: string, value: string) {
   try { localStorage.setItem(key, value); } catch { /* storage unavailable */ }
 }
 
-function fileName(path: string) {
-  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
-}
-
-function newWorkspaceId() {
-  return `ws-${crypto.randomUUID().slice(0, 8)}`;
-}
-
-export function newWorkspaceTab(cwd: string, connectionId = ""): WorkspaceTab {
-  return {
-    id: newWorkspaceId(),
-    cwd,
-    connectionId,
-    layout: leaf(CHAT_PANE_ID),
-    panes: {},
-    sessions: { [CHAT_PANE_ID]: { connectionId } },
-    activePane: CHAT_PANE_ID,
-  };
-}
-
-/**
- * The hidden 「新会话」工作区：没有 pi 进程的 tab，只在所有标签页关掉之后
- * 撑起首页（EmptySession）。它有自己的连接 id（`<cwd>#home`），由
- * `useWorkspaceTabs.open` 开成一个全新的空会话，所以它永远不是某个旧会话的副本。
- */
-export const HOME_WORKSPACE_ID = "home";
-
-export function newHomeWorkspace(cwd: string): WorkspaceTab {
-  return { ...newWorkspaceTab(cwd), id: HOME_WORKSPACE_ID };
-}
-
-export function isHomeWorkspace(workspace: WorkspaceTab | undefined): boolean {
-  return workspace?.id === HOME_WORKSPACE_ID;
-}
-
-/** Next free session pane id; the first one is always `chat`. */
-function nextSessionPaneId(sessions: Record<string, { connectionId: string }>) {
-  let n = Object.keys(sessions).length;
-  while (sessions[`session:${n}`]) n += 1;
-  return `session:${n}`;
-}
-
-type Persisted = { workspaces: WorkspaceTab[]; activeWorkspaceId: string };
-
-/** A stored workspace is only trusted when its tree still describes its panes. */
-function readWorkspaces(cwd: string): Persisted {
-  const fallback = (): Persisted => {
-    const workspace = newWorkspaceTab(cwd);
-    return { workspaces: [workspace], activeWorkspaceId: workspace.id };
-  };
-  try {
-    const raw = localStorage.getItem(WORKSPACES_KEY);
-    if (!raw) return fallback();
-    const parsed = JSON.parse(raw) as Partial<Persisted>;
-    if (!Array.isArray(parsed.workspaces)) return fallback();
-    const workspaces: WorkspaceTab[] = [];
-    for (const entry of parsed.workspaces) {
-      if (!entry || typeof entry !== "object") continue;
-      const panes = entry.panes && typeof entry.panes === "object" ? entry.panes : {};
-      const layout = entry.layout;
-      if (!layout || typeof layout !== "object") continue;
-      const sessions: Record<string, { connectionId: string }> = { [CHAT_PANE_ID]: { connectionId: "" } };
-      if (entry.sessions && typeof entry.sessions === "object") {
-        for (const id of Object.keys(entry.sessions)) {
-          if (id === CHAT_PANE_ID) continue;
-          sessions[id] = { connectionId: "" };
-        }
-      }
-      const valid = new Set<string>([...Object.keys(sessions), ...Object.keys(panes)]);
-      const seen: string[] = [];
-      const walk = (node: LayoutNode): boolean => {
-        if (node.type === "leaf") {
-          if (!valid.has(node.id) || seen.includes(node.id)) return false;
-          seen.push(node.id);
-          return true;
-        }
-        if (!Array.isArray(node.children) || !Array.isArray(node.sizes)) return false;
-        if (node.children.length < 2 || node.children.length !== node.sizes.length) return false;
-        return node.children.every(walk);
-      };
-      if (!walk(layout) || !seen.includes(CHAT_PANE_ID)) continue;
-      workspaces.push({
-        id: typeof entry.id === "string" && entry.id ? entry.id : newWorkspaceId(),
-        cwd: typeof entry.cwd === "string" && entry.cwd ? entry.cwd : cwd,
-        connectionId: "",
-        layout,
-        panes,
-        sessions,
-        activePane: typeof entry.activePane === "string" && seen.includes(entry.activePane)
-          ? entry.activePane
-          : firstLeafId(layout),
-      });
-    }
-    if (workspaces.length === 0) return fallback();
-    const activeWorkspaceId = workspaces.some((workspace) => workspace.id === parsed.activeWorkspaceId)
-      ? (parsed.activeWorkspaceId as string)
-      : workspaces[0].id;
-    return { workspaces, activeWorkspaceId };
-  } catch {
-    return fallback();
-  }
-}
-
-type ShellState = Persisted & {
+type ShellState = {
+  workspaces: WorkspaceTab[];
+  activeWorkspaceId: string;
   /** Panes that just appeared from a split, keyed by pane id (transient). */
   entering: Record<string, PaneEdge>;
   /**
@@ -254,71 +142,28 @@ type ShellState = Persisted & {
   setSplitRatio: (splitId: string, index: number, ratio: number) => void;
 };
 
-const initial = typeof window === "undefined"
-  ? { workspaces: [newWorkspaceTab("")], activeWorkspaceId: "" }
-  : readWorkspaces(localStorage.getItem("pi-gui.cwd") ?? "");
-if (!initial.activeWorkspaceId) initial.activeWorkspaceId = initial.workspaces[0].id;
-
-function persist(state: Persisted) {
-  // 首页工作区不入库：重开应用时按正常流程恢复上一次的会话标签页，不记住「全关了」。
-  const real = state.workspaces.filter((workspace) => workspace.id !== HOME_WORKSPACE_ID);
-  const activeWorkspaceId = real.some((workspace) => workspace.id === state.activeWorkspaceId)
-    ? state.activeWorkspaceId
-    : (real[0]?.id ?? "");
-  write(WORKSPACES_KEY, JSON.stringify({
-    activeWorkspaceId,
-    workspaces: real.map(({ id, cwd, layout, panes, sessions, activePane }) => ({ id, cwd, layout, panes, sessions, activePane })),
-  }));
+/**
+ * 启动总是落在首页（新会话面），标签页不持久化——恢复某次会话是会话列表的事，
+ * 不是“默认落在哪个 tab”的事。`pi-gui.cwd` 只给首页一个初始范围，真正的范围由
+ * bootstrap 确认后再刷新。
+ */
+function initialCwd(): string {
+  try { return localStorage.getItem("pi-gui.cwd") ?? ""; } catch { return ""; }
 }
 
-function activeIndex(state: Pick<ShellState, "workspaces" | "activeWorkspaceId">) {
-  const index = state.workspaces.findIndex((workspace) => workspace.id === state.activeWorkspaceId);
-  return index < 0 ? 0 : index;
-}
-
-function findFile(workspace: WorkspaceTab, path: string) {
-  for (const [paneId, pane] of Object.entries(workspace.panes)) {
-    const index = pane.files.findIndex((file) => file.path === path);
-    if (index >= 0) return { paneId, index };
-  }
-  return null;
-}
-
-function nextEditorPaneId(panes: Record<string, PaneState>) {
-  let n = Object.keys(panes).length + 1;
-  while (panes[`editor:${n}`]) n += 1;
-  return `editor:${n}`;
-}
-
-/** Take a file out of its pane; the pane closes when it was its last tab. */
-function detachFile(workspace: WorkspaceTab, path: string): WorkspaceTab | null {
-  const found = findFile(workspace, path);
-  if (!found) return null;
-  const pane = workspace.panes[found.paneId];
-  const files = pane.files.filter((file) => file.path !== path);
-  const activeFile = pane.activeFile === path ? (files.at(-1)?.path ?? null) : pane.activeFile;
-  if (files.length > 0) {
-    return { ...workspace, panes: { ...workspace.panes, [found.paneId]: { files, activeFile } } };
-  }
-  const panes = { ...workspace.panes };
-  delete panes[found.paneId];
-  const layout = removePane(workspace.layout, found.paneId) ?? workspace.layout;
-  const activePane = workspace.activePane === found.paneId
-    ? (siblingLeafId(workspace.layout, found.paneId) ?? firstLeafId(layout))
-    : workspace.activePane;
-  return { ...workspace, layout, panes, activePane };
-}
+const initial = {
+  workspaces: [newHomeWorkspace(initialCwd())] as WorkspaceTab[],
+  activeWorkspaceId: HOME_WORKSPACE_ID,
+};
 
 export const useShell = create<ShellState>((set, get) => {
-  /** Apply an update to the active workspace and persist the result. */
+  /** 把一次改动应用到当前工作区（首页也是一个工作区，所以永远有对象可改）。 */
   const patchActive = (update: (workspace: WorkspaceTab) => WorkspaceTab, extra?: Partial<ShellState>) => {
     const state = get();
     const index = activeIndex(state);
     const workspaces = [...state.workspaces];
     workspaces[index] = update(workspaces[index]);
-    const next = { ...state, ...extra, workspaces };
     set({ workspaces, ...extra });
-    persist(next);
     return workspaces[index];
   };
 
@@ -364,52 +209,45 @@ export const useShell = create<ShellState>((set, get) => {
       const state = get();
       if (!state.workspaces.some((workspace) => workspace.id === activeWorkspaceId)) return;
       set({ activeWorkspaceId });
-      persist({ workspaces: state.workspaces, activeWorkspaceId });
     },
 
     newWorkspace: (cwd, connectionId) => {
       const state = get();
+      // connectionId 一并建好：新建的标签页绝不能先以空连接渲染一下，
+      // 否则 SessionScope 会回退到当前投影（首页/上一个会话）闪一下。
       const workspace = newWorkspaceTab(cwd ?? state.workspaces[activeIndex(state)].cwd, connectionId);
-      const workspaces = [...state.workspaces, workspace];
+      const workspaces = insertTab(state.workspaces, workspace);
       set({ workspaces, activeWorkspaceId: workspace.id });
-      persist({ workspaces, activeWorkspaceId: workspace.id });
       return workspace;
     },
 
     closeWorkspace: (id) => {
       const state = get();
-      // 首页工作区不是标签页，不能关；关掉最后一个标签页时它会被自动补出来。
+      // 首页不是标签页，关不掉：最后一个标签页关掉后就落到它。
       if (id === HOME_WORKSPACE_ID) return;
       const index = state.workspaces.findIndex((workspace) => workspace.id === id);
       if (index < 0) return;
-      const removed = state.workspaces[index];
-      let workspaces = state.workspaces.filter((workspace) => workspace.id !== id);
-      // 所有标签页都关掉了：留一个隐藏的首页工作区，内容走 EmptySession。
-      if (!workspaces.some((workspace) => workspace.id === HOME_WORKSPACE_ID)) {
-        const real = workspaces.filter((workspace) => workspace.id !== HOME_WORKSPACE_ID);
-        if (real.length === 0) workspaces = [...workspaces, newHomeWorkspace(removed.cwd)];
-      }
-      let activeWorkspaceId = state.activeWorkspaceId;
-      if (activeWorkspaceId === id) {
-        const real = workspaces.filter((workspace) => workspace.id !== HOME_WORKSPACE_ID);
-        activeWorkspaceId = real[Math.min(index, real.length - 1)]?.id ?? HOME_WORKSPACE_ID;
-      }
-      if (!workspaces.some((workspace) => workspace.id === activeWorkspaceId)) {
-        activeWorkspaceId = workspaces[0].id;
-      }
-      set({ workspaces, activeWorkspaceId });
-      persist({ workspaces, activeWorkspaceId });
+      const tabs = state.workspaces.filter((workspace) => workspace.id !== HOME_WORKSPACE_ID);
+      const removedAt = tabs.findIndex((workspace) => workspace.id === id);
+      const workspaces = state.workspaces.filter((workspace) => workspace.id !== id);
+      // 相邻的那个标签页（先往前找，没有就往后），都没有就回首页。
+      const nextId = state.activeWorkspaceId === id
+        ? (tabs[removedAt - 1] ?? tabs[removedAt + 1])?.id ?? HOME_WORKSPACE_ID
+        : state.activeWorkspaceId;
+      set({ workspaces, activeWorkspaceId: nextId });
     },
 
     promoteHomeWorkspace: () => {
       const state = get();
-      const index = state.workspaces.findIndex((workspace) => workspace.id === HOME_WORKSPACE_ID);
-      if (index < 0 || state.activeWorkspaceId !== HOME_WORKSPACE_ID) return;
-      const workspaces = [...state.workspaces];
-      const id = newWorkspaceId();
-      workspaces[index] = { ...workspaces[index], id };
-      set({ workspaces, activeWorkspaceId: id });
-      persist({ workspaces, activeWorkspaceId: id });
+      if (state.activeWorkspaceId !== HOME_WORKSPACE_ID) return;
+      const home = state.workspaces.find((workspace) => workspace.id === HOME_WORKSPACE_ID);
+      if (!home) return;
+      // 首页第一条消息 → 变成真正的标签页（连同它已有的面板树一起），
+      // 后面再补一个干净的首页。
+      const tab: WorkspaceTab = { ...home, id: newWorkspaceId() };
+      const rest = state.workspaces.filter((workspace) => workspace.id !== HOME_WORKSPACE_ID);
+      const workspaces = [...rest, tab, newHomeWorkspace(home.cwd)];
+      set({ workspaces, activeWorkspaceId: tab.id });
     },
 
     detachPaneToWorkspace: (paneId, targetTabId, position) => {
@@ -449,7 +287,6 @@ export const useShell = create<ShellState>((set, get) => {
       }
       workspaces.splice(insertAt, 0, workspace);
       set({ workspaces, activeWorkspaceId: workspace.id });
-      persist({ workspaces, activeWorkspaceId: workspace.id });
       return workspace;
     },
 
@@ -478,7 +315,6 @@ export const useShell = create<ShellState>((set, get) => {
       const workspaces = state.workspaces.map((workspace) =>
         workspace.id === id ? { ...workspace, connectionId } : workspace);
       set({ workspaces });
-      persist({ workspaces, activeWorkspaceId: state.activeWorkspaceId });
     },
 
     setWorkspaceCwd: (id, cwd) => {
@@ -486,7 +322,6 @@ export const useShell = create<ShellState>((set, get) => {
       const workspaces = state.workspaces.map((workspace) =>
         workspace.id === id ? { ...workspace, cwd } : workspace);
       set({ workspaces });
-      persist({ workspaces, activeWorkspaceId: state.activeWorkspaceId });
     },
 
     focusPane: (paneId) => {

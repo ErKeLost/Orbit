@@ -15,8 +15,9 @@ import {
   useProjects,
   type Project,
 } from "../../lib/projects";
-import { changeSession, connect, desktopRuntime, forgetProject, report, setSessionRoots } from "../../lib/rpc";
-import { openWorkspaceScope } from "../../lib/workspace-scope";
+import { connect, desktopRuntime, forgetProject, queryClient, report, setSessionRoots } from "../../lib/rpc";
+import { useWorkspaceTabs } from "./use-workspace-tabs";
+import { useSessionContextMenu } from "./SessionMenu";
 import { runRemoteHostOperation } from "../../lib/remote-runtime";
 import { useProjectSessionGroups } from "../../hooks/use-project-sessions";
 import { sessionGlyph, sessionRelativeTime, sessionTitle } from "../../lib/session-visual";
@@ -325,12 +326,14 @@ function RailSessionCard({
   active,
   running,
   onSelect,
+  onContextMenu,
 }: {
   session: Session;
   projectLabel: string;
   active: boolean;
   running: boolean;
   onSelect: () => void;
+  onContextMenu: (event: ReactMouseEvent) => void;
 }) {
   return (
     <button
@@ -339,6 +342,7 @@ function RailSessionCard({
       data-session-card={session.path}
       aria-current={active ? "true" : undefined}
       onClick={onSelect}
+      onContextMenu={onContextMenu}
       className={`flex w-full cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-left ${
         active ? "bg-selection-strong text-content" : "opacity-70 hover:bg-content/5 hover:opacity-100"
       }`}
@@ -375,6 +379,11 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
   const setWidth = useShell((state) => state.setProjectRailWidth);
   const setProjectRailOpen = useShell((state) => state.setProjectRailOpen);
   const [busyProject, setBusyProject] = useState("");
+  const tabs = useWorkspaceTabs();
+  const { openMenu: openSessionMenu, menuNode: sessionMenuNode } = useSessionContextMenu({
+    onOpen: (session) => void openSession(session).catch(report),
+    onDeleted: (session) => void queryClient.invalidateQueries({ queryKey: ["pi", "sessions", session.cwd] }),
+  });
   const [picker, setPicker] = useState(false);
   // 会话区块的展开状态：和其它 shell 偏好一样存 localStorage，重启后保持。
   const [sessionsOpen, setSessionsOpen] = useState(() => {
@@ -460,13 +469,8 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
 
   async function openSession(session: Session) {
     useWorkspace.getState().set({ panel: "chat" });
-    // 和侧栏的会话列表一样：先确保那个项目的 pi 进程在跑，再切会话。
-    const mode = homeDir && session.cwd === homeDir ? "home" : "project";
-    const workspace = useWorkspace.getState();
-    if (workspace.cwd !== session.cwd || workspace.workspaceMode !== mode || workspace.connection !== "online") {
-      await connect(session.cwd, mode);
-    }
-    await changeSession({ type: "switch_session", sessionPath: session.path });
+    // 真实会话进 header 的标签页；首页只留给“新会话”。
+    await tabs.openSession(session);
   }
 
   async function chooseHome() {
@@ -477,7 +481,7 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
     useWorkspace.getState().set({ panel: "chat" });
     setBusyProject(homeDir);
     try {
-      await openWorkspaceScope(homeDir, "home");
+      await tabs.openScope(homeDir, "home");
     } catch (error) {
       report(error);
     } finally {
@@ -489,7 +493,7 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
     useWorkspace.getState().set({ panel: "chat" });
     setBusyProject(path);
     try {
-      await openWorkspaceScope(path, "project");
+      await tabs.openScope(path, "project");
     } catch (error) {
       report(error);
     } finally {
@@ -641,6 +645,7 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
                         active={session.path === currentSessionFile}
                         running={Boolean(liveSessions.find((live) => live.path === session.path)?.running)}
                         onSelect={() => void openSession(session).catch(report)}
+                        onContextMenu={(event) => openSessionMenu(session, event)}
                       />
                     ))}
                   </div>
@@ -673,6 +678,7 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
           onClose={() => setMenu(null)}
         />
       ) : null}
+      {sessionMenuNode}
       {editing ? (
         <ProjectEditorDialog
           project={editing}

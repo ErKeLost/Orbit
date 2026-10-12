@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspace } from "../../lib/store";
-import { changeSession, connect, report } from "../../lib/rpc";
+import { report } from "../../lib/rpc";
+import { useWorkspaceTabs } from "../shell/use-workspace-tabs";
 import { useProjects } from "../../lib/projects";
 import { MIN_QUERY, useFileSearch } from "../../lib/search";
 import { useShell } from "../shell/shellStore";
@@ -28,12 +29,12 @@ import {
 
 type Command = { id: string; label: string; icon: IconComponent; run: () => void };
 
-function useCommands(): Command[] {
+function useCommands(newSession: () => void): Command[] {
   const setPanel = (panel: Parameters<ReturnType<typeof useWorkspace.getState>["set"]>[0]["panel"]) =>
     useWorkspace.getState().set({ panel });
   return useMemo(
     () => [
-      { id: "cmd:new-session", label: "新会话", icon: Plus, run: () => void changeSession({ type: "new_session" }).catch(report) },
+      { id: "cmd:new-session", label: "新会话", icon: Plus, run: newSession },
       { id: "cmd:inbox", label: "打开收件箱", icon: InboxIcon, run: () => setPanel("inbox") },
       { id: "cmd:notes", label: "打开笔记", icon: File, run: () => setPanel("notes") },
       { id: "cmd:automations", label: "打开自动化", icon: Zap, run: () => setPanel("automations") },
@@ -45,7 +46,7 @@ function useCommands(): Command[] {
       { id: "cmd:changes", label: "打开变更", icon: MessageSquare, run: () => { useShell.getState().setSessionSidebarOpen(true); useShell.getState().setSidebarTab("changes"); } },
       { id: "cmd:terminal", label: "切换终端", icon: Terminal, run: () => useShell.getState().setTerminalOpen(!useShell.getState().terminalOpen) },
     ],
-    [],
+    [newSession],
   );
 }
 
@@ -60,7 +61,8 @@ function QuickOpenOverlay({ onClose }: { onClose: () => void }) {
   const homeDir = useWorkspace((state) => state.homeDir);
   const workspaceMode = useWorkspace((state) => state.workspaceMode);
   const { projects } = useProjects();
-  const commands = useCommands();
+  const tabs = useWorkspaceTabs();
+  const commands = useCommands(() => { useWorkspace.getState().set({ panel: "chat" }); void tabs.create(); });
   const [raw, setRaw] = useState("");
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -125,7 +127,7 @@ function QuickOpenOverlay({ onClose }: { onClose: () => void }) {
       row.run();
     } else {
       useWorkspace.getState().set({ panel: "chat" });
-      void connect(row.path, "project").catch(report);
+      void tabs.openScope(row.path, "project").catch(report);
     }
   };
 

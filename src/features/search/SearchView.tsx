@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspace } from "../../lib/store";
-import { changeSession, connect, persistedSessionFile, report } from "../../lib/rpc";
+import { persistedSessionFile, report } from "../../lib/rpc";
+import { useWorkspaceTabs } from "../shell/use-workspace-tabs";
 import { useProjects } from "../../lib/projects";
 import { MIN_QUERY, useFileSearch, useSessionSearch, type SearchFileHit, type SearchSessionHit } from "../../lib/search";
 import { useShell } from "../shell/shellStore";
@@ -89,6 +90,7 @@ function Row({
 /** Orbit's Search view: one query box, four filters, grouped results, ↑↓/Enter 导航。 */
 export function SearchView() {
   const cwd = useWorkspace((state) => state.cwd);
+  const tabs = useWorkspaceTabs();
   const homeDir = useWorkspace((state) => state.homeDir);
   const workspaceMode = useWorkspace((state) => state.workspaceMode);
   const { projects } = useProjects();
@@ -153,14 +155,14 @@ export function SearchView() {
   };
   const openSession = (hit: SearchSessionHit) => {
     useWorkspace.getState().set({ panel: "chat" });
-    void changeSession({ type: "switch_session", sessionPath: hit.path }).catch(report);
+    void tabs.openSession({ path: hit.path, cwd }).catch(report);
   };
   const activate = (row: FlatRow) => {
     if (row.kind === "file") openFile(row.hit);
     else if (row.kind === "session") openSession(row.hit);
     else {
       useWorkspace.getState().set({ panel: "chat" });
-      void connect(row.path, "project").catch(report);
+      void tabs.openScope(row.path, "project").catch(report);
     }
   };
 
@@ -243,7 +245,7 @@ export function SearchView() {
                     meta={item.path}
                     onClick={() => {
                       useWorkspace.getState().set({ panel: "chat" });
-                      void connect(item.path, "project").catch(report);
+                      void tabs.openScope(item.path, "project").catch(report);
                     }}
                   />
                 );

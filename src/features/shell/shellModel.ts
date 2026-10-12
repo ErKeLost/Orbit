@@ -1,0 +1,133 @@
+import {
+  firstLeafId,
+  leaf,
+  removePane,
+  siblingLeafId,
+  type LayoutNode,
+} from "./paneLayout";
+
+/**
+ * Pure shell model: the workspace-tab / pane-tree shapes and the functions that
+ * transform them. No zustand, no pi, no DOM — `shellStore.ts` owns the mutable
+ * state and calls into this file, so the layout rules can be tested or reused
+ * on their own.
+ */
+export type SidebarTab = "sessions" | "files" | "changes";
+export type CollapsedRailMode = "compact" | "hidden";
+export type DockPosition = "bottom" | "top" | "left" | "right";
+export type OpenFile = { path: string; name: string; preview: boolean; /** Set on a diff tab: the working-tree comparison it shows. */ diff?: "staged" | "unstaged"; /**
+   * Set on an all-changes review tab: every staged/unstaged file in one view.
+   * The path is synthetic (`changes:<kind>`); there is no real file behind it.
+   */ changes?: true; /**
+   * Set on a commit review tab: one historical commit's files and diffs.
+   * The path is synthetic (`commit:<sha>`).
+   */ commit?: { sha: string; shortSha: string; subject: string }; /**
+   * Known on a folder opened from the tree or a listing, so the pane does not
+   * have to ask the disk before it knows not to read a directory as text.
+   * `lib/path-meta` stays the authority; this only avoids the first round trip.
+   */ isDir?: boolean };
+export type PaneState = { files: OpenFile[]; activeFile: string | null };
+
+/** The session pane's leaf id; editor panes use `editor:<n>`. */
+export const CHAT_PANE_ID = "chat";
+
+export type WorkspaceTab = {
+  id: string;
+  cwd: string;
+  /** Pi RPC process bound to this workspace (empty until it is opened). */
+  connectionId: string;
+  layout: LayoutNode;
+  panes: Record<string, PaneState>;
+  /** Session panes: leaf id → the connection that pane shows (Orbit leaves). */
+  sessions: Record<string, { connectionId: string }>;
+  activePane: string;
+};
+
+/** Index into `workspaces` of the active surface; 0 when it is missing. */
+export function activeIndex(state: { workspaces: WorkspaceTab[]; activeWorkspaceId: string }): number {
+  const index = state.workspaces.findIndex((workspace) => workspace.id === state.activeWorkspaceId);
+  return index < 0 ? 0 : index;
+}
+
+export function fileName(path: string) {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+}
+
+export function newWorkspaceId() {
+  return `ws-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+export function newWorkspaceTab(cwd: string, connectionId = ""): WorkspaceTab {
+  return {
+    id: newWorkspaceId(),
+    cwd,
+    connectionId,
+    layout: leaf(CHAT_PANE_ID),
+    panes: {},
+    sessions: { [CHAT_PANE_ID]: { connectionId } },
+    activePane: CHAT_PANE_ID,
+  };
+}
+
+/**
+ * The hidden 「新会话」工作区：没有 pi 进程的 tab，只在所有标签页关掉之后
+ * 撑起首页（EmptySession）。它有自己的连接，由 `use-workspace-tabs.show` 开成
+ * 一个全新的空会话，所以它永远不是某个旧会话的副本。
+ */
+export const HOME_WORKSPACE_ID = "home";
+
+export function newHomeWorkspace(cwd: string): WorkspaceTab {
+  return { ...newWorkspaceTab(cwd), id: HOME_WORKSPACE_ID };
+}
+
+export function isHomeWorkspace(workspace: WorkspaceTab | undefined): boolean {
+  return workspace?.id === HOME_WORKSPACE_ID;
+}
+
+/** Next free session pane id; the first one is always `chat`. */
+export function nextSessionPaneId(sessions: Record<string, { connectionId: string }>) {
+  let n = Object.keys(sessions).length;
+  while (sessions[`session:${n}`]) n += 1;
+  return `session:${n}`;
+}
+
+/** 标签页一律插在首页前面，首页永远排在最后。 */
+export function insertTab(workspaces: WorkspaceTab[], tab: WorkspaceTab): WorkspaceTab[] {
+  const home = workspaces.findIndex((workspace) => workspace.id === HOME_WORKSPACE_ID);
+  const next = [...workspaces];
+  next.splice(home < 0 ? next.length : home, 0, tab);
+  return next;
+}
+
+export function findFile(workspace: WorkspaceTab, path: string) {
+  for (const [paneId, pane] of Object.entries(workspace.panes)) {
+    const index = pane.files.findIndex((file) => file.path === path);
+    if (index >= 0) return { paneId, index };
+  }
+  return null;
+}
+
+export function nextEditorPaneId(panes: Record<string, PaneState>) {
+  let n = Object.keys(panes).length + 1;
+  while (panes[`editor:${n}`]) n += 1;
+  return `editor:${n}`;
+}
+
+/** Take a file out of its pane; the pane closes when it was its last tab. */
+export function detachFile(workspace: WorkspaceTab, path: string): WorkspaceTab | null {
+  const found = findFile(workspace, path);
+  if (!found) return null;
+  const pane = workspace.panes[found.paneId];
+  const files = pane.files.filter((file) => file.path !== path);
+  const activeFile = pane.activeFile === path ? (files.at(-1)?.path ?? null) : pane.activeFile;
+  if (files.length > 0) {
+    return { ...workspace, panes: { ...workspace.panes, [found.paneId]: { files, activeFile } } };
+  }
+  const panes = { ...workspace.panes };
+  delete panes[found.paneId];
+  const layout = removePane(workspace.layout, found.paneId) ?? workspace.layout;
+  const activePane = workspace.activePane === found.paneId
+    ? (siblingLeafId(workspace.layout, found.paneId) ?? firstLeafId(layout))
+    : workspace.activePane;
+  return { ...workspace, layout, panes, activePane };
+}

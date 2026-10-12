@@ -16,7 +16,7 @@ import { SessionSidebar } from "./features/shell/SessionSidebar";
 import { TitleBar } from "./features/shell/TitleBar";
 import { FileView } from "./features/shell/FileView";
 import { MobileShell } from "./features/shell/MobileShell";
-import { useActiveWorkspace, useShell, isHomeWorkspace } from "./features/shell/shellStore";
+import { useActiveWorkspace, useShell, isHomeWorkspace, CHAT_PANE_ID } from "./features/shell/shellStore";
 import { ChatPane } from "./features/chat/ChatPane";
 import { SettingsView } from "./features/settings/SettingsView";
 import { InboxView } from "./features/inbox/InboxView";
@@ -26,7 +26,7 @@ import { useAutomationScheduler } from "./features/automations/useAutomationSche
 import { PaneDropHint, PaneSash, SessionPaneHeader } from "./features/shell/PaneChrome";
 import { layoutLeaves, layoutSashes, setSplitRatio as setSplitRatioLayout, type LayoutNode } from "./features/shell/paneLayout";
 import { paneDropFromPoint, setTitleTabDrop, titleTabDropFromPoint, useTabDrop, type PaneDrop } from "./features/shell/paneDrop";
-import { useWorkspaceTabs } from "./features/shell/use-workspace-tabs";
+import { useWorkspaceTabs, useWorkspaceTabsEffects } from "./features/shell/use-workspace-tabs";
 import { SessionScope } from "./features/shell/session-scope";
 import { closeWorkspaceConnection } from "./lib/rpc";
 import { setGrabbing, suppressTextSelection } from "./shared/lib/drag";
@@ -45,7 +45,7 @@ function useMobileLayout(forced: boolean) {
   return forced || matches;
 }
 
-function WorkArea() {
+function WorkArea({ withSessions }: { withSessions: boolean }) {
   const panel = useWorkspace((state) => state.panel);
 
   const cwd = useWorkspace((state) => state.cwd);
@@ -59,6 +59,9 @@ function WorkArea() {
   const setSplitRatio = useShell((state) => state.setSplitRatio);
   const focusedPane = useActiveWorkspace((workspace) => workspace.activePane);
   const sessions = useActiveWorkspace((workspace) => workspace.sessions);
+  // 面板永远跑在工作区自己的连接上（分屏会话除外）——不再回退到“全局投影”，
+  // 切项目范围、切标签页时谁该换连接由控制器一处决定。
+  const workspaceConnectionId = useActiveWorkspace((workspace) => workspace.connectionId);
   const homeWorkspace = useActiveWorkspace(isHomeWorkspace);
   const closePane = useShell((state) => state.closePane);
   const tabs = useWorkspaceTabs();
@@ -152,7 +155,7 @@ function WorkArea() {
         const workspace = titleTab
           ? useShell.getState().detachPaneToWorkspace(fromId, titleTab.targetTabId, titleTab.position)
           : useShell.getState().detachPaneToWorkspace(fromId);
-        if (workspace) void tabs.open(workspace.id, { fresh: true });
+        if (workspace) void tabs.show(workspace.id);
         return;
       }
       const over = paneDropFromPoint(lastX, lastY);
@@ -182,12 +185,12 @@ function WorkArea() {
   if (panel === "automations") return <AutomationsView />;
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {/* 红绿灯归属：展开栏开着→展开栏头部让位；侧栏可见→侧栏头部让位；
-          全屏面板（移动端/笔记，侧栏被藏）→ 标题栏自己让位。 */}
+      {/* 红绿灯归属：展开栏开着→展开栏头部让位；侧栏真的画出来→侧栏头部让位；
+          侧栏没画（关掉了、或首页/没有项目）→ 标题栏自己让位，不能被 tab 盖住。 */}
       <TitleBar
         railsHidden={
           !projectRailOpen &&
-          (!sessionSidebarOpen || panel === "mobile-access" || panel === "notes")
+          (!withSessions || !sessionSidebarOpen || panel === "mobile-access" || panel === "notes")
         }
       />
       <MetricsSync />
@@ -218,7 +221,7 @@ function WorkArea() {
                 {sessions[entry.id] ? (
                   // Every session pane is scoped to its own pi connection, so any
                   // number of them can stream at once (Orbit's session panes).
-                  <SessionScope connectionId={sessions[entry.id].connectionId || connectionId}>
+                  <SessionScope connectionId={entry.id === CHAT_PANE_ID ? workspaceConnectionId ?? "" : sessions[entry.id].connectionId || workspaceConnectionId || ""}>
                     <div className="chat-pane-background relative isolate flex h-full min-h-0 min-w-0 flex-1 flex-col">
                       {split ? (
                         <SessionPaneHeader
@@ -236,7 +239,7 @@ function WorkArea() {
                         />
                       ) : null}
                       <ChatPane
-                        key={sessions[entry.id].connectionId || connectionId || cwd}
+                        key={sessions[entry.id].connectionId || workspaceConnectionId || cwd}
                         onSubmitted={homeWorkspace ? tabs.promoteHome : undefined}
                       />
                     </div>
@@ -281,6 +284,8 @@ function WorkArea() {
 }
 
 export default function App() {
+  // 壳层的连接/scope 同步只挂一次：所有组件共享同一个会话控制器。
+  useWorkspaceTabsEffects();
   const projectRailOpen = useShell((state) => state.projectRailOpen);
   const sessionSidebarOpen = useShell((state) => state.sessionSidebarOpen);
   const panel = useWorkspace((state) => state.panel);
@@ -340,7 +345,7 @@ export default function App() {
         {withSessions ? (
           <SessionSidebar visible={sessionSidebarOpen && !chromeless} railVisible={projectRailOpen} onSearch={openSearch} />
         ) : null}
-        <WorkArea />
+        <WorkArea withSessions={withSessions} />
         <QuickOpen />
       </div>
       <ScreenOverlay />
