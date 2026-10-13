@@ -1,6 +1,7 @@
 import {describe,test,expect} from 'bun:test'
 import {assignTurnClocks,emptyTranscript,groupDisplayMessages,reuseGroups,reduceEvent,hydrate,sameModel,toolResultImages,toolResultText,withPendingModel} from '../src/lib/protocol'
 import { summarizeToolCalls } from '../src/lib/tool-activity'
+import { projectTurn } from '../src/features/chat/turnModel'
 import { turnDurationId } from '../src/lib/turn-duration'
 describe('Pi 0.87.1 JSONL event projection',()=>{
  test('assembling indexed text and thinking deltas, ending with the authoritative snapshot',()=>{
@@ -208,6 +209,63 @@ test('consecutive assistant fragments render as one logical turn',()=>{
  expect(groups[1].items.map(item=>item.id)).toEqual(['thought-1','thought-2','answer'])
  expect(groups[1].indexes).toEqual([1,2,3])
  expect(turnDurationId(groups[1].items)).toBe('tool:read-1')
+})
+test('a sub-agent result joins the run instead of opening a turn of its own',()=>{
+ const envelope='Message Type: FINAL_ANSWER\nTask name: /root\nSender: /root/reviewer\nStatus: completed\nPayload:\nAll checks pass.'
+ const messages=[
+  {id:'user',message:{role:'user',content:'review'}},
+  {id:'work',message:{role:'assistant',content:[{type:'text',text:'spawning a reviewer'},{type:'toolCall',id:'agent-1',name:'spawn_agent'}]}},
+  {id:'result',message:{role:'custom',customType:'subagent_result',content:[{type:'text',text:envelope}]}},
+  {id:'answer',message:{role:'assistant',content:[{type:'text',text:'the reviewer found nothing.'}]}},
+ ]
+ const groups=groupDisplayMessages(messages)
+ // A `custom` role used to start a new group, which made the worker's report
+ // that group's final answer and painted it full size in the transcript body.
+ expect(groups).toHaveLength(2)
+ expect(groups[1].items.map(item=>item.id)).toEqual(['work','result','answer'])
+})
+test('a turn that ends in an error still shows what the agent managed to say',()=>{
+ // `stopReason: "error"` used to suppress promotion, burying the agent's own
+ // explanation of the failure — the one thing a reader needs in that case.
+ const turn=projectTurn([
+  {id:'work',message:{role:'assistant',stopReason:'toolUse',content:[{type:'toolCall',id:'c1',name:'bash',arguments:{}}]}},
+  {id:'explain',message:{role:'assistant',stopReason:'error',errorMessage:'rate limited',content:[{type:'text',text:'这个页面我直接告诉你怎么勾、IP 怎么填：'}]}},
+ ],{},false)
+ expect(turn.work.map(step=>step.kind)).toEqual(['tool'])
+ expect(turn.answer.map(step=>step.text)).toEqual(['这个页面我直接告诉你怎么勾、IP 怎么填：'])
+})
+test('prose that follows a tool call in the same message is the answer',()=>{
+ // The old `lastHasTool` gate suppressed the whole message as soon as it held
+ // any tool call, even when the prose came after it.
+ const turn=projectTurn([
+  {id:'m',message:{role:'assistant',stopReason:'stop',content:[
+   {type:'toolCall',id:'c1',name:'bash',arguments:{}},
+   {type:'text',text:'总结：两处都已修复。'},
+  ]}},
+ ],{},false)
+ expect(turn.answer.map(step=>step.text)).toEqual(['总结：两处都已修复。'])
+})
+test('prose that leads into a pending tool call stays in the work fold',()=>{
+ // The walk stops at the tool call: this prose is narration, not an answer.
+ const turn=projectTurn([
+  {id:'m',message:{role:'assistant',stopReason:'toolUse',content:[
+   {type:'text',text:'我先看一下这个文件。'},
+   {type:'toolCall',id:'c1',name:'read',arguments:{}},
+  ]}},
+ ],{},false)
+ expect(turn.answer).toHaveLength(0)
+ expect(turn.work.map(step=>step.kind)).toEqual(['note','tool'])
+})
+test('a sub-agent result is not promoted to the answer',()=>{
+ const envelope='Message Type: FINAL_ANSWER\nTask name: /root\nSender: /root/reviewer\nStatus: completed\nPayload:\nAll checks pass.'
+ const turn=projectTurn([
+  {id:'work',message:{role:'assistant',content:[{type:'text',text:'spawning a reviewer'},{type:'toolCall',id:'agent-1',name:'spawn_agent'}]}},
+  {id:'result',message:{role:'custom',customType:'subagent_result',content:[{type:'text',text:envelope}]}},
+  {id:'answer',message:{role:'assistant',content:[{type:'text',text:'the reviewer found nothing.'}]}},
+ ],{},false)
+ expect(turn.answer.map(step=>step.text)).toEqual(['the reviewer found nothing.'])
+ // The envelope is stripped for display; the payload is what the fold holds.
+ expect(turn.work.map(step=>step.text)).toContain('All checks pass.')
 })
 test('turn duration ids survive live-to-history message id changes',()=>{
  const live={id:'live-4-1',message:{role:'assistant',timestamp:1789546873294,content:[{type:'thinking',thinking:'work'}]}}

@@ -96,6 +96,27 @@ export function workCategory(name: string): WorkCategory {
   return "other";
 }
 
+/**
+ * An inter-agent envelope (`Message Type:` / `Task name:` / `Sender:` / …) is
+ * machine framing, not prose. The fold shows the payload it wraps, because the
+ * activity row directly above it already names the worker and its status.
+ */
+const ENVELOPE_KEYS = /^(Message Type|Task name|Sender|Status|Payload|Error):/
+
+function stripAgentEnvelope(text: string) {
+  const lines = text.split("\n");
+  let seenKey = false;
+  let index = 0;
+  while (index < lines.length) {
+    const line = lines[index].trim();
+    if (line && !ENVELOPE_KEYS.test(line)) break;
+    if (line) seenKey = true;
+    index += 1;
+  }
+  if (!seenKey) return text.trim();
+  return lines.slice(index).join("\n").trim() || text.trim();
+}
+
 /** Steps for one assistant message: thinking, notes (non-final prose), tools. */
 function messageSteps(item: DisplayMessage, messageIndex: number, live: boolean, tools: Record<string, Tool>): TurnStep[] {
   const parts = contentParts(item.message);
@@ -110,7 +131,8 @@ function messageSteps(item: DisplayMessage, messageIndex: number, live: boolean,
       return [{ key, kind: isImageTool(part, tools) ? "image" : "tool", part, messageIndex, live: Boolean(tools[part.id ?? ""]?.running) }];
     }
     if (part.type === "text") {
-      const text = withoutRuntimeImageNotes(part.text ?? "");
+      const raw = part.text ?? "";
+      const text = withoutRuntimeImageNotes(item.message.role === "custom" ? stripAgentEnvelope(raw) : raw);
       if (!text.trim()) return [];
       return [{ key, kind: "note", text, messageIndex, live: tail }];
     }
@@ -142,36 +164,33 @@ export function projectTurn(
   const steps = assistant.flatMap((item, index) => messageSteps(item, index, streaming && index === assistant.length - 1, tools));
   const last = assistant.at(-1);
   const lastIndex = assistant.length - 1;
-  const stoppedCleanly =
-    !last?.message.errorMessage && (!last?.message.stopReason || last.message.stopReason === "stop");
-  const lastHasTool = steps.some((step) => step.messageIndex === lastIndex && step.kind === "tool");
-  // 最终回答必须随 delta 实时出现在回答区，而不是等 message_end 一次性铺开。
-  // 唯一例外是 toolcall 跟在正文后面：那说明这段是中间叙述（“我先看一下…”），
-  // 留在过程 fold 里；等 toolcall 落地时它会从回答区移进 fold，这是唯一一次
-  // 接受的位移。报错的消息（errorMessage）同样不提升。
-
-  // The answer is the run of notes at the very end of the final message, as
-  // long as no tool call follows them. While streaming, the live tail prose
-  // is promoted too so it reads at full size as it arrives; once a tool call
-  // does follow (lastHasTool), the notes drop back into the work fold — that
-  // is the one accepted transition, and it keeps intermediate narration out
-  // of the answer area after the fact.
-  // Successful image generations are content, not process (Orbit appends
-  // them as first-class image blocks): lift them out of the work steps so they
-  // render outside the fold. Failed calls stay behind as ordinary tool rows.
+  // The answer is the trailing run of prose in the final assistant message. The
+  // walk itself is the whole test: a non-note step (a tool call) after the prose
+  // means that prose was narration leading into the call, so it stays work.
+  //
+  // Two gates used to sit in front of it and both hid real answers:
+  // - `stopReason` had to be "stop", so a turn that ended in an error or ran out
+  //   of room buried the agent's own explanation of what went wrong — the one
+  //   thing a reader needs most in that case.
+  // - the message had to contain no tool call at all, which also suppressed
+  //   prose that came *after* a call in the same message.
+  // Streaming prose is promoted as it arrives and drops back behind the fold
+  // when a tool call follows it; that is the one accepted transition, and it is
+  // the same rule at the end of the turn as in the middle of it.
+  // Successful image generations are content, not process (Orbit appends them
+  // as first-class image blocks): lift them out of the work steps so they render
+  // outside the fold. Failed calls stay behind as ordinary tool rows.
   const imageSteps = steps.filter(
     (step) => step.kind === "image" && step.part?.type === "toolCall" && !tools[step.part.id ?? ""]?.isError,
   );
   const imageKeys = new Set(imageSteps.map((step) => step.key));
   const workRest = steps.filter((step) => !imageKeys.has(step.key));
   let split = workRest.length;
-  if (stoppedCleanly && !lastHasTool) {
-    while (split > 0) {
-      const step = workRest[split - 1];
-      if (step.messageIndex !== lastIndex) break;
-      if (step.kind === "note" || (step.kind === "image" && step.part?.type === "image")) split -= 1;
-      else break;
-    }
+  while (split > 0) {
+    const step = workRest[split - 1];
+    if (step.messageIndex !== lastIndex) break;
+    if (step.kind === "note" || (step.kind === "image" && step.part?.type === "image")) split -= 1;
+    else break;
   }
   return {
     items,

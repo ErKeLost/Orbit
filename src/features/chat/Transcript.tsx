@@ -150,22 +150,33 @@ function PhaseIcon({ kind, className = "" }: { kind: Phase["kind"]; className?: 
 
 function ThinkingRow({ step }: { step: TurnStep }) {
   const [open, setOpen] = useState(false);
-  const text = proseSummary(step.text ?? "") || "Thinking";
+  const full = (step.text ?? "").trim();
+  const text = proseSummary(full) || "Thinking";
+  // A short block's summary *is* its text, so an expand affordance would print
+  // the same words twice. Only a block that actually has more to show gets one.
+  const expandable = full !== text;
   const pulse = step.live ? "zen-thinking-pulse" : "";
+  const label = (
+    <span className={`min-w-0 flex-1 truncate font-sans text-sm text-content/50 transition-colors duration-200 group-hover:text-content/75 ${pulse}`}>{text}</span>
+  );
   return (
     <div className="flex min-w-0 flex-col">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-label={open ? "收起思考" : `展开思考：${text}`}
-        onClick={() => setOpen((value) => !value)}
-        className="group flex min-w-0 items-center gap-1.5 py-1 text-left"
-      >
-        <span className={`min-w-0 flex-1 truncate font-sans text-sm text-content/50 transition-colors duration-200 group-hover:text-content/75 ${pulse}`}>{text}</span>
-      </button>
-      {open ? (
+      {expandable ? (
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-label={open ? "收起思考" : `展开思考：${text}`}
+          onClick={() => setOpen((value) => !value)}
+          className="group flex min-w-0 items-center gap-1.5 py-1 text-left"
+        >
+          {label}
+        </button>
+      ) : (
+        <div className="flex min-w-0 items-center gap-1.5 py-1">{label}</div>
+      )}
+      {open && expandable ? (
         <div className="min-w-0 pb-2">
-          <Markdown className="agent-reasoning" content={step.text ?? ""} />
+          <Markdown className="agent-reasoning" content={full} />
         </div>
       ) : null}
     </div>
@@ -174,15 +185,24 @@ function ThinkingRow({ step }: { step: TurnStep }) {
 
 function NoteRow({ step }: { step: TurnStep }) {
   const [open, setOpen] = useState(false);
-  const text = proseSummary(step.text ?? "");
+  const full = (step.text ?? "").trim();
+  const text = proseSummary(full);
+  const expandable = Boolean(text) && full !== text;
+  const label = (
+    <span className="min-w-0 flex-1 truncate font-sans text-sm text-content/50 transition-colors duration-200 group-hover:text-content/75">{text}</span>
+  );
   return (
     <div className="flex min-w-0 flex-col">
-      <button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)} className="group flex min-w-0 items-center gap-1.5 py-1 text-left">
-        <span className="min-w-0 flex-1 truncate font-sans text-sm text-content/50 transition-colors duration-200 group-hover:text-content/75">{text}</span>
-      </button>
-      {open ? (
+      {expandable ? (
+        <button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)} className="group flex min-w-0 items-center gap-1.5 py-1 text-left">
+          {label}
+        </button>
+      ) : (
+        <div className="flex min-w-0 items-center gap-1.5 py-1">{label}</div>
+      )}
+      {open && expandable ? (
         <div className="min-w-0 pb-2">
-          <Markdown content={step.text ?? ""} />
+          <Markdown content={full} />
         </div>
       ) : null}
     </div>
@@ -359,18 +379,20 @@ function PhaseGroup({ phase, tools, live }: { phase: Phase; tools: Record<string
   ) : (
     <span className="min-w-0 flex-1 truncate font-sans text-sm text-content/50 transition-colors duration-200 group-hover:text-content/80">{title}</span>
   );
+  // The label already shows `proseSummary` of the headline. Repeating the same
+  // words underneath is only worth it when the headline is longer than its
+  // summary.
+  const headlineDetail = phase.headline?.text && phase.headline.text.trim() !== title ? phase.headline.text : undefined;
   if (phase.steps.length === 0) {
+    // A phase that is nothing but prose has nothing to disclose: the label is the
+    // same text (`proseSummary` of it), so rendering a label *and* a body printed
+    // the same paragraph twice. Show it once, the way a lone step is shown.
     return (
-      <div className="flex min-w-0 flex-col">
-        <button type="button" aria-expanded={open} onClick={() => setOverride(!open)} className="group flex w-full min-w-0 items-center gap-1.5 py-1 text-left">
-          <PhaseIcon kind={phase.kind} />
-          {label}
-        </button>
-        {open && phase.headline?.text ? (
-          <div className="pb-2 pl-5">
-            <Markdown content={phase.headline.text} animated={live} />
-          </div>
-        ) : null}
+      <div className="flex min-w-0 items-start gap-1.5">
+        <PhaseIcon kind={phase.kind} className="mt-[7px]" />
+        <div className="min-w-0 flex-1">
+          {phase.headline?.text ? <Markdown content={phase.headline.text} animated={live} /> : null}
+        </div>
       </div>
     );
   }
@@ -396,9 +418,9 @@ function PhaseGroup({ phase, tools, live }: { phase: Phase; tools: Record<string
         {open ? (
           <div className={live ? "zen-phase-live" : undefined}>
             <div className="flex min-w-0 flex-col">
-              {open && phase.headline?.text ? (
+              {open && headlineDetail ? (
                 <div className="zen-phase-step py-1">
-                  <Markdown content={phase.headline.text} animated={live} />
+                  <Markdown content={headlineDetail} animated={live} />
                 </div>
               ) : null}
               {phase.steps.map((step) => (
@@ -628,6 +650,11 @@ const AssistantTurn = memo(
     // Work stays open while the agent is still working; once it has answered,
     // it folds behind the "worked for" line (Orbit `foldableWork`).
     const workOpen = workOverride ?? (streaming && !answered);
+    // Only matter when the answer is actually sitting under it. The fold's own
+    // rows and the answer share the same left edge, so with the fold expanded
+    // and only a few pixels between them the answer reads as one more step.
+    // The gap is what makes it "jump out" of Working.
+    const workVisible = hasWork && workOpen;
     const duration = elapsedMs ?? (streaming ? liveElapsed : null);
     const foldTitle = streaming ? (
       <Shimmer className="min-w-0 truncate font-sans text-sm" duration={1.6}>
@@ -664,7 +691,11 @@ const AssistantTurn = memo(
             {() => (
               <div className="zen-fold-rail zen-fold-tail flow-root pl-5">
                 <ActivityPhases steps={turn.work} tools={tools} done={!streaming || answered} />
-                {activity ? <div className="px-4 py-1">{activity}</div> : null}
+                {/* The worker feed is part of this fold, not a sibling of it: it
+                    renders inside the same rail so collapsing "Working…" hides
+                    it too. No extra padding, or its rows would sit to the right
+                    of the activity steps they belong with. */}
+                {activity ?? null}
               </div>
             )}
           </TurnRow>
@@ -683,7 +714,7 @@ const AssistantTurn = memo(
               data-selectable-agent-response={streaming ? undefined : step.key}
               data-chat-message={step.key}
               data-chat-message-role="assistant"
-              className={`min-w-0 px-4 pb-1 text-content ${index === 0 && hasWork ? "pt-1" : "pt-3"}`}
+              className={`min-w-0 px-4 pb-1 text-content ${index === 0 ? (workVisible ? "pt-5" : "pt-3") : "pt-3"}`}
             >
               <Markdown content={step.text ?? ""} animated={streaming && step.live} />
             </div>
