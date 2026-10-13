@@ -1,20 +1,30 @@
+/*
+ * The feed sits inside the work fold, between the activity steps. Those steps
+ * carry their own 16px gutter (`ActivityPhases` is `px-4`), so the feed needs
+ * the same one: without it every worker row started 16px to the *left* of the
+ * steps it belongs with — left of the fold's own spine.
+ */
 .agent-feed {
   display: grid;
   gap: 4px;
   min-width: 0;
-  padding: 2px 0;
+  padding: 2px 16px;
 }
 
 .agent-feed-line {
   position: relative;
   display: grid;
-  width: calc(100% - min(calc(var(--agent-depth, 0) * 24px), 96px));
+  width: calc(100% - min(calc(var(--agent-depth, 0) * 20px), 80px));
   min-width: 0;
   min-height: 34px;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
+  /* Same icon column as a step row: a 14px glyph with a 6px gap, so worker
+     names start on the same x as the step text above them. */
+  grid-template-columns: 14px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  margin-left: min(calc(var(--agent-depth, 0) * 24px), 96px);
+  gap: 6px;
+  /* One indent step equals the icon column, so a child's rail lands directly
+     under its parent's icon centre (the `-13px` below). */
+  margin-left: min(calc(var(--agent-depth, 0) * 20px), 80px);
   padding: 3px 0;
   border: 0;
   color: color-mix(in srgb, var(--color-content) 50%, transparent);
@@ -37,13 +47,13 @@ button.agent-feed-line:focus-visible { outline: 2px solid color-mix(in srgb, var
 
 .agent-feed-avatar {
   display: grid;
-  width: 20px;
-  height: 20px;
+  width: 14px;
+  height: 14px;
   place-items: center;
   color: var(--color-content);
 }
 
-.agent-feed-avatar svg { display: block; width: 20px; height: 20px; }
+.agent-feed-avatar svg { display: block; width: 14px; height: 14px; }
 
 .agent-feed-copy {
   display: flex;
@@ -99,7 +109,7 @@ button.agent-feed-line:focus-visible { outline: 2px solid color-mix(in srgb, var
 }
 
 @media (max-width: 720px) {
-  .agent-feed-line { grid-template-columns: 24px minmax(0, 1fr); }
+  .agent-feed-line { grid-template-columns: 14px minmax(0, 1fr); }
   .agent-feed-line > time { display: none; }
   .agent-feed-copy strong { max-width: 46%; }
 }
