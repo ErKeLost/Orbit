@@ -225,6 +225,8 @@ export class SubagentRuntime {
   private disposed = false
   private publishTimer?: ReturnType<typeof setTimeout>
   private lastPublishedAt = 0
+  /** Increments on every top-level user turn; see {@link AgentNode.turn}. */
+  private turn = 0
 
   constructor(rootId: string, publish: PublishSnapshot, parentSessionFile?: string, options: RuntimeOptions = {}) {
     this.rootId = rootId
@@ -237,6 +239,27 @@ export class SubagentRuntime {
     this.filterFork = options.filterFork ?? true
     this.sessionBaseDir = parentSessionFile ? join(dirname(parentSessionFile), "subagents") : undefined
     this.emit()
+  }
+
+  /**
+   * Workers that finished during the current user turn.
+   *
+   * `this.nodes` keeps every worker the process ever spawned — a follow-up turn
+   * has to be able to address them by path — but the *published* recent list
+   * must not. It used to be "every settled worker, capped at 80", so once a
+   * single worker had finished, every later turn's fold showed the whole
+   * accumulated history: a message sent four seconds ago displayed workers with
+   * 4m19s elapsed. The GUI renders the feed under the newest prompt only, so
+   * scoping it to this turn loses nothing.
+   *
+   * Live workers are deliberately not scoped: a worker spawned two turns ago
+   * that is still running is live work and stays visible until it settles.
+   */
+  private settledThisTurn(): AgentNode[] {
+    return [...this.nodes.values()]
+      .filter((node) => TERMINAL_STATUSES.has(node.status) && node.turn === this.turn)
+      .sort((a, b) => a.startedAt - b.startedAt)
+      .slice(-80)
   }
 
   private emit(force = false): void {
@@ -254,7 +277,7 @@ export class SubagentRuntime {
     this.lastPublishedAt = now
     const all = [...this.nodes.values()].sort((a, b) => a.startedAt - b.startedAt)
     const active = all.filter((node) => !TERMINAL_STATUSES.has(node.status))
-    const recent = all.filter((node) => TERMINAL_STATUSES.has(node.status)).slice(-80)
+    const recent = this.settledThisTurn()
     this.publish({ version: 1, rootId: this.rootId, active, recent, updatedAt: now })
   }
 
@@ -295,6 +318,7 @@ export class SubagentRuntime {
       status: "queued",
       summary: "等待启动",
       startedAt: Date.now(),
+      turn: this.turn,
       childrenIds: [],
       ...(options.model ? { model: options.model } : {}),
     }
@@ -876,7 +900,7 @@ export class SubagentRuntime {
       version: 1,
       rootId: this.rootId,
       active: all.filter((node) => !TERMINAL_STATUSES.has(node.status)),
-      recent: all.filter((node) => TERMINAL_STATUSES.has(node.status)).slice(-80),
+      recent: this.settledThisTurn(),
       updatedAt: Date.now(),
     }
   }
@@ -899,11 +923,14 @@ export class SubagentRuntime {
    * only ever touches workers that have already finished, and by `dispose`.
    *
    * The tree itself is left in place so a follow-up turn can still address the
-   * workers it spawned; the published snapshot keeps only the most recent
-   * entries.
+   * workers it spawned; the published snapshot keeps only this turn's entries.
    */
   beginUserTurn(): void {
+    this.turn += 1
     this.updates.length = 0
+    // Publish straight away rather than on the 64ms throttle: the previous
+    // turn's workers have to leave the fold the moment the new prompt arrives.
+    this.emit(true)
   }
 
   async dispose(): Promise<void> {

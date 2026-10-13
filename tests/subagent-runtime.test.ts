@@ -394,6 +394,35 @@ describe("agent addressing and lifecycle", () => {
     expect(runtime.resolveAgentId(running.agent.id)).toBe(running.agent.id)
   })
 
+  test("a new user turn drops the previous turn's workers from the published snapshot", async () => {
+    const paths = await fixture()
+    useFakePi()
+    const published: AgentSnapshot[] = []
+    const runtime = makeRuntime(paths.parentSession, undefined, (snapshot) => published.push(snapshot))
+
+    const first = await runtime.spawn({ name: "first", task: "quick", cwd: paths.cwd })
+    expect(await until(() => runtime.snapshot().recent.length === 1)).toBe(true)
+    expect(runtime.snapshot().recent[0]?.id).toBe(first.agent.id)
+
+    // `recent` used to be "every settled worker, capped at 80", so a message sent
+    // seconds ago displayed workers from minutes earlier. The fold belongs to the
+    // new turn, so the new turn starts with nothing settled in it.
+    runtime.beginUserTurn()
+    expect(runtime.snapshot().recent).toHaveLength(0)
+    // The GUI is told straight away rather than on the 64ms publish throttle,
+    // otherwise a stale row survives into the first frame of the new turn.
+    expect(published.at(-1)?.recent).toHaveLength(0)
+    // Only the published list is scoped: the worker stays addressable by id and
+    // path, because follow-up turns still have to reach it.
+    expect(runtime.resolveAgentId(first.agent.id)).toBe(first.agent.id)
+    expect(runtime.resolveAgentId(`/root/first`)).toBe(first.agent.id)
+
+    // A worker that settles in the new turn does belong to it.
+    const second = await runtime.spawn({ name: "second", task: "quick", cwd: paths.cwd })
+    expect(await until(() => runtime.snapshot().recent.length === 1)).toBe(true)
+    expect(runtime.snapshot().recent[0]?.id).toBe(second.agent.id)
+  })
+
   test("eviction bounds live processes without touching active workers", async () => {
     const paths = await fixture()
     useFakePi()

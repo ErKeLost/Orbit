@@ -15,6 +15,13 @@ export interface AgentNode {
   status: AgentStatus
   summary: string
   startedAt: number
+  /**
+   * The top-level user turn this worker was spawned in. The published snapshot
+   * keeps only this turn's settled workers, so a new message never shows the
+   * previous turn's sub-agents. Internal to the runtime; not part of the wire
+   * contract the GUI reads.
+   */
+  turn?: number
   endedAt?: number
   model?: string
   pid?: number
