@@ -24,6 +24,8 @@ import { ComposerHighlight } from "./ComposerHighlight";
 import { useComposerTokens } from "./composerTokens";
 import { expandMentionLabels, type MentionFile } from "./fileMentions";
 import { ContextMeter } from "./ContextMeter";
+import { stepInputHistory, inputHistoryEntries } from "./input-history";
+import { userText } from "./turnModel";
 import { SpeechInput } from "../../components/ai-elements/speech-input";
 import { WorkspaceRoots } from "./WorkspaceRoots";
 import { ProjectPicker } from "./ProjectPicker";
@@ -204,8 +206,16 @@ const DraftField = memo(
     onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
     onHasValue: (has: boolean) => void;
     onPalette: (request: PaletteRequest | null) => void;
+
+    /**
+     * Shell-style recall of what the reader already sent. Returns true when the
+     * arrow key was consumed as history, in which case it must not also move the
+     * caret. The field decides *when* an arrow means history; the composer owns
+     * the entries and the cursor into them.
+     */
+    onHistory: (direction: "up" | "down", caret: { start: number; end: number; length: number }) => boolean;
   }>(function DraftField(
-    { composerKey, placeholder, disabled, paletteOpen, skillNames, mentionLabels, onKeyDown, onHasValue, onPalette },
+    { composerKey, placeholder, disabled, paletteOpen, skillNames, mentionLabels, onKeyDown, onHasValue, onPalette, onHistory },
     ref,
   ) {
       const [draft, setDraft] = useState(() => useWorkspace.getState().draft || draftCache.get(composerKey) || "");
@@ -228,6 +238,9 @@ const DraftField = memo(
           setText: (text, position) => {
             caret.current = position;
             setDraft(text);
+            // Recalled text can start with `/` or `@`: keep the palette in step
+            // with the draft instead of waiting for the next keystroke.
+            onPalette(paletteRequest(text, position));
             requestAnimationFrame(() => {
               const el = field.current;
               el?.focus();
@@ -235,7 +248,7 @@ const DraftField = memo(
             });
           },
         }),
-        [],
+        [onPalette],
       );
       useEffect(() => {
         lruCache(draftCache, composerKey, draft);
@@ -277,6 +290,13 @@ const DraftField = memo(
               if (paletteOpen && ["ArrowUp", "ArrowDown", "Enter", "Tab", "Escape"].includes(event.key)) {
                 event.preventDefault();
                 return;
+              }
+              if ((event.key === "ArrowUp" || event.key === "ArrowDown") && !event.shiftKey && !event.altKey && !event.metaKey) {
+                const el = event.currentTarget;
+                if (onHistory(event.key === "ArrowUp" ? "up" : "down", { start: el.selectionStart ?? 0, end: el.selectionEnd ?? 0, length: el.value.length })) {
+                  event.preventDefault();
+                  return;
+                }
               }
               onKeyDown(event);
             }}
@@ -321,6 +341,11 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
   const [plusOpen, setPlusOpen] = useState(false);
   const [fileDrag, setFileDrag] = useState(false);
   const draftRef = useRef<DraftHandle>(null);
+  // Shell-style recall of what the reader already sent. Kept in refs, and the
+  // transcript is read lazily inside the handler: subscribing to it here would
+  // re-render the composer on every streamed token.
+  const historyIndex = useRef<number | null>(null);
+  const historyStash = useRef("");
   const plusRef = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -328,6 +353,38 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
   const desktopMac = runtimeTarget === "desktop" && runtimePlatform === "macos";
 
   useEffect(() => { lruCache(attachmentCache, composerKey, attachments); }, [attachments, composerKey]);
+
+  // A different session has a different history; drop any cursor into the old one.
+  useEffect(() => {
+    historyIndex.current = null;
+    historyStash.current = "";
+  }, [composerKey]);
+
+  const navigateHistory = useCallback(
+    (direction: "up" | "down", caret: { start: number; end: number; length: number }) => {
+      // A selection, or a caret sitting mid-text, keeps the arrow for itself: a
+      // multi-line draft must still be editable with the keyboard.
+      if (caret.start !== caret.end) return false;
+      const browsing = historyIndex.current !== null;
+      // Entering history wants the caret at the very start (bash's rule); while
+      // browsing, the caret sits at the end of the recalled line, so the same
+      // rule would trap the reader on the newest entry.
+      if (!browsing && !(direction === "up" && caret.start === 0)) return false;
+      const entries = inputHistoryEntries(
+        useWorkspace.getState().transcript.messages,
+        userText as (message: never) => string,
+      );
+      const step = stepInputHistory(entries.length, historyIndex.current, direction);
+      if (!step) return browsing;
+      if (!browsing) historyStash.current = draftRef.current?.value() ?? "";
+      historyIndex.current = step.index;
+      const text = step.restore ? historyStash.current : entries[step.index ?? 0] ?? "";
+      if (step.restore) historyStash.current = "";
+      draftRef.current?.setText(text, text.length);
+      return true;
+    },
+    [],
+  );
 
   // Notes 的「Add to chat」：把笔记正文前置进当前草稿（Orbit 同名事件）。
   useEffect(() => {
@@ -436,6 +493,9 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
       const before = attachments;
       setAttachments([]);
       draftRef.current?.clear();
+      // A freshly sent message is now the newest history entry.
+      historyIndex.current = null;
+      historyStash.current = "";
       // 从首页（EmptySession）发出的第一条消息会把整个 composer 重挂载到会话底部。
       // 被卸载的实例不会再 flush effect，draft/attachment 缓存里仍留着刚发出的内容，
       // 重挂载的 composer 会按同一个 composerKey 把它们原样捞回来（发出去的消息
@@ -585,6 +645,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
             onKeyDown={onKeyDown}
             onHasValue={setHasValue}
             onPalette={setPalette}
+            onHistory={navigateHistory}
           />
 
           <div className="flex items-center gap-1 px-2 pb-2">
