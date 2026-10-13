@@ -30,7 +30,9 @@ function AgentAvatar({ agent }: { agent: AgentNode }) {
 function statusText(agent: AgentNode) {
   if (agent.status === "running") return agent.summary || "正在处理";
   if (agent.status === "queued") return "等待启动";
-  if (agent.status === "completed") return "已完成";
+  // Codex shows a short preview of the worker's answer on the status line rather
+  // than its full output, which stays in the supervisor's context.
+  if (agent.status === "completed") return agent.summary ? `已完成 — ${agent.summary}` : "已完成";
   if (agent.status === "aborted") return "已中止";
   if (agent.status === "failed") return agent.error || "执行失败";
   return agent.summary || "状态更新";

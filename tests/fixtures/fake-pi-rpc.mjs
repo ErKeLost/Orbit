@@ -1,10 +1,19 @@
 import { createInterface } from "node:readline"
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 const args = process.argv.slice(2)
 const sessionIndex = args.indexOf("--session-dir")
 const sessionDir = sessionIndex >= 0 ? args[sessionIndex + 1] : process.cwd()
 const sessionFile = join(sessionDir, "fake-child.jsonl")
+// Record the exact spawn arguments so tests can assert how the runtime launched
+// the worker (`--fork <source>`, `--model`, ...).
+mkdirSync(sessionDir, { recursive: true })
+writeFileSync(join(sessionDir, "fixture-argv.json"), JSON.stringify(args))
+
+// FIXTURE_HANG keeps the agent from ever settling, which is how tests exercise
+// wait timeouts and non-blocking spawns.
+const hang = process.env.FIXTURE_HANG === "1"
 let run = 0
 let timers = []
 
@@ -19,6 +28,7 @@ function later(delay, value) {
 
 function runAgent() {
   run += 1
+  if (hang) return
   const answer = `result-${run}`
   later(10, { type: "agent_start" })
   later(15, { type: "message_start", message: { role: "assistant", content: [] } })
@@ -48,6 +58,9 @@ createInterface({ input: process.stdin, crlfDelay: Infinity }).on("line", (line)
     return
   }
   if (command.type === "prompt") {
+    // Record what the runtime actually asked for, so tests can assert that the
+    // supervisor conversation is delivered as a session fork rather than as text.
+    appendFileSync(join(sessionDir, "fixture-prompts.jsonl"), `${JSON.stringify(command.message)}\n`)
     send({ id: command.id, type: "response", command: "prompt", success: true })
     runAgent()
     return

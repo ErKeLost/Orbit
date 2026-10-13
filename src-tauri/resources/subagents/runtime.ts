@@ -1,13 +1,50 @@
 import { randomUUID } from "node:crypto"
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
-import { existsSync, mkdirSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { basename, dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core"
-import type { AgentBatchResult, AgentNode, AgentResult, AgentSnapshot, AgentStatus } from "./types.ts"
+import { filterForkSession } from "./fork.ts"
+import { joinAgentPath, resolveAgentPath, ROOT_PATH, validateAgentName } from "./paths.ts"
+import type { AgentNode, AgentResult, AgentSnapshot, AgentStatus } from "./types.ts"
 
 type PublishSnapshot = (snapshot: AgentSnapshot) => void
+
+/**
+ * Pushes a finished worker's result back into the supervisor's own context.
+ *
+ * This is the asynchronous half of the Codex collaboration model: `spawn_agent`
+ * returns as soon as the worker is running, and the result arrives later as an
+ * injected message rather than as a tool result. The host wires this to
+ * `pi.sendMessage()`, which owns turn triggering and queueing.
+ */
+export type DeliverResult = (node: AgentNode, output: string) => void
+
+export interface RuntimeOptions {
+  deliver?: DeliverResult
+  /**
+   * Whether to strip tool payloads from the inherited history. Codex forks only
+   * the conversation and drops tool calls/results; set false to inherit the raw
+   * parent session file instead.
+   */
+  filterFork?: boolean
+  /** This process's own canonical agent path. Defaults to `PI_GUI_AGENT_PATH` or `/root`. */
+  selfPath?: string
+}
 type ChildEvent = Record<string, unknown> & { type?: string; id?: string; command?: string; success?: boolean }
+
+/**
+ * How a child worker receives the parent conversation.
+ *
+ * - `inherit` forks the parent session file when the worker starts, so it sees
+ *   the parent's complete message history (tool results included) and keeps a
+ *   `parentSession` lineage header. Pi owns the context window and compaction;
+ *   Orbit never re-serializes the transcript.
+ * - `isolated` starts an empty session. The worker only sees the delegated
+ *   task, which keeps cost flat for independent work and lets the supervisor
+ *   decide exactly what background to hand over.
+ */
+export type AgentContextMode = "inherit" | "isolated"
 
 export interface TaskInput {
   name?: string
@@ -15,7 +52,7 @@ export interface TaskInput {
   cwd?: string
   model?: string
   thinking?: string
-  parentContext?: string
+  context?: AgentContextMode
 }
 
 export interface SpawnOptions extends TaskInput {
@@ -51,12 +88,38 @@ interface ChildHandle {
   detachAbort?: () => void
   failure?: { status: "failed" | "aborted"; message: string }
   usage?: Record<string, unknown>
+  /** Whether this worker inherited the supervisor's history through a fork. */
+  inherited: boolean
+  /** Messages sent while the worker was idle; flushed into its next prompt. */
+  queued: string[]
+  /** Tail of the worker's stderr, kept so a failure can be explained. */
+  stderr: string
 }
 
 const TERMINAL_STATUSES = new Set<AgentStatus>(["completed", "failed", "aborted"])
-const MAX_ACTIVE_CHILDREN = 8
+/** Workers that may run at once. Advertised to the model in the agent instructions. */
+export const MAX_ACTIVE_CHILDREN = 8
+/** Workers kept alive for follow-up work; settled ones are evicted oldest-first. */
+const MAX_LIVE_CHILDREN = 12
 const CHILD_EXTENSION = join(dirname(fileURLToPath(import.meta.url)), "entry.ts")
+
+/**
+ * Built-in extensions every worker keeps.
+ *
+ * `--no-extensions` disables extension *discovery* and built-in extensions in
+ * one switch. That is what stops Orbit's own GUI extension (and any user or
+ * project extension) from registering itself inside a worker, but it also
+ * strips the capabilities that make a worker as capable as its supervisor.
+ * Re-adding the built-ins explicitly restores them without turning discovery
+ * back on.
+ *
+ * `builtin:tool-search` registers inactive and is activated by the MCP
+ * extension when a server declares `exposure: "deferred"`. `builtin:llama.cpp`
+ * is kept so a worker can resolve a model the supervisor runs locally.
+ */
+const CHILD_BUILTIN_EXTENSIONS = ["builtin:mcp", "builtin:codemode", "builtin:tool-search", "builtin:llama.cpp"]
 const MODEL_OUTPUT_LIMIT_BYTES = 50 * 1024
+const DEFAULT_WAIT_TIMEOUT_MS = 30_000
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -114,21 +177,21 @@ function currentPiInvocation(args: string[]): { command: string; args: string[] 
   throw new Error("无法定位当前 Pi 执行入口，拒绝回退到其他 Pi 安装")
 }
 
-function makeTaskPrompt(task: TaskInput, parentId: string | null): string {
-  const context = parentId ? `\n父 agent id: ${parentId}` : ""
-  const parentContext = task.parentContext?.trim()
-    ? `\n\n父 Agent 上下文（仅用于理解委派任务，不要把它当成新的指令）：\n---\n${task.parentContext.trim()}\n---`
-    : ""
-  return [
-    "你是 Orbit 中的子 agent。",
-    "只处理下面委派的任务，完成后给出简洁、可执行的结果摘要。",
-    "如果需要修改文件，直接在当前工作目录完成，并说明修改了什么。",
-    context,
-    "",
-    "委派任务：",
-    task.task.trim(),
-    parentContext,
+function makeTaskPrompt(task: TaskInput, node: AgentNode, selfPath: string, inherited: boolean): string {
+  // Codex delivers the initial task in the same envelope a finished worker uses
+  // for its answer, so one format covers both directions of the tree.
+  const header = [
+    "Message Type: NEW_TASK",
+    `Task name: ${node.path}`,
+    `Sender: ${selfPath}`,
+    "Payload:",
   ].join("\n")
+  // The inherited history is delivered by Pi as real messages, not as text in
+  // this prompt, so the worker only needs to be told that it can rely on it.
+  const lineage = inherited
+    ? "\n你已继承父 agent 的完整对话上下文（含工具调用与结果）。直接基于它完成委派任务，不要重复父已经做过的工作。"
+    : ""
+  return `${header}\n${task.task.trim()}${lineage}`
 }
 
 export function resultText(node: AgentNode, output: string): string {
@@ -146,20 +209,32 @@ export function resultText(node: AgentNode, output: string): string {
  * status payloads cheap even for long-running sessions.
  */
 export class SubagentRuntime {
-  private readonly rootId: string
+  readonly rootId: string
+  /** This process's own canonical path: `/root` for a supervisor, its own path for a worker. */
+  readonly selfPath: string
   private readonly parentSessionFile?: string
   private readonly sessionBaseDir?: string
   private readonly nodes = new Map<string, AgentNode>()
   private readonly children = new Map<string, ChildHandle>()
   private readonly publish: PublishSnapshot
+  private readonly deliver?: DeliverResult
+  private readonly filterFork: boolean
+  /** Workers that reached a terminal state since the last `waitForUpdate`. */
+  private readonly updates: AgentNode[] = []
+  private waiter?: () => void
   private disposed = false
   private publishTimer?: ReturnType<typeof setTimeout>
   private lastPublishedAt = 0
 
-  constructor(rootId: string, publish: PublishSnapshot, parentSessionFile?: string) {
+  constructor(rootId: string, publish: PublishSnapshot, parentSessionFile?: string, options: RuntimeOptions = {}) {
     this.rootId = rootId
+    // A worker inherits its own path from the supervisor that spawned it, so a
+    // nested agent's children hang off the right branch of the tree.
+    this.selfPath = options.selfPath || process.env.PI_GUI_AGENT_PATH || ROOT_PATH
     this.parentSessionFile = parentSessionFile
     this.publish = publish
+    this.deliver = options.deliver
+    this.filterFork = options.filterFork ?? true
     this.sessionBaseDir = parentSessionFile ? join(dirname(parentSessionFile), "subagents") : undefined
     this.emit()
   }
@@ -207,10 +282,15 @@ export class SubagentRuntime {
   private createNode(options: SpawnOptions): AgentNode {
     const id = randomUUID()
     const parentId = this.parentId(options.parentId)
+    const name = options.name?.trim() || `agent_${this.nodes.size + 1}`
+    const parentPath = parentId ? this.nodes.get(parentId)?.path ?? this.selfPath : this.selfPath
+    // `spawn` validated the name before reaching here.
+    const path = joinAgentPath(parentPath, name) as string
     const node: AgentNode = {
       id,
       parentId,
-      name: options.name?.trim() || `子 agent ${this.nodes.size + 1}`,
+      path,
+      name,
       task: options.task.trim(),
       status: "queued",
       summary: "等待启动",
@@ -311,6 +391,8 @@ export class SubagentRuntime {
       }
       handle.settledDone = true
       handle.settle()
+      // The worker finished a turn. Report it to the supervisor asynchronously.
+      this.finishRun(node.id)
       return
     }
     if (type === "agent_end") {
@@ -331,16 +413,93 @@ export class SubagentRuntime {
     }
   }
 
+  /**
+   * The session file to fork for an inherited worker, or undefined when the
+   * caller asked for an isolated one. `inherit` needs a parent session file to
+   * fork, and Pi persists sessions lazily (on the first conversation entry), so
+   * a missing file silently degrades to an empty session rather than failing
+   * the delegation.
+   *
+   * When filtering is enabled the parent's entries are rewritten into a
+   * tool-free transcript first (Codex's `keep_forked_rollout_item` behaviour),
+   * which drops the bulky tool payloads a worker can read again for itself.
+   * The rewritten file lives in the worker's own session dir and is only a fork
+   * source, never the worker's session.
+   */
+  private forkSource(options: SpawnOptions, sessionDir: string | undefined): string | undefined {
+    if ((options.context ?? "inherit") !== "inherit") return undefined
+    const file = this.parentSessionFile
+    if (!file || !existsSync(file)) return undefined
+    if (!this.filterFork || !sessionDir) return file
+    try {
+      const { content } = filterForkSession(readFileSync(file, "utf8"))
+      if (!content) return file
+      const target = join(sessionDir, "fork-source.jsonl")
+      writeFileSync(target, content)
+      return target
+    } catch {
+      // A filter failure must never block delegation; inherit verbatim instead.
+      return file
+    }
+  }
+
+  /**
+   * Keep the number of live worker processes bounded. Settled workers are the
+   * only eviction candidates: active ones are doing work, and a settled one can
+   * always be replaced by a fresh spawn (the equivalent of Codex's `not_found`).
+   */
+  private evictSettledWorkers(): void {
+    if (this.children.size < MAX_LIVE_CHILDREN) return
+    const candidates = [...this.nodes.values()]
+      .filter((node) => TERMINAL_STATUSES.has(node.status) && this.children.has(node.id))
+      .sort((a, b) => (a.endedAt ?? a.startedAt) - (b.endedAt ?? b.startedAt))
+    for (const victim of candidates) {
+      if (this.children.size < MAX_LIVE_CHILDREN) break
+      const handle = this.children.get(victim.id)
+      if (!handle) continue
+      // Drop the handle first: everything below this point is asynchronous, and
+      // a stale handle must never be reachable in the meantime.
+      this.children.delete(victim.id)
+      void this.stopProcess(victim.id, handle, false)
+    }
+  }
+
+  /**
+   * Record a worker's terminal turn: notify waiters and hand the result to the
+   * host for asynchronous injection. Every terminal turn reports once, so a
+   * reopened worker (via `send`) reports again on its next settle.
+   */
+  private finishRun(nodeId: string): void {
+    const node = this.nodes.get(nodeId)
+    if (!node || !TERMINAL_STATUSES.has(node.status)) return
+    const output = this.children.get(nodeId)?.output.trim() || node.summary || ""
+    this.updates.push(node)
+    const waiter = this.waiter
+    this.waiter = undefined
+    waiter?.()
+    this.deliver?.(node, output)
+  }
+
   private createChild(node: AgentNode, options: SpawnOptions, signal: AbortSignal | undefined): ChildHandle {
     // Keep the child extension but disable discovered user/project extensions;
     // this prevents the GUI extension from recursively registering itself while
     // still loading the small, explicit child control surface.
-    const args = ["--mode", "rpc", "--offline", "--no-extensions", "--extension", CHILD_EXTENSION]
+    const args = [
+      "--mode", "rpc", "--offline", "--no-extensions",
+      ...CHILD_BUILTIN_EXTENSIONS.flatMap((name) => ["--extension", name]),
+      "--extension", CHILD_EXTENSION,
+    ]
+    let sessionDir: string | undefined
     if (this.sessionBaseDir) {
-      const sessionDir = join(this.sessionBaseDir, node.id)
+      sessionDir = join(this.sessionBaseDir, node.id)
       mkdirSync(sessionDir, { recursive: true })
       args.push("--session-dir", sessionDir)
     }
+    // Pi copies the fork source's entries into a fresh session inside the
+    // worker's own session dir and keeps the parent link in the header, so
+    // lineage and isolation both survive.
+    const forkFrom = this.forkSource(options, sessionDir)
+    if (forkFrom) args.push("--fork", forkFrom)
     if (options.model) args.push("--model", options.model)
     if (options.thinking) args.push("--thinking", options.thinking)
     const invocation = currentPiInvocation(args)
@@ -350,6 +509,7 @@ export class SubagentRuntime {
         ...process.env,
         PI_GUI_SUBAGENT: "1",
         PI_GUI_AGENT_ID: node.id,
+        PI_GUI_AGENT_PATH: node.path,
         PI_GUI_AGENT_PARENT_ID: node.parentId || "",
       },
       shell: false,
@@ -375,6 +535,9 @@ export class SubagentRuntime {
       pending: new Map(),
       buffer: "",
       output: "",
+      inherited: Boolean(forkFrom),
+      queued: [],
+      stderr: "",
       streamingText: "",
       streamingThinking: "",
       lastProgress: "启动中",
@@ -417,7 +580,9 @@ export class SubagentRuntime {
     })
     child.stderr.on("data", (chunk: Buffer | string) => {
       const text = chunk.toString().trim()
-      if (text) this.update(node.id, { summary: safeSummary(text) })
+      if (!text) return
+      handle.stderr = `${handle.stderr}${text}\n`.slice(-2_000)
+      this.update(node.id, { summary: safeSummary(text) })
     })
     child.once("error", (error) => {
       handle.exited = true
@@ -425,6 +590,7 @@ export class SubagentRuntime {
       handle.detachAbort?.()
       failPending(errorText(error))
       this.update(node.id, { status: "failed", summary: errorText(error), error: errorText(error), endedAt: Date.now() })
+      this.finishRun(node.id)
       finish()
     })
     child.once("close", (code, signalName) => {
@@ -443,6 +609,7 @@ export class SubagentRuntime {
           endedAt: Date.now(),
         })
       }
+      this.finishRun(node.id)
       finish()
     })
     return handle
@@ -491,7 +658,13 @@ export class SubagentRuntime {
   async spawn(options: SpawnOptions, signal?: AbortSignal, onUpdate?: AgentToolUpdateCallback<AgentSnapshot>): Promise<AgentResult> {
     if (this.disposed) throw new Error("sub-agent runtime 已关闭")
     if (!options.task?.trim()) throw new Error("子 agent 任务不能为空")
+    // Rejecting beats rewriting: a name the model can predict is worth more than
+    // one it has to notice was changed. Mirrors Codex's `validate_agent_name`.
+    const requested = options.name?.trim() || `agent_${this.nodes.size + 1}`
+    const invalid = validateAgentName(requested)
+    if (invalid) throw new Error(invalid)
     if (this.snapshot().active.length >= MAX_ACTIVE_CHILDREN) throw new Error(`子 agent 并发数不能超过 ${MAX_ACTIVE_CHILDREN}`)
+    this.evictSettledWorkers()
     const node = this.createNode(options)
     this.update(node.id, { status: "running", summary: "正在启动" })
     let handle: ChildHandle | undefined
@@ -512,15 +685,25 @@ export class SubagentRuntime {
         }
       }
       try {
-        if (this.parentSessionFile) {
-          const lineage = await this.request(handle, { type: "new_session", parentSession: this.parentSessionFile }, 30_000)
-          if (lineage.success === false) throw new Error(lineage.error || "Pi 子会话创建失败")
-        }
+        // No `new_session` here: an inherited worker already owns a session that
+        // carries the parent history, and asking for a new one would throw that
+        // context away. An isolated worker starts empty anyway.
         const state = await this.request(handle, { type: "get_state" }, 30_000)
         if (state.success === false) throw new Error(state.error || "Pi 子 agent 状态读取失败")
-        const accepted = await this.request(handle, { type: "prompt", message: makeTaskPrompt(options, node.parentId) }, 30_000)
+        const prompt = makeTaskPrompt(options, node, this.selfPath, handle.inherited)
+        // Messages queued while the worker was idle ride along with its next task.
+        const queued = handle.queued.splice(0)
+        const accepted = await this.request(handle, { type: "prompt", message: queued.length > 0 ? `${queued.join("\n")}\n\n${prompt}` : prompt }, 30_000)
         if (accepted.success === false) throw new Error(accepted.error || "Pi 子 agent 拒绝了任务")
       } catch (error) {
+        // Record the real failure *before* stopping the process. Otherwise the
+        // close handler sees a still-running node and replaces the cause with
+        // the generic "process exited with code N", hiding why the spawn failed.
+        const detail = [errorText(error), handle.stderr.trim()].filter(Boolean).join("\n")
+        const current = this.nodes.get(node.id)
+        if (current && !TERMINAL_STATUSES.has(current.status)) {
+          this.update(node.id, { status: signal?.aborted ? "aborted" : "failed", summary: errorText(error), error: detail, endedAt: Date.now() })
+        }
         await this.stopProcess(node.id, handle, false)
         throw error
       }
@@ -538,48 +721,73 @@ export class SubagentRuntime {
     }
   }
 
-  async delegate(options: SpawnOptions, signal?: AbortSignal, onUpdate?: AgentToolUpdateCallback<AgentSnapshot>): Promise<AgentResult> {
-    const accepted = await this.spawn(options, signal, onUpdate)
-    await this.wait(accepted.agent.id, signal)
-    const agent = this.nodes.get(accepted.agent.id) || accepted.agent
-    const handle = this.children.get(agent.id)
-    return {
-      agent,
-      output: this.output(agent.id),
-      snapshot: this.snapshot(),
-      ...(handle?.usage ? { usage: handle.usage } : {}),
+  /**
+   * Wait until any worker reports a terminal turn, or the timeout elapses.
+   *
+   * This is the Codex `wait_agent` contract: it waits for a *signal* and
+   * deliberately returns no worker content, because content reaches the
+   * supervisor asynchronously through the delivery hook.
+   */
+  async waitForUpdate(
+    timeoutMs = DEFAULT_WAIT_TIMEOUT_MS,
+    signal?: AbortSignal,
+  ): Promise<{ message: string; timedOut: boolean; updated: AgentNode[] }> {
+    const describe = (updated: AgentNode[]) =>
+      updated.length > 0 ? `Updates: ${updated.map((node) => `${node.name} [${node.status}]`).join(", ")}` : "Wait completed."
+    const drain = () => this.updates.splice(0)
+    if (this.updates.length > 0) {
+      const updated = drain()
+      return { message: describe(updated), timedOut: false, updated }
     }
-  }
-
-  async delegateMany(options: SpawnOptions[], signal?: AbortSignal, onUpdate?: AgentToolUpdateCallback<AgentSnapshot>): Promise<AgentBatchResult> {
-    if (options.length === 0) throw new Error("至少需要一个子 agent 任务")
-    if (this.snapshot().active.length + options.length > MAX_ACTIVE_CHILDREN) throw new Error(`子 agent 并发数不能超过 ${MAX_ACTIVE_CHILDREN}`)
-    const accepted = await Promise.all(options.map((option) => this.spawn(option, signal, onUpdate)))
-    await Promise.all(accepted.map((result) => this.wait(result.agent.id, signal)))
-    const results = accepted.map((result) => {
-      const agent = this.nodes.get(result.agent.id) || result.agent
-      const handle = this.children.get(agent.id)
-      return {
-        agent,
-        output: this.output(agent.id),
-        snapshot: this.snapshot(),
-        ...(handle?.usage ? { usage: handle.usage } : {}),
+    if (this.children.size === 0) return { message: "No live agents.", timedOut: false, updated: [] }
+    await new Promise<void>((resolve) => {
+      let done = false
+      const finish = () => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        signal?.removeEventListener("abort", finish)
+        if (this.waiter === finish) this.waiter = undefined
+        resolve()
+      }
+      const timer = setTimeout(finish, Math.max(0, timeoutMs))
+      this.waiter = finish
+      if (signal) {
+        if (signal.aborted) { finish(); return }
+        signal.addEventListener("abort", finish, { once: true })
       }
     })
-    return { results, snapshot: this.snapshot() }
+    const updated = drain()
+    return updated.length > 0
+      ? { message: describe(updated), timedOut: false, updated }
+      : { message: "Wait timed out.", timedOut: true, updated: [] }
   }
 
+  /**
+   * Codex splits message delivery in two: `steer` reaches a running worker
+   * promptly without starting a turn, `followUp` also starts a turn when the
+   * worker is idle.
+   *
+   * Pi has no "queue without starting" for an idle RPC agent, so a steer to an
+   * idle worker is buffered here and prepended to its next task.
+   */
   async send(agentId: string, message: string, mode: "steer" | "followUp" = "steer"): Promise<AgentNode> {
     const node = this.nodes.get(agentId)
     const handle = this.children.get(agentId)
     if (!node || !handle) throw new Error(`找不到正在运行的 agent: ${agentId}`)
     const wasTerminal = TERMINAL_STATUSES.has(node.status)
+    if (wasTerminal && mode === "steer") {
+      handle.queued.push(message)
+      return this.update(agentId, { summary: safeSummary(`已排队补充消息：${message}`) })
+    }
     if (wasTerminal) handle.resetSettled()
     this.update(agentId, { status: "running", summary: "正在处理补充消息", endedAt: undefined, error: undefined })
     try {
+      const queued = handle.queued.splice(0)
+      const body = queued.length > 0 ? `${queued.join("\n")}\n\n${message}` : message
       const response = await this.request(handle, {
         type: "prompt",
-        message,
+        message: body,
         ...(!wasTerminal ? { streamingBehavior: mode } : {}),
       }, 30_000)
       if (response.success === false) throw new Error(response.error || "Pi 拒绝了消息")
@@ -615,6 +823,45 @@ export class SubagentRuntime {
     return [...this.nodes.values()].some((node) => !TERMINAL_STATUSES.has(node.status))
   }
 
+  /**
+   * Resolve a model-supplied target to an agent id.
+   *
+   * Accepts, in order, the opaque agent id, an absolute path (`/root/a/b`), or
+   * a reference relative to this agent (`b`, `a/b`). Matching Codex, an
+   * ambiguous reference is rejected rather than guessed.
+   */
+  resolveAgentId(target: string): string {
+    const value = target.trim()
+    if (!value) throw new Error("目标 agent 不能为空")
+    if (this.nodes.has(value)) {
+      if (!this.children.has(value)) throw new Error(`agent 已被回收，请重新 spawn: ${value}`)
+      return value
+    }
+    const path = resolveAgentPath(this.selfPath, value)
+    if (path) {
+      const matches = [...this.nodes.values()].filter((node) => node.path === path)
+      if (matches.length === 1) {
+        if (!this.children.has(matches[0].id)) throw new Error(`agent 已被回收，请重新 spawn: ${value}`)
+        return matches[0].id
+      }
+      if (matches.length > 1) throw new Error(`agent 路径不唯一: ${value}`)
+    }
+    // A bare name still works when it is unambiguous, which keeps simple cases
+    // forgiving without making the reference rules fuzzy.
+    const byName = [...this.nodes.values()].filter((node) => node.name === value)
+    if (byName.length === 1) return byName[0].id
+    if (byName.length > 1) throw new Error(`agent 名称不唯一，请改用规范路径: ${value}`)
+    throw new Error(`找不到 agent: ${value}`)
+  }
+
+  /** Canonical paths of workers that have not been evicted and can still accept work. */
+  liveAgentNames(): string[] {
+    return [...this.nodes.values()]
+      .filter((node) => this.children.has(node.id))
+      .map((node) => `${node.path} [${node.status}]`)
+  }
+
+  /** Names of workers that have not been evicted and can still accept work. */
   async interrupt(agentId: string): Promise<AgentNode> {
     const node = this.nodes.get(agentId)
     const handle = this.children.get(agentId)
@@ -642,12 +889,21 @@ export class SubagentRuntime {
       .join("\n\n---\n\n"))
   }
 
-  async beginRun(): Promise<void> {
-    if ([...this.nodes.values()].some((node) => !TERMINAL_STATUSES.has(node.status))) return
-    await Promise.all([...this.children.entries()].map(([id, handle]) => this.stopProcess(id, handle)))
-    this.children.clear()
-    this.nodes.clear()
-    this.emit(true)
+  /**
+   * A new top-level user turn starts.
+   *
+   * Workers are deliberately **not** reclaimed here. An input event can race a
+   * spawn (the GUI sends its mode-sync prompts concurrently with the user's own
+   * message), and killing live work because a new message arrived is never
+   * right. Process pressure is handled by {@link evictSettledWorkers}, which
+   * only ever touches workers that have already finished, and by `dispose`.
+   *
+   * The tree itself is left in place so a follow-up turn can still address the
+   * workers it spawned; the published snapshot keeps only the most recent
+   * entries.
+   */
+  beginUserTurn(): void {
+    this.updates.length = 0
   }
 
   async dispose(): Promise<void> {

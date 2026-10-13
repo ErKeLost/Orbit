@@ -8,6 +8,8 @@ export type AgentStatus = "queued" | "running" | "completed" | "failed" | "abort
 export interface AgentNode {
   id: string
   parentId: string | null
+  /** Canonical path, e.g. `/root/arch_pipeline`. Codex-style agent identity. */
+  path: string
   name: string
   task: string
   status: AgentStatus
@@ -36,9 +38,4 @@ export interface AgentResult {
   output: string
   snapshot: AgentSnapshot
   usage?: Record<string, unknown>
-}
-
-export interface AgentBatchResult {
-  results: AgentResult[]
-  snapshot: AgentSnapshot
 }

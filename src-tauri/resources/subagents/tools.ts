@@ -1,87 +1,181 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
-import { modelVisibleOutput, resultText, SubagentRuntime, textFromMessage, type TaskInput } from "./runtime.ts"
-import type { AgentNode, AgentResult, AgentSnapshot } from "./types.ts"
+import { MAX_ACTIVE_CHILDREN, modelVisibleOutput, SubagentRuntime, type AgentContextMode, type TaskInput } from "./runtime.ts"
+import { ROOT_PATH } from "./paths.ts"
+import type { AgentNode, AgentSnapshot } from "./types.ts"
 
 type RuntimeContext = Pick<ExtensionContext, "cwd" | "model" | "thinkingLevel" | "sessionManager" | "ui">
-type ToolResult = AgentToolResult<AgentSnapshot & { agent?: AgentNode; output?: string; results?: AgentResult[] }>
+type ToolResult = AgentToolResult<AgentSnapshot & { agent?: AgentNode; output?: string }>
 
-export const SUBAGENT_TOOL_NAMES = ["spawn_agent", "spawn_agents", "send_message", "followup_task", "wait_agent", "interrupt_agent", "list_agents"] as const
+/**
+ * The collaboration surface. This mirrors Codex's V2 multi-agent tool set
+ * exactly: there is deliberately no batch `spawn_agents`, because spawning is
+ * asynchronous, so N independent workers are requested by emitting N
+ * `spawn_agent` calls rather than by a batch primitive.
+ */
+export const SUBAGENT_TOOL_NAMES = [
+  "spawn_agent",
+  "send_message",
+  "followup_task",
+  "wait_agent",
+  "interrupt_agent",
+  "list_agents",
+] as const
+
+/** customType of the message a finished worker injects into the supervisor. */
+export const SUBAGENT_RESULT_TYPE = "subagent_result"
+
+const DEFAULT_WAIT_TIMEOUT_MS = 30_000
+const MAX_WAIT_TIMEOUT_MS = 600_000
+
+/**
+ * Collaboration notes appended to every agent that can spawn workers, mirroring
+ * Codex's shared multi-agent usage hint (`DEFAULT_MULTI_AGENT_V2_SHARED_USAGE_HINT_TEXT`
+ * plus the wait and concurrency guidance).
+ *
+ * The Codex `functions.exec` note is intentionally omitted: there it warns that
+ * collaboration tools are absent from the script namespace, while a Pi custom
+ * tool defaults to `direct` exposure, so codemode can in fact reach them.
+ */
+export const SHARED_AGENT_NOTES = `
+All agents share the same directory. In detail:
+- All agents have access to the same filesystem as you.
+- All agents use the same current working directory.
+- As a result, edits made by one agent are immediately visible to all other agents.
+- Do not revert or rewrite another agent's changes without saying so.
+
+When calling wait_agent, prefer longer waits (minutes) over frequent short polls, because each call blocks until a worker reports.
+
+There are ${MAX_ACTIVE_CHILDREN} concurrency slots, so up to ${MAX_ACTIVE_CHILDREN} workers can be active at once.`
+
 export const ROOT_ORCHESTRATION_INSTRUCTIONS = `
 <multi_agent_mode>
-You are the supervisor for this task and remain responsible for the final answer. Delegate when a specialist or independent parallel work will improve the result; do not delegate trivial requests by habit. Use spawn_agent for one bounded delegation: it waits for that child and returns its completed result. Use spawn_agents for independent tasks: it runs them in parallel and returns all completed results together. After receiving delegation results, decide whether to synthesize, continue, or delegate a follow-up. Do not use send_message, wait_agent, or process state as a substitute for the delegation result unless you are controlling an already-running task.
+You are the supervisor for this task, at agent path /root, and remain responsible for the final answer. You are not blocked while workers run: spawn_agent returns as soon as a worker starts, and that worker's result arrives later as a separate message in this conversation, formatted:
+
+Message Type: FINAL_ANSWER
+Task name: /root
+Sender: <the worker's path>
+Payload:
+<result>
+
+So never expect worker output inside the spawn_agent tool result, and do not re-read files the workers already reported on. Each worker's canonical path is <your path>/<task_name>, and you can address it by that path, by a path relative to you, or by its agent id. Delegate when a specialist or independent parallel work will improve the result; do not delegate trivial requests by habit. Request independent work by emitting several spawn_agent calls; they start concurrently. Use wait_agent to block until any worker reports (it returns only a summary, not content), then synthesize from the result messages. Use send_message to redirect a running worker without starting a turn, followup_task to give an existing worker more work and wake it if idle, interrupt_agent to stop one, and list_agents to inspect the tree (optionally filtered by path prefix). Workers inherit this conversation by default, so write the task itself rather than restating background you already covered.
+${SHARED_AGENT_NOTES}
 </multi_agent_mode>`
+
 export const CHILD_ORCHESTRATION_INSTRUCTIONS = `
 <multi_agent_mode>
-You are a specialist delegated by a parent supervisor. Complete only the assigned task, use the available repository tools, and return a concise result with evidence and changed files. Delegate further only when the assigned task has a genuinely independent workstream that cannot be handled directly; otherwise return your result to the parent.
+You are a specialist delegated by a parent supervisor. Complete only the assigned task, use the available repository tools, and return a concise result with evidence and changed files: your final answer is delivered back to the supervisor automatically, so make it self-contained. You can spawn your own workers with spawn_agent the same way, and their results will arrive as separate FINAL_ANSWER messages. Delegate further only when the assigned task has a genuinely independent workstream that cannot be handled directly.
+${SHARED_AGENT_NOTES}
 </multi_agent_mode>`
 
 const ThinkingSchema = { type: "string", enum: ["off", "minimal", "low", "medium", "high", "xhigh", "max"] } as const
+const ContextSchema = {
+  type: "string",
+  enum: ["inherit", "isolated"],
+  description: "inherit (default) forks the supervisor conversation so the worker sees the discussion; isolated starts empty and sees only message",
+} as const
 const TaskSchema = {
   type: "object",
   properties: {
-    task_name: { type: "string", description: "Stable task name shown in the agent tree" },
-    message: { type: "string", description: "Complete task delegated to the child agent" },
+    task_name: {
+      type: "string",
+      description:
+        "Stable task name for the new agent: lowercase letters, digits and underscores only. The agent's canonical path becomes <your path>/<task_name>.",
+    },
+    message: { type: "string", description: "Complete task delegated to the new agent" },
     cwd: { type: "string", description: "子 agent 工作目录，默认当前项目" },
     model: { type: "string", description: "可选模型，格式 provider/model" },
     thinking: ThinkingSchema,
+    context: ContextSchema,
   },
   required: ["task_name", "message"],
   additionalProperties: false,
 } as const
-const BatchTaskSchema = {
+const TargetSchema = {
   type: "object",
   properties: {
-    tasks: { type: "array", minItems: 1, maxItems: 8, items: TaskSchema },
+    target: { type: "string", description: "Agent id or canonical path returned by spawn_agent" },
+    message: { type: "string", description: "Message text to deliver" },
   },
-  required: ["tasks"],
+  required: ["target", "message"],
   additionalProperties: false,
 } as const
 
-type SpawnInput = Omit<TaskInput, "name" | "task"> & { task_name: string; message: string }
-type BatchInput = { tasks: SpawnInput[] }
+type SpawnInput = Omit<TaskInput, "name" | "task"> & { task_name: string; message: string; context?: AgentContextMode }
 
 function toolResult(text: string, snapshot: AgentSnapshot, agent?: AgentNode, output?: string): ToolResult {
-  return { content: [{ type: "text", text: modelVisibleOutput(text) }], details: { ...snapshot, ...(agent ? { agent } : {}), ...(output !== undefined ? { output: modelVisibleOutput(output) } : {}) } }
-}
-
-function parentContext(ctx: RuntimeContext): string {
-  return ctx.sessionManager.getEntries()
-    .flatMap((entry) => {
-      if (entry.type !== "message") return []
-      const role = entry.message.role
-      if (role !== "user" && role !== "assistant") return []
-      const text = textFromMessage(entry.message).replace(/\s+/g, " ").trim()
-      return text ? [`${role}: ${text}`] : []
-    })
-    .join("\n")
-    .slice(-12_000)
+  return {
+    content: [{ type: "text", text: modelVisibleOutput(text) }],
+    details: { ...snapshot, ...(agent ? { agent } : {}), ...(output !== undefined ? { output: modelVisibleOutput(output) } : {}) },
+  }
 }
 
 function taskOptions(input: SpawnInput, ctx: RuntimeContext): TaskInput {
+  // The supervisor conversation is delivered by Pi through a filtered session
+  // fork, not by re-serializing it here.
   return {
     name: input.task_name,
     task: input.message,
     cwd: input.cwd || ctx.cwd,
     model: input.model || (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined),
     thinking: input.thinking || ctx.thinkingLevel,
-    parentContext: parentContext(ctx),
+    context: input.context ?? "inherit",
   }
 }
 
-function runtimeFor(ctx: RuntimeContext, current: { runtime?: SubagentRuntime }): SubagentRuntime {
+/**
+ * Format a finished worker's result the way Codex does: an envelope naming the
+ * recipient and the sender, so a result is never confused with user input.
+ */
+function resultMessage(recipient: string, node: AgentNode, output: string): string {
+  return [
+    "Message Type: FINAL_ANSWER",
+    `Task name: ${recipient}`,
+    `Sender: ${node.path}`,
+    `Status: ${node.status}`,
+    ...(node.error ? [`Error: ${node.error}`] : []),
+    "Payload:",
+    modelVisibleOutput(output || node.summary || "(no output)"),
+  ].join("\n")
+}
+
+function runtimeFor(ctx: RuntimeContext, current: { runtime?: SubagentRuntime }, pi: ExtensionAPI): SubagentRuntime {
   if (current.runtime) return current.runtime
   const rootId = process.env.PI_GUI_AGENT_ID || ctx.sessionManager.getSessionId()
+  // A worker is told its own path by the supervisor that spawned it, so a
+  // nested tree keeps branching from the right place.
+  const selfPath = process.env.PI_GUI_AGENT_PATH || ROOT_PATH
   current.runtime = new SubagentRuntime(
     rootId,
     (snapshot) => ctx.ui.setStatus("gui-agents", JSON.stringify(snapshot)),
     ctx.sessionManager.getSessionFile(),
+    {
+      selfPath,
+      // The asynchronous half of the collaboration model. While the supervisor
+      // is running this steers into its next request; when it is idle it starts
+      // a turn, so a result is never stranded.
+      deliver: (node, output) => {
+        pi.sendMessage(
+          {
+            customType: SUBAGENT_RESULT_TYPE,
+            content: [{ type: "text", text: resultMessage(selfPath, node, output) }],
+            // The payload is context for the supervisor, not a turn of its own.
+            // It is injected visibly so the worker's report stays readable inside
+            // the supervisor's work fold, next to the activity rows that name it,
+            // while the supervisor's own prose remains the answer the user reads.
+            display: true,
+            details: { agent: node, output: modelVisibleOutput(output) },
+          },
+          { triggerTurn: true },
+        )
+      },
+    },
   )
   return current.runtime
 }
 
-function resultDetails(result: AgentResult): ToolResult["details"] {
-  return { ...result.snapshot, agent: result.agent, output: result.output, ...(result.usage ? { usage: result.usage } : {}) }
+function resolveTarget(runtime: SubagentRuntime, target: string): string {
+  return runtime.resolveAgentId(target)
 }
 
 export function registerSubagentTools(pi: ExtensionAPI): void {
@@ -90,153 +184,133 @@ export function registerSubagentTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "spawn_agent",
     label: "Spawn agent",
-    description: "Delegate one bounded task to a child Pi agent and return its completed result. The parent remains responsible for deciding what to do with that result.",
-    promptGuidelines: ["Use spawn_agent for one specialized task. It waits for the child to finish and returns the final result; use spawn_agents when independent tasks should run in parallel."],
+    description:
+      "Spawn a new agent to work on the specified task. Returns as soon as the agent has started; its final answer is delivered to you later as a separate message, not as this tool's result. The spawned agent gets the same tools as you and can spawn its own workers.",
+    promptGuidelines: [
+      "Use spawn_agent for one specialized task. It returns immediately; emit several calls when independent work should run in parallel.",
+      "The worker already sees this conversation unless you pass context: \"isolated\", so describe the task itself instead of re-summarizing prior work.",
+      "Never assume a worker's answer is in the spawn_agent result; it arrives as a later FINAL_ANSWER message.",
+    ],
     executionMode: "sequential",
     parameters: TaskSchema,
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
       const input = params as SpawnInput
-      const runtime = runtimeFor(ctx, state)
-      const result = await runtime.delegate(taskOptions(input, ctx), signal, onUpdate)
-      return { content: [{ type: "text", text: modelVisibleOutput(resultText(result.agent, result.output)) }], details: resultDetails(result) }
-    },
-  })
-
-  pi.registerTool({
-    name: "spawn_agents",
-    label: "Spawn agents",
-    description: "Delegate independent tasks to multiple child Pi agents in parallel and return every completed result for the supervisor to synthesize.",
-    promptGuidelines: ["Use spawn_agents only for independent tasks. It waits for all children and returns one result per task; do not use it for dependent steps."],
-    executionMode: "sequential",
-    parameters: BatchTaskSchema,
-    async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const input = params as BatchInput
-      const runtime = runtimeFor(ctx, state)
-      const result = await runtime.delegateMany(input.tasks.map((task) => taskOptions(task, ctx)), signal, onUpdate)
-      const output = result.results.map((item) => resultText(item.agent, item.output)).join("\n\n---\n\n")
-      return {
-        content: [{ type: "text", text: modelVisibleOutput(output) }],
-        details: { ...result.snapshot, results: result.results },
-      }
+      const runtime = runtimeFor(ctx, state, pi)
+      const result = await runtime.spawn(taskOptions(input, ctx), signal, onUpdate)
+      return toolResult(
+        `${result.agent.path} (agent_id: ${result.agent.id}) started. Its result will arrive as a separate FINAL_ANSWER message sent by ${result.agent.path}.`,
+        result.snapshot,
+        result.agent,
+      )
     },
   })
 
   pi.registerTool({
     name: "send_message",
     label: "Message agent",
-    description: "Send context to a running child without starting a new turn when possible.",
-    parameters: {
-      type: "object",
-      properties: { target: { type: "string", description: "Agent id returned by spawn_agent" }, message: { type: "string" } },
-      required: ["target", "message"],
-      additionalProperties: false,
-    } as const,
+    description: "Send a message to an existing agent. The message is delivered promptly. Does not trigger a new turn.",
+    parameters: TargetSchema,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const input = params as { target: string; message: string }
-      const runtime = runtimeFor(ctx, state)
-      const agent = await runtime.send(input.target, input.message, "steer")
-      return toolResult(`${agent.name}: 消息已发送`, runtime.snapshot(), agent)
+      const runtime = runtimeFor(ctx, state, pi)
+      const agent = await runtime.send(resolveTarget(runtime, input.target), input.message, "steer")
+      return toolResult(`${agent.path}: 消息已投递`, runtime.snapshot(), agent)
     },
   })
 
   pi.registerTool({
     name: "followup_task",
     label: "Follow up agent",
-    description: "Assign follow-up work to an existing child. A completed child starts another turn with its existing context.",
-    parameters: {
-      type: "object",
-      properties: { target: { type: "string", description: "Agent id returned by spawn_agent" }, message: { type: "string" } },
-      required: ["target", "message"],
-      additionalProperties: false,
-    } as const,
+    description:
+      "Send a follow-up task to an existing non-root agent and trigger a turn if it is idle. The answer arrives later as a separate message.",
+    parameters: TargetSchema,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const input = params as { target: string; message: string }
-      const runtime = runtimeFor(ctx, state)
-      const agent = await runtime.send(input.target, input.message, "followUp")
-      await runtime.wait(agent.id, _signal)
-      const output = runtime.output(agent.id)
-      return toolResult(resultText(runtime.snapshot().recent.find((item) => item.id === agent.id) || agent, output), runtime.snapshot(), agent, output)
+      const runtime = runtimeFor(ctx, state, pi)
+      const agent = await runtime.send(resolveTarget(runtime, input.target), input.message, "followUp")
+      return toolResult(`${agent.path}: 已追加任务`, runtime.snapshot(), agent)
     },
   })
 
   pi.registerTool({
     name: "wait_agent",
     label: "Wait agent",
-    description: "等待一个子 agent 或当前所有子 agent 完成，并返回完整结果。",
-    parameters: { type: "object", properties: { target: { type: "string" } }, additionalProperties: false } as const,
+    description:
+      "Wait for a worker update, including completions and results. Returns only a summary of which workers have updates, never their content, because content is delivered as separate messages. Prefer long timeouts over polling.",
+    parameters: {
+      type: "object",
+      properties: {
+        timeout_ms: {
+          type: "number",
+          description: `Timeout in milliseconds. Defaults to ${DEFAULT_WAIT_TIMEOUT_MS}, max ${MAX_WAIT_TIMEOUT_MS}.`,
+        },
+      },
+      additionalProperties: false,
+    } as const,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const input = params as { target?: string }
-      const runtime = runtimeFor(ctx, state)
-      const snapshot = await runtime.wait(input.target, signal)
-      const output = runtime.output(input.target)
-      return toolResult(output || "子 agent 状态已更新", snapshot, undefined, output)
+      const input = params as { timeout_ms?: number }
+      const runtime = runtimeFor(ctx, state, pi)
+      const requested = typeof input.timeout_ms === "number" && Number.isFinite(input.timeout_ms) ? input.timeout_ms : DEFAULT_WAIT_TIMEOUT_MS
+      const timeout = Math.min(Math.max(requested, 0), MAX_WAIT_TIMEOUT_MS)
+      const outcome = await runtime.waitForUpdate(timeout, signal)
+      return toolResult(outcome.message, runtime.snapshot(), outcome.updated[0])
     },
   })
 
   pi.registerTool({
     name: "interrupt_agent",
     label: "Interrupt agent",
-    description: "取消一个正在运行的子 agent。",
+    description: "Interrupt an agent's current turn, if any. The agent's process is reclaimed; spawn a new one to continue the work.",
     parameters: {
       type: "object",
-      properties: { target: { type: "string" } },
+      properties: { target: { type: "string", description: "Agent id or canonical path returned by spawn_agent" } },
       required: ["target"],
       additionalProperties: false,
     } as const,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const input = params as { target: string }
-      const runtime = runtimeFor(ctx, state)
-      const agent = await runtime.interrupt(input.target)
-      return toolResult(`${agent.name}: ${agent.status}`, runtime.snapshot(), agent)
+      const runtime = runtimeFor(ctx, state, pi)
+      const agent = await runtime.interrupt(resolveTarget(runtime, input.target))
+      return toolResult(`${agent.path}: ${agent.status}`, runtime.snapshot(), agent)
     },
   })
 
   pi.registerTool({
     name: "list_agents",
     label: "List agents",
-    description: "查看当前父会话启动的全部子 agent 及状态。",
-    parameters: { type: "object", properties: {}, additionalProperties: false } as const,
-    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-      const runtime = runtimeFor(ctx, state)
+    description: "List live agents in the current supervisor tree. Optionally filter by canonical path prefix.",
+    parameters: {
+      type: "object",
+      properties: {
+        path_prefix: { type: "string", description: "Canonical path prefix filter without a trailing slash. Omit to list all live agents." },
+      },
+      additionalProperties: false,
+    } as const,
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const input = params as { path_prefix?: string }
+      const runtime = runtimeFor(ctx, state, pi)
       const snapshot = runtime.snapshot()
-      return toolResult(JSON.stringify(snapshot), snapshot)
+      const prefix = input.path_prefix?.trim().replace(/\/+$/, "")
+      const live = runtime.liveAgentNames()
+      const filtered = prefix ? live.filter((entry) => entry.split(" ")[0].startsWith(prefix)) : live
+      const body = filtered.length > 0 ? filtered.join("\n") : "(no live agents)"
+      return toolResult(body, snapshot)
     },
   })
 
-  pi.on("agent_start", async () => {
-    if (state.runtime) await state.runtime.beginRun()
+  // A new top-level user turn clears the pending result mailbox. Workers are
+  // deliberately left running: the GUI sends its mode-sync prompts concurrently
+  // with the user's own message, so reclaiming here could kill live work.
+  pi.on("input", async (event) => {
+    if (event.streamingBehavior) return
+    if (event.source !== "interactive" && event.source !== "rpc") return
+    state.runtime?.beginUserTurn()
   })
 
   pi.on("before_agent_start", async (event) => {
     if (!SUBAGENT_TOOL_NAMES.some((name) => pi.getActiveTools().includes(name))) return
     const instructions = process.env.PI_GUI_SUBAGENT === "1" ? CHILD_ORCHESTRATION_INSTRUCTIONS : ROOT_ORCHESTRATION_INSTRUCTIONS
     return { systemPrompt: `${event.systemPrompt}\n\n${instructions}` }
-  })
-
-  // Also guard individual tool calls in case a model ignores the injected
-  // instruction. Collaboration controls remain available so a parent can
-  // message, inspect, interrupt, or wait for its workers while they run.
-  pi.on("tool_call", async (event, ctx) => {
-    if (!state.runtime?.hasActiveChildren()) return
-    if ((SUBAGENT_TOOL_NAMES as readonly string[]).includes(event.toolName)) return
-    try {
-      await state.runtime.wait(undefined, ctx.signal)
-    } catch (error) {
-      if (!ctx.signal?.aborted) throw error
-    }
-  })
-
-  // A child can run concurrently with the parent while it is being
-  // dispatched, but the parent must not start another Pi run until every
-  // dispatched child has settled. Pi awaits lifecycle handlers before it
-  // polls queued continuations, so this is the supervisor barrier.
-  pi.on("agent_end", async (_event, ctx) => {
-    if (!state.runtime || !state.runtime.hasActiveChildren()) return
-    try {
-      await state.runtime.wait(undefined, ctx.signal)
-    } catch (error) {
-      if (!ctx.signal?.aborted) throw error
-    }
   })
 
   pi.on("session_shutdown", async () => {

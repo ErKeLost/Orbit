@@ -149,9 +149,15 @@ export function reuseGroups<G extends DisplayMessageGroup>(previous: readonly G[
   })
 }
 export function groupDisplayMessages(messages: DisplayMessage[]): DisplayMessageGroup[] {
+  // `custom` is an extension-injected message (a sub-agent result). It belongs
+  // to the assistant run that is currently in flight, not to a turn of its own:
+  // on its own it would be projected as that turn's final answer and rendered at
+  // full size in the body, which is exactly where a worker's report does not
+  // belong. Kept in the run it is ordinary work prose, so it folds with the rest.
+  const inRun = (role: string) => role === 'assistant' || role === 'custom'
   return messages.reduce<DisplayMessageGroup[]>((groups, item, index) => {
     const previous = groups.at(-1)
-    if (item.message.role === 'assistant' && previous?.items.every(entry => entry.message.role === 'assistant')) {
+    if (inRun(item.message.role) && previous?.items.every(entry => inRun(entry.message.role))) {
       previous.items.push(item)
       previous.indexes.push(index)
       return groups
