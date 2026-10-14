@@ -1,5 +1,5 @@
 import { Streamdown, preprocessLaTeX } from "@lobehub/streamdown";
-import { Children, createElement, useMemo, useSyncExternalStore, type ComponentPropsWithoutRef, type ElementType, type ReactNode } from "react";
+import { Children, createElement, memo, useMemo, useSyncExternalStore, type ComponentPropsWithoutRef, type ElementType, type ReactNode } from "react";
 import remarkGfm from "remark-gfm";
 import type { PluggableList } from "unified";
 import { remarkMentions } from "../lib/remark-mentions";
@@ -74,7 +74,7 @@ const textComponents = {
  * Markdown keeps Orbit's renderer (LobeHub Streamdown + remark + the Shiki
  * `Pre` block) and takes Orbit's typography through `.agent-markdown`.
  */
-export function Markdown({ content, animated = false, className = "" }: { content: string; animated?: boolean; className?: string }) {
+export const Markdown = memo(function Markdown({ content, animated = false, className = "" }: { content: string; animated?: boolean; className?: string }) {
   const settleDelay = animated ? 180 : 0;
   const hasMath = MATH_PATTERN.test(content);
   const plugins = useSyncExternalStore(subscribeMath, mathSnapshot, mathSnapshot);
@@ -114,4 +114,4 @@ export function Markdown({ content, animated = false, className = "" }: { conten
       />
     </div>
   );
-}
+});

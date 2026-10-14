@@ -766,7 +766,7 @@ export type TranscriptGroup = {
   elapsedMs?: number;
 };
 
-export function TranscriptGroupView({
+export const TranscriptGroupView = memo(function TranscriptGroupView({
   group,
   tools,
   streaming,
@@ -803,7 +803,7 @@ export function TranscriptGroupView({
       activity={activity}
     />
   );
-}
+});
 
 /** "Working…" before the first token arrives (Orbit `InitialThinking`). */
 export function InitialWorking({ label, startedAt }: { label: string; startedAt?: number | null }) {
