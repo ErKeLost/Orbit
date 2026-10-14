@@ -24,6 +24,7 @@ import {
   flushEvents,
   fresh,
   loadMessages,
+  isLoadingConnection,
   multiAgentModeCommand,
   computerUseModeCommand,
   patch,
@@ -72,8 +73,13 @@ function activateConnection(id:string,cwd:string){
  if(previous.connectionId&&previous.connectionId!==id)snapshots.set(previous.connectionId,snapshot())
  projectActive.set(cwd,id)
  const saved=snapshots.get(id)??fresh()
- // 快照里可能留着上一条连接没跑完的 loading，切过去不会再有 hydrate 来收它，先收起来。
- useWorkspace.getState().set({...saved,cwd,connectionId:id,panel:'chat',transcript:transcriptLoading(saved.transcript,false)})
+ // 空快照 + 正在拉历史：保持骨架屏。否则切回这条连接的第一帧会是一个空
+ // transcript，ChatPane 会把它当“新会话”渲染出首页——就是“闪一下首页”。
+ // 首页/新会话的 keepTranscript 快照 loading 本来就是 false，不受影响；
+ // 有正文的快照永远优先，旧的、没人再收的 loading 仍然收起来。
+ const stillLoading = saved.transcript.messages.length === 0 && saved.transcript.loading
+   && (saved.connection !== "online" || isLoadingConnection(id))
+ useWorkspace.getState().set({...saved,cwd,connectionId:id,panel:'chat',transcript:transcriptLoading(saved.transcript,stillLoading)})
  persistSession(cwd,saved.state?.sessionFile);syncLiveSessions()
  if(saved.connection==='online')void Promise.all([refresh(id),syncSessionModes(id)]).catch(error=>patch(id,{error:String(error)}))
 }

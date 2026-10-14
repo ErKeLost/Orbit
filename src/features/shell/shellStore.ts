@@ -18,6 +18,7 @@ import {
   findFile,
   HOME_WORKSPACE_ID,
   insertTab,
+  isHomeWorkspace,
   newHomeWorkspace,
   newWorkspaceId,
   newWorkspaceTab,
@@ -74,6 +75,11 @@ function write(key: string, value: string) {
 type ShellState = {
   workspaces: WorkspaceTab[];
   activeWorkspaceId: string;
+  /**
+   * 每个项目（cwd）最后一次激活的会话标签页。header 上的会话是挂项目的：
+   * 在项目栏切项目时用它把那个项目上次的会话原样带回来，而不是每次开一个新的。
+   */
+  activeByProject: Record<string, string>;
   /** Panes that just appeared from a split, keyed by pane id (transient). */
   entering: Record<string, PaneEdge>;
   /**
@@ -140,6 +146,7 @@ type ShellState = {
   /** Drag a file tab onto a pane edge: open it in a brand new pane there. */
   openFileInNewPane: (path: string, targetPane: string, edge: PaneEdge) => void;
   closePane: (paneId: string) => void;
+  restoreHomeSessionPane: () => void;
   clearEntering: (paneId: string) => void;
   setSplitRatio: (splitId: string, index: number, ratio: number) => void;
 };
@@ -156,7 +163,15 @@ function initialCwd(): string {
 const initial = {
   workspaces: [newHomeWorkspace(initialCwd())] as WorkspaceTab[],
   activeWorkspaceId: HOME_WORKSPACE_ID,
+  activeByProject: {} as Record<string, string>,
 };
+
+/** 记录/更新一个工作区作为它项目的「当前会话」；首页本身不是某个项目的会话。 */
+function rememberActive(map: Record<string, string>, workspace: WorkspaceTab): Record<string, string> {
+  if (isHomeWorkspace(workspace) || !workspace.cwd) return map;
+  if (map[workspace.cwd] === workspace.id) return map;
+  return { ...map, [workspace.cwd]: workspace.id };
+}
 
 export const useShell = create<ShellState>((set, get) => {
   /** 把一次改动应用到当前工作区（首页也是一个工作区，所以永远有对象可改）。 */
@@ -216,8 +231,9 @@ export const useShell = create<ShellState>((set, get) => {
 
     activateWorkspace: (activeWorkspaceId) => {
       const state = get();
-      if (!state.workspaces.some((workspace) => workspace.id === activeWorkspaceId)) return;
-      set({ activeWorkspaceId });
+      const workspace = state.workspaces.find((item) => item.id === activeWorkspaceId);
+      if (!workspace) return;
+      set({ activeWorkspaceId, activeByProject: rememberActive(state.activeByProject, workspace) });
     },
 
     newWorkspace: (cwd, connectionId, options) => {
@@ -227,7 +243,13 @@ export const useShell = create<ShellState>((set, get) => {
       const workspace = newWorkspaceTab(cwd ?? state.workspaces[activeIndex(state)].cwd, connectionId);
       const workspaces = insertTab(state.workspaces, workspace);
       // background：自动化/子任务在后台开自己的会话，绝不抢用户正在看的标签页。
-      set({ workspaces, ...(options?.background ? {} : { activeWorkspaceId: workspace.id }) });
+      set({
+        workspaces,
+        ...(options?.background ? {} : {
+          activeWorkspaceId: workspace.id,
+          activeByProject: rememberActive(state.activeByProject, workspace),
+        }),
+      });
       return workspace;
     },
 
@@ -244,7 +266,11 @@ export const useShell = create<ShellState>((set, get) => {
       const nextId = state.activeWorkspaceId === id
         ? (tabs[removedAt - 1] ?? tabs[removedAt + 1])?.id ?? HOME_WORKSPACE_ID
         : state.activeWorkspaceId;
-      set({ workspaces, activeWorkspaceId: nextId });
+      // 被关掉的会话不再能被切项目带回来。
+      const activeByProject = Object.fromEntries(
+        Object.entries(state.activeByProject).filter(([, workspaceId]) => workspaceId !== id),
+      );
+      set({ workspaces, activeWorkspaceId: nextId, activeByProject });
     },
 
     promoteHomeWorkspace: () => {
@@ -257,7 +283,7 @@ export const useShell = create<ShellState>((set, get) => {
       const tab: WorkspaceTab = { ...home, id: newWorkspaceId() };
       const rest = state.workspaces.filter((workspace) => workspace.id !== HOME_WORKSPACE_ID);
       const workspaces = [...rest, tab, newHomeWorkspace(home.cwd)];
-      set({ workspaces, activeWorkspaceId: tab.id });
+      set({ workspaces, activeWorkspaceId: tab.id, activeByProject: rememberActive(state.activeByProject, tab) });
       return tab.id;
     },
 
@@ -332,7 +358,11 @@ export const useShell = create<ShellState>((set, get) => {
       const state = get();
       const workspaces = state.workspaces.map((workspace) =>
         workspace.id === id ? { ...workspace, cwd } : workspace);
-      set({ workspaces });
+      // 换了范围的会话不该再算作旧项目的「当前会话」；新范围下面再激活时自然记上。
+      const activeByProject = Object.fromEntries(
+        Object.entries(state.activeByProject).filter(([, workspaceId]) => workspaceId !== id),
+      );
+      set({ workspaces, activeByProject });
     },
 
     focusPane: (paneId) => {
@@ -511,24 +541,41 @@ export const useShell = create<ShellState>((set, get) => {
     closePane: (paneId) => {
       const workspace = get().workspaces[activeIndex(get())];
       const session = Boolean(workspace.sessions[paneId]);
-      if (session && Object.keys(workspace.sessions).length < 2) return;
       if (!session && !workspace.panes[paneId]) return;
+      // 文件面板可以独占工作区；只保留最后一个可见面板。
+      const layout = removePane(workspace.layout, paneId);
+      if (!layout) return;
       patchActive((current) => {
         const panes = { ...current.panes };
         delete panes[paneId];
         const sessions = { ...current.sessions };
         delete sessions[paneId];
-        const layout = removePane(current.layout, paneId) ?? current.layout;
+        const connectionId = session && current.connectionId === current.sessions[paneId].connectionId
+          ? Object.values(sessions)[0]?.connectionId ?? ""
+          : current.connectionId;
         return {
           ...current,
           layout,
           panes,
           sessions,
+          connectionId,
           activePane: current.activePane === paneId
             ? (siblingLeafId(current.layout, paneId) ?? firstLeafId(layout))
             : current.activePane,
         };
       });
+    },
+
+    restoreHomeSessionPane: () => {
+      const state = get();
+      const home = state.workspaces.find((workspace) => workspace.id === HOME_WORKSPACE_ID);
+      if (!home || home.sessions[CHAT_PANE_ID]) return;
+      set({ workspaces: state.workspaces.map((workspace) => workspace !== home ? workspace : {
+        ...home,
+        layout: placeNewPane(home.layout, home.activePane, CHAT_PANE_ID, "bottom"),
+        sessions: { ...home.sessions, [CHAT_PANE_ID]: { connectionId: "" } },
+        activePane: CHAT_PANE_ID,
+      }) });
     },
 
     clearEntering: (paneId) => {

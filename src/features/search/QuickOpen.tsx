@@ -127,7 +127,7 @@ function QuickOpenOverlay({ onClose }: { onClose: () => void }) {
       row.run();
     } else {
       useWorkspace.getState().set({ panel: "chat" });
-      void tabs.openScope(row.path, "project").catch(report);
+      void tabs.selectProject(row.path, "project").catch(report);
     }
   };
 

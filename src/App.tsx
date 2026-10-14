@@ -28,7 +28,6 @@ import { layoutLeaves, layoutSashes, setSplitRatio as setSplitRatioLayout, type 
 import { paneDropFromPoint, setTitleTabDrop, titleTabDropFromPoint, useTabDrop, type PaneDrop } from "./features/shell/paneDrop";
 import { useWorkspaceTabs, useWorkspaceTabsEffects } from "./features/shell/use-workspace-tabs";
 import { SessionScope } from "./features/shell/session-scope";
-import { closeWorkspaceConnection } from "./lib/rpc";
 import { setGrabbing, suppressTextSelection } from "./shared/lib/drag";
 
 /** Phone-sized windows and the Android app use the stacked MobileShell. */
@@ -63,7 +62,6 @@ function WorkArea({ withSessions }: { withSessions: boolean }) {
   // 切项目范围、切标签页时谁该换连接由控制器一处决定。
   const workspaceConnectionId = useActiveWorkspace((workspace) => workspace.connectionId);
   const homeWorkspace = useActiveWorkspace(isHomeWorkspace);
-  const closePane = useShell((state) => state.closePane);
   const tabs = useWorkspaceTabs();
   // A sash drag previews through a local tree and only writes on release.
   const [previewLayout, setPreviewLayout] = useState<LayoutNode | null>(null);
@@ -227,14 +225,7 @@ function WorkArea({ withSessions }: { withSessions: boolean }) {
                         <SessionPaneHeader
                           showGrip
                           focused={focusedPane === entry.id}
-                          onClosePane={
-                            Object.keys(sessions).length > 1
-                              ? () => {
-                                  closePane(entry.id);
-                                  void closeWorkspaceConnection(sessions[entry.id].connectionId);
-                                }
-                              : undefined
-                          }
+                          onClosePane={() => void tabs.closeSessionPane(entry.id)}
                           onPaneDragStart={paneDragStart(entry.id)}
                         />
                       ) : null}

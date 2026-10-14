@@ -35,7 +35,9 @@ export function ProjectPicker({ disabled }: { disabled: boolean }) {
     setMenu(false);
     setBusy(true);
     try {
-      await tabs.openScope(path, mode);
+      // 项目优先带回它上次的会话；「不在文件夹里工作」始终是一个新会话面。
+      if (mode === "project") await tabs.selectProject(path, mode);
+      else await tabs.openScope(path, mode);
     } catch (error) {
       report(error);
     } finally {

@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import type { Session } from "../../lib/protocol";
 import { useWorkspace, type WorkspaceMode } from "../../lib/store";
-import { openWorkspaceScope } from "../../lib/workspace-scope";
 import {
   cachedTranscript,
   changeSession,
@@ -25,6 +24,12 @@ import { HOME_WORKSPACE_ID, isHomeWorkspace, useShell, type WorkspaceTab } from 
 
 /** 正在启动的连接，避免同一个槽位被并发 `show` 拉起两次。 */
 const starting = new Map<string, Promise<void>>();
+
+/**
+ * 正在显示的面，按 `工作区:范围` 去重。首页的 effect 与控制器可能在同一帧里都要
+ * 显示首页；不去重的话两边各算一个随机连接 id，会白起一条 pi 进程并闪一下。
+ */
+const showing = new Map<string, Promise<void>>();
 
 /**
  * 这条连接上是否已经有一个真实会话：有正文，或者正在跑/压缩。
@@ -64,6 +69,22 @@ async function show(id: string) {
   const workspace = shell.workspaces.find((item) => item.id === id);
   // 范围还没确定（bootstrap 之前）时不启动进程，否则会拿空 cwd 去连。
   if (!workspace || !workspace.cwd) return;
+  const key = `${id}:${workspace.cwd}`;
+  const inflight = showing.get(key);
+  if (inflight) return inflight;
+  let task: Promise<void>;
+  task = runShow(id, workspace.cwd).finally(() => {
+    if (showing.get(key) === task) showing.delete(key);
+  });
+  showing.set(key, task);
+  return task;
+}
+
+async function runShow(id: string, cwd: string) {
+  const shell = useShell.getState();
+  const workspace = shell.workspaces.find((item) => item.id === id);
+  // 等连接起来时这个面可能已经被切到别的范围了；旧的那次直接作废，别回写。
+  if (!workspace || workspace.cwd !== cwd || !workspace.cwd) return;
   const home = isHomeWorkspace(workspace);
   const previousId = shell.activeWorkspaceId;
   const previous = useWorkspace.getState().connectionId;
@@ -82,6 +103,12 @@ async function show(id: string) {
     }
   }
   shell.activateWorkspace(id);
+
+  if (Object.keys(workspace.sessions).length === 0) {
+    setDesktopScope(workspace.cwd, workspace.cwd === useWorkspace.getState().homeDir ? "home" : "project");
+    useWorkspace.getState().set({ connectionId: "" });
+    return;
+  }
 
   const bound = workspace.connectionId;
   const live = Boolean(bound) && hasWorkspaceConnection(bound);
@@ -112,7 +139,9 @@ async function show(id: string) {
     workspace.cwd,
     target,
     revivePath
-      ? { sessionPath: revivePath, keepTranscript: true }
+      // 复活的旧标签页只有拿到正文缓存才 keepTranscript；否则该走骨架屏，
+      // 不能让空 transcript 先渲染成首页。
+      ? { sessionPath: revivePath, ...(cached ? { keepTranscript: true } : {}) }
       : empty ? { keepTranscript: true } : undefined,
   );
   starting.set(target, task);
@@ -121,7 +150,9 @@ async function show(id: string) {
     await task;
   } finally {
     starting.delete(target);
-  }// bootstrap 不再预先建项目连接，附加 roots 跟着面上层后台同步，不挡首次渲染。
+  }
+  // 连接起来时范围可能已经变了（用户又点了别的项目）：这次结果作废。
+  if (useShell.getState().workspaces.find((item) => item.id === id)?.cwd !== workspace.cwd) return;// bootstrap 不再预先建项目连接，附加 roots 跟着面上层后台同步，不挡首次渲染。
     if (useWorkspace.getState().workspaceMode === "project") {
       void syncConfiguredProjectRoots(workspace.cwd, target).catch(() => undefined);
     }
@@ -136,46 +167,62 @@ async function show(id: string) {
   enforceConnectionBudget();
 }
 
-/** 切换工作范围（项目 / 主目录）：当前面留在原处，只是换一条该范围的连接。 */
-async function openScope(path: string, mode: WorkspaceMode) {
+/**
+ * 把一个范围落在首页（也就是这个范围的新会话面）。首页上正在跑的会话先升格成
+ * 标签页留在后台；旧连接没跑东西就收掉。连接由 `show` 开，这里不再单独 `connect`，
+ * 否则同一范围会白起两条 pi 进程。
+ */
+async function showHomeScope(path: string, mode: WorkspaceMode) {
   const shell = useShell.getState();
-  const active = shell.workspaces.find((item) => item.id === shell.activeWorkspaceId);
-  const home = isHomeWorkspace(active);
-  const previousConnection = active?.connectionId;
-  if (home && active) {
-    if (previousConnection && connectionHasWork(previousConnection)) {
-      // 首页其实已经是一个会话：先升格成标签页留在后台，再给新的空首页换范围。
+  const home = shell.workspaces.find(isHomeWorkspace);
+  if (!home) return;
+  const bound = home.connectionId;
+  if (bound) {
+    if (connectionHasWork(bound)) {
       shell.promoteHomeWorkspace();
-      const nextHome = useShell.getState().workspaces.find(isHomeWorkspace);
-      if (nextHome) {
-        shell.setWorkspaceCwd(nextHome.id, path);
-        shell.bindWorkspaceConnection(nextHome.id, "");
-      }
-    } else {
-      if (previousConnection) void closeWorkspaceConnection(previousConnection, "已切换范围").catch(() => undefined);
-      shell.setWorkspaceCwd(active.id, path);
-      shell.bindWorkspaceConnection(active.id, "");
+    } else if (!connectionInUseElsewhere(bound, HOME_WORKSPACE_ID)) {
+      void closeWorkspaceConnection(bound, "已切换范围").catch(() => undefined);
     }
   }
-  await openWorkspaceScope(path, mode);
-  if (home) {
-    await show(HOME_WORKSPACE_ID);
+  const nextHome = useShell.getState().workspaces.find(isHomeWorkspace);
+  if (!nextHome) return;
+  if (nextHome.cwd !== path) {
+    useShell.getState().setWorkspaceCwd(nextHome.id, path);
+    useShell.getState().bindWorkspaceConnection(nextHome.id, "");
+  }
+  setDesktopScope(path, mode);
+  await show(HOME_WORKSPACE_ID);
+}
+
+/**
+ * 选中一个项目：header 上的会话是挂项目的，所以优先把这个项目上次的会话标签页
+ * 原样带回来（复用它的连接与正文，零骨架屏、零新进程）；没有就在这个范围开一个
+ * 干净的新会话首页。绝不去改别的项目正在跑的标签页。
+ */
+async function selectProject(path: string, mode: WorkspaceMode = "project") {
+  const shell = useShell.getState();
+  const remembered = shell.activeByProject[path];
+  const existing = remembered
+    ? shell.workspaces.find((item) => item.id === remembered && !isHomeWorkspace(item) && item.cwd === path)
+    : undefined;
+  if (existing) {
+    await show(existing.id);
+    // `show` 只把 cwd 跟着连接切过去；模式（project/home）也要落下来。
+    setDesktopScope(path, mode);
     return;
   }
-  const current = useWorkspace.getState().connectionId;
-  // 活动标签页在换范围后仍开着，它的旧连接要留在后台继续跑（每个会话都能后台跑），
-  // 只有已经被彻底舍弃、没有任何会话内容的连接才收掉。
-  if (previousConnection && previousConnection !== current) {
-    const activeId = useShell.getState().activeWorkspaceId;
-    if (!connectionHasWork(previousConnection) && !connectionInUseElsewhere(previousConnection, activeId)) {
-      void closeWorkspaceConnection(previousConnection, "已切换范围").catch(() => undefined);
-    }
-  }
+  await showHomeScope(path, mode);
+}
+
+/** 切换工作范围（项目 / 主目录）：一律落在那个范围的新会话首页，范围写进全局投影。 */
+async function openScope(path: string, mode: WorkspaceMode) {
+  await showHomeScope(path, mode);
 }
 
 /** 「新建会话」：回到首页（也就是一个全新的空会话），不再克隆当前会话。 */
 async function create(projectCwd?: string) {
   const shell = useShell.getState();
+  shell.restoreHomeSessionPane();
   const active = shell.workspaces.find((item) => item.id === shell.activeWorkspaceId);
   if (projectCwd && projectCwd !== active?.cwd) {
     const homeDir = useWorkspace.getState().homeDir;
@@ -183,6 +230,24 @@ async function create(projectCwd?: string) {
     return;
   }
   await show(HOME_WORKSPACE_ID);
+}
+
+/** 关闭会话面板后保留编辑器；显式新建时才重新打开默认会话。 */
+async function closeSessionPane(paneId: string) {
+  const shell = useShell.getState();
+  const workspace = shell.workspaces.find((item) => item.id === shell.activeWorkspaceId);
+  const session = workspace?.sessions[paneId];
+  if (!workspace || !session) return;
+  shell.closePane(paneId);
+  const next = useShell.getState().workspaces.find((item) => item.id === workspace.id);
+  if (!next || next.sessions[paneId]) return;
+  const id = session.connectionId || workspace.connectionId;
+  if (id && !connectionInUseElsewhere(id, workspace.id) && !Object.values(next.sessions).some((item) => item.connectionId === id)) {
+    // 在异步关闭进程之前摘掉投影，避免 effects 把已关闭的连接重新绑回工作区。
+    if (useWorkspace.getState().connectionId === id) useWorkspace.getState().set({ connectionId: "" });
+    await closeWorkspaceConnection(id, "会话面板已关闭");
+  }
+  if (next.connectionId) focusWorkspaceConnection(next.connectionId, next.cwd);
 }
 
 /** 关闭标签页；关掉的是当前页时就切到相邻页，没有邻居就回首页。 */
@@ -210,7 +275,13 @@ async function openSession(session: Pick<Session, "path"> & { cwd?: string }) {
   const owner = connectionOwningSession(session.path);
   const existing = shell.workspaces.find((item) =>
     !isHomeWorkspace(item)
-    && (item.connectionId === owner || connectionSnapshot(item.connectionId)?.state?.sessionFile === session.path));
+    && (
+      (Boolean(owner) && item.connectionId === owner)
+      || connectionSnapshot(item.connectionId)?.state?.sessionFile === session.path
+      // 休眠标签页（连接已回收，只剩 sessionPath）也算已打开：`show` 会按它复活，
+      // 而不是再开一个重复标签页。
+      || item.sessionPath === session.path
+    ));
   if (existing) {
     await show(existing.id);
     return;
@@ -384,7 +455,7 @@ async function openBackground(cwd: string, options?: { prompt?: string }): Promi
 }
 
 /** 一个共享的控制器：组件只拿它的动作，不各自起一份副作用。 */
-const controller = { show, create, close, promoteHome, openScope, openSession, splitSession, openBackground, reconcile: reconcileOrphans };
+const controller = { show, create, close, closeSessionPane, promoteHome, openScope, selectProject, openSession, splitSession, openBackground, reconcile: reconcileOrphans };
 
 /** 供非组件作用域（调度器、事件处理）使用的同一份控制器：它不是 hook，只是纯对象。 */
 export const workspaceTabs = controller;
@@ -413,7 +484,7 @@ export function useWorkspaceTabsEffects() {
   useEffect(() => {
     const shell = useShell.getState();
     const workspace = shell.workspaces.find((item) => item.id === shell.activeWorkspaceId);
-    if (!workspace || isHomeWorkspace(workspace)) return;
+    if (!workspace || isHomeWorkspace(workspace) || Object.keys(workspace.sessions).length === 0) return;
     if (connectionId && workspace.connectionId !== connectionId) shell.bindWorkspaceConnection(workspace.id, connectionId);
     if (cwd && workspace.cwd !== cwd) shell.setWorkspaceCwd(workspace.id, cwd);
   }, [connectionId, cwd, activeWorkspaceId]);
@@ -423,7 +494,7 @@ export function useWorkspaceTabsEffects() {
     if (activeWorkspaceId !== HOME_WORKSPACE_ID) return;
     const shell = useShell.getState();
     const home = shell.workspaces.find((item) => item.id === HOME_WORKSPACE_ID);
-    if (!home) return;
+    if (!home || Object.keys(home.sessions).length === 0) return;
     if (cwd && home.cwd !== cwd) {
       if (home.connectionId) void closeWorkspaceConnection(home.connectionId, "已切换范围").catch(() => undefined);
       shell.setWorkspaceCwd(HOME_WORKSPACE_ID, cwd);

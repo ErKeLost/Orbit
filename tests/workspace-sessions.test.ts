@@ -113,6 +113,7 @@ function reset(cwd = "/p") {
   useShell.setState({
     workspaces: [{ id: HOME_WORKSPACE_ID, cwd, connectionId: "", layout: { kind: "leaf", id: "chat" }, panes: {}, sessions: { chat: { connectionId: "" } }, activePane: "chat" } as never],
     activeWorkspaceId: HOME_WORKSPACE_ID,
+    activeByProject: {},
   })
   useWorkspace.getState().set({ cwd, connectionId: "", connection: "online", workspaceMode: "project", state: null } as never)
 }
@@ -292,5 +293,26 @@ describe("多 session 后台运行", () => {
 
     expect(model.closed).toEqual([])
     expect(alive()).toContain(aConn)
+  })
+
+  test("切项目带出那个项目上次的会话（header 上的会话是挂项目的）", async () => {
+    const tabs = useWorkspaceTabs()
+    await tabs.show(HOME_WORKSPACE_ID)
+    await tabs.openSession({ path: "/p/a.jsonl", cwd: "/p" })
+    const aConn = useWorkspace.getState().connectionId
+    const aTab = useShell.getState().workspaces.find(w => w.connectionId === aConn)!
+
+    // 切到另一个项目：没有该项目的会话，落到它的新会话首页。
+    await tabs.selectProject("/q", "project")
+    expect(useWorkspace.getState().cwd).toBe("/q")
+    expect(useShell.getState().activeWorkspaceId).toBe(HOME_WORKSPACE_ID)
+
+    // 切回项目 p：应带回 a 的标签页，复用连接、不重开。
+    const openedBefore = model.opened.length
+    await tabs.selectProject("/p", "project")
+    expect(useShell.getState().activeWorkspaceId).toBe(aTab.id)
+    expect(useWorkspace.getState().connectionId).toBe(aConn)
+    expect(model.opened.length).toBe(openedBefore)
+    expect(model.closed).not.toContain(aConn)
   })
 })

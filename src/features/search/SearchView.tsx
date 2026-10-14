@@ -162,7 +162,7 @@ export function SearchView() {
     else if (row.kind === "session") openSession(row.hit);
     else {
       useWorkspace.getState().set({ panel: "chat" });
-      void tabs.openScope(row.path, "project").catch(report);
+      void tabs.selectProject(row.path, "project").catch(report);
     }
   };
 

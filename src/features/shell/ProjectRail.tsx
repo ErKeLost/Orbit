@@ -493,7 +493,8 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
     useWorkspace.getState().set({ panel: "chat" });
     setBusyProject(path);
     try {
-      await tabs.openScope(path, "project");
+      // 优先带出这个项目上次的会话（header 上的会话是挂项目的），没有才开新会话首页。
+      await tabs.selectProject(path, "project");
     } catch (error) {
       report(error);
     } finally {

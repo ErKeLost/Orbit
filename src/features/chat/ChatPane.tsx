@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useWorkspace, useWorkspaceStore } from "../../lib/store";
@@ -23,6 +23,12 @@ import { ErrorRow, InitialWorking, TranscriptGroupView, TranscriptSkeleton, type
 import { Composer } from "./Composer";
 import { PromptOutline } from "./PromptOutline";
 
+/**
+ * 分组缓存按「连接」（SessionScope 的 facade store）缓存，而不是按这次挂载：
+ * 切标签页/切项目会重挂 ChatPane，但同一个连接的 facade 是稳定的，重挂时直接
+ * 命中上一次的分组结果（`reuseGroups` 还保证流式 tick 之间只重算最后一组），
+ * 长会话回来时不再从头分组一遍。
+ */
 const groupCache = new WeakMap<object, ReturnType<typeof groupDisplayMessages>>();
 
 /**
@@ -155,11 +161,12 @@ export function ChatPane({ onSubmitted }: { onSubmitted?: () => void } = {}) {
     staleTime: Infinity,
   });
   const savedDurations = useMemo(() => ({ ...(historical.data ?? {}), ...readTurnDurations(sessionFile) }), [historical.data, sessionFile]);
-  const [owner] = useState(() => ({}));
+  // 和 useFrameStream 读的是同一个 facade：用它作分组缓存的键，跨重挂命中。
+  const store = useWorkspaceStore();
 
   const groups = useMemo<(TranscriptGroup & { indexes: number[] })[]>(() => {
-    const raw = reuseGroups(groupCache.get(owner) ?? [], groupDisplayMessages(transcript.messages));
-    groupCache.set(owner, raw);
+    const raw = reuseGroups(groupCache.get(store) ?? [], groupDisplayMessages(transcript.messages));
+    groupCache.set(store, raw);
     const claimed = new Set<number>();
     return raw.map((group) => {
       const startedAt = group.items.find((item) => item.startedAt !== undefined)?.startedAt;
@@ -176,7 +183,7 @@ export function ChatPane({ onSubmitted }: { onSubmitted?: () => void } = {}) {
         elapsedMs,
       };
     });
-  }, [owner, transcript.messages, transcript.running, transcript.active, transcript.turnStartedAt, savedDurations]);
+  }, [store, transcript.messages, transcript.running, transcript.active, transcript.turnStartedAt, savedDurations]);
 
   useEffect(() => {
     if (!sessionFile || transcript.running) return;
@@ -233,25 +240,31 @@ export function ChatPane({ onSubmitted }: { onSubmitted?: () => void } = {}) {
   const runningLabel = transcript.compacting ? "正在压缩上下文" : transcript.phase && transcript.phase !== "就绪" ? transcript.phase : "Working…";
   const dockVertical = dockPosition === "top" || dockPosition === "bottom";
   const dock = dockOpen && terminalAvailable ? <TerminalDock cwd={project} open /> : null;
+  // 终端是 Orbit 的 `ProjectTerminalDock`：首页（新会话面）也要能开。用一个统一的
+  // 外框把 dock 撑在所有分支外面——空首页、骨架屏、正文共用同一个位置——这样
+  // 「首页 → 第一条消息」以及切项目时 xterm 不会被卸载重挂，PTY 不重启、不闪。
+  const sheet = (content: ReactNode) => (
+    <div className={`relative flex min-h-0 min-w-0 flex-1 ${dockVertical ? "flex-col" : "flex-row"}`}>
+      {dockPosition === "top" || dockPosition === "left" ? dock : null}
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">{content}</div>
+      {dockPosition === "bottom" || dockPosition === "right" ? dock : null}
+    </div>
+  );
 
   // 会话还没到：骨架屏占位，不要停在旧会话的内容上再突然换掉。
   if (transcript.loading) {
-    return (
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+    return sheet(
+      <>
         <ChatBackground />
         <div className="relative z-10 min-h-0 flex-1 overflow-hidden">
           <TranscriptSkeleton />
         </div>
-      </div>
+      </>,
     );
   }
 
   if (groups.length === 0 && !waiting) {
-    return (
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        <EmptySession cwd={project} onSubmitted={onSubmitted ?? noop} />
-      </div>
-    );
+    return sheet(<EmptySession cwd={project} onSubmitted={onSubmitted ?? noop} />);
   }
 
   const renderGroup = (group: (typeof groups)[number], index: number) => (
@@ -264,10 +277,8 @@ export function ChatPane({ onSubmitted }: { onSubmitted?: () => void } = {}) {
     />
   );
 
-  return (
-    <div className={`relative flex min-h-0 min-w-0 flex-1 ${dockVertical ? "flex-col" : "flex-row"}`}>
-      {dockPosition === "top" || dockPosition === "left" ? dock : null}
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+  return sheet(
+    <>
       <ChatBackground />
       {/* Kept content during a reconnect: the screen is still the session the
           user left, and saying so is the difference between "it is thinking"
@@ -311,8 +322,6 @@ export function ChatPane({ onSubmitted }: { onSubmitted?: () => void } = {}) {
       {Object.entries(statuses).flatMap(([key, value]) => (!key.startsWith("gui-") && value ? [<div key={key} className="extension-status">{key}: {value}</div>] : []))}
       {/* Sending anchors the turn to the top instead of pinning to the bottom. */}
       <Composer onSubmitted={onSubmitted ?? noop} />
-      </div>
-      {dockPosition === "bottom" || dockPosition === "right" ? dock : null}
-    </div>
+    </>,
   );
 }

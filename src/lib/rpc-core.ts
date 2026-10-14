@@ -37,6 +37,8 @@ const SESSION_FILES_KEY='pi-gui.sessionFiles.v1',LEGACY_SESSION_FILES_KEY=['pi-g
 const pending=new Map<string,Pending>(),snapshots=new Map<string,Snapshot>(),connections=new Map<string,{token:symbol;cwd:string}>(),projectActive=new Map<string,string>(),sessionOwners=new Map<string,string>(),eventQueues=new Map<string,Event[]>(),flushTimers=new Map<string,ReturnType<typeof setTimeout>>()
 const sessionMetadataPending=new Set<string>()
 const reconnectingProjects=new Map<string,Promise<void>>()
+/** 正在拉历史消息的连接。切回这种连接时不能把骨架屏收掉，否则会先闪一下空首页。 */
+const loadingConnections=new Set<string>()
 /** 已要求、待 Pi 确认的模型切换（见 `protocol.ts` 的 `withPendingModel`）。 */
 const pendingModels=new Map<string,PendingModel>()
 /**
@@ -308,6 +310,7 @@ export async function loadMessages(target=activeTarget()){
  // 几百条消息的会话，get_messages 的响应就是几 MB，会被电脑端切成多帧发过来；
  // 30s 的上限让“会话大”和“链路卡住了”变成同一个结果，所以给它更长的预算。
  const id=route(target)
+ loadingConnections.add(id)
  try{
   // get_messages 与 get_state 没有先后依赖，并行发：省掉一整轮往返。
   const [data,state]=await Promise.all([
@@ -326,8 +329,12 @@ export async function loadMessages(target=activeTarget()){
   // 骨架屏必须跟着失败一起收起来，否则加载失败后面板就永远停在骨架屏上。
   patch(id,{transcript:transcriptLoading(current(id).transcript,false)})
   throw error
+ }finally{
+  loadingConnections.delete(id)
  }
 }
+/** 这条连接的历史消息是否正在加载（供切面时决定要不要收骨架屏）。 */
+export function isLoadingConnection(id:string){return loadingConnections.has(id)}
 function projectDisconnected(error:unknown){return String(error instanceof Error?error.message:error).includes('项目尚未连接')}
 
 // The connection/session modules are built on these internals; export them so
@@ -382,5 +389,6 @@ export {
   projectDisconnected,
   transcriptCache,
   rememberTranscript,
+  loadingConnections,
 };
 export type { Pending };
