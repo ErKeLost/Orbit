@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import type { Session } from "../../lib/protocol";
 import { useWorkspace, type WorkspaceMode } from "../../lib/store";
+import { normalizeProjectPath } from "../../lib/projects";
 import {
   cachedTranscript,
   changeSession,
@@ -20,7 +21,7 @@ import {
   firstUserTitle,
   workspaceConnectionIds,
 } from "../../lib/rpc";
-import { HOME_WORKSPACE_ID, isHomeWorkspace, useShell, type WorkspaceTab } from "./shellStore";
+import { HOME_WORKSPACE_ID, isHomeWorkspace, projectWorkspaceTabs, useShell, type WorkspaceTab } from "./shellStore";
 
 /** 正在启动的连接，避免同一个槽位被并发 `show` 拉起两次。 */
 const starting = new Map<string, Promise<void>>();
@@ -201,10 +202,12 @@ async function showHomeScope(path: string, mode: WorkspaceMode) {
  */
 async function selectProject(path: string, mode: WorkspaceMode = "project") {
   const shell = useShell.getState();
-  const remembered = shell.activeByProject[path];
-  const existing = remembered
-    ? shell.workspaces.find((item) => item.id === remembered && !isHomeWorkspace(item) && item.cwd === path)
-    : undefined;
+  const key = normalizeProjectPath(path);
+  // 这个项目的标签页（header 是挂项目的）：优先上次用的那个，没有就回到最后一个
+  // 已经开着的会话，而不是把用户丢到一个空首页。
+  const projectTabs = projectWorkspaceTabs(shell.workspaces, path);
+  const remembered = shell.activeByProject[key] ?? shell.activeByProject[path];
+  const existing = projectTabs.find((item) => item.id === remembered) ?? projectTabs.at(-1);
   if (existing) {
     await show(existing.id);
     // `show` 只把 cwd 跟着连接切过去；模式（project/home）也要落下来。
@@ -419,8 +422,9 @@ function enforceConnectionBudget() {
     .filter((item) => !item.pinned)
     .map((item) => ({ ...item, messages: connectionSnapshot(item.id)?.transcript.messages.length ?? 0 }));
   const excess = live.length - MAX_LIVE_CONNECTIONS;
+  const byConnection = new Map(shell.workspaces.map((workspace) => [workspace.connectionId, workspace]));
   for (const item of scored.slice(0, excess)) {
-    const workspace = shell.workspaces.find((candidate) => candidate.connectionId === item.id);
+    const workspace = byConnection.get(item.id);
     if (workspace) {
       const sessionPath = connectionSnapshot(item.id)?.state?.sessionFile;
       useShell.getState().updateWorkspace(workspace.id, {

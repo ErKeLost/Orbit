@@ -91,6 +91,23 @@ export function isHomeWorkspace(workspace: WorkspaceTab | undefined): boolean {
   return workspace?.id === HOME_WORKSPACE_ID;
 }
 
+/** 去掉尾部斜杠再比，`/a` 与 `/a/` 是同一个项目。 */
+function sameProjectCwd(left: string, right: string): boolean {
+  return (left.replace(/\/+$/, "") || "/") === (right.replace(/\/+$/, "") || "/");
+}
+
+/**
+ * header 里的标签页是挂项目的：只返回当前项目的会话标签页，首页永远不是标签页。
+ *
+ * 其它项目的会话不会被删，也不影响它们后台继续跑；只是不出现在这个项目的条里，
+ * 切回那个项目时再整套换回来（见 `activeByProject`）。
+ */
+export function projectWorkspaceTabs(workspaces: WorkspaceTab[], cwd: string): WorkspaceTab[] {
+  return workspaces.filter(
+    (workspace) => !isHomeWorkspace(workspace) && (!cwd || sameProjectCwd(workspace.cwd, cwd)),
+  );
+}
+
 /** Next free session pane id; the first one is always `chat`. */
 export function nextSessionPaneId(sessions: Record<string, { connectionId: string }>) {
   let n = Object.keys(sessions).length;

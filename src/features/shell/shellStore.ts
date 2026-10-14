@@ -31,7 +31,7 @@ import {
   type WorkspaceTab,
 } from "./shellModel";
 
-export { CHAT_PANE_ID, HOME_WORKSPACE_ID, isHomeWorkspace, newHomeWorkspace, newWorkspaceTab } from "./shellModel";
+export { CHAT_PANE_ID, HOME_WORKSPACE_ID, isHomeWorkspace, projectWorkspaceTabs, newHomeWorkspace, newWorkspaceTab } from "./shellModel";
 export type { CollapsedRailMode, DockPosition, OpenFile, PaneState, SidebarTab, WorkspaceTab } from "./shellModel";
 
 /**

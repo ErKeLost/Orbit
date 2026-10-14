@@ -4,7 +4,7 @@ import { useTitleTabDrop } from "./paneDrop";
 import { PanelLeft, Plus, Settings, Terminal, X } from "../../shared/ui/icons";
 import { IS_MAC, MOD, TitleIconButton } from "./chrome";
 import { useWorkspaceTabs } from "./use-workspace-tabs";
-import { isHomeWorkspace, useShell, type WorkspaceTab } from "./shellStore";
+import { projectWorkspaceTabs, useShell, type WorkspaceTab } from "./shellStore";
 import { currentShortcut, shortcutLabel } from "../../lib/keybindings";
 import { compactTitle } from "../../lib/session-visual";
 import { connectionSnapshot, firstUserTitle, subscribeSnapshot } from "../../lib/rpc";
@@ -133,22 +133,28 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
   // The hidden home workspace is not a tab: it only appears as the 首页 once
   // every tab has been closed.
   const allWorkspaces = useShell((state) => state.workspaces);
-  const workspaces = useMemo(() => allWorkspaces.filter((workspace) => !isHomeWorkspace(workspace)), [allWorkspaces]);
+  // header 里的会话是挂项目的：只显示当前项目的标签页，切项目就换一整套。
+  // 其它项目的会话仍然活着（后台跑、被收养/休眠），只是不出现在这个项目的条里。
+  const cwd = useWorkspace((state) => state.cwd);
+  const workspaces = useMemo(() => projectWorkspaceTabs(allWorkspaces, cwd), [allWorkspaces, cwd]);
   const activeWorkspaceId = useShell((state) => state.activeWorkspaceId);
   const tabs = useWorkspaceTabs();
   // 面板拖到标题栏时的插入提示（monocode 的 paneToTabDrop）。
   const paneToTabDrop = useTitleTabDrop();
   const [menu, setMenu] = useState<{ workspace: WorkspaceTab; x: number; y: number } | null>(null);
 
+  /** 当前项目的标签页（关闭其他/右侧只在项目内生效，别误杀别的项目的后台会话）。 */
+  const projectTabs = () => projectWorkspaceTabs(useShell.getState().workspaces, cwd);
+
   const closeOthers = async (workspaceId: string) => {
-    const others = useShell.getState().workspaces.filter((item) => item.id !== workspaceId && !isHomeWorkspace(item));
+    const others = projectTabs().filter((item) => item.id !== workspaceId);
     setMenu(null);
     for (const item of others) await tabs.close(item.id);
     await tabs.show(workspaceId);
   };
 
   const closeRight = async (workspaceId: string) => {
-    const items = useShell.getState().workspaces.filter((item) => !isHomeWorkspace(item));
+    const items = projectTabs();
     const index = items.findIndex((item) => item.id === workspaceId);
     if (index < 0) return;
     setMenu(null);
