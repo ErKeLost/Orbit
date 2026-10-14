@@ -9,7 +9,29 @@ import type { AgentNode, AgentSnapshot } from "../src-tauri/resources/subagents/
 import { registerSubagentTools, SUBAGENT_TOOL_NAMES } from "../src-tauri/resources/subagents/tools"
 
 const fakePi = resolve(import.meta.dir, "fixtures/fake-pi-rpc.mjs")
-const testNode = "/opt/homebrew/bin/node"
+
+/**
+ * The fake worker runs on a real Node. `bun test` runs this file under bun, and
+ * the CI Web job is Ubuntu with Node from `setup-node` — so resolve Node from
+ * PATH instead of hardcoding Homebrew, which made the child exit 1 and took all
+ * 18 delegation tests down on every CI run. Scanned by hand: spawning `which`
+ * at module-eval time left bun's spawner in an EBADF state for the real worker.
+ */
+function resolveTestNode(): string {
+  if (/[/\\]node(\.exe)?$/i.test(process.execPath) && existsSync(process.execPath)) return process.execPath
+  const separator = process.platform === "win32" ? ";" : ":"
+  const names = process.platform === "win32" ? ["node.exe", "node"] : ["node"]
+  for (const dir of (process.env.PATH ?? "").split(separator)) {
+    if (!dir) continue
+    for (const name of names) {
+      const candidate = join(dir, name)
+      if (existsSync(candidate)) return candidate
+    }
+  }
+  return ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"].find(existsSync) ?? process.execPath
+}
+
+const testNode = resolveTestNode()
 const roots: string[] = []
 const runtimes: SubagentRuntime[] = []
 const originalNode = process.env.ORBIT_PI_NODE_PATH
