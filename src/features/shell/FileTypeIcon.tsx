@@ -1,117 +1,99 @@
-import { memo, useMemo, useSyncExternalStore } from "react";
+import { memo, useSyncExternalStore } from "react";
+import { Icon as Iconify, addCollection } from "@iconify/react/offline";
 
 type Props = {
   name: string;
   isDir: boolean;
   isOpen?: boolean;
+  /** Kept for callers: Catppuccin has no separate root-folder glyphs. */
   isRoot?: boolean;
   size?: number;
 };
 
-type IconPack = typeof import("react-material-icon-theme");
+type Associations = {
+  fileNames: Record<string, string>;
+  fileExtensions: Record<string, string>;
+  languageIds: Record<string, string>;
+  folderNames: Record<string, string>;
+};
 
 /**
- * The Material icon pack inlines every glyph as a component — ~1.1 MB, the
- * single largest thing in the boot chunk, for 16px decorations. Load it after
- * first paint and hold a same-sized blank until it lands, so the app starts
- * without it and nothing reflows when it arrives.
+ * File/folder icons are Catppuccin Icons (`catppuccin/vscode-icons`).
+ *
+ * The glyph set (~300 KB) and the filename→icon table (~59 KB) load after first
+ * paint, the same rule the previous Material pack followed: neither belongs in
+ * the boot chunk, and a same-sized blank holds the layout until they land.
+ * `@iconify/react/offline` is used so a name that ever misses can never turn
+ * into a network request.
  */
-let pack: IconPack | null = null;
+let associations: Associations | null = null;
 let loading: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
-function loadPack() {
-  if (pack || loading) return;
-  loading = import("react-material-icon-theme").then((mod) => {
-    pack = mod;
+function load() {
+  if (associations || loading) return;
+  loading = Promise.all([
+    import("@iconify-json/catppuccin/icons.json"),
+    import("../files/model/catppuccinIconAssociations.json"),
+  ]).then(([icons, table]) => {
+    addCollection((icons.default ?? icons) as never);
+    associations = ((table as { default?: Associations }).default ?? table) as Associations;
     for (const listener of listeners) listener();
   });
 }
 
 function subscribe(onStoreChange: () => void) {
   listeners.add(onStoreChange);
-  loadPack();
+  load();
   return () => {
     listeners.delete(onStoreChange);
   };
 }
 
-function getSnapshot() {
-  return pack;
-}
+const snapshot = () => associations;
 
-/** Filename maps to the matching Material Icon Theme icon. */
-export const FileTypeIcon = memo(function FileTypeIcon({
-  name,
-  isDir,
-  isOpen = false,
-  isRoot = false,
-  size = 16,
-}: Props) {
-  const icons = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+/** Filename maps to the matching Catppuccin icon. */
+export const FileTypeIcon = memo(function FileTypeIcon({ name, isDir, isOpen = false, size = 16 }: Props) {
+  const table = useSyncExternalStore(subscribe, snapshot, snapshot);
+  const iconName = table ? (isDir ? resolveFolderIcon(table, name, isOpen) : resolveFileIcon(table, name)) : "";
 
-  const iconName = icons
-    ? isDir
-      ? icons.getFolderIcon({ folderName: name, isOpen, isRoot })
-      : resolveFileIcon(icons, name)
-    : "";
-  let svg = icons?.getIconSvg(iconName) ?? "";
-  // The theme advertises a few specialized folder icons without shipping
-  // their SVG — a folder named "skills" or "features" resolves to
-  // `folder-skills-open` / `folder-features-open`, whose body is empty, and
-  // the row grows a 16px hole. The plain folder glyph always exists, so an
-  // empty answer falls back to it.
-  if (!svg) {
-    svg = icons?.getIconSvg(isDir ? (isOpen ? "folder-open" : "folder") : "file") ?? "";
-  }
-  // React compares this prop by identity. A fresh object replaces the SVG
-  // subtree even when the glyph is unchanged (for example, on resize).
-  const markup = useMemo(() => ({ __html: svg }), [svg]);
-
-  if (!icons) {
+  if (!table || !iconName) {
     return (
-      <span
-        aria-hidden
-        className="inline-block shrink-0"
-        style={{ width: size, height: size }}
-      />
+      <span aria-hidden className="inline-block shrink-0" style={{ width: size, height: size }} />
     );
   }
-
   return (
     <span
       aria-hidden
       className="material-icon inline-block shrink-0 align-middle"
       style={{ width: size, height: size }}
-      dangerouslySetInnerHTML={markup}
-    />
+    >
+      <Iconify icon={`catppuccin:${iconName}`} width="100%" height="100%" />
+    </span>
   );
 });
 
-/**
- * The package only checks `fileExtension` when that prop is set — it does not
- * peel an extension off `fileName`. Try the full name, then compound suffixes
- * (`d.ts`, then `ts`) so `.rs` / `.toml` / `.json` resolve by compound suffix.
- */
-function resolveFileIcon(icons: IconPack, fileName: string): string {
-  const key = fileName.toLowerCase();
-  const fromName = icons.getFileIcon({
-    fileName: key,
-    fallback: "",
-    iconPack: "",
-  });
+/** Table keys are lowercase except a few (`CNAME`, `Tauri.toml`, `META-INF`). */
+function lookup(map: Record<string, string>, key: string): string | undefined {
+  return map[key] ?? map[key.toLowerCase()] ?? map[key.replace(/_/g, "-")];
+}
+
+function resolveFileIcon(table: Associations, fileName: string): string {
+  const fromName = lookup(table.fileNames, fileName);
   if (fromName) return fromName;
 
-  for (const ext of compoundExtensions(key)) {
-    const fromExt = icons.getFileIcon({
-      fileExtension: ext,
-      fallback: "",
-      iconPack: "",
-    });
-    if (fromExt) return fromExt;
+  // The table keys extensions, so peel compound suffixes (`d.ts`, then `ts`).
+  for (const ext of compoundExtensions(fileName.toLowerCase())) {
+    const found = table.fileExtensions[ext];
+    if (found) return found;
   }
-
   return "file";
+}
+
+function resolveFolderIcon(table: Associations, name: string, isOpen: boolean): string {
+  const base = lookup(table.folderNames, name);
+  if (base) return isOpen ? `${base}-open` : base;
+  return isOpen ? "folder-open" : "folder";
 }
 
 function compoundExtensions(fileName: string): string[] {
