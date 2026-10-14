@@ -177,17 +177,22 @@ async function showHomeScope(path: string, mode: WorkspaceMode) {
   const shell = useShell.getState();
   const home = shell.workspaces.find(isHomeWorkspace);
   if (!home) return;
+  // 范围真的变了才动连接：同一个范围重复「新建会话」直接复用首页那条空连接，
+  // 不再先关再开（那是白等一次 pi 进程）。
+  const changed = normalizeProjectPath(home.cwd) !== normalizeProjectPath(path);
   const bound = home.connectionId;
   if (bound) {
     if (connectionHasWork(bound)) {
+      // 首页其实已经是一个会话了：先升格成标签页留在后台，再开一个干净的新首页。
       shell.promoteHomeWorkspace();
-    } else if (!connectionInUseElsewhere(bound, HOME_WORKSPACE_ID)) {
+    } else if (changed && !connectionInUseElsewhere(bound, HOME_WORKSPACE_ID)) {
+      useShell.getState().bindWorkspaceConnection(HOME_WORKSPACE_ID, "");
       void closeWorkspaceConnection(bound, "已切换范围").catch(() => undefined);
     }
   }
   const nextHome = useShell.getState().workspaces.find(isHomeWorkspace);
   if (!nextHome) return;
-  if (nextHome.cwd !== path) {
+  if (changed) {
     useShell.getState().setWorkspaceCwd(nextHome.id, path);
     useShell.getState().bindWorkspaceConnection(nextHome.id, "");
   }
@@ -222,17 +227,20 @@ async function openScope(path: string, mode: WorkspaceMode) {
   await showHomeScope(path, mode);
 }
 
-/** 「新建会话」：回到首页（也就是一个全新的空会话），不再克隆当前会话。 */
+/** 「新建会话」：在**当前项目**开一个全新的空会话，不再克隆当前会话。 */
 async function create(projectCwd?: string) {
   const shell = useShell.getState();
   shell.restoreHomeSessionPane();
   const active = shell.workspaces.find((item) => item.id === shell.activeWorkspaceId);
-  if (projectCwd && projectCwd !== active?.cwd) {
-    const homeDir = useWorkspace.getState().homeDir;
-    await openScope(projectCwd, homeDir && projectCwd === homeDir ? "home" : "project");
+  const workspace = useWorkspace.getState();
+  // 没显式给项目时用当前范围。首页的 cwd 可能是上次切项目留下的旧值，
+  // 直接 `show(首页)` 会跳到那个旧项目里去。
+  const target = projectCwd ?? workspace.cwd ?? active?.cwd ?? "";
+  if (!target) {
+    await show(HOME_WORKSPACE_ID);
     return;
   }
-  await show(HOME_WORKSPACE_ID);
+  await showHomeScope(target, workspace.homeDir && target === workspace.homeDir ? "home" : "project");
 }
 
 /** 关闭会话面板后保留编辑器；显式新建时才重新打开默认会话。 */

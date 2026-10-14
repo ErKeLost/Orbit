@@ -315,4 +315,22 @@ describe("多 session 后台运行", () => {
     expect(model.opened.length).toBe(openedBefore)
     expect(model.closed).not.toContain(aConn)
   })
+
+  test("新建会话落在当前项目，而不是首页残留的旧范围", async () => {
+    const tabs = useWorkspaceTabs()
+    await tabs.show(HOME_WORKSPACE_ID)
+    await tabs.openSession({ path: "/p/a.jsonl", cwd: "/p" })
+
+    // 模拟：首页的 cwd 是别的项目（上次切项目留下的），当前在 /p 的会话里。
+    useShell.getState().setWorkspaceCwd(HOME_WORKSPACE_ID, "/q")
+    useShell.getState().bindWorkspaceConnection(HOME_WORKSPACE_ID, "")
+    useWorkspace.getState().set({ cwd: "/p" })
+
+    await tabs.create()
+
+    const home = useShell.getState().workspaces.find(w => w.id === HOME_WORKSPACE_ID)!
+    expect(home.cwd).toBe("/p")
+    expect(useShell.getState().activeWorkspaceId).toBe(HOME_WORKSPACE_ID)
+    expect(useWorkspace.getState().cwd).toBe("/p")
+  })
 })
