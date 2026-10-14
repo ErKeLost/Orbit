@@ -7,6 +7,7 @@ import {registerSubagentTools,SUBAGENT_TOOL_NAMES} from './subagents/index.ts'
 import {registerWorkspace} from './workspace.ts'
 import {COMPUTER_USE_TOOL_NAMES,registerComputerUseMode} from './computer-use/mode.ts'
 import {providerToolChars} from './context-payload.ts'
+import {enableFastSearchTools,FAST_SEARCH_GUIDELINE} from './search-tools.ts'
 // Pi official docs/extensions.md: registerCommand, getAllTools, setActiveTools,
 // ExtensionCommandContext.navigateTree and setLabel. Loaded only by this GUI.
 export const SESSION_META_TYPE='pi-gui-session-meta'
@@ -834,6 +835,9 @@ export default async function (pi: ExtensionAPI) {
   registerWorkspace(pi)
   registerImages(pi)
   pi.on('before_provider_request',event=>{latestProviderToolChars=providerToolChars(event.payload)})
+  // 搜索类工具的提示词引导：`grep` 激活后 pi 自己的「用 bash 搜索」规则会消失，
+  // 这里再明确一次，手动关掉内置 grep 时也不至于退回 `grep -r`。
+  pi.on('before_agent_start',event=>{const lines=event.systemPromptOptions.promptGuidelines;if(!lines.includes(FAST_SEARCH_GUIDELINE))lines.push(FAST_SEARCH_GUIDELINE)})
   const {SettingsManager}=await import(pathToFileURL(join(dirname(realpathSync(process.argv[1])),'index.js')).href)
   pi.registerCommand('gui-observe',{description:'GUI: observe session configuration',handler:async(_args,ctx)=>{
     const settings=SettingsManager.create(ctx.cwd,undefined,{projectTrusted:ctx.isProjectTrusted()})
@@ -920,7 +924,7 @@ export default async function (pi: ExtensionAPI) {
     }
     throw new Error(`未知的媒体操作 ${action}`)
   }})
-  pi.on('session_start',async(_event,ctx)=>publishCapabilities(ctx))
+  pi.on('session_start',(_event,ctx)=>{enableFastSearchTools(pi);publishCapabilities(ctx)})
   pi.on('mcp_servers_change',async(_event,ctx)=>{publishMcp(ctx);publishCapabilities(ctx)})
   pi.on('session_info_changed',async(event,ctx)=>ctx.ui.setStatus(SESSION_NAME_STATUS,JSON.stringify({name:event.name??null})))
   pi.on('cache_warming_decision',async(event,ctx)=>ctx.ui.setStatus(CACHE_STATUS,JSON.stringify({action:event.action,warmCost:event.warmCost,missCost:event.missCost,continuationProbability:event.continuationProbability})))
