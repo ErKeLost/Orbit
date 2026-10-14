@@ -41,15 +41,6 @@ function parseRgb(value: string, fallback: string) {
   return `${match[0]}, ${match[1]}, ${match[2]}`;
 }
 
-/**
- * Stamped plates are pure outputs of (pane size, ink, fit, anchors): keep the last
- * few so re-showing the home surface — every project switch lands there — does not
- * re-run the downsampler on the main thread.
- */
-type GalaxyPlateCacheEntry = { plate: HTMLCanvasElement; stars: GalaxyStar[]; float: { x: boolean; y: boolean } };
-const plateCache = new Map<string, GalaxyPlateCacheEntry>();
-const PLATE_CACHE_LIMIT = 6;
-
 function contentRgb(element?: Element | null) {
   // Read the ink from the pane the backdrop fills, not from <body>: the empty
   // session pins itself to the dark theme, so the galaxy keeps the same light
@@ -107,7 +98,8 @@ export function GalaxyDotBackground({
     // Drawn one pixel per CSS pixel, not per device pixel: the plate only ever
     // lands on whole pixels, so nearest-neighbour keeps every square exactly
     // square, and the backing store stays a quarter of the size.
-    let plate = document.createElement("canvas");
+    const plate = document.createElement("canvas");
+    const plateCtx = plate.getContext("2d");
     const meteors: GalaxyMeteor[] = [];
 
     const image = new Image();
@@ -134,39 +126,26 @@ export function GalaxyDotBackground({
       if (!ready) return;
 
       const size = galaxyPlateSize(width, height);
-      const plateKey = `${width}x${height}:${rgb}:${fit ?? "cover"}:${mode ?? "color"}:${anchorX ?? ""}:${anchorY ?? ""}:${JSON.stringify(ink ?? null)}`;
-      const stamped = plateCache.get(plateKey);
-      if (stamped) {
-        plate = stamped.plate;
-        stars = stamped.stars;
-        float = stamped.float;
-      } else {
-        plate.width = size.width;
-        plate.height = size.height;
-        const buildCtx = plate.getContext("2d");
-        if (buildCtx) {
-          buildCtx.setTransform(1, 0, 0, 1, 0, 0);
-          const stamp = paintGalaxy(buildCtx, {
-            image,
-            imageWidth: image.naturalWidth,
-            imageHeight: image.naturalHeight,
-            width,
-            height,
-            rgb,
-            fit,
-            mode,
-            ink,
-            anchorX,
-            anchorY,
-          });
-          stars = stamp.stars;
-          float = stamp.float;
-          plateCache.set(plateKey, { plate, stars, float });
-          if (plateCache.size > PLATE_CACHE_LIMIT) {
-            const oldest = plateCache.keys().next().value;
-            if (oldest !== undefined) plateCache.delete(oldest);
-          }
-        }
+      plate.width = size.width;
+      plate.height = size.height;
+      plateCtx?.setTransform(1, 0, 0, 1, 0, 0);
+
+      if (plateCtx) {
+        const stamp = paintGalaxy(plateCtx, {
+          image,
+          imageWidth: image.naturalWidth,
+          imageHeight: image.naturalHeight,
+          width,
+          height,
+          rgb,
+          fit,
+          mode,
+          ink,
+          anchorX,
+          anchorY,
+        });
+        stars = stamp.stars;
+        float = stamp.float;
       }
       pattern = galaxyGridPattern(ctx, rgb, { ...GALAXY_INK, ...ink });
     };
