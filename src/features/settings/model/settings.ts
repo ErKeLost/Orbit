@@ -25,6 +25,7 @@ export const SETTINGS_INDEX: SettingIndexEntry[] = [
   { id: "blur", section: "appearance", label: "模糊半径", keywords: "毛玻璃 blur 背景" },
   { id: "body-glass", section: "appearance", label: "主面板玻璃", keywords: "半透明 主面板 glass" },
   { id: "chat-background", section: "appearance", label: "聊天背景", keywords: "背景图 图片 wallpaper" },
+  { id: "chat-background-opacity", section: "appearance", label: "背景不透明度", keywords: "背景图 图片 透明度 opacity wallpaper" },
   { id: "collapsed-rail", section: "appearance", label: "收起时的项目栏", keywords: "图标栏 隐藏 紧凑 collapsed rail" },
   { id: "ui-scale", section: "appearance", label: "界面缩放", keywords: "缩放 大小 zoom scale" },
   { id: "show-excluded-files", section: "appearance", label: "显示被忽略的文件", keywords: "git ignore 忽略 构建产物" },

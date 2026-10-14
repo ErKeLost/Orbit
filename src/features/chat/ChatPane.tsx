@@ -95,10 +95,11 @@ function EmptySession({ cwd, onSubmitted }: { cwd: string; onSubmitted: () => vo
 /** Orbit's chat background: a fixed image behind the transcript and composer. */
 function ChatBackground() {
   const path = useAppearance((state) => state.chatBackground);
+  const opacity = useAppearance((state) => state.chatBackgroundOpacity);
   if (!path) return null;
   return (
     <div aria-hidden className="chat-pane-background pointer-events-none absolute inset-0 z-0 overflow-hidden">
-      <img src={convertFileSrc(path)} alt="" className="h-full w-full object-cover opacity-[0.22]" />
+      <img src={convertFileSrc(path)} alt="" className="h-full w-full object-cover" style={{ opacity }} />
     </div>
   );
 }

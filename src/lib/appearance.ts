@@ -17,6 +17,7 @@ const BODY_GLASS_KEY = "orbit.bodyGlass";
 const UI_SCALE_KEY = "orbit.uiScale";
 const EXCLUDED_KEY = "orbit.showExcludedFiles";
 const CHAT_BG_KEY = "orbit.chatBackground";
+const CHAT_BG_OPACITY_KEY = "orbit.chatBackgroundOpacity";
 const DIFF_KEY = "orbit.diffPalette";
 const HUE_KEY = "orbit.themeHue";
 const SATURATION_KEY = "orbit.themeSaturation";
@@ -106,11 +107,14 @@ type AppearanceState = {
   uiScale: number;
   showExcludedFiles: boolean;
   chatBackground: string | null;
+  /** 0–1，作用于聊天背景图片的透明度。 */
+  chatBackgroundOpacity: number;
   setBlur: (blur: number) => void;
   setBodyGlass: (on: boolean) => void;
   setUiScale: (scale: number) => void;
   setShowExcludedFiles: (on: boolean) => void;
   setChatBackground: (path: string | null) => void;
+  setChatBackgroundOpacity: (opacity: number) => void;
   setPreference: (preference: ThemePreference) => void;
   setTint: (patch: Partial<Pick<AppearanceState, "hue" | "saturation" | "darkLightness" | "sidebarOpacity">>) => void;
   setAccent: (accent: string | null) => void;
@@ -188,6 +192,7 @@ export const useAppearance = create<AppearanceState>((set, get) => ({
   uiScale: clamp(loadNumber(UI_SCALE_KEY, 1), 0.5, 2),
   showExcludedFiles: read(EXCLUDED_KEY) === "true",
   chatBackground: read(CHAT_BG_KEY),
+  chatBackgroundOpacity: clamp(loadNumber(CHAT_BG_OPACITY_KEY, 0.22), 0, 1),
   setPreference: preference => {
     write(SCHEME_KEY, preference);
     write(LEGACY_SCHEME_KEY, preference);
@@ -232,9 +237,13 @@ export const useAppearance = create<AppearanceState>((set, get) => ({
     write(CHAT_BG_KEY, chatBackground);
     set({ chatBackground });
   },
+  setChatBackgroundOpacity: chatBackgroundOpacity => {
+    write(CHAT_BG_OPACITY_KEY, String(chatBackgroundOpacity));
+    set({ chatBackgroundOpacity });
+  },
   restoreDefaults: () => {
-    for (const key of [HUE_KEY, SATURATION_KEY, LIGHTNESS_KEY, SIDEBAR_OPACITY_KEY, ACCENT_KEY, DIFF_KEY, BLUR_KEY, BODY_GLASS_KEY, UI_SCALE_KEY, EXCLUDED_KEY, CHAT_BG_KEY]) write(key, null);
-    set({ ...DEFAULT_APPEARANCE, accent: null, diffPalette: "default" as DiffPalette, blur: 24, bodyGlass: true, uiScale: 1, showExcludedFiles: false, chatBackground: null });
+    for (const key of [HUE_KEY, SATURATION_KEY, LIGHTNESS_KEY, SIDEBAR_OPACITY_KEY, ACCENT_KEY, DIFF_KEY, BLUR_KEY, BODY_GLASS_KEY, UI_SCALE_KEY, EXCLUDED_KEY, CHAT_BG_KEY, CHAT_BG_OPACITY_KEY]) write(key, null);
+    set({ ...DEFAULT_APPEARANCE, accent: null, diffPalette: "default" as DiffPalette, blur: 24, bodyGlass: true, uiScale: 1, showExcludedFiles: false, chatBackground: null, chatBackgroundOpacity: 0.22 });
   },
 }));
 

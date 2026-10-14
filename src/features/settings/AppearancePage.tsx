@@ -177,6 +177,16 @@ export function AppearancePage() {
             )}
           </div>
         </div>
+        <Row anchorId="chat-background-opacity" label="背景不透明度" description="聊天背景图的透明度，0 为完全不可见。">
+          <Slider
+            label="聊天背景不透明度"
+            value={Math.round(appearance.chatBackgroundOpacity * 100)}
+            display={`${Math.round(appearance.chatBackgroundOpacity * 100)}%`}
+            min={0}
+            max={100}
+            onChange={(value) => appearance.setChatBackgroundOpacity(value / 100)}
+          />
+        </Row>
       </Group>
 
       <Group title="布局">
