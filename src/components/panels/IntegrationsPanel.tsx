@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Switch } from "../UI";
+import { Button, Input, Switch } from "../UI";
 import { Icon } from "../Icon";
 import { ImageEndpointDialog } from "../ImageEndpointDialog";
 import { toast as gooeyToast } from "../../shared/ui/toast";
-import { imageConfig, refreshCapabilities, report, saveImageConfig, type ImageConfig, type ImageConfigKind } from "../../lib/rpc";
+import { imageConfig, refreshCapabilities, report, saveImageConfig, type ImageConfig, type ImageConfigKind, saveWebSearchApiKey, saveWebSearchConfig, webSearchConfig } from "../../lib/rpc";
 import { useWorkspace } from "../../lib/store";
 import { availableMediaModels, parseCapabilities } from "../../lib/capabilities";
 import "../..//styles/provider-page.css";
@@ -82,7 +82,15 @@ export function IntegrationsPanel() {
   const online = useWorkspace((state) => state.connection === "online");
   const capabilities = parseCapabilities(useWorkspace((state) => state.statuses?.capabilities));
   const config = useQuery({ queryKey: ["pi", "image-config"], queryFn: imageConfig, enabled: desktop });
+  const webSearch = useQuery({ queryKey: ["pi", "web-search-config"], queryFn: webSearchConfig, enabled: desktop });
   const [endpointOpen, setEndpointOpen] = useState(false);
+  const [webSearchDraft, setWebSearchDraft] = useState({ enabled: true, baseUrl: "", providerId: "", searchUrl: "", apiKey: "" });
+
+  useEffect(() => {
+    const value = webSearch.data;
+    if (!value) return;
+    setWebSearchDraft({ enabled: value.enabled, baseUrl: value.baseUrl, providerId: value.providerId, searchUrl: value.searchUrl, apiKey: "" });
+  }, [webSearch.data]);
 
   // Capabilities are published by Pi's extension, not by image_config. Refresh
   // them when this page is entered so the model selector does not depend on
@@ -128,6 +136,24 @@ export function IntegrationsPanel() {
   const setKindEnabled = (kind: string, spec: ImageConfigKind, enabled: boolean) =>
     write({ kinds: { ...(config.data?.kinds ?? {}), [kind]: { ...spec, enabled } } }, enabled ? `已启用 ${spec.label ?? kind}` : `已关闭 ${spec.label ?? kind}`);
 
+  async function saveWebSearch() {
+    try {
+      const saved = await saveWebSearchConfig({ enabled: webSearchDraft.enabled, baseUrl: webSearchDraft.baseUrl, providerId: webSearchDraft.providerId, searchUrl: webSearchDraft.searchUrl });
+      if (webSearchDraft.apiKey.trim()) await saveWebSearchApiKey(saved.providerId, webSearchDraft.apiKey.trim());
+      setWebSearchDraft(current => ({ ...current, apiKey: "" }));
+      await webSearch.refetch();
+      gooeyToast.success("Web Search 配置已保存", { description: "重连项目后，新的端点设置会用于会话", showTimestamp: false });
+    } catch (error) { report(error); }
+  }
+
+  async function clearWebSearchKey() {
+    try {
+      await saveWebSearchApiKey(webSearch.data?.providerId ?? webSearchDraft.providerId, null);
+      await webSearch.refetch();
+      gooeyToast.success("Web Search 密钥已清除", { showTimestamp: false });
+    } catch (error) { report(error); }
+  }
+
   return (
     <section className="provider-settings integrations-settings" aria-label="第三方接入">
       <div className="provider-detail">
@@ -164,6 +190,30 @@ export function IntegrationsPanel() {
         </header>
 
         <div className="provider-detail-content">
+        <section className="provider-card">
+          <header className="provider-card-head">
+            <div>
+              <h3>Web Search <span className="provider-status">Expand</span></h3>
+              <p>一个工具支持 search、fetch、highlights 三种 mode。API Key 只保存在 Pi 的 auth.json。</p>
+            </div>
+            <Switch aria-label="启用 Web Search" checked={webSearchDraft.enabled} disabled={!desktop} onChange={(enabled) => setWebSearchDraft(current => ({ ...current, enabled }))} />
+          </header>
+          <div className="provider-card-rows">
+            <div className="provider-row provider-row-form">
+              <label className="provider-row-label">Provider ID<Input aria-label="Web Search Provider ID" value={webSearchDraft.providerId} disabled={!desktop} onChange={(event) => setWebSearchDraft(current => ({ ...current, providerId: event.target.value }))} placeholder="expand" spellCheck={false} /></label>
+              <label className="provider-row-label">Base URL<Input aria-label="Expand Base URL" value={webSearchDraft.baseUrl} disabled={!desktop} onChange={(event) => setWebSearchDraft(current => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.expand.ai" spellCheck={false} /></label>
+            </div>
+            <div className="provider-row provider-row-form">
+              <label className="provider-row-label">Search URL<Input aria-label="Web Search URL" value={webSearchDraft.searchUrl} disabled={!desktop} onChange={(event) => setWebSearchDraft(current => ({ ...current, searchUrl: event.target.value }))} placeholder="https://www.bing.com/search?q=" spellCheck={false} /></label>
+              <label className="provider-row-label">API Key<Input aria-label="Expand API Key" type="password" autoComplete="off" value={webSearchDraft.apiKey} disabled={!desktop} onChange={(event) => setWebSearchDraft(current => ({ ...current, apiKey: event.target.value }))} placeholder={webSearch.data?.hasApiKey ? "已保存，留空保持不变" : "粘贴 Expand API Key"} spellCheck={false} /></label>
+            </div>
+            <div className="provider-row">
+              <span className="provider-row-label">凭据状态</span>
+              <span className="provider-connection-note">{webSearch.data?.hasApiKey ? "已配置" : "未配置"}</span>
+              <div className="provider-detail-actions"><Button variant="outline" disabled={!desktop} onClick={() => void saveWebSearch()}>保存配置</Button>{webSearch.data?.hasApiKey ? <Button variant="ghost" disabled={!desktop} onClick={() => void clearWebSearchKey()}>清除密钥</Button> : null}</div>
+            </div>
+          </div>
+        </section>
           <section className="provider-card">
             <header className="provider-card-head">
               <div>

@@ -40,7 +40,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
-use crate::{automations, bridge, git, github_inbox, gitlab, image_config, media, notes, pty_term, search};
+use crate::{automations, bridge, git, github_inbox, gitlab, image_config, media, notes, pty_term, search, web_search};
 #[cfg(target_os = "macos")]
 use crate::ax;
 
@@ -182,6 +182,9 @@ pub const REMOTE_COMMANDS: &[&str] = &[
     "image_config",
     "save_image_config",
     "save_image_api_key",
+    "web_search_config",
+    "save_web_search_config",
+    "save_web_search_api_key",
     // macOS only, like the module that implements it: the accessibility
     // snapshot computer use reads.
     "ax_observe",
@@ -668,6 +671,9 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
         "save_image_api_key" => {
             json(image_config::save_image_api_key(text(&args, "provider")?, opt::<String>(&args, "apiKey")?).await?)
         }
+        "web_search_config" => web_search::web_search_config().await,
+        "save_web_search_config" => web_search::save_web_search_config(required(&args, "config")?).await,
+        "save_web_search_api_key" => json(web_search::save_web_search_api_key(text(&args, "provider")?, opt::<String>(&args, "apiKey")?).await?),
         // The accessibility snapshot: still desktop-owned, but a paired phone is
         // allowed to read it because computer use is the feature that needs it.
         #[cfg(target_os = "macos")]

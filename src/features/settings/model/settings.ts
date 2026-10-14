@@ -37,6 +37,7 @@ export const SETTINGS_INDEX: SettingIndexEntry[] = [
   { id: "image-endpoint", section: "integrations", label: "图片端点", keywords: "火山方舟 base url provider 端点" },
   { id: "image-default-model", section: "integrations", label: "默认出图模型", keywords: "模型 切换 seedream generate_image image model" },
   { id: "image-capabilities", section: "integrations", label: "生成能力开关", keywords: "generate_image 开关 启用 关闭" },
+  { id: "web-search", section: "integrations", label: "Web Search 配置", keywords: "web search expand 搜索 API Key endpoint mode fetch highlights" },
   // 其他
   { id: "providers", section: "providers", label: "模型端点", keywords: "api key 模型 catalog providers" },
   { id: "skills", section: "skills", label: "技能管理", keywords: "skills 命令 斜杠" },

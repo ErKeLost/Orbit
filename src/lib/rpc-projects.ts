@@ -127,6 +127,11 @@ export async function saveImageConfig(patch:ImageConfigPatch):Promise<ImageConfi
 /** The key goes to Pi's auth.json under the provider id, like every other key. */
 export async function saveImageApiKey(provider:string,apiKey:string|null):Promise<{provider:string;hasApiKey:boolean}> { if(!workspaceBackend()) throw new Error('图片密钥请在电脑端设置'); return invoke('save_image_api_key',{provider,apiKey}) }
 
+export type WebSearchConfig={enabled:boolean;baseUrl:string;providerId:string;searchUrl:string;hasApiKey:boolean;defaultBaseUrl?:string;defaultProviderId?:string}
+export async function webSearchConfig():Promise<WebSearchConfig> { if(!workspaceBackend()) throw new Error('Web Search 配置请在电脑端设置'); return invoke<WebSearchConfig>('web_search_config') }
+export async function saveWebSearchConfig(config:Partial<Pick<WebSearchConfig,'enabled'|'baseUrl'|'providerId'|'searchUrl'>>):Promise<WebSearchConfig> { if(!workspaceBackend()) throw new Error('Web Search 配置请在电脑端设置'); return invoke<WebSearchConfig>('save_web_search_config',{config}) }
+export async function saveWebSearchApiKey(provider:string,apiKey:string|null):Promise<{provider:string;hasApiKey:boolean}> { if(!workspaceBackend()) throw new Error('Web Search 密钥请在电脑端设置'); return invoke('save_web_search_api_key',{provider,apiKey}) }
+
 export type SpeechConfig={
   transport?:'volcengine-speech'|'openai-compat'
   appid?:string

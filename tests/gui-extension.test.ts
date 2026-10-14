@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { applyGuiToolSelection, parseSessionMetadata } from '../src-tauri/resources/gui-extension'
 import { enableFastSearchTools, FAST_SEARCH_TOOLS } from '../src-tauri/resources/search-tools'
+import { enableWebSearchTool, formatWebSearchResult, resolveWebSearchSettings, webSearchRequest, WEB_SEARCH_TOOL } from '../src-tauri/resources/web-search'
 
 describe('agent-generated session metadata', () => {
   test('accepts compact titles and supported semantic icons', () => {
@@ -50,5 +51,45 @@ describe('fast search tools', () => {
   test('运行时没注册的工具跳过', () => {
     const { pi } = fake(['grep'], ['read'])
     expect(enableFastSearchTools(pi)).toEqual(['grep'])
+  })
+})
+
+describe('Expand web search tool', () => {
+  test('defaults to an enabled Expand provider without exposing a key', () => {
+    expect(resolveWebSearchSettings(null)).toEqual({
+      enabled: true,
+      baseUrl: 'https://api.expand.ai',
+      providerId: 'expand',
+      searchUrl: 'https://www.bing.com/search?q=',
+    })
+  })
+
+  test('builds the three supported modes', () => {
+    const settings = resolveWebSearchSettings(null)
+    expect(webSearchRequest(settings, 'search', { query: 'pi coding agent' })).toEqual({
+      url: 'https://api.expand.ai/v1/fetch?include=',
+      body: { url: 'https://www.bing.com/search?q=pi%20coding%20agent' },
+    })
+    expect(webSearchRequest(settings, 'fetch', { url: 'https://example.com/docs' }).body).toEqual({ url: 'https://example.com/docs' })
+    expect(webSearchRequest(settings, 'highlights', { url: 'https://example.com/docs', query: 'authentication', maxResults: 3, minScore: 0.4 }).body).toMatchObject({
+      url: 'https://example.com/docs',
+      highlights: { query: 'authentication', maxResults: 3, minScore: 0.4 },
+    })
+  })
+
+  test('keeps web search active by default', () => {
+    let active = ['read']
+    const pi = {
+      getAllTools: () => [{ name: WEB_SEARCH_TOOL }],
+      getActiveTools: () => active,
+      setActiveTools: (names: string[]) => { active = names },
+    }
+    expect(enableWebSearchTool(pi)).toBe(true)
+    expect(active).toEqual(['read', WEB_SEARCH_TOOL])
+    expect(enableWebSearchTool(pi)).toBe(false)
+  })
+
+  test('bounds fetched Markdown while retaining the mode label', () => {
+    expect(formatWebSearchResult('docs', 'result', 3)).toBe('Expand Web Search：docs\n\nres\n\n[结果过长，已截断]')
   })
 })

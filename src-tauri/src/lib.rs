@@ -24,6 +24,7 @@ mod git;
 mod github_inbox;
 mod gitlab;
 mod image_config;
+mod web_search;
 mod speech;
 mod media;
 mod pty_term;
@@ -321,6 +322,9 @@ pub fn run() {
             image_config::image_config,
             image_config::save_image_config,
             image_config::save_image_api_key,
+            web_search::web_search_config,
+            web_search::save_web_search_config,
+            web_search::save_web_search_api_key,
             speech::speech_config,
             speech::save_speech_config,
             speech::save_speech_api_key,

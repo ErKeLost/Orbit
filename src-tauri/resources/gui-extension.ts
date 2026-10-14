@@ -8,6 +8,7 @@ import {registerWorkspace} from './workspace.ts'
 import {COMPUTER_USE_TOOL_NAMES,registerComputerUseMode} from './computer-use/mode.ts'
 import {providerToolChars} from './context-payload.ts'
 import {enableFastSearchTools,FAST_SEARCH_GUIDELINE} from './search-tools.ts'
+import {enableWebSearchTool,registerWebSearch,resolveWebSearchSettings} from './web-search.ts'
 // Pi official docs/extensions.md: registerCommand, getAllTools, setActiveTools,
 // ExtensionCommandContext.navigateTree and setLabel. Loaded only by this GUI.
 export const SESSION_META_TYPE='pi-gui-session-meta'
@@ -600,10 +601,13 @@ export function validateCall(settings:ImageSettings,kind:string,modelId:string,i
 
 const MODELS_CONFIG_PATH=join(homedir(),'.pi/agent/models.json')
 const AUTH_CONFIG_PATH=join(homedir(),'.pi/agent/auth.json')
+const WEB_SEARCH_CONFIG_PATH=join(homedir(),'.pi/agent/web-search.json')
 
 function readJsonFile(path:string):unknown{
   try{return JSON.parse(readFileSync(path,'utf8'))}catch{return null}
 }
+
+function readWebSearchSettings(){return resolveWebSearchSettings(readJsonFile(WEB_SEARCH_CONFIG_PATH))}
 
 /**
  * 每一个「值得问一次它有没有出图模型」的 provider。
@@ -834,6 +838,7 @@ export default async function (pi: ExtensionAPI) {
   registerSubagentTools(pi)
   registerWorkspace(pi)
   registerImages(pi)
+  registerWebSearch(pi,{readConfig:readWebSearchSettings,authPath:AUTH_CONFIG_PATH})
   pi.on('before_provider_request',event=>{latestProviderToolChars=providerToolChars(event.payload)})
   // 搜索类工具的提示词引导：`grep` 激活后 pi 自己的「用 bash 搜索」规则会消失，
   // 这里再明确一次，手动关掉内置 grep 时也不至于退回 `grep -r`。
@@ -924,7 +929,7 @@ export default async function (pi: ExtensionAPI) {
     }
     throw new Error(`未知的媒体操作 ${action}`)
   }})
-  pi.on('session_start',(_event,ctx)=>{enableFastSearchTools(pi);publishCapabilities(ctx)})
+  pi.on('session_start',(_event,ctx)=>{enableFastSearchTools(pi);enableWebSearchTool(pi);publishTools(ctx);publishCapabilities(ctx)})
   pi.on('mcp_servers_change',async(_event,ctx)=>{publishMcp(ctx);publishCapabilities(ctx)})
   pi.on('session_info_changed',async(event,ctx)=>ctx.ui.setStatus(SESSION_NAME_STATUS,JSON.stringify({name:event.name??null})))
   pi.on('cache_warming_decision',async(event,ctx)=>ctx.ui.setStatus(CACHE_STATUS,JSON.stringify({action:event.action,warmCost:event.warmCost,missCost:event.missCost,continuationProbability:event.continuationProbability})))
