@@ -78,6 +78,7 @@ type Props = {
   onStageFile?: (id: string) => void;
   onDiscardFile?: (id: string) => void;
   onStageHunk?: (id: string, pos: number) => void;
+  onFileVisibility?: (id: string, visible: boolean) => void;
 };
 
 export function UnifiedDiffView({
@@ -94,6 +95,7 @@ export function UnifiedDiffView({
   onStageFile,
   onDiscardFile,
   onStageHunk,
+  onFileVisibility,
 }: Props) {
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const colorScheme = useColorScheme();
@@ -268,6 +270,7 @@ export function UnifiedDiffView({
               onStageFile={onStageFile}
               onDiscardFile={onDiscardFile}
               onStageHunk={onStageHunk}
+              onFileVisibility={onFileVisibility}
               bindRef={bindFileRef}
             />
           ))}
@@ -296,6 +299,7 @@ type FileSectionProps = {
   onStageFile?: (id: string) => void;
   onDiscardFile?: (id: string) => void;
   onStageHunk?: (id: string, pos: number) => void;
+  onFileVisibility?: (id: string, visible: boolean) => void;
   bindRef: (path: string, node: HTMLElement | null) => void;
 };
 
@@ -313,6 +317,7 @@ const FileSection = memo(function FileSection({
   onStageFile,
   onDiscardFile,
   onStageHunk,
+  onFileVisibility,
   bindRef,
 }: FileSectionProps) {
   const Chevron = expanded ? ChevronDown : ChevronRight;
@@ -322,6 +327,11 @@ const FileSection = memo(function FileSection({
   const [tokens, setTokens] = useState<Map<UnifiedLine, SyntaxToken[]> | null>(
     null,
   );
+
+  useEffect(() => {
+    onFileVisibility?.(file.id, expanded && (near || focused));
+    return () => onFileVisibility?.(file.id, false);
+  }, [expanded, file.id, focused, near, onFileVisibility]);
 
   useEffect(() => {
     if (!expanded || !near) return;
@@ -472,6 +482,7 @@ function equalFileSectionProps(
     previous.onStageFile === next.onStageFile &&
     previous.onDiscardFile === next.onDiscardFile &&
     previous.onStageHunk === next.onStageHunk &&
+    previous.onFileVisibility === next.onFileVisibility &&
     previous.bindRef === next.bindRef
   );
 }

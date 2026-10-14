@@ -1,27 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertCircle, Loader } from "../../../shared/ui/icons";
 import {
   gitCommitFileDiff,
   gitCommitFiles,
   type GitChangedFile,
 } from "../../../platform/tauri/fs";
-import { forEachConcurrent } from "../../../shared/lib/concurrent";
-import { buildUnifiedFile, type UnifiedFileDiff } from "../model/unifiedDiff";
+import { useLazyFileDiffs } from "../hooks/useLazyFileDiffs";
 import { UnifiedDiffView, type UnifiedDiffFileModel } from "./UnifiedDiffView";
 
 type Props = {
   cwd: string;
   sha: string;
 };
-
-type LoadedDiff = {
-  binary: boolean;
-  tooLarge: boolean;
-  unified: UnifiedFileDiff | null;
-  error?: string;
-};
-
-const DIFF_LOAD_CONCURRENCY = 4;
 
 /**
  * 单个历史提交的整版审阅：列出该提交触及的文件，并发的把每个文件的
@@ -30,55 +20,26 @@ const DIFF_LOAD_CONCURRENCY = 4;
  */
 export function CommitDiffView({ cwd, sha }: Props) {
   const [files, setFiles] = useState<GitChangedFile[] | null>(null);
-  const [diffs, setDiffs] = useState<Map<string, LoadedDiff>>(new Map());
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!cwd || cwd === "~" || !sha) {
       setFiles([]);
-      setDiffs(new Map());
       return;
     }
 
     let disposed = false;
     let generation = 0;
     setFiles(null);
-    setDiffs(new Map());
 
     const run = () => {
       const current = ++generation;
       void gitCommitFiles(cwd, sha)
-        .then(async (listed) => {
+        .then((listed) => {
           if (disposed || current !== generation) return;
           setFiles(listed);
-          setDiffs(new Map());
-          setError(null);
-          await forEachConcurrent(
-            listed,
-            DIFF_LOAD_CONCURRENCY,
-            async (file) => {
-              let loaded: LoadedDiff;
-              try {
-                const diff = await gitCommitFileDiff(cwd, sha, file.relative);
-                const unified = !diff.binary && !diff.tooLarge ? buildUnifiedFile(diff.original, diff.current) : null;
-                loaded = { binary: diff.binary, tooLarge: diff.tooLarge, unified };
-              } catch (caught: unknown) {
-                loaded = {
-                  binary: false,
-                  tooLarge: false,
-                  unified: null,
-                  error: caught instanceof Error ? caught.message : String(caught),
-                };
-              }
-              if (disposed || current !== generation) return;
-              setDiffs((existing) => {
-                const next = new Map(existing);
-                next.set(file.relative, loaded);
-                return next;
-              });
-            },
-            () => !disposed && current === generation,
-          );
+              setError(null);
+
         })
         .catch((caught: unknown) => {
           if (disposed || current !== generation) return;
@@ -92,6 +53,12 @@ export function CommitDiffView({ cwd, sha }: Props) {
       disposed = true;
     };
   }, [cwd, sha]);
+
+  const listedIds = useMemo(() => new Set(files?.map((file) => file.relative) ?? []), [files]);
+  const loadFile = useCallback((id: string) => listedIds.has(id)
+    ? gitCommitFileDiff(cwd, sha, id)
+    : Promise.resolve(undefined), [cwd, sha, listedIds]);
+  const { diffs, onFileVisibility } = useLazyFileDiffs(files, loadFile);
 
   const models = useMemo<UnifiedDiffFileModel[]>(() => {
     if (!files) return [];
@@ -148,5 +115,5 @@ export function CommitDiffView({ cwd, sha }: Props) {
     );
   }
 
-  return <UnifiedDiffView files={models} totals={totals} />;
+  return <UnifiedDiffView files={models} totals={totals} onFileVisibility={onFileVisibility} />;
 }

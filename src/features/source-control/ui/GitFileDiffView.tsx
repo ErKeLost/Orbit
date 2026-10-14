@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { FileDiff, LoaderCircle } from "../../../shared/ui/icons";
 import { gitFileDiff, type GitFileDiffKind } from "../../../platform/tauri/fs";
-import { buildUnifiedFile } from "../model/unifiedDiff";
+import { buildUnifiedFileAsync } from "../model/asyncUnifiedDiff";
 import { UnifiedDiffView, type UnifiedDiffFileModel } from "./UnifiedDiffView";
 
 /**
@@ -16,17 +16,19 @@ export function GitFileDiffView({ cwd, path, kind }: { cwd: string; path: string
 
   const query = useQuery({
     queryKey: ["git", "file-diff", cwd, relative, kind],
-    queryFn: () => gitFileDiff(cwd, relative, kind),
+    queryFn: async ({ signal }) => {
+      const file = await gitFileDiff(cwd, relative, kind);
+      const built = file.binary || file.tooLarge ? null : await buildUnifiedFileAsync(file.original, file.current, signal);
+      return { binary: file.binary, tooLarge: file.tooLarge, built };
+    },
     staleTime: 0,
     gcTime: 0,
   });
 
   const file = query.data;
-  const original = file?.original;
-  const current = file?.current;
   const model = useMemo<UnifiedDiffFileModel | null>(() => {
-    if (!file || original == null || current == null) return null;
-    const built = buildUnifiedFile(original, current);
+    if (!file) return null;
+    const built = file.built;
     return {
       id: relative,
       path: relative,
@@ -34,14 +36,14 @@ export function GitFileDiffView({ cwd, path, kind }: { cwd: string; path: string
       binary: file.binary,
       tooLarge: file.tooLarge,
       emptyMessage:
-        !file.binary && !file.tooLarge && built.lines.length > 0 && built.additions + built.deletions === 0
+        !file.binary && !file.tooLarge && built != null && built.lines.length > 0 && built.additions + built.deletions === 0
           ? "没有差异"
           : undefined,
-      additions: built.additions,
-      deletions: built.deletions,
-      blocks: built.blocks,
+      additions: built?.additions ?? 0,
+      deletions: built?.deletions ?? 0,
+      blocks: built?.blocks ?? [],
     };
-  }, [file, original, current, relative]);
+  }, [file, relative]);
 
   if (query.isPending) {
     return (

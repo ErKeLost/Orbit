@@ -746,6 +746,16 @@ fn diff_index(root: &Path, include_sync: bool) -> GitDiffIndex {
     let files = index_files(root);
     let additions = files.iter().map(|file| file.additions).sum();
     let deletions = files.iter().map(|file| file.deletions).sum();
+    if !include_sync {
+        return GitDiffIndex {
+            branch,
+            head,
+            files,
+            additions,
+            deletions,
+            ..GitDiffIndex::default()
+        };
+    }
     let remote = git_remote_name(root);
     let upstream = branch
         .as_deref()
@@ -769,7 +779,6 @@ fn diff_index(root: &Path, include_sync: bool) -> GitDiffIndex {
         }
         head_pushed = git_run(root, &["branch", "-r", "--contains", "HEAD"]).is_some();
     }
-    let _ = include_sync;
     GitDiffIndex {
         branch,
         head,
