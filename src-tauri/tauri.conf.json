@@ -84,6 +84,7 @@
     },
     "resources": [
       "resources/gui-extension.ts",
+      "resources/search-tools.ts",
       "resources/context-payload.ts",
       "resources/workspace.ts",
       "resources/subagents",

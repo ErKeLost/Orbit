@@ -15,6 +15,7 @@ cpSync(resolve(root,'src-tauri/resources/computer-use'),resolve(resources,'compu
 cpSync(resolve(root,'src-tauri/resources/node_modules'),resolve(resources,'node_modules'),{recursive:true})
 cpSync(resolve(root,'src-tauri/resources/node-runtime'),resolve(resources,'node-runtime'),{recursive:true})
 cpSync(resolve(root,'src-tauri/resources/gui-extension.ts'),resolve(resources,'gui-extension.ts'))
+cpSync(resolve(root,'src-tauri/resources/search-tools.ts'),resolve(resources,'search-tools.ts'))
 cpSync(resolve(root,'src-tauri/resources/context-payload.ts'),resolve(resources,'context-payload.ts'))
 cpSync(resolve(root,'src-tauri/resources/workspace.ts'),resolve(resources,'workspace.ts'))
 const cli=resolve(resources,'pi-runtime/cli.js'),extension=resolve(resources,'gui-extension.ts'),runtimeNode=resolve(resources,'node-runtime',process.platform==='win32'?'node.exe':'node'),runtimeModules=resolve(resources,'node_modules')
