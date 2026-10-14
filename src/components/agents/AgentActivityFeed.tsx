@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { elapsedMs, formatAgentElapsed, hasRunningAgents, type AgentNode, type AgentSnapshot } from "../../lib/agents";
 import { Icon } from "../Icon";
+import { agentIcon, agentKind, KIND_LABELS, STATUS_LABELS } from "./agent-kind";
 import "./agent-activity.css";
 
 type AgentActivityFeedProps = {
@@ -8,23 +9,15 @@ type AgentActivityFeedProps = {
   onOpenAgent?: (agent: AgentNode) => void;
 };
 
-function agentIcon(agent: AgentNode) {
-  const text = `${agent.name} ${agent.task}`.toLowerCase();
-  if (/search|find|explore|inspect|分析|搜索|检查|查找/.test(text)) return "fluent-color:search-sparkle-24";
-  if (/read|repo|structure|file|folder|目录|文件|仓库|文档/.test(text)) return "fluent-color:document-folder-24";
-  if (/code|implement|edit|fix|代码|实现|修复|开发/.test(text)) return "fluent-color:code-block-24";
-  if (/test|verify|check|测试|验证/.test(text)) return "fluent-color:checkmark-circle-24";
-  if (/run|bash|command|执行|运行|命令/.test(text)) return "fluent-color:wrench-screwdriver-24";
-  if (/plan|coordinate|orchestrat|规划|协调/.test(text)) return "fluent-color:people-community-24";
-  if (agent.status === "failed") return "fluent-color:error-circle-24";
-  if (agent.status === "aborted") return "fluent-color:warning-24";
-  if (agent.status === "queued") return "fluent-color:clock-24";
-  if (agent.status === "completed") return "fluent-color:checkmark-circle-24";
-  return "fluent-color:lightbulb-24";
-}
-
 function AgentAvatar({ agent }: { agent: AgentNode }) {
-  return <span className="agent-feed-avatar" aria-hidden="true"><Icon name={agentIcon(agent)} /></span>;
+  const kind = agentKind(agent);
+  const title = [agent.name, KIND_LABELS[kind], STATUS_LABELS[agent.status], agent.model].filter(Boolean).join(" · ");
+  return (
+    <span className={`agent-feed-avatar is-${agent.status}`} data-kind={kind} title={title} aria-hidden="true">
+      <Icon name={agentIcon(agent)} />
+      <i className="agent-feed-badge" />
+    </span>
+  );
 }
 
 function statusText(agent: AgentNode) {

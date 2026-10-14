@@ -46,6 +46,7 @@ button.agent-feed-line:focus-visible { outline: 2px solid color-mix(in srgb, var
 }
 
 .agent-feed-avatar {
+  position: relative;
   display: grid;
   width: 14px;
   height: 14px;
@@ -54,6 +55,43 @@ button.agent-feed-line:focus-visible { outline: 2px solid color-mix(in srgb, var
 }
 
 .agent-feed-avatar svg { display: block; width: 14px; height: 14px; }
+
+/*
+ * Status sits *on* the kind glyph instead of replacing it: a worker's avatar
+ * keeps saying what it worked on while the corner badge says how it ended.
+ * The ring is painted with the panel colour so the dot reads as detached from
+ * the multicoloured fluent icon underneath it.
+ */
+.agent-feed-badge {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--color-background-base) 88%, transparent);
+}
+
+.agent-feed-line.is-running .agent-feed-badge {
+  display: block;
+  color: var(--color-accent);
+  animation: agent-feed-badge-pulse 1.6s ease-in-out infinite;
+}
+
+.agent-feed-line.is-queued .agent-feed-badge {
+  display: block;
+  color: color-mix(in srgb, var(--color-content) 55%, transparent);
+}
+
+.agent-feed-line.is-failed .agent-feed-badge { display: block; color: #f87171; }
+.agent-feed-line.is-aborted .agent-feed-badge { display: block; color: #fbbf24; }
+
+@keyframes agent-feed-badge-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.72); }
+}
 
 .agent-feed-copy {
   display: flex;
@@ -116,4 +154,5 @@ button.agent-feed-line:focus-visible { outline: 2px solid color-mix(in srgb, var
 
 @media (prefers-reduced-motion: reduce) {
   .agent-feed-shimmer { color: color-mix(in srgb, var(--color-content) 50%, transparent) !important; background: none; animation: none; }
+  .agent-feed-badge { animation: none !important; }
 }
