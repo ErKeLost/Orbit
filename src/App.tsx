@@ -24,7 +24,7 @@ import { SearchView } from "./features/search/SearchView";
 import { AutomationsView } from "./features/automations/AutomationsView";
 import { useAutomationScheduler } from "./features/automations/useAutomationScheduler";
 import { PaneDropHint, PaneSash, SessionPaneHeader } from "./features/shell/PaneChrome";
-import { layoutLeaves, layoutSashes, setSplitRatio as setSplitRatioLayout, type LayoutNode } from "./features/shell/paneLayout";
+import { layoutLeaves, layoutSashes, leafIds, removePane, setSplitRatio as setSplitRatioLayout, type LayoutNode } from "./features/shell/paneLayout";
 import { paneDropFromPoint, setTitleTabDrop, titleTabDropFromPoint, useTabDrop, type PaneDrop } from "./features/shell/paneDrop";
 import { useWorkspaceTabs, useWorkspaceTabsEffects } from "./features/shell/use-workspace-tabs";
 import { SessionScope } from "./features/shell/session-scope";
@@ -70,9 +70,27 @@ function WorkArea({ withSessions }: { withSessions: boolean }) {
   const tabDrop = useTabDrop();
   const paneContainerRef = useRef<HTMLDivElement | null>(null);
   const tree = previewLayout ?? layout;
-  const leaves = useMemo(() => layoutLeaves(tree), [tree]);
-  const sashes = useMemo(() => layoutSashes(tree), [tree]);
+  // 关掉最后一个文件面板后，编辑器叶子会留在布局里但什么都没有（panes 已被删）。
+  // 这种悬挂叶子不能占位置：先剪掉，剩下的面板才能真正合并到整块。
+  const renderTree = useMemo(() => {
+    let next = tree;
+    for (const id of leafIds(tree)) {
+      if (sessions[id] || (panes[id]?.files.length ?? 0) > 0) continue;
+      const pruned = removePane(next, id);
+      if (!pruned) return next;
+      next = pruned;
+    }
+    return next;
+  }, [tree, sessions, panes]);
+  const leaves = useMemo(() => layoutLeaves(renderTree), [renderTree]);
+  const sashes = useMemo(() => layoutSashes(renderTree), [renderTree]);
   const split = leaves.length > 1;
+  // 没有任何会话面板、也没有带文件的文件面板时（例如最后一个文件标签被关掉后
+  // 剩下一个悬挂的文件叶子，或首页的会话面板被关掉），回落到首页/新会话面，
+  // 而不是留一块黑。
+  const hasSessionPanes = Object.keys(sessions).length > 0;
+  const hasFileContent = Object.values(panes).some((pane) => pane.files.length > 0);
+  const emptyWorkspace = leaves.length === 0 || (!hasSessionPanes && !hasFileContent);
   // A pane a split just created slides in from the edge it took. The store
   // records that edge, so `data-pane-enter` is on the pane's first paint and
   // the animation starts from the offscreen keyframe (never a final-position
@@ -194,6 +212,16 @@ function WorkArea({ withSessions }: { withSessions: boolean }) {
       <MetricsSync />
       {panel === "chat" ? (
         <div ref={paneContainerRef} className="relative min-h-0 min-w-0 flex-1">
+          {emptyWorkspace ? (
+            <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col">
+              <SessionScope connectionId={workspaceConnectionId ?? ""}>
+                <div className="chat-pane-background relative isolate flex h-full min-h-0 min-w-0 flex-1 flex-col">
+                  <ChatPane onSubmitted={homeWorkspace ? tabs.promoteHome : undefined} />
+                </div>
+              </SessionScope>
+            </div>
+          ) : (
+          <>
           {leaves.map((entry) => {
             const dragging = paneDrag?.fromId === entry.id;
             const hint = paneDrag?.overId === entry.id ? paneDrag.edge : null;
@@ -266,6 +294,8 @@ function WorkArea({ withSessions }: { withSessions: boolean }) {
               onCancel={() => setPreviewLayout(null)}
             />
           ))}
+          </>
+          )}
         </div>
       ) : (
         <Panel />

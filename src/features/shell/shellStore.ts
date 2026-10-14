@@ -570,9 +570,12 @@ export const useShell = create<ShellState>((set, get) => {
       const state = get();
       const home = state.workspaces.find((workspace) => workspace.id === HOME_WORKSPACE_ID);
       if (!home || home.sessions[CHAT_PANE_ID]) return;
+      // 只剩悬挂的文件叶子（panes 已被删空）时直接回到单会话面板，
+      // 否则会在首页旁边留一块空的黑面板。
+      const hasPanes = Object.keys(home.panes).length > 0;
       set({ workspaces: state.workspaces.map((workspace) => workspace !== home ? workspace : {
         ...home,
-        layout: placeNewPane(home.layout, home.activePane, CHAT_PANE_ID, "bottom"),
+        layout: hasPanes ? placeNewPane(home.layout, home.activePane, CHAT_PANE_ID, "bottom") : leaf(CHAT_PANE_ID),
         sessions: { ...home.sessions, [CHAT_PANE_ID]: { connectionId: "" } },
         activePane: CHAT_PANE_ID,
       }) });

@@ -21,7 +21,7 @@ import {
   firstUserTitle,
   workspaceConnectionIds,
 } from "../../lib/rpc";
-import { HOME_WORKSPACE_ID, isHomeWorkspace, projectWorkspaceTabs, useShell, type WorkspaceTab } from "./shellStore";
+import { CHAT_PANE_ID, HOME_WORKSPACE_ID, isHomeWorkspace, projectWorkspaceTabs, useShell, type WorkspaceTab } from "./shellStore";
 
 /** 正在启动的连接，避免同一个槽位被并发 `show` 拉起两次。 */
 const starting = new Map<string, Promise<void>>();
@@ -477,6 +477,8 @@ export function useWorkspaceTabsEffects() {
   const cwd = useWorkspace((state) => state.cwd);
   const activeWorkspaceId = useShell((state) => state.activeWorkspaceId);
   const liveConnections = useWorkspace((state) => state.liveSessions.length);
+  // 首页是否还有会话面板。关掉/恢复它时要重跑首页那条 effect。
+  const homeHasSession = useShell((state) => Boolean(state.workspaces.find((item) => item.id === HOME_WORKSPACE_ID)?.sessions[CHAT_PANE_ID]));
 
   // 对账：任何一条活连接都必须有标签页持有（changeSession swap、后台任务开的
   // 连接都会落在这里被收养成后台标签页）。挂在 liveSessions 上，跑起来/结束都会触发。
@@ -494,20 +496,29 @@ export function useWorkspaceTabsEffects() {
   }, [connectionId, cwd, activeWorkspaceId]);
 
   // 首页是默认面，也是当前范围的新会话面：范围变了就换一条干净的连接。
+  // 首页的会话面板被关掉后（可能只剩一个悬挂的文件叶子），先把它恢复成新会话面，
+  // 否则 `WorkArea` 没有可画的内容——就是那块黑。
   useEffect(() => {
     if (activeWorkspaceId !== HOME_WORKSPACE_ID) return;
     const shell = useShell.getState();
     const home = shell.workspaces.find((item) => item.id === HOME_WORKSPACE_ID);
-    if (!home || Object.keys(home.sessions).length === 0) return;
-    if (cwd && home.cwd !== cwd) {
-      if (home.connectionId) void closeWorkspaceConnection(home.connectionId, "已切换范围").catch(() => undefined);
-      shell.setWorkspaceCwd(HOME_WORKSPACE_ID, cwd);
-      shell.bindWorkspaceConnection(HOME_WORKSPACE_ID, "");
+    if (!home) return;
+    // 首页的会话面板只有在「一个 tab 都不剩」时才自动补回来。还有文件面板时，
+    // 关掉就是关掉（文件面板可以独占工作区），不能又被 effect 顶回来。
+    if (Object.keys(home.sessions).length === 0 && Object.values(home.panes).every((pane) => pane.files.length === 0)) {
+      shell.restoreHomeSessionPane();
+    }
+    const next = useShell.getState().workspaces.find((item) => item.id === HOME_WORKSPACE_ID);
+    if (!next) return;
+    if (cwd && next.cwd !== cwd) {
+      if (next.connectionId) void closeWorkspaceConnection(next.connectionId, "已切换范围").catch(() => undefined);
+      useShell.getState().setWorkspaceCwd(HOME_WORKSPACE_ID, cwd);
+      useShell.getState().bindWorkspaceConnection(HOME_WORKSPACE_ID, "");
     }
     if (!cwd) return;
-    if (home.connectionId && hasWorkspaceConnection(home.connectionId) && connectionCwd(home.connectionId) === home.cwd) return;
+    if (next.connectionId && hasWorkspaceConnection(next.connectionId) && connectionCwd(next.connectionId) === next.cwd) return;
     void show(HOME_WORKSPACE_ID);
-  }, [activeWorkspaceId, cwd]);
+  }, [activeWorkspaceId, cwd, homeHasSession]);
 }
 
 export type { WorkspaceTab };
