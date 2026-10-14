@@ -8,6 +8,7 @@ import { Popover } from "../../shared/ui/Popover";
 import { Check, ChevronDown, Search } from "../../shared/ui/icons";
 import { ModelLogo } from "../../components/ModelMeta";
 import { EffortSlider } from "../../components/chat/EffortSlider";
+import { useSessionTarget } from "../shell/use-session-target";
 
 type ThinkingLevel = NonNullable<RpcSessionState["thinkingLevel"]>;
 
@@ -43,6 +44,10 @@ function ModelRow({ model, active, onSelect }: { model: Model; active: boolean; 
  */
 function ModelPickerImpl() {
   const project = useWorkspace((state) => state.cwd);
+  // 模型切换必须发到**这个面板自己的连接**：同一个项目可以有好几条会话连接，
+  // 只用 cwd 会被 `route(cwd)` 解析成 projectActive[cwd]（可能是后台那条），
+  // 结果前台面板的模型没变——就是那个「点了没反应」。
+  const target = useSessionTarget();
   const online = useWorkspace((state) => state.connection === "online");
   const streaming = useWorkspace((state) => state.transcript.running);
   const state = useWorkspace((workspace) => workspace.state);
@@ -50,13 +55,13 @@ function ModelPickerImpl() {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const models = useQuery({
-    queryKey: ["pi", "models", project],
-    queryFn: () => request<{ models: Model[] }>({ type: "get_available_models" }, 30000, project),
+    queryKey: ["pi", "models", project, target],
+    queryFn: () => request<{ models: Model[] }>({ type: "get_available_models" }, 30000, target),
     enabled: online,
   });
   const levels = useQuery({
-    queryKey: ["pi", "levels", project, state?.model?.provider, state?.model?.id],
-    queryFn: () => request<{ levels: ThinkingLevel[] }>({ type: "get_available_thinking_levels" }, 30000, project),
+    queryKey: ["pi", "levels", project, target, state?.model?.provider, state?.model?.id],
+    queryFn: () => request<{ levels: ThinkingLevel[] }>({ type: "get_available_thinking_levels" }, 30000, target),
     enabled: online,
   });
   const allModels = models.data?.models ?? emptyModels;
@@ -89,22 +94,22 @@ function ModelPickerImpl() {
       useWorkspace.getState().set({ state: { ...previous, thinkingLevel: command.level } });
     }
     // 模型同理，而且它会重起 Pi 进程：先把意图贴上，别停在旧模型上等确认。
-    if (command.type === "set_model") expectModel(project, { provider: command.provider, id: command.modelId });
+    if (command.type === "set_model") expectModel(target, { provider: command.provider, id: command.modelId });
     try {
-      await request(command, 30000, project);
-      const next = await request<typeof state>({ type: "get_state" }, 30000, project);
+      await request(command, 30000, target);
+      const next = await request<typeof state>({ type: "get_state" }, 30000, target);
       if (command.type === "set_model") {
         if (next?.model?.provider !== command.provider || next.model.id !== command.modelId) {
-          settleModel(project, next ?? undefined);
+          settleModel(target, next ?? undefined);
           throw new Error("Pi 没有确认模型切换");
         }
-        settleModel(project, next ?? undefined);
+        settleModel(target, next ?? undefined);
         await persistDefaultModel(command.provider, command.modelId);
         return;
       }
       useWorkspace.getState().set({ state: next });
     } catch (error) {
-      if (command.type === "set_model") settleModel(project, previous ?? undefined);
+      if (command.type === "set_model") settleModel(target, previous ?? undefined);
       else if (command.type === "set_thinking_level" && previous) useWorkspace.getState().set({ state: previous });
       report(error);
     }
@@ -166,7 +171,11 @@ function ModelPickerImpl() {
                     key={`${model.provider}/${model.id}`}
                     model={model}
                     active={state?.model?.provider === model.provider && state.model.id === model.id}
-                    onSelect={() => void choose({ type: "set_model", provider: model.provider, modelId: model.id })}
+                    onSelect={() => {
+                      // 选完就把菜单收起来：切模型要重起 Pi 进程，菜单干挂着会像“没反应”。
+                      dismiss();
+                      void choose({ type: "set_model", provider: model.provider, modelId: model.id });
+                    }}
                   />
                 ))}
               </section>
