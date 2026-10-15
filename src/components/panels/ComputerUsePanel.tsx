@@ -10,6 +10,7 @@ import {
   setComputerUseMode,
   testComputerUseDecision,
   type ComputerUseConfig,
+  type ComputerUseJevModel,
   type ComputerUseModel,
 } from "../../lib/rpc";
 import { Button, Input, Select, Switch } from "../UI";
@@ -19,6 +20,14 @@ import { SettingsGroup, SettingRow } from "./GeneralSettingsPanel";
 const MODEL_LABELS: Record<ComputerUseModel, string> = {
   jev: "Jev · TypeSafe",
   "clef-flash": "Clef-flash · Cloudflare（9B）",
+};
+
+// Both are served by the same SystemOne endpoint and cost $0.042/M input tokens
+// with free output; `jev-latest` still resolves to 1.13.0, so 1.14.0 is the
+// newest release and the default here.
+const JEV_MODEL_LABELS: Record<ComputerUseJevModel, string> = {
+  "jev-1.14.0": "Jev 1.14.0 · 最新（2026-10-14）",
+  "jev-1.13.0": "Jev 1.13.0 · 稳定（jev-latest 指向）",
 };
 
 function formatAnswer(answer: Record<string, unknown> | null): string {
@@ -63,7 +72,7 @@ export function ComputerUsePanel() {
   }
   useEffect(() => { if (desktop) void reload(); }, [desktop]);
 
-  async function patch(patchValue: Partial<Pick<ComputerUseConfig, "decisionModel" | "cloudflareAccountId" | "systemoneBaseUrl">>, label: string) {
+  async function patch(patchValue: Partial<Pick<ComputerUseConfig, "decisionModel" | "jevModel" | "cloudflareAccountId" | "systemoneBaseUrl">>, label: string) {
     setBusy(label);
     try {
       const next = await saveComputerUseConfig(patchValue);
@@ -129,6 +138,13 @@ export function ComputerUsePanel() {
           <option value="clef-flash">{MODEL_LABELS["clef-flash"]}</option>
         </Select>
       </SettingRow>
+      {jevSelected ? (
+        <SettingRow title="Jev 版本" description="别名 jev-latest 仍指向 1.13.0，这里按版本号固定；两个版本同价，输出 token 免费。">
+          <Select aria-label="Jev 版本" value={config?.jevModel ?? "jev-1.14.0"} disabled={busy !== null} onChange={event => void patch({ jevModel: event.target.value as ComputerUseJevModel }, "Jev 版本")}>
+            {(Object.keys(JEV_MODEL_LABELS) as ComputerUseJevModel[]).map(id => <option key={id} value={id}>{JEV_MODEL_LABELS[id]}</option>)}
+          </Select>
+        </SettingRow>
+      ) : null}
       <SettingRow title="连接测试" description={test ? test.text : "发一条真实的三选一决策请求，验证当前模型与凭据是否可用，并返回延迟与 token 用量。"}>
         <div className="settings-directory-actions">
           <span className="remote-settings-note">{keyReady ? "凭据就绪" : "缺少凭据"}</span>

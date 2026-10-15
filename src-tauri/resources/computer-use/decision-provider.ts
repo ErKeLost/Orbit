@@ -8,6 +8,24 @@ export type DecisionModel = "jev" | "clef-flash"
 
 const CLOUDFLARE_RUN_URL = "https://api.cloudflare.com/client/v4/accounts"
 
+/**
+ * Jev's pinned model. `getModels`-style listing only exposes the aliases, and
+ * `jev-latest` still points at the previous stable release, so the version is
+ * named here rather than left to the SDK default.
+ */
+export const DEFAULT_JEV_MODEL = "jev-1.14.0"
+
+/** Versions the settings page offers. TypeSafe accepts versioned IDs directly. */
+export const JEV_MODELS = ["jev-1.14.0", "jev-1.13.0"] as const
+
+const JEV_MODEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+
+/** The model sent to TypeSafe; malformed overrides fall back to the default. */
+export function configuredJevModel(): string {
+  const raw = process.env.ORBIT_CU_JEV_MODEL?.trim()
+  return raw && JEV_MODEL_PATTERN.test(raw) ? raw : DEFAULT_JEV_MODEL
+}
+
 export function configuredDecisionModel(): DecisionModel {
   const raw = process.env.ORBIT_CU_DECISION_MODEL?.trim().toLowerCase()
   // The 27B `clef` variant was retired from the selector; keep accepting the
@@ -78,7 +96,7 @@ export function createDecisionClient(loadJevKey: () => string): TypeSafeClient {
   const model = configuredDecisionModel()
   if (!isClefModel(model)) {
     const baseURL = process.env.ORBIT_CU_SYSTEMONE_BASE_URL?.trim()
-    return new TypeSafeClient({ apiKey: loadJevKey(), logLevel: "off", ...(baseURL ? { baseURL } : {}) })
+    return new TypeSafeClient({ apiKey: loadJevKey(), defaultModel: configuredJevModel(), logLevel: "off", ...(baseURL ? { baseURL } : {}) })
   }
   const accountId = loadCloudflareAccountId()
   const token = loadCloudflareToken()

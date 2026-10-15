@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { configuredDecisionModel, createDecisionClient, isClefModel } from "../src-tauri/resources/computer-use/decision-provider"
+import { configuredDecisionModel, configuredJevModel, createDecisionClient, isClefModel } from "../src-tauri/resources/computer-use/decision-provider"
 
-const ENV_KEYS = ["ORBIT_CU_DECISION_MODEL", "ORBIT_CU_SYSTEMONE_BASE_URL", "ORBIT_CF_ACCOUNT_ID", "ORBIT_CF_API_TOKEN_PATH", "CLOUDFLARE_API_TOKEN"] as const
+const ENV_KEYS = ["ORBIT_CU_DECISION_MODEL", "ORBIT_CU_JEV_MODEL", "ORBIT_CU_SYSTEMONE_BASE_URL", "ORBIT_CF_ACCOUNT_ID", "ORBIT_CF_API_TOKEN_PATH", "CLOUDFLARE_API_TOKEN"] as const
 
 function setEnv(patch: Partial<Record<(typeof ENV_KEYS)[number], string>>) {
   for (const key of ENV_KEYS) {
@@ -35,7 +35,18 @@ describe("computer use decision provider", () => {
     setEnv({})
     const client = createDecisionClient(() => "jev-key")
     expect(client.baseURL).toBe("https://api.typesafe.ai")
-    expect(client.defaultModel).toBe("jev-latest")
+    // `jev-latest` still resolves to 1.13.0, so the newest release is pinned.
+    expect(client.defaultModel).toBe("jev-1.14.0")
+  })
+
+  test("pins the Jev version and ignores malformed overrides", () => {
+    setEnv({ ORBIT_CU_JEV_MODEL: "jev-1.13.0" })
+    expect(configuredJevModel()).toBe("jev-1.13.0")
+    expect(createDecisionClient(() => "jev-key").defaultModel).toBe("jev-1.13.0")
+    setEnv({ ORBIT_CU_JEV_MODEL: "  ", })
+    expect(configuredJevModel()).toBe("jev-1.14.0")
+    setEnv({ ORBIT_CU_JEV_MODEL: "jev 1.14.0; rm -rf /" })
+    expect(configuredJevModel()).toBe("jev-1.14.0")
   })
 
   test("honors a custom SystemOne base URL for Jev", () => {

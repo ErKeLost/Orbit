@@ -624,6 +624,7 @@ fn apply_orbit_runtime_env(
         "ORBIT_CU_DECISION_MODEL",
         computer_use_decision_model(&computer_use),
     );
+    command.env("ORBIT_CU_JEV_MODEL", computer_use_jev_model(&computer_use));
     if let Some(account) = computer_use
         .get("cloudflareAccountId")
         .and_then(Value::as_str)
@@ -842,6 +843,11 @@ fn computer_use_config_path() -> Result<PathBuf, String> {
     Ok(agent_dir()?.join("computer-use.json"))
 }
 
+/// Jev's pinned model. TypeSafe takes versioned IDs even when `GET /v1/models`
+/// only lists the aliases, and `jev-latest` still points at the previous stable
+/// release, so the version is stored instead of the alias.
+const DEFAULT_JEV_MODEL: &str = "jev-1.14.0";
+
 fn cloudflare_token_path() -> Result<PathBuf, String> {
     Ok(agent_dir()?.join("cloudflare-api-token"))
 }
@@ -851,6 +857,7 @@ fn cloudflare_token_path() -> Result<PathBuf, String> {
 fn read_computer_use_config() -> Value {
     let mut config = json!({
         "decisionModel": "jev",
+        "jevModel": DEFAULT_JEV_MODEL,
         "cloudflareAccountId": "",
         "systemoneBaseUrl": "",
     });
@@ -875,6 +882,23 @@ fn computer_use_decision_model(config: &Value) -> String {
         Some("clef") | Some("clef-flash") => "clef-flash".into(),
         _ => "jev".into(),
     }
+}
+
+/// The model actually sent to TypeSafe. Unknown or malformed values fall back
+/// to the pinned default, so a hand-edited config cannot send an arbitrary
+/// string as the model.
+fn computer_use_jev_model(config: &Value) -> String {
+    config
+        .get("jevModel")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 64
+                && value.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        })
+        .unwrap_or(DEFAULT_JEV_MODEL)
+        .to_string()
 }
 
 fn cloudflare_api_token() -> Option<String> {
@@ -902,6 +926,7 @@ fn computer_use_config_view() -> Value {
     let config = read_computer_use_config();
     json!({
         "decisionModel": computer_use_decision_model(&config),
+        "jevModel": computer_use_jev_model(&config),
         "cloudflareAccountId": config.get("cloudflareAccountId").and_then(Value::as_str).unwrap_or(""),
         "systemoneBaseUrl": config.get("systemoneBaseUrl").and_then(Value::as_str).unwrap_or(""),
         "keys": {
@@ -922,7 +947,7 @@ pub fn computer_use_config() -> Result<Value, String> {
 pub fn save_computer_use_config(config: Value) -> Result<Value, String> {
     let mut current = read_computer_use_config();
     if let Some(object) = config.as_object() {
-        for key in ["decisionModel", "cloudflareAccountId", "systemoneBaseUrl"] {
+        for key in ["decisionModel", "jevModel", "cloudflareAccountId", "systemoneBaseUrl"] {
             if let Some(value) = object.get(key) {
                 current[key] = match value {
                     Value::String(text) => Value::String(text.trim().to_string()),
@@ -988,7 +1013,7 @@ pub async fn test_computer_use_decision() -> Result<Value, String> {
         let response = client
             .post(format!("{base}/v1/systemone"))
             .bearer_auth(key)
-            .json(&json!({ "model": "jev-latest", "state": state, "questions": questions }))
+            .json(&json!({ "model": computer_use_jev_model(&config), "state": state, "questions": questions }))
             .send()
             .await
             .map_err(|e| format!("Jev 请求失败：{e}"))?;
@@ -1007,7 +1032,7 @@ pub async fn test_computer_use_decision() -> Result<Value, String> {
         return Ok(json!({
             "ok": true,
             "provider": "jev",
-            "model": body.get("model").cloned().unwrap_or(json!("jev-latest")),
+            "model": body.get("model").cloned().unwrap_or(json!(computer_use_jev_model(&config))),
             "latencyMs": started.elapsed().as_millis() as u64,
             "answer": body.get("answers").cloned(),
             "usage": body.get("usage").cloned(),

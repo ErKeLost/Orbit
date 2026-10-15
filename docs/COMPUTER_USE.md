@@ -51,7 +51,10 @@ if a stale candidate survives into the current turn.
 backends, selected in Settings → 操作电脑 (stored in
 `~/.pi/agent/computer-use.json`):
 
-- **Jev (TypeSafe)** — the default; key at `~/.pi/agent/typesafe-api-key`.
+- **Jev (TypeSafe)** — the default; key at `~/.pi/agent/typesafe-api-key`. The
+  version is pinned by ID (`jev-1.14.0` by default, `jev-1.13.0` selectable in
+  the same page) because the `jev-latest` alias still resolves to 1.13.0;
+  `ORBIT_CU_JEV_MODEL` overrides it for a spawned session.
 - **Clef-flash (Cloudflare)** — Cloudflare's open 9B decision model on
   Workers AI; Account ID in the config, API Token at
   `~/.pi/agent/cloudflare-api-token`.
