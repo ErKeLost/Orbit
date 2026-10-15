@@ -1859,6 +1859,37 @@ fn write_mcp_config(path: &Path, config: &Value) -> Result<(), String> {
     Ok(())
 }
 
+/// `autoEnableCodemode` from an `mcp.json` root. Pi defaults it to `true`, which
+/// activates the `codemode` tool as soon as a server with `codemode` exposure
+/// connects; Orbit's default is off so codemode is opt-in through the
+/// Capabilities switch instead of appearing in every session.
+fn mcp_auto_codemode(config: &Value) -> bool {
+    config
+        .get("autoEnableCodemode")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+/// Write Orbit's default into an existing `mcp.json` that does not set
+/// `autoEnableCodemode`. An explicit user value is kept, and a missing file is
+/// left alone (no servers means nothing would be auto-activated). Returns
+/// whether the file changed.
+fn ensure_mcp_auto_codemode_default(dir: &Path) -> Result<bool, String> {
+    let path = mcp_config_path(dir);
+    if !path.exists() {
+        return Ok(false);
+    }
+    let mut root = read_mcp_config(&path)?;
+    let object = root.as_object_mut().ok_or("Pi mcp.json 不是有效配置对象")?;
+    if object.contains_key("autoEnableCodemode") {
+        return Ok(false);
+    }
+    object.insert("autoEnableCodemode".into(), Value::Bool(false));
+    let _ = fs::copy(&path, dir.join("mcp.json.pi-gui.bak"));
+    write_mcp_config(&path, &root)?;
+    Ok(true)
+}
+
 /// Server names with stored OAuth credentials, from Pi's `mcp-auth.json`.
 fn mcp_authenticated_servers(dir: &Path) -> Vec<String> {
     read_json_file(dir.join("mcp-auth.json"), "Pi mcp-auth.json")
@@ -1892,6 +1923,7 @@ pub fn list_mcp_servers() -> Result<Value, String> {
         "path": path,
         "servers": views,
         "authenticated": mcp_authenticated_servers(&dir),
+        "autoEnableCodemode": config.as_ref().map(mcp_auto_codemode).unwrap_or(false),
     }))
 }
 
@@ -1929,6 +1961,13 @@ pub fn save_mcp_server(name: String, config: Value) -> Result<Value, String> {
     if !root.is_object() {
         root = json!({});
     }
+    {
+        let object = root.as_object_mut().unwrap();
+        // Orbit 的默认值跟着第一次写入落地，之后由设置面板显式开关。
+        object
+            .entry("autoEnableCodemode")
+            .or_insert(Value::Bool(false));
+    }
     let servers = root
         .as_object_mut()
         .unwrap()
@@ -1964,6 +2003,26 @@ pub fn delete_mcp_server(name: String) -> Result<Value, String> {
     let _ = fs::copy(&path, dir.join("mcp.json.pi-gui.bak"));
     write_mcp_config(&path, &root)?;
     Ok(json!({"name": name, "deleted": true}))
+}
+
+#[tauri::command]
+pub fn set_mcp_auto_codemode(enabled: bool) -> Result<Value, String> {
+    let dir = agent_dir()?;
+    let path = mcp_config_path(&dir);
+    let mut root = if path.exists() {
+        let _ = fs::copy(&path, dir.join("mcp.json.pi-gui.bak"));
+        read_mcp_config(&path)?
+    } else {
+        json!({})
+    };
+    if !root.is_object() {
+        root = json!({});
+    }
+    root.as_object_mut()
+        .unwrap()
+        .insert("autoEnableCodemode".into(), Value::Bool(enabled));
+    write_mcp_config(&path, &root)?;
+    Ok(json!({"autoEnableCodemode": enabled}))
 }
 
 #[tauri::command]
@@ -2132,6 +2191,25 @@ mod mcp_config_tests {
         assert_eq!(mcp_server_view("remote", &json!({"url":"https://example.com/mcp"}))["transport"], "http");
         assert_eq!(mcp_server_view("broken", &json!({"args":[]}))["transport"], "invalid");
         assert_eq!(mcp_server_view("off", &json!({"command":"x","enabled":false}))["enabled"], false);
+    }
+
+    #[test]
+    fn codemode_is_off_unless_the_config_explicitly_opts_in() {
+        let dir = temporary_dir("mcp-codemode");
+        let path = mcp_config_path(&dir);
+        // 没有 mcp.json 就不写文件：没有服务器就没有东西会被自动激活。
+        assert!(!ensure_mcp_auto_codemode_default(&dir).unwrap());
+        assert!(!path.exists());
+        write_mcp_config(&path, &json!({"mcpServers":{"tempad-dev":{"command":"npx"}}})).unwrap();
+        assert!(ensure_mcp_auto_codemode_default(&dir).unwrap());
+        assert_eq!(read_mcp_config(&path).unwrap()["autoEnableCodemode"], false);
+        // 已经写过就不再改，用户显式打开的值更不会被覆盖。
+        assert!(!ensure_mcp_auto_codemode_default(&dir).unwrap());
+        write_mcp_config(&path, &json!({"autoEnableCodemode":true,"mcpServers":{}})).unwrap();
+        assert!(!ensure_mcp_auto_codemode_default(&dir).unwrap());
+        assert!(mcp_auto_codemode(&read_mcp_config(&path).unwrap()));
+        assert!(!mcp_auto_codemode(&json!({"mcpServers":{}})));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -2982,6 +3060,7 @@ pub async fn pi_connect(
         let path = project(&cwd)?;
         let runtime = RuntimePaths::resolve(&app, &path)?;
         repair_custom_model_costs(&runtime.agent_dir)?;
+        ensure_mcp_auto_codemode_default(&runtime.agent_dir)?;
         let pi = runtime.pi.clone();
         let node = runtime.node.clone();
         // Explicit executable paths also work when Finder's PATH lacks the Node version manager.

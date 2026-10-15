@@ -239,6 +239,7 @@ pub fn run() {
             bridge::list_mcp_servers,
             bridge::save_mcp_server,
             bridge::delete_mcp_server,
+            bridge::set_mcp_auto_codemode,
             bridge::mcp_config_location,
             bridge::get_gui_settings,
             bridge::set_gui_setting,
