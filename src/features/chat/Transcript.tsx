@@ -26,6 +26,8 @@ import {
   X,
 } from "../../shared/ui/icons";
 import { FileTypeIcon } from "../shell/FileTypeIcon";
+import { SiteLogo } from "./site-logo";
+import { resultSites, urlHost, urlOrigin } from "./web-search-site";
 import {
   buildPhases,
   formatWorkingDuration,
@@ -214,10 +216,15 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
   const [open, setOpen] = useState(false);
   const tool = tools[part.id ?? ""];
   const name = toolName(part, tools);
-  const { action, target, file } = toolLabel(part, tools);
+  const { action, target, file, web, href } = toolLabel(part, tools);
+  // A fetch names one site: its logo leads the row. A search only knows its
+  // query, so the *returned* sites' logos are appended once the result lands.
+  const siteOrigin = web && href ? urlOrigin(href) : undefined;
+  const siteHost = web && href ? urlHost(href) : undefined;
   const failed = Boolean(tool?.isError);
   const running = Boolean(tool?.running);
   const result = toolResultText(tool?.result);
+  const searched = useMemo(() => (web && !href && !failed ? resultSites(result) : []), [web, href, failed, result]);
   const request = part.argsText ?? JSON.stringify(part.arguments ?? {});
   const code = useMemo(
     () => (open ? getToolCodePresentation(name, part.arguments ?? {}, result, tool?.details) : {}),
@@ -247,8 +254,14 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
         </span>
         <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-[13px]">
           <span className={`shrink-0 font-sans text-sm ${actionTone}`}>{action}</span>
-          {target ? (
-            file ? (
+          {target || web ? (
+            web && href ? (
+              <span className={`-my-0.5 flex min-w-0 max-w-full items-center gap-1 rounded bg-content/6 px-1 py-0.5 group-hover:bg-content/10 ${targetTone}`} title={siteHost ? `${siteHost} · ${target}` : target}>
+                {siteOrigin ? <SiteLogo origin={siteOrigin} /> : null}
+                {siteHost ? <span className="shrink-0 font-sans text-[11px] text-content/45">{siteHost}</span> : null}
+                {target ? <span className="min-w-0 truncate">{target}</span> : null}
+              </span>
+            ) : file ? (
               <span className={`-my-0.5 flex min-w-0 max-w-full items-center gap-1 rounded bg-content/6 px-1 py-0.5 group-hover:bg-content/10 ${targetTone}`} title={target}>
                 <FileTypeIcon name={fileName} isDir={false} />
                 <span className="min-w-0 truncate">{target}</span>
@@ -258,6 +271,11 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
                 <span className="min-w-0 truncate">{target}</span>
               </span>
             )
+          ) : null}
+          {searched.length ? (
+            <span className="flex shrink-0 items-center gap-1 pl-0.5" title={searched.join(" · ")}>
+              {searched.map((host) => <SiteLogo key={host} origin={`https://${host}`} />)}
+            </span>
           ) : null}
           {additions || deletions ? (
             <span className="shrink-0 font-sans text-[11px] font-semibold tabular-nums">

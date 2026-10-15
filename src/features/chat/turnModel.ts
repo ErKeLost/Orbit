@@ -342,8 +342,18 @@ export function formatWorkingDuration(elapsedMs: number | null | undefined, mode
   return who ? `${who} ${verb} for ${elapsed}` : `${verb} for ${elapsed}`;
 }
 
+/**
+ * A tool row: `<action> <target>`. `file` gives the target the file chip;
+ * `href` marks a web row, which gets a site-logo chip instead.
+ */
+export type ToolLabel = { action: string; target: string; file: boolean; /** Set on web rows, which carry a site-logo chip. */ web?: boolean; href?: string };
+
+/** The web-search tool, however the extension registers it. */
+const WEB_TOOL = /^(web[_-]?search|search[_-]?web|websearch)$/i;
+const WEB_MODES = new Set(["search", "fetch", "highlights"]);
+
 /** Tool row label: Orbit's "<Verb> <target>" grammar. */
-export function toolLabel(part: Part, tools: Record<string, Tool>) {
+export function toolLabel(part: Part, tools: Record<string, Tool>): ToolLabel {
   const name = toolName(part, tools);
   const args = part.arguments ?? {};
   const first = (fields: string[]) => {
@@ -354,9 +364,24 @@ export function toolLabel(part: Part, tools: Record<string, Tool>) {
     return "";
   };
   const kind = toolKind(name);
+  const web = WEB_TOOL.test(name) || (kind === "search" && typeof args.mode === "string" && WEB_MODES.has(args.mode));
+  if (web) {
+    // A query is not a file, and not a local pattern either: the row names the
+    // site it searched (the provider) or the page it fetched (the URL's host).
+    const url = first(["url"]);
+    const query = first(["query"]);
+    const reading = typeof args.mode === "string" && args.mode !== "search";
+    return {
+      action: reading ? "Fetch" : "Search",
+      target: reading ? url || query : query || url,
+      file: false,
+      web: true,
+      href: url || undefined,
+    };
+  }
   if (kind === "read") return { action: "Read", target: first(["path", "file_path", "filePath", "file", "url"]), file: true };
   if (kind === "edit") return { action: /write|create/i.test(name) ? "Write" : "Edit", target: first(["path", "file_path", "filePath", "file"]), file: true };
-  if (kind === "search") return { action: /list|ls/i.test(name) ? "List" : "Find", target: first(["pattern", "query", "glob", "path"]), file: false };
+  if (kind === "search") return { action: /list|ls/i.test(name) ? "List" : "Search", target: first(["pattern", "query", "glob", "path"]), file: false };
   if (kind === "command") return { action: "Run", target: first(["command", "cmd", "script"]), file: false };
   if (kind === "computer") return { action: "Computer", target: first(["goal", "app", "url", "target"]), file: false };
   return { action: name, target: first(["path", "query", "command", "input", "url", "name"]), file: false };
