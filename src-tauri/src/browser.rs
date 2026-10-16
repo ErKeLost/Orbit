@@ -333,15 +333,15 @@ pub fn launch_args(profile: &Path, url: &str) -> Vec<String> {
     ]
 }
 
-/// Origins allowed to open the DevTools socket.
-///
-/// Deliberately a list and not `*`: the port is loopback-only, but `*` would
-/// let any page in the user's *other* browser attach to the profile this one
-/// holds. Extend with `ORBIT_BROWSER_ALLOW_ORIGINS` when a dev server runs
-/// somewhere else.
-
-/// The scale Chrome rasters at. 2 matches a Retina display; lowering it trades
-/// sharpness for smaller frames.
+// Origins allowed to open the DevTools socket.
+//
+// Deliberately a list and not `*`: the port is loopback-only, but `*` would
+// let any page in the user's *other* browser attach to the profile this one
+// holds. Extend with `ORBIT_BROWSER_ALLOW_ORIGINS` when a dev server runs
+// somewhere else.
+//
+// The scale Chrome rasters at. 2 matches a Retina display; lowering it trades
+// sharpness for smaller frames.
 
 /// The pid of a Chrome that holds this profile while no session file points at
 /// it: the launcher was killed, the machine slept, or the session file was
