@@ -368,26 +368,60 @@ fn orphan_owner(_profile: &Path) -> Option<i32> {
     None
 }
 
+/// Ask a process to stop, politely or forcefully.
+///
+/// Unix has signals, and SIGTERM is what lets Chrome flush its profile on the
+/// way out. Windows has no SIGTERM: the same request is `taskkill` without `/F`
+/// (post the close message), and `/F` for the version that does not ask.
+#[cfg(unix)]
+fn stop_process(pid: i32, force: bool) {
+    unsafe {
+        libc::kill(pid, if force { libc::SIGKILL } else { libc::SIGTERM });
+    }
+}
+
+#[cfg(windows)]
+fn stop_process(pid: i32, force: bool) {
+    let mut command = Command::new("taskkill");
+    command.args(["/PID", &pid.to_string(), "/T"]);
+    if force {
+        command.arg("/F");
+    }
+    let _ = command.output();
+}
+
+/// Whether a pid is still there, which Unix answers with signal 0.
+///
+/// Windows has no such question, so there `false` means "stop waiting" rather
+/// than "it is gone". Nothing on Windows depends on the answer: `orphan_owner`
+/// cannot identify a browser there in the first place, and the wait in `close`
+/// polls Chrome's own debug port instead.
+#[cfg(unix)]
+fn process_alive(pid: i32) -> bool {
+    (unsafe { libc::kill(pid, 0) }) == 0
+}
+
+#[cfg(not(unix))]
+fn process_alive(_pid: i32) -> bool {
+    false
+}
+
 /// Stop an orphaned Orbit browser and clear the lock it left behind, so the next
 /// launch is a normal launch instead of "Chrome exited with 21" forever.
 fn clear_orphan(profile: &Path) {
     let Some(pid) = orphan_owner(profile) else {
         return;
     };
-    unsafe {
-        libc::kill(pid, libc::SIGTERM);
-    }
+    stop_process(pid, false);
     let deadline = Instant::now() + Duration::from_secs(4);
     while Instant::now() < deadline {
-        if unsafe { libc::kill(pid, 0) } != 0 {
+        if !process_alive(pid) {
             break;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    if unsafe { libc::kill(pid, 0) } == 0 {
-        unsafe {
-            libc::kill(pid, libc::SIGKILL);
-        }
+    if process_alive(pid) {
+        stop_process(pid, true);
         std::thread::sleep(Duration::from_millis(300));
     }
     clear_stale_singleton(profile);
@@ -407,7 +441,7 @@ fn clear_stale_singleton(profile: &Path) {
         .rsplit('-')
         .next()
         .and_then(|value| value.parse::<i32>().ok());
-    let alive = pid.is_some_and(|pid| unsafe { libc::kill(pid, 0) } == 0);
+    let alive = pid.is_some_and(process_alive);
     if alive {
         return;
     }
@@ -551,11 +585,10 @@ pub fn close() -> Result<(), String> {
         return Ok(());
     };
     clear_session();
-    // Ask nicely, then make sure. Chrome shuts down its own profile cleanly on
-    // SIGTERM, which is what keeps logins in the profile usable next time.
-    unsafe {
-        libc::kill(session.pid as i32, libc::SIGTERM);
-    }
+    // Ask nicely, then make sure. Chrome flushes its profile on the way out —
+    // SIGTERM on Unix, a posted close on Windows — which is what keeps logins in
+    // the profile usable next time.
+    stop_process(session.pid as i32, false);
     // Chrome flushes its profile on the way out; killing it too early leaves
     // the singleton files that make the next launch refuse to start.
     let deadline = Instant::now() + Duration::from_secs(8);
@@ -565,9 +598,7 @@ pub fn close() -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    unsafe {
-        libc::kill(session.pid as i32, libc::SIGKILL);
-    }
+    stop_process(session.pid as i32, true);
     if let Ok(profile) = profile_dir() {
         clear_stale_singleton(&profile);
     }
