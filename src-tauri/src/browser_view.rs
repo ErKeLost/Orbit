@@ -191,6 +191,11 @@ fn with_tab_status(host: &BrowserViewHost, tab: &str) -> Result<BrowserViewStatu
 // ---------------------------------------------------------------------------
 
 /// Create the tab's view on first use, then keep it where the tab says it is.
+///
+/// `add_child`, `set_position`, `set_size` and show/hide are desktop window
+/// APIs, so the phone gets the stub below rather than a module that cannot
+/// build.
+#[cfg(desktop)]
 #[tauri::command(async)]
 pub fn browser_view_sync(
     app: AppHandle,
@@ -318,6 +323,20 @@ pub fn browser_view_sync(
     Ok(state.status())
 }
 
+/// A phone has no browser column, so there is no view to place.
+#[cfg(mobile)]
+#[tauri::command(async)]
+pub fn browser_view_sync(
+    _app: AppHandle,
+    _host: tauri::State<'_, BrowserViewHost>,
+    _tab: String,
+    _rect: ViewRect,
+    _url: Option<String>,
+    _visible: Option<bool>,
+) -> Result<BrowserViewStatus, String> {
+    Err("手机端没有浏览器栏".to_string())
+}
+
 /// Tell the app which browser tab is in front: the agent's channel follows it.
 #[tauri::command(async)]
 pub fn browser_view_activate(host: tauri::State<'_, BrowserViewHost>, tab: String) -> Result<(), String> {
@@ -392,6 +411,7 @@ pub fn browser_view_status(host: tauri::State<'_, BrowserViewHost>, tab: String)
     status(&host, &tab)
 }
 
+#[cfg(desktop)]
 #[tauri::command(async)]
 pub fn browser_view_close(_app: AppHandle, host: tauri::State<'_, BrowserViewHost>, tab: String) -> Result<(), String> {
     let mut tabs = host.tabs.lock().map_err(|error| error.to_string())?;
@@ -404,6 +424,17 @@ pub fn browser_view_close(_app: AppHandle, host: tauri::State<'_, BrowserViewHos
         state.view.close().map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+/// Same as `browser_view_sync`: closing is a desktop view operation.
+#[cfg(mobile)]
+#[tauri::command(async)]
+pub fn browser_view_close(
+    _app: AppHandle,
+    _host: tauri::State<'_, BrowserViewHost>,
+    _tab: String,
+) -> Result<(), String> {
+    Err("手机端没有浏览器栏".to_string())
 }
 
 /// What a tab's own page says about itself, plus its load flag.
