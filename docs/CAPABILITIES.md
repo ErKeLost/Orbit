@@ -28,6 +28,7 @@
 | 扩展 select / confirm / input / editor | GUI 对话框，以 id 返回 extension_ui_response |
 | 扩展 notify / setStatus / setWidget / setTitle / set_editor_text | 提示、状态、文本组件、标题、编辑器 |
 | 项目文件引用 | Composer 的 `@` 文件索引；从当前工作区筛选路径并插入引用 |
+| 提示词联想（ghost text） | `gui-suggest` 扩展命令，用**会话自己的模型**，主题强调色的幽灵文字，**Tab / →** 采纳、**Esc** 忽略：只在**回合结束**且输入框为空时，按**当前对话**猜「你下一句想说什么」（`turn` 原样回传，用户一旦发出下一句，上一轮的猜测就自动不匹配）。**打字永远不调模型**：只有 agent 每次 run 结束时产生一次联想。**一轮只调一次**：按「第几次回合结束」计数（不是按 `turnKey`，那个会在 settle 后再抖一次），分屏时再由模块级 `claimTurnSuggestion` 认领一次；切会话、开关面板、把草稿删回空白都不再付钱。prompt 结构沿袭 pi 自己的压缩 agent：system 只讲角色与禁令，数据包在 `<conversation>` / `<draft>` 标签里，指令放最后用 `<text></text>` 给输出骨架，回答再过 `suggestionFailure` 闸门（截断 / 报错 / 想调工具一律不用）。上下文序列化与 pi 的 `serializeConversation` 逐字段同形：`[User]:` / `[Assistant thinking]:` / `[Assistant]:` / `[Assistant tool calls]: name(k=v)` / `[Tool result]:`，工具结果**截取而不是整条带上**（留头 + `[... N more characters truncated]`，即 pi 的 `truncateForSummary`），整段只留最后 1600 字（每条调用参数 160 字上限、**每条消息最多列 2 个调用**）。「碰过哪些文件」另交给 pi 的 `computeFileLists` + `formatFileOperations`：去重排序的 `<read-files>` / `<modified-files>` 清单不占那 1600 字窗口，所以旧轮次掉出去时文件上下文不会跟着没。设置持久化在 `orbit.promptSuggestion`，输入框 `+` 菜单可关。逻辑见 `src/features/chat/promptSuggestion.ts` 与 `gui-extension.ts` |
 | 文件夹视图 | 目录是独立的一种视图，不再掉进文本分支。`file_meta` 的 `isDir` 是权威答案（同时保留标签页从文件树带来的 `isDir`，避免常见情况多一次往返），`list_dir` 提供一级列表。面包屑按工作区收拢、过深折叠；分区为文件夹 / 图片瀑布 / 其余文件（名称·大小·时间）。图片用 `<img>` + asset protocol + `loading="lazy"`，不用 canvas：WebView 自己流式读盘并在主线程外解码，`content-visibility` 和多图层都比不上它。手机端没有 asset protocol，退化为图标。路径不存在时显示「文件不存在」而不是 `EOS error 2`。分组与排序是纯函数，见 `lib/directory.ts` 与 `tests/directory.test.ts` |
 | Bash 实时输出 | 监听 Pi `bash_execution_update`，显示增量输出、命令、退出码、取消和截断路径 |
 | 会话导入、分享、重命名、复制 | Pi 工具面板接入 `/import`、`/share`、`set_session_name`、`get_last_assistant_text` |
@@ -46,11 +47,15 @@
 | 屏幕通道（Screen） | 可选。手机端「屏幕」页请求后才启动。ScreenCaptureKit 采集（零拷贝 CVPixelBuffer）→ VideoToolbox 硬编 H.264（JPEG 为兜底）→ 单帧总线 → 独立 WebSocket（复用 token/E2EE/relay）→ 手机端 WebCodecs 解码到 canvas；输入经 `xa11y` 注入，与 `gui_task` 同一授权。最慢订阅者门控（保证 H.264 参考链不断）、跳号自动补关键帧、逐字节变化检测、单帧硬上限、带宽调节器（码率优先、只降不升过请求值）。需要 macOS「屏幕录制」授权。架构见 [SCREEN.md](SCREEN.md) |
 | 电脑操作（Computer Use） | 可选。Pi 只提供目标 App、整体 goal、本地文本槽和预算；Spotlight resolver 解析本地化 App 身份；Rust `ax_control` worker 负责 AX skeleton/drill、snapshot refs、事件驱动等待、动作和 post-state；决策模型每轮只在当前能力候选中选择 operation+target。默认不截图，只保留唯一生产后端。默认关闭；输入框旁开关或设置开启。有 API/CLI 时不要用。架构见 [COMPUTER_USE.md](COMPUTER_USE.md) |
 | 电脑操作决策模型 | 设置 → 操作电脑。Jev（TypeSafe）与 Cloudflare Clef-flash 两套后端都保留，共用同一 SystemOne 协议，可在配置页切换；同页保存 Jev Key、Cloudflare Account ID / API Token、SystemOne Base URL，并提供真实连接的延迟测试。Jev 版本按版本号固定（默认 `jev-1.14.0`，可选 `jev-1.13.0`），不依赖 `jev-latest` 别名。选择写入 `~/.pi/agent/computer-use.json`，重连项目后生效 |
+| 浏览器（Browser Use） | 可选。`browser_task` 驱动**真实的 Chrome**（独立进程、独立资料目录、headless 或可见窗口），不是 iframe、也不是 Tauri 子 webview：DOM 经 CDP 读取，点击/输入经 DevTools 的 `Input.*` 投递（可信事件）。一次请求给出操作 + 每个操作的目标（推测式并发），模型只能选页面上观察到的元素编号，永远不会产出选择器、坐标或脚本。决策过期则不执行、不计数；已交付的动作永不重试；不可撤销的步骤需要确认。字段值优先取 `textSlots`（决策模型只看用途，看不到值），没有就用运行**自己的模型**写一个（一次 Pi 一次性提问，只接受 `{"text":…}`，绝不编造个人信息，说不出就报 `needs_text`）。架构见 [BROWSER_USE.md](BROWSER_USE.md) |
+| 浏览器第三栏（BrowserDock） | **真实内核渲染**：`Window::add_child` 把一块 WKWebView 放进窗口（macOS），页面由系统直接绘制 —— 不是 iframe、不是帧流，文字与 app 同级清晰，滚动/选中/输入法/右键都是原生的。默认开启、四边可 dock、拖拽调大小、双击复位，切到整页设置界面也留在右侧；栏本身「跟着浏览器走」：agent 启动的 Chrome 会让栏自己出现，关掉栏只停止取帧、不会杀掉正在跑任务的浏览器。画面是 CDP screencast 帧（只在重绘时产生），点击坐标按 letterbox 反算，⌘A/⌘C/⌘V 走 Chrome 自己的编辑命令。页面的 alert/confirm/prompt 在栏底成一条横幅由用户处理。地址栏是 omnibox（不含点的词当搜索词，默认百度）；子视图不在任何 capability 里，网页碰不到 app 的命令，唯一通道是 app→页面的 `browser_view_eval`（读标题/地址/驱动页面）。**注意：agent 的 `browser_task` 仍跑在独立的 headless Chrome 上**（CDP 才能给 DOM 级决策与可信输入），把 agent 接到这一栏上是下一步 |
+| 浏览器内核与会话 | 依次发现 Chrome / Chromium / Brave / Edge / Vivaldi，或用 `ORBIT_BROWSER_BINARY` 指定；`ORBIT_BROWSER_HEADFUL=1` 用真实窗口（栏仍镜像同一个 tab）；`ORBIT_BROWSER_HOME` 整体挪走资料目录与 session.json。启动参数只写在 Rust 一处，扩展通过 `Orbit --browser-ensure` 复用同一套，因此栏和 agent 不会对「浏览器怎么跑」产生分歧。带 `--remote-allow-origins`（webview 必发 `Origin`，Chrome 默认拒登），内核 stderr 落在 `~/.pi/agent/browser/chrome.log`。远端命令边界里 `browser_open`/`browser_status`/`browser_close` 是显式排除项（手机没有这一栏） |
 | OAuth 登录、安装/更新/移除包、终端主题与快捷键设置 | 设置中的“打开 Pi 终端”；使用原始 Pi 功能 |
 | 自定义 TUI 组件与终端专有扩展 | 原始 Pi 终端入口；RPC 的 custom() 无可移植的图形表示 |
 
 ## 事实上的限制
 
+- Browser Use 的页面观察器支持常见 HTML/ARIA 控件，但不穿透 shadow root 与 iframe，也不支持 canvas 应用、文件上传、下载、嵌套滚动与任意键盘组件；没有输入法，中文请粘贴或走 `textSlots`。`DONE` 只是「模型认为页面满足了目标」，不是独立验证，工具结果会附上页面自己的可见文本供调用方核对。它不会绕过登录墙、付费墙或验证码，遇到就报 `blocked`。Jev 1.14 的图片与 Box 问题（图片内目标定位）尚未接入决策循环。
 - 这不是官方 Pi 桌面客户端，产品代码为本地自建 GUI。
 - RPC 文档明确指出 custom() 返回 undefined，多种终端 header/footer/editor 接口在 RPC 中为 no-op，主题 API 不可用。不能宣称任意第三方终端扩展都能原样显示在 React 中。
 - Pi 没有内置逐次工具审批；确认弹窗来自需要用户输入的扩展。本 GUI 不伪造内置审批能力。

@@ -613,6 +613,13 @@ fn apply_orbit_runtime_env(
         .env("ORBIT_PI_SOURCE", pi_source)
         .env("JITI_FS_CACHE", "false");
     command.env("ORBIT_PI_VERSION", pi_version);
+    // Browser Use: the Pi extension drives the same Chrome the dock shows, and
+    // it gets there by running this binary with `--browser-ensure` (browser.rs).
+    // The path travels explicitly because `tauri dev` and the bundled app have
+    // different locations, and the extension must not guess either.
+    if let Ok(executable) = std::env::current_exe() {
+        command.env("ORBIT_APP_BINARY", executable);
+    }
     if let Ok(key_path) = typesafe_key_path() {
         command.env("ORBIT_TYPESAFE_KEY_PATH", key_path);
     }

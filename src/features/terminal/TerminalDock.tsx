@@ -17,32 +17,55 @@ import {
   X,
 } from "../../shared/ui/icons";
 import { useShell, type DockPosition } from "../shell/shellStore";
-import { TerminalView } from "./TerminalView";
 
 /** Orbit's dock sizes (`projects/model/projectTerminal.ts`). */
 const DOCK_SIZE_DEFAULT: Record<DockPosition, number> = { top: 220, bottom: 220, left: 360, right: 360 };
 const VERTICAL_MIN = 88;
 const HORIZONTAL_MIN = 180;
 
-const SIDE_ITEMS: { id: DockPosition; label: string }[] = [
+const DOCK_SIDE_ITEMS: { id: DockPosition; label: string }[] = [
   { id: "bottom", label: "Dock Bottom" },
   { id: "top", label: "Dock Top" },
   { id: "left", label: "Dock Left" },
   { id: "right", label: "Dock Right" },
 ];
 
-function isVertical(side: DockPosition) {
+function isVerticalDock(side: DockPosition) {
   return side === "top" || side === "bottom";
 }
 
 function clampDockSize(side: DockPosition, value: number) {
-  const vertical = isVertical(side);
+  const vertical = isVerticalDock(side);
   const min = vertical ? VERTICAL_MIN : HORIZONTAL_MIN;
   const span = vertical ? window.innerHeight : window.innerWidth;
   const max = Math.max(min, Math.floor(span * 0.7));
   if (!Number.isFinite(value)) return DOCK_SIZE_DEFAULT[side];
   return Math.min(max, Math.max(min, Math.round(value)));
 }
+
+/** Where the drag handle sits: on the edge that faces the rest of the shell. */
+function dockSashClass(side: DockPosition) {
+  if (side === "top") return "absolute inset-x-0 -bottom-px z-10 h-1.5 cursor-row-resize touch-none";
+  if (side === "bottom") return "absolute inset-x-0 -top-px z-10 h-1.5 cursor-row-resize touch-none";
+  if (side === "left") return "absolute inset-y-0 -right-px z-10 w-1.5 cursor-col-resize touch-none";
+  return "absolute inset-y-0 -left-px z-10 w-1.5 cursor-col-resize touch-none";
+}
+
+function dockBorderClass(side: DockPosition) {
+  if (side === "top") return "border-b";
+  if (side === "bottom") return "border-t";
+  if (side === "left") return "border-r";
+  return "border-l";
+}
+
+/** A dock on the right or bottom grows as the pointer moves *towards* the content. */
+function dockSizeFromDrag(side: DockPosition, startSize: number, startPoint: number, point: number) {
+  const delta = point - startPoint;
+  const signed = side === "bottom" || side === "right" ? -delta : delta;
+  return clampDockSize(side, startSize + signed);
+}
+import { TerminalView } from "./TerminalView";
+
 
 function sideIcon(side: DockPosition) {
   if (side === "top") return PanelTop;
@@ -78,7 +101,7 @@ export function TerminalDock({ cwd, open }: { cwd: string; open: boolean }) {
   const sideButton = useRef<HTMLDivElement>(null);
   const drag = useRef<{ start: number; size: number } | null>(null);
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
-  const vertical = isVertical(side);
+  const vertical = isVerticalDock(side);
   const SideIcon = sideIcon(side);
   const HideIcon = hideIcon(side);
 
@@ -128,9 +151,7 @@ export function TerminalDock({ cwd, open }: { cwd: string; open: boolean }) {
   const onResizePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!drag.current) return;
     const point = vertical ? event.clientY : event.clientX;
-    const delta = point - drag.current.start;
-    const signed = side === "bottom" || side === "right" ? -delta : delta;
-    paint(clampDockSize(side, drag.current.size + signed));
+    paint(dockSizeFromDrag(side, drag.current.size, drag.current.start, point));
   };
 
   const onResizePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -143,23 +164,14 @@ export function TerminalDock({ cwd, open }: { cwd: string; open: boolean }) {
 
   if (!open) return null;
 
-  const sash =
-    side === "top"
-      ? "absolute inset-x-0 -bottom-px z-10 h-1.5 cursor-row-resize touch-none"
-      : side === "bottom"
-        ? "absolute inset-x-0 -top-px z-10 h-1.5 cursor-row-resize touch-none"
-        : side === "left"
-          ? "absolute inset-y-0 -right-px z-10 w-1.5 cursor-col-resize touch-none"
-          : "absolute inset-y-0 -left-px z-10 w-1.5 cursor-col-resize touch-none";
+  const sash = dockSashClass(side);
 
   return (
     <section
       data-project-terminal-dock=""
       aria-label="终端"
       style={vertical ? { height: size } : { width: size }}
-      className={`relative flex h-full min-h-0 min-w-0 shrink-0 flex-col bg-transparent ${
-        side === "top" ? "border-b" : side === "bottom" ? "border-t" : side === "left" ? "border-r" : "border-l"
-      } border-stroke`}
+      className={`relative flex h-full min-h-0 min-w-0 shrink-0 flex-col bg-transparent ${dockBorderClass(side)} border-stroke`}
     >
       <div
         role="separator"
@@ -254,7 +266,7 @@ export function TerminalDock({ cwd, open }: { cwd: string; open: boolean }) {
       </div>
       {menu ? (
         <PointMenu x={menu.x} y={menu.y} label="移动终端" width={180} onClose={() => setMenu(null)}>
-          {SIDE_ITEMS.map((item) => (
+          {DOCK_SIDE_ITEMS.map((item) => (
             <MenuItem
               key={item.id}
               onClick={() => {

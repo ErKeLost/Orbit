@@ -6,6 +6,7 @@ import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, McpServer
 import {registerSubagentTools,SUBAGENT_TOOL_NAMES} from './subagents/index.ts'
 import {registerWorkspace} from './workspace.ts'
 import {COMPUTER_USE_TOOL_NAMES,registerComputerUseMode} from './computer-use/mode.ts'
+import {BROWSER_USE_TOOL_NAMES,registerBrowserUseMode} from './browser-use/mode.ts'
 import {providerToolChars} from './context-payload.ts'
 import {enableFastSearchTools,FAST_SEARCH_GUIDELINE} from './search-tools.ts'
 import {enableWebSearchTool,registerWebSearch,resolveWebSearchSettings} from './web-search.ts'
@@ -13,7 +14,8 @@ import {enableWebSearchTool,registerWebSearch,resolveWebSearchSettings} from './
 // ExtensionCommandContext.navigateTree and setLabel. Loaded only by this GUI.
 export const SESSION_META_TYPE='pi-gui-session-meta'
 export const SESSION_ICONS=['code','bug','palette','magnifying-glass','book-open','terminal-window','globe','image-square','film-strip','music-notes','database','translate','list-checks','calendar-blank','rocket-launch','lightbulb','chats','chat-teardrop-text'] as const
-const COMPUTER_USE_TOOLS=new Set<string>(COMPUTER_USE_TOOL_NAMES)
+// Both modes own their own gating command, so neither belongs in the generic tool list.
+const COMPUTER_USE_TOOLS=new Set<string>([...COMPUTER_USE_TOOL_NAMES,...BROWSER_USE_TOOL_NAMES])
 type SessionIcon=(typeof SESSION_ICONS)[number]
 export function parseSessionMetadata(raw:string):{title:string;icon:SessionIcon}|null{
   const match=raw.match(/\{[\s\S]*\}/)
@@ -38,6 +40,202 @@ function contextBreakdown(pi: ExtensionAPI, providerChars: number | undefined) {
     toolChars: providerChars ?? pi.getAllTools().filter(tool => active.has(tool.name)).reduce((total, tool) => total + toolChars(tool), 0),
   }
 }
+/**
+ * Composer ghost text (「联想」). Codex 的提示词补全：把输入框里没写完的一句
+ * 交给会话自己的模型续一句，GUI 画在光标后面。纯计算留在这里，命令只负责
+ * 取模型和回传，方便单测。
+ *
+ * 两种补全共用同一条命令：
+ * * 草稿非空 —— 你正在打字，把这句话接完；
+ * * 草稿为空 —— 一轮刚结束，猜你接下来会说什么（带上 `turn`，用户一旦发出
+ *   下一句，上一轮的猜测必须自己作废）。
+ *
+ * 结构沿袭 pi 自己的压缩 agent（`core/compaction/compaction.js`）：
+ * system 只讲角色与禁令，数据一律包在标签里（`<conversation>` / `<draft>`），
+ * 真正的指令放在最后并用 EXACT format 给出输出骨架；对话必须先序列化成带
+ * `[User]:` / `[Assistant]:` 前缀的文本再塞进标签，否则模型会把它当成一段
+ * 聊天接着往下说。返回后过同一道闸门：截断的、报错的、想调工具的一律不用。
+ */
+export const SUGGEST_SYSTEM=`You are a composer completion assistant. You read a coding session and produce exactly one piece of text for the user's input box, following the format in the final instruction.
+
+Do NOT answer the conversation. Do NOT explain your reasoning. Do NOT write any sentence of your own around the answer. Output ONLY the <text></text> block the instruction asks for.`
+/** 上限按任务给：一句最长 60 字，中文一个字符可能占到两个 token。 */
+export const SUGGEST_MAX_TOKENS=200
+/**
+ * pi 的序列化预算是 token 级的（`reserveTokens`）；这里是同一思路的字符版：一次
+ * 补全不值得付整轮上下文的钱。整体只留最后这么多字。
+ */
+const CONVERSATION_MAX_CHARS=1600
+/**
+ * 单条工具结果 / thinking 的上限。pi 的 `truncateForSummary` 用的是 2000 字，那是
+ * 按它自己的上下文预算定的比例；这里是窗口的四分之一。关键不是数字，是**不是
+ * 整条塞进去**：超出部分丢掉，只留一句标明了截掉多少字的尾巴。
+ */
+const TOOL_RESULT_MAX_CHARS=400
+const THINKING_MAX_CHARS=400
+const TOOL_CALL_MAX_CHARS=160
+/**
+ * 一条 assistant 消息最多列几个调用。pi 的压缩 agent 根本不复述调用，它把
+ * `read`/`write`/`edit` 抽成一份文件清单（`computeFileLists`）。补全需要知道
+ * “在碰哪些文件”，但不需要读完每一次调用，两个够看懂这一轮在干什么。
+ */
+const TOOL_CALLS_PER_MESSAGE=2
+/** 续写草稿的指令。放在数据后面，用 EXACT format 给出输出骨架。 */
+export function continueInstructions(draft:string):string{return `# Instructions
+Complete the message the user is typing. The text already in the input box is:
+
+<draft>
+${draft}
+</draft>
+
+Output the continuation alone, wrapped in <text></text>, so that the draft and the output read as one sentence when joined.
+
+RULES:
+- CONTINUE, never repeat: the output is appended to the draft verbatim, so restating any part of the draft is wrong.
+- Same language and tone as the draft. At most one short clause, 60 characters or fewer.
+- Preserve file paths, identifiers and command names exactly as the draft spells them.
+- Do not introduce file paths, identifiers, URLs, names or numbers that are not already in the draft or the conversation.
+- If no continuation is clearly warranted, output an empty block: <text></text>
+
+Example: for the draft \`把测试\` a correct answer is <text>补上</text>; <text>把测试补上</text> is wrong because it repeats the draft.`}
+/** 猜下一句的指令。 */
+export const NEXT_INSTRUCTIONS=`# Instructions
+The agent has just finished a turn. Predict what the user will type next and output that sentence alone, wrapped in <text></text>.
+
+RULES:
+- Write the user's own instruction, exactly as the user would type it. Never ask the user a question and never describe yourself.
+- One sentence, 60 characters or fewer, in the language of the conversation.
+- Ground it in the turn that just finished: verify the change, take the next step, or finish what was left undone. Name the actual files, symbols or commands from the conversation when they are relevant.
+- Preserve file paths, identifiers and command names exactly as the conversation spells them.
+- Do not introduce file paths, identifiers, URLs, names or numbers that are not in the conversation.
+- If nothing sensible comes to mind, output an empty block: <text></text>
+
+Example: <text>把刚才的改动补上测试。</text>`
+type SessionContentBlock={type?:string;text?:string;thinking?:string;name?:string;arguments?:Record<string,unknown>}
+type SessionMessageShape={role?:string;content?:unknown;isError?:boolean}
+function squash(value:string):string{return value.replace(/\s+/g,' ').trim()}
+function clip(text:string,limit:number,side:'head'|'tail'='head'):string{
+  if(text.length<=limit)return text
+  const dropped=text.length-limit,body=side==='head'?text.slice(0,limit):text.slice(-limit)
+  return side==='head'?`${body}\n[... ${dropped} more characters truncated]`:`[... ${dropped} earlier characters truncated]\n${body}`
+}function blocksOf(message:SessionMessageShape):SessionContentBlock[]{return Array.isArray(message.content)?message.content as SessionContentBlock[]:[]}
+function textOf(message:SessionMessageShape):string{
+  if(typeof message.content==='string')return message.content
+  return blocksOf(message).filter(block=>block.type==='text').map(block=>String(block.text??'')).join(' ')
+}
+function thinkingOf(blocks:SessionContentBlock[]):string{
+  return blocks.filter(block=>block.type==='thinking').map(block=>String(block.thinking??'')).join('\n')
+}
+function toolCallsOf(blocks:SessionContentBlock[]):string{
+  const calls=blocks.filter(block=>block.type==='toolCall').map(block=>{
+    const args=Object.entries(block.arguments??{}).map(([key,value])=>`${key}=${JSON.stringify(value)}`).join(', ')
+    return `${String(block.name??'tool')}(${clip(args,TOOL_CALL_MAX_CHARS)})`
+  })
+  if(!calls.length)return ''
+  const shown=calls.slice(0,TOOL_CALLS_PER_MESSAGE)
+  const rest=calls.length-shown.length
+  return rest>0?`${shown.join('; ')}; …+${rest} more`:`${shown.join('; ')}`
+}
+// ---------------------------------------------------------------------------
+// File inventory, lifted from pi's compaction agent (`utils.js`): tool calls
+// collapse into a deduplicated, sorted list of what was read and what was
+// written/edited, formatted as XML. This is how the agent says “what happened”
+// without replaying every call and every result.
+// ---------------------------------------------------------------------------
+type FileOps={read:Set<string>;written:Set<string>;edited:Set<string>}
+function createFileOps():FileOps{return {read:new Set(),written:new Set(),edited:new Set()}}
+function addFileOp(toolName:string|undefined,args:Record<string,unknown>|undefined,ops:FileOps):void{
+  const path=typeof args?.path==='string'?args.path:undefined
+  if(!path)return
+  if(toolName==='read')ops.read.add(path)
+  else if(toolName==='write')ops.written.add(path)
+  else if(toolName==='edit')ops.edited.add(path)
+}
+/** 改过的文件不再算「只看过」，两边不重复。 */
+export function computeFileLists(ops:FileOps):{readFiles:string[];modifiedFiles:string[]}{
+  const modified=new Set([...ops.edited,...ops.written])
+  return {readFiles:[...ops.read].filter(file=>!modified.has(file)).sort(),modifiedFiles:[...modified].sort()}
+}
+export function formatFileOperations(readFiles:string[],modifiedFiles:string[]):string{
+  const sections:string[]=[]
+  if(readFiles.length>0)sections.push(`<read-files>\n${readFiles.join('\n')}\n</read-files>`)
+  if(modifiedFiles.length>0)sections.push(`<modified-files>\n${modifiedFiles.join('\n')}\n</modified-files>`)
+  return sections.length?`\n\n${sections.join('\n\n')}`:''
+}
+/**
+ * 会话 → 文本，与 pi 的 `serializeConversation` 同形：带角色前缀、thinking / 正文 /
+ * 工具调用分三行、工具结果**截取而不是整条带上**，整体只留最后 1600 字。
+ *
+ * 为什么一定要包成标签里的文本：pi 自己的注释——*"Serialize conversation to text so
+ * model doesn't try to continue it"*。传真实消息列表，模型会把最后一轮当成待续的
+ * 聊天；包进 `<conversation>` 它才当成数据读。
+ */
+export function suggestionConversation(ctx:ExtensionCommandContext):string{
+  const lines:string[]=[]
+  const ops=createFileOps()
+  for(const entry of ctx.sessionManager.getEntries()){
+    if(entry.type!=='message')continue
+    const message=entry.message as SessionMessageShape
+    if(message?.role==='user'){
+      const text=squash(textOf(message))
+      if(text)lines.push(`[User]: ${text}`)
+      continue
+    }
+    if(message?.role==='assistant'){
+      const blocks=blocksOf(message)
+      const thinking=squash(thinkingOf(blocks))
+      const text=squash(textOf(message))
+      if(thinking)lines.push(`[Assistant thinking]: ${clip(thinking,THINKING_MAX_CHARS)}`)
+      if(text)lines.push(`[Assistant]: ${text}`)
+      // 清单要看完所有调用；展示出去的那一行才只留前两个。
+      for(const block of blocks)if(block.type==='toolCall')addFileOp(block.name,block.arguments,ops)
+      const calls=toolCallsOf(blocks)
+      if(calls)lines.push(`[Assistant tool calls]: ${calls}`)
+      continue
+    }
+    if(message?.role==='toolResult'){
+      const text=squash(textOf(message))
+      if(text)lines.push(`[Tool result${message.isError?' error':''}]: ${clip(text,TOOL_RESULT_MAX_CHARS)}`)
+    }
+  }
+  const {readFiles,modifiedFiles}=computeFileLists(ops)
+  return `${clip(lines.join('\n'),CONVERSATION_MAX_CHARS,'tail')}${formatFileOperations(readFiles,modifiedFiles)}`
+}
+/** 数据在前、指令在最后，中间不插一句自己的话。 */
+export function suggestionUserText(draft:string,conversation:string):string{
+  const context=conversation.trim()?`<conversation>\n${conversation.trim()}\n</conversation>\n\n`:''
+  return draft.trim()?`${context}${continueInstructions(draft)}`:`${context}${NEXT_INSTRUCTIONS}`
+}
+/** pi 的 `getSummarizationFailure` 同款闸门：截断或报错的回答不能当补全。 */
+export function suggestionFailure(stopReason:string|undefined,hasToolCall:boolean):boolean{
+  return stopReason==='error'||stopReason==='length'||hasToolCall
+}
+/**
+ * 模型给什么就用什么，但只认「就是续写」。
+ *
+ * 约定的输出是 `<text>…</text>`，一个标签比让模型转义 JSON 可靠得多；但实测
+ * 小型模型经常不理格式，直接把续写本身丢回来（`改成异步的`），也有模型老老实实
+ * 包成 `{"text":…}`。三种都收。没有标签也没有 JSON 时只取第一行 —— 真正的补全
+ * 不会有第二行，出现第二行就是解释。
+ */
+export function parseSuggestionText(raw:string):string|null{
+  const tagged=raw.match(/<text>([\s\S]*?)<\/text>/i)
+  if(tagged)return cleanSuggestion(tagged[1]??'')
+  const json=raw.match(/\{[\s\S]*\}/)
+  if(json){
+    try{
+      const value=JSON.parse(json[0]) as {text?:unknown}
+      // 是合法 JSON 但没有 text 字段：这是模型的另一个回答，不能当续写画出去。
+      return typeof value.text==='string'?cleanSuggestion(value.text):null
+    }catch{/* 不是合法 JSON，就当成普通回答继续往下走 */}
+  }
+  return cleanSuggestion(raw.split('\n')[0]??'')
+}
+function cleanSuggestion(value:string):string|null{
+  const text=value.replace(/\s+/g,' ').replace(/^["'“”‘’]+|["'“”‘’]+$/g,'').trim()
+  if(!text||text.length>SUGGEST_MAX_CHARS)return null
+  return text
+}
 function sessionText(ctx:ExtensionCommandContext){
   return ctx.sessionManager.getEntries().flatMap(entry=>{
     if(entry.type!=='message'||!['user','assistant'].includes(entry.message.role))return []
@@ -57,6 +255,9 @@ export const MEDIA_STATUS='gui-media'
 export const VIRTUAL_MODEL_STATUS='gui-virtual-models'
 export const CACHE_STATUS='gui-cache'
 export const SESSION_NAME_STATUS='gui-session-name'
+export const SUGGEST_STATUS='gui-suggest'
+/** 补全超过这个长度就说明模型没听指令，宁可不显示也不画一屏幽灵文字。 */
+export const SUGGEST_MAX_CHARS=160
 export const VIRTUAL_MODEL_API_ID='pi-virtual'
 export const MEDIA_DIR=join(homedir(),'.pi/agent/orbit-media')
 const MCP_NAMESPACE_PREFIX='mcp__'
@@ -856,6 +1057,7 @@ export default async function (pi: ExtensionAPI) {
   const publishMcp = (ctx: ExtensionContext) => { const servers=collectMcpServers(pi); ctx.ui.setStatus(MCP_STATUS,JSON.stringify({servers})); return servers };
   const publishMedia = (ctx: ExtensionContext) => { const image=modelTypeInventory(ctx,'image'),classifier=modelTypeInventory(ctx,'classifier'); ctx.ui.setStatus(MEDIA_STATUS,JSON.stringify({image,classifier})); return {image,classifier} };
   registerComputerUseMode(pi, publishTools)
+  registerBrowserUseMode(pi, publishTools)
   pi.registerCommand('gui-tools', {description:'GUI: list available tools',handler:async (_args: string,ctx: ExtensionCommandContext) => publishTools(ctx)});
   pi.registerCommand('gui-tools-set', {description:'GUI: change active tools',handler:async (args: string,ctx: ExtensionCommandContext) => {
     await ctx.waitForIdle(); const names=JSON.parse(args);
@@ -933,6 +1135,22 @@ export default async function (pi: ExtensionAPI) {
   pi.on('mcp_servers_change',async(_event,ctx)=>{publishMcp(ctx);publishCapabilities(ctx)})
   pi.on('session_info_changed',async(event,ctx)=>ctx.ui.setStatus(SESSION_NAME_STATUS,JSON.stringify({name:event.name??null})))
   pi.on('cache_warming_decision',async(event,ctx)=>ctx.ui.setStatus(CACHE_STATUS,JSON.stringify({action:event.action,warmCost:event.warmCost,missCost:event.missCost,continuationProbability:event.continuationProbability})))
+  // Composer 联想：一次纯补全调用，不进会话、不产生回合，也不会碰草稿本身。
+  // 结果回在 status 上，并原样带上被问的那份草稿 —— 前端只用「草稿完全相等」
+  // 的那一条，迟到的回答自然作废。
+  pi.registerCommand('gui-suggest',{description:'GUI: complete the composer draft as ghost text',handler:async(args:string,ctx:ExtensionCommandContext)=>{
+    let draft='',turn:unknown=null
+    try{const value=JSON.parse(args||'{}') as {draft?:unknown;turn?:unknown};draft=typeof value.draft==='string'?value.draft:'';turn=value.turn??null}catch{draft='';turn=null}
+    const publish=(text:string)=>ctx.ui.setStatus(SUGGEST_STATUS,JSON.stringify({draft,turn,text}))
+    const conversation=suggestionConversation(ctx)
+    // 空草稿又没有任何对话（新会话）时没什么可猜的，省掉一次调用。
+    if(!ctx.model||(!draft.trim()&&!conversation)){publish('');return}
+    try{
+      const response=await ctx.modelRegistry.complete(ctx.model,{systemPrompt:SUGGEST_SYSTEM,messages:[{role:'user',content:[{type:'text',text:suggestionUserText(draft,conversation)}],timestamp:Date.now()}]},{maxTokens:SUGGEST_MAX_TOKENS,cacheRetention:'none'})
+      const hasToolCall=response.content.some(part=>part.type==='toolCall')
+      publish(suggestionFailure(response.stopReason,hasToolCall)?'':parseSuggestionText(response.content.flatMap(part=>part.type==='text'?[part.text]:[]).join(''))??'')
+    }catch{publish('')}
+  }})
   pi.registerCommand('gui-session-meta',{description:'GUI: generate durable session title and icon',handler:async(_args:string,ctx:ExtensionCommandContext)=>{
     try{
       const existing=ctx.sessionManager.getEntries().find(entry=>entry.type==='custom'&&entry.customType===SESSION_META_TYPE)

@@ -89,6 +89,7 @@
       "resources/context-payload.ts",
       "resources/workspace.ts",
       "resources/subagents",
+      "resources/browser-use",
       "resources/computer-use",
       "resources/node_modules",
       "resources/node-runtime",

@@ -18,6 +18,8 @@ pub mod disclaim;
 /// input injection have per-platform implementations, and non-macOS targets
 /// report that they are unavailable instead of failing to build.
 mod screen;
+pub mod browser;
+pub mod browser_view;
 mod bridge;
 mod sessions;
 mod git;
@@ -211,6 +213,9 @@ pub fn run() {
             if let Some(main) = app.get_webview_window("main") {
                 let _ = main.show();
             }
+            // The column's view is this process's; the agent's loop is another.
+            // This is the socket between them (`browser_view::serve`).
+            browser_view::serve(app.handle().clone());
             splash::mark(app.handle(), &app.state::<splash::SplashState>(), "backend");
             Ok(())
         })
@@ -220,6 +225,8 @@ pub fn run() {
         .manage(power::KeepAwake::new())
         .manage(pty_term::PtyHost::new())
         .manage(screen::ScreenHost::default())
+        .manage(browser::BrowserHost::default())
+        .manage(browser_view::BrowserViewHost::default())
         .invoke_handler(tauri::generate_handler![
             #[cfg(target_os = "macos")]
             ax::ax_observe,
@@ -244,6 +251,25 @@ pub fn run() {
             bridge::get_gui_settings,
             bridge::set_gui_setting,
             bridge::computer_use_key_status,
+            // Browser Use (`docs/BROWSER_USE.md`): the third column's Chrome.
+            // Screencast frames and input forwarding are CDP work and live in
+            // the webview; these commands own the process and the session file.
+            browser::browser_open,
+            browser::browser_status,
+            browser::browser_close,
+            browser::browser_client_report,
+            // The column's engine view: a real child web view, not a frame
+            // stream. See `browser_view.rs`.
+            browser_view::browser_view_sync,
+            browser_view::browser_view_activate,
+            browser_view::browser_view_navigate,
+            browser_view::browser_view_go,
+            browser_view::browser_view_reload,
+            browser_view::browser_view_stop,
+            browser_view::browser_view_eval,
+            browser_view::browser_view_status,
+            browser_view::browser_view_page,
+            browser_view::browser_view_close,
             bridge::save_computer_use_key,
             bridge::computer_use_config,
             bridge::save_computer_use_config,
@@ -389,13 +415,23 @@ pub fn run() {
                 window.state::<pty_term::PtyHost>().kill_all();
                 window.state::<bridge::Bridge>().stop();
                 window.state::<remote::RemoteHost>().stop();
+                // The owned Chrome is Orbit's, not the user's: it goes away with
+                // the window that hosts the column showing it. The child web view
+                // is part of the window and dies with it.
+                let _ = browser::close();
             }
         })
         .build(tauri::generate_context!())
         .expect("error while building Orbit")
-        .run(|_app, _event| {
+        .run(|app, event| {
+            let exit = matches!(event, tauri::RunEvent::Exit);
             #[cfg(target_os = "macos")]
-            reopen_main_window(_app, _event);
+            reopen_main_window(app, event);
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+            if exit {
+                let _ = browser::close();
+            }
         });
 }
 

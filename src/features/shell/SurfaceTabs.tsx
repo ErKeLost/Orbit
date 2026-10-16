@@ -8,7 +8,7 @@ import { useTabCloseMotion } from "../../shared/hooks/useTabCloseMotion";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { TabLabel } from "../../shared/ui/TabLabel";
 import { MenuItem, MenuSeparator, PointMenu } from "../../shared/ui/controls";
-import { ChevronLeft, ChevronRight, Copy, ExternalLink, File, FolderOpen, FolderTree, GripVertical, FileDiff, Square, X } from "../../shared/ui/icons";
+import { ChevronLeft, ChevronRight, Copy, ExternalLink, File, FolderOpen, FolderTree, Globe, GripVertical, FileDiff, Square, X } from "../../shared/ui/icons";
 import { TabWidthMotion } from "./ClosingTab";
 import { FileTypeIcon } from "./FileTypeIcon";
 import { IS_MAC } from "./chrome";
@@ -247,6 +247,8 @@ export function SurfaceTabs({
                 <span className="grid shrink-0 place-items-center">
                   {file.diff ? (
                     <FileDiff className="size-3.5 text-content/60" strokeWidth={1.75} />
+                  ) : file.browser ? (
+                    <Globe className="size-3.5 shrink-0 text-content/50" strokeWidth={1.75} />
                   ) : (
                     <FileTypeIcon name={file.name} isDir={file.isDir === true} size={14} />
                   )}

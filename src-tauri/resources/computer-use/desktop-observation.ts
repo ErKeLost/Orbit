@@ -759,20 +759,6 @@ function quotedGoalAnchors(goal: string): string[] {
   return [...goal.matchAll(/[“「『"]([^”」』"]{2,120})[”」』"]/g)].map(match => match[1])
 }
 
-/** One line per offered candidate. The structured criteria travel separately
- * as the choice payload, so this text is only the human-readable interface Jev
- * reads; keeping it terse is what lets the whole offer set fit the text budget
- * instead of the offer set being cut to fit the text. */
-function compactCandidate(candidate: DesktopCandidate): string {
-  const criteria = candidate.criteria ?? {}
-  const what = criteria.what ?? candidate.description.split(";")[0]
-  const parts = [candidate.operation.toLowerCase(), what]
-  if (criteria.holds) parts.push(`holds ${criteria.holds}`)
-  if (criteria.where) parts.push(criteria.where)
-  if (criteria.in_item) parts.push(`in ${criteria.in_item}`)
-  if (criteria.at) parts.push(`at ${criteria.at}`)
-  return parts.join(" · ").slice(0, 200)
-}
 
 /** One line per element: the model's whole view of what it can act on here, in
  * reading order, with the operations available on it. Every target question
@@ -871,58 +857,6 @@ function collectVisibleText(root: DesktopNode): string[] {
   return values
 }
 
-/** How likely a node is to be the target of a goal, as an ordinal rank rather
- * than a weight. A scalar made the levels negotiable: independent conditions
- * added up, so a container could accumulate a lower score than an editable
- * field by accident and push the field out of the readable list. Levels are
- * strict predicates here, and no combination of the tie-breakers below can
- * overturn a higher level.
- *
- * Only properties the accessibility tree actually exposes are used, so the same
- * order applies to any application: nothing here names an app, a role set that
- * one toolkit happens to use, or a coordinate. */
-function relevanceRank(node: FlatNode, shells: ReadonlySet<string>): number {
-  const actions = new Set(node.available_actions ?? [])
-  // The only node that can consume the next prepared text is the field itself.
-  const editable = isEditableTextRole(node.role, node) && (node.states ?? []).includes("editable")
-  // The innermost pressable element is the control, whether or not the app
-  // named it. A wrapper that merely contains controls is not a target: it would
-  // compete with the control inside it and dilute the choice.
-  const control = hasClickAction(actions) && !(node.ref_id && shells.has(node.ref_id))
-  const primary = hasPrimaryCapability(node)
-  const named = Boolean(node.name || node.description || visibleValue(node))
-  // A large unlabelled region is where later inspection finds its controls.
-  const structural = ["split_group", "group"].includes(node.role.toLowerCase()) && (node.children_count ?? 0) >= 5
-  if (editable) return 0
-  if (control && named) return 1
-  if (control) return 2
-  if (primary && named) return 3
-  if (named || structural) return 4
-  return 5
-}
-
-/** Lexicographic relevance order. Ties are broken by observed facts in
- * priority order, each one a boolean rather than a delta: a node whose text
- * matches the goal or the prepared value first, then what is on screen before
- * what is not, then a scroll region before a plain container, then a named node
- * before an anonymous one, and finally the tree's own order, which is stable
- * and therefore reproducible across runs. */
-function compareRelevance(left: FlatNode, right: FlatNode, anchors: string[], shells: ReadonlySet<string>, leftIndex: number, rightIndex: number): number {
-  const rank = relevanceRank(left, shells) - relevanceRank(right, shells)
-  if (rank !== 0) return rank
-  const matches = (node: FlatNode) => {
-    const haystack = `${node.name ?? ""} ${node.description ?? ""} ${node.value ?? ""}`
-    return anchors.some(value => value.length > 0 && haystack.includes(value))
-  }
-  const offscreen = (node: FlatNode) => Number((node.states ?? []).includes("offscreen"))
-  const scrollable = (node: FlatNode) => Number(!(node.available_actions ?? []).some(action => SCROLL_ACTIONS.includes(action)))
-  const anonymous = (node: FlatNode) => Number(!(node.name || node.description || visibleValue(node)))
-  return Number(matches(right)) - Number(matches(left))
-    || offscreen(left) - offscreen(right)
-    || scrollable(left) - scrollable(right)
-    || anonymous(left) - anonymous(right)
-    || leftIndex - rightIndex
-}
 
 const MODAL_OVERLAY_ROLES = new Set(["sheet", "alert", "dialog"])
 function isModalOverlay(role: string): boolean {

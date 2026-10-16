@@ -26,6 +26,7 @@ import {
   loadMessages,
   isLoadingConnection,
   multiAgentModeCommand,
+  browserUseModeCommand,
   computerUseModeCommand,
   patch,
   persistSession,
@@ -162,6 +163,13 @@ export async function setComputerUseMode(enabled:boolean){
  if(useWorkspace.getState().connection!=='online')return
  try{await request(computerUseModeCommand(enabled),30000)}
  catch(error){useWorkspace.getState().set({computerUseEnabled:previous});localStorage.setItem('pi-gui.computerUseEnabled',String(previous));throw error}
+}
+export async function setBrowserUseMode(enabled:boolean){
+ const previous=useWorkspace.getState().browserUseEnabled
+ useWorkspace.getState().set({browserUseEnabled:enabled});localStorage.setItem('pi-gui.browserUseEnabled',String(enabled))
+ if(useWorkspace.getState().connection!=='online')return
+ try{await request(browserUseModeCommand(enabled),30000)}
+ catch(error){useWorkspace.getState().set({browserUseEnabled:previous});localStorage.setItem('pi-gui.browserUseEnabled',String(previous));throw error}
 }
 export async function connect(cwd:string,workspaceMode:WorkspaceMode=useWorkspace.getState().workspaceMode,options?:{restoreLast?:boolean}){
  const restoreLast=options?.restoreLast!==false

@@ -19,7 +19,7 @@ if (b.status !== 0) process.exit(b.status ?? 1);
 const iso = mkdtempSync(resolve(tmpdir(), "orbit-e2e-"));
 const res = resolve(iso, "resources");
 mkdirSync(res, { recursive: true });
-for (const n of ["pi-runtime", "subagents", "computer-use", "node_modules", "node-runtime"])
+for (const n of ["pi-runtime", "subagents", "computer-use", "browser-use", "node_modules", "node-runtime"])
   cpSync(resolve(root, "src-tauri/resources", n), resolve(res, n), { recursive: true });
 for (const n of ["gui-extension.ts", "search-tools.ts", "web-search.ts", "context-payload.ts", "workspace.ts"])
   cpSync(resolve(root, "src-tauri/resources", n), resolve(res, n));

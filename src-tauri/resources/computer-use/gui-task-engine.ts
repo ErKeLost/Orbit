@@ -8,8 +8,6 @@ import { validateTaskInput, type DesktopCandidate, type DesktopDecision, type De
 import { describeDiff, diffTrees, findNodeByIdentity } from "./tree-diff.ts"
 
 const CHROMIUM_RENDERER_SETTLE_MS = 2_000
-const SETTLE_POLL_MS = 60
-const SETTLE_CEILING_MS = 900
 /** Wait for the first accessibility notification after an action. */
 const EVENT_SETTLE_TIMEOUT_MS = 900
 /** The "new" marker is only informative when a minority of targets changed. */
@@ -20,8 +18,6 @@ const REPLAY_WAIT_POLL_MS = 120
 /** Busy-aware settle: keep observing while a progress indicator is shown. */
 const BUSY_CEILING_MS = 3_000
 const BUSY_POLL_MS = 150
-/** After typing into an autocomplete field, wait this long for suggestions. */
-const SUGGESTION_WAIT_MS = 300
 /** Minimum predicted probability for finishing without a DONE round trip. */
 const COMPLETION_THRESHOLD = 0.75
 
@@ -1024,24 +1020,6 @@ function isBusy(root: DesktopNode): boolean {
     queue.push(...(node.children ?? []))
   }
   return false
-}
-
-function isAutocompleteField(candidate: DesktopCandidate): boolean {
-  return /^combo_?box\b/i.test(candidate.criteria?.what ?? candidate.description)
-}
-
-/** A list/menu/listbox that did not exist before appeared (suggestions). */
-function hasNewPopupList(before: DesktopNode, after: DesktopNode): boolean {
-  const count = (root: DesktopNode) => {
-    let total = 0
-    const queue = [root]
-    for (let index = 0; index < queue.length; index++) {
-      if (/^(list|menu|list_box|listbox)$/.test(queue[index].role)) total++
-      queue.push(...(queue[index].children ?? []))
-    }
-    return total
-  }
-  return count(after) > count(before)
 }
 
 /** Local, application-agnostic proof that a delivered action took effect:

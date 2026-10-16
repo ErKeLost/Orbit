@@ -56,6 +56,7 @@ describe("durable state", () => {
       "orbit.remote.connection.v1": "recovered from the host snapshot on connect",
       "pi-gui.multiAgentEnabled": "a switch whose default is fine",
       "pi-gui.computerUseEnabled": "a switch whose default is fine",
+      "pi-gui.browserUseEnabled": "a switch whose default is fine",
       "pi-gui.sidebarOpen": "cosmetic; note the narrow variant below IS durable",
       "orbit.terminal.position": "cosmetic dock placement, defaults to bottom",
       "orbit.terminal.open": "cosmetic visibility, defaults to closed",

@@ -25,8 +25,20 @@ export type OpenFile = { path: string; name: string; preview: boolean; /** Set o
    * Known on a folder opened from the tree or a listing, so the pane does not
    * have to ask the disk before it knows not to read a directory as text.
    * `lib/path-meta` stays the authority; this only avoids the first round trip.
-   */ isDir?: boolean };
+   */ isDir?: boolean; /**
+   * Set on a browser tab: a real web view in a pane (`browser_view.rs`), with
+   * the page it is showing. A synthetic path (`browser:<id>`) makes it an
+   * ordinary tab entry, which is what gives it tab reordering, dragging onto
+   * another pane, splitting and closing without a second implementation.
+   */ browser?: { url: string; title?: string } };
 export type PaneState = { files: OpenFile[]; activeFile: string | null };
+
+/** The path prefix that marks a tab as a browser page rather than a file. */
+export const BROWSER_PATH_PREFIX = "browser:";
+
+export function isBrowserPath(path: string): boolean {
+  return path.startsWith(BROWSER_PATH_PREFIX);
+}
 
 /** The session pane's leaf id; editor panes use `editor:<n>`. */
 export const CHAT_PANE_ID = "chat";

@@ -1552,6 +1552,16 @@ html.theme-light .agent-chat-composer {
     0 2px 6px color-mix(in srgb, var(--color-content) 6%, transparent);
 }
 
+/*
+ * 但首页（空会话）是钉死暗色的星系面：面内 `--color-background-base` 已经被改写成
+ * 暗色纸面，上面那条 light 规则会在 light 模式下把 composer 刷成一块不透明的黑板，
+ * 盖掉底下的星系格子。面内保持和暗色模式一样的半透明处理。
+ */
+html.theme-light .orbit-galaxy-surface [data-composer-box] {
+  background: color-mix(in srgb, var(--color-content) 3%, transparent);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--color-content) 4%, transparent);
+}
+
 /* Solid primary actions share the composer submit treatment. */
 .primary-action:not(:disabled) {
   background: white;
@@ -1622,6 +1632,23 @@ html.has-user-accent .primary-action:disabled {
   -webkit-text-fill-color: color-mix(
     in srgb,
     var(--color-content) 40%,
+    transparent
+  );
+}
+
+/*
+ * Composer ghost text (联想). The suggestion is painted in the accent colour so it
+ * reads as an offer rather than as text the reader typed, and it follows the
+ * reader's own accent when they picked one (`--user-accent-color`).
+ *
+ * Nothing else is drawn with it: any hint rendered in the same mirror flow would
+ * push the suggestion right by its own width, and accepting it would then snap the
+ * text back to the left.
+ */
+.composer-ghost {
+  color: color-mix(
+    in srgb,
+    var(--user-accent-color, var(--color-accent)) 78%,
     transparent
   );
 }

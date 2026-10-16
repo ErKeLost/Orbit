@@ -13,15 +13,18 @@ export type LiveSession = { path: string; cwd: string; connectionId?: string; ti
 export type Workspace = {
   telemetry:Telemetry; inspector:boolean; transcript: Transcript; state: RpcSessionState | null; connection: 'offline' | 'connecting' | 'online';
   runtimeTarget:RuntimeTarget; runtimePlatform:string; remoteTheme:RemoteTheme|null; remoteMachineName:string; cwd:string; connectionId:string; homeDir:string; workspaceMode:WorkspaceMode; piVersion:string; panel:Panel; settingsPage:SettingsPage; error:string | null; draft:string;
-  dialogs:UiRequest[]; notices:string[]; statuses:Record<string,string>; widgets:Record<string,string[]>; liveSessions:LiveSession[]; agents:AgentSnapshot | null; multiAgentEnabled:boolean; computerUseEnabled:boolean;
+  dialogs:UiRequest[]; notices:string[]; statuses:Record<string,string>; widgets:Record<string,string[]>; liveSessions:LiveSession[]; agents:AgentSnapshot | null; multiAgentEnabled:boolean; computerUseEnabled:boolean; browserUseEnabled:boolean;
   /** Whether the floating screen window is open. Independent of the panel. */
   screenPip:boolean; screenExpanded:boolean;
   set: (patch: Partial<Omit<Workspace,'set'|'event'|'updateAgentSnapshot'>>) => void; event:(event:Event)=>void; updateAgentSnapshot:(input:unknown)=>void;
 }
 const initialMultiAgentMode=()=>typeof localStorage!=='undefined'&&localStorage.getItem('pi-gui.multiAgentEnabled')==='true'
 const initialComputerUseMode=()=>typeof localStorage!=='undefined'&&localStorage.getItem('pi-gui.computerUseEnabled')==='true'
+// Browser Use 默认开启：它只驱动自己那个 Chrome，不碰用户的桌面；关掉后扩展里的
+// /gui-browser-use-mode 才不会把 browser_task 放回工具集。
+const initialBrowserUseMode=()=>typeof localStorage!=='undefined'&&localStorage.getItem('pi-gui.browserUseEnabled')!=='false'
 export const workspaceStore=create<Workspace>((set)=>({
-  telemetry:emptyTelemetry(),inspector:false,transcript:emptyTranscript(),state:null,connection:'offline',runtimeTarget:'unknown',runtimePlatform:'',remoteTheme:null,remoteMachineName:'',cwd:'',connectionId:'',homeDir:'',workspaceMode:'project',piVersion:'',panel:'chat',settingsPage:'general',error:null,draft:'',dialogs:[],notices:[],statuses:{},widgets:{},liveSessions:[],agents:null,multiAgentEnabled:initialMultiAgentMode(),computerUseEnabled:initialComputerUseMode(),screenPip:false,screenExpanded:false,
+  telemetry:emptyTelemetry(),inspector:false,transcript:emptyTranscript(),state:null,connection:'offline',runtimeTarget:'unknown',runtimePlatform:'',remoteTheme:null,remoteMachineName:'',cwd:'',connectionId:'',homeDir:'',workspaceMode:'project',piVersion:'',panel:'chat',settingsPage:'general',error:null,draft:'',dialogs:[],notices:[],statuses:{},widgets:{},liveSessions:[],agents:null,multiAgentEnabled:initialMultiAgentMode(),computerUseEnabled:initialComputerUseMode(),browserUseEnabled:initialBrowserUseMode(),screenPip:false,screenExpanded:false,
   set:(patch)=>set(patch),
   updateAgentSnapshot:(input)=>set(current=>{
     if(input==null||input==='')return {agents:null}

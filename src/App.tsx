@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { MetricsSync } from "./lib/metrics";
 import { useWorkspace } from "./lib/store";
@@ -332,6 +333,16 @@ export default function App() {
     shell.setSessionSidebarOpen(next);
   });
   useDesktopNotifications();
+  // The agent's channel can ask for a tab, never for a rectangle: a tab gets the
+  // pane's geometry, which is the only placement that stays right.
+  useEffect(() => {
+    const pending = listen<{ url?: string }>("browser:open", event => {
+      useShell.getState().openBrowser(event.payload?.url ?? "");
+    });
+    return () => {
+      void pending.then(unlisten => unlisten());
+    };
+  }, []);
   const openSearch = () => useWorkspace.getState().set({ panel: "search" });
 
   if (bootstrap.runtimeTarget === "mobile" && bootstrap.pairing.required) {
@@ -357,6 +368,7 @@ export default function App() {
 
   return (
     <div className="workspace-background flex h-full flex-col bg-background-base text-content">
+      {/* Browser tabs are pane tabs, so they need no wrapper of their own. */}
       <div className="flex min-h-0 min-w-0 flex-1">
         {projectRailOpen ? (
           <ProjectRail visible onSearch={openSearch} />

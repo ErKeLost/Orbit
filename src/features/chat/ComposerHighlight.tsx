@@ -12,10 +12,13 @@ export function ComposerHighlight({
   text,
   names,
   mentions,
+  ghost,
 }: {
   text: string;
   names: ReadonlySet<string>;
   mentions: ReadonlyMap<string, MentionFile>;
+  /** Continuation shown after the caret; muted, and never part of the draft. */
+  ghost?: string | null;
 }): ReactNode {
   return (
     <>
@@ -30,6 +33,7 @@ export function ComposerHighlight({
           <FileMentionRuns key={index} text={part.text} mentions={mentions} />
         ),
       )}
+      {ghost ? <span className="composer-ghost">{ghost}</span> : null}
       {/* A trailing newline needs an extra row, or the mirror is a line short. */}
       {text.endsWith("\n") ? "\n" : null}
     </>

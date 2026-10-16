@@ -262,16 +262,18 @@ export function persistedSessionFile(project:string):string {
 }
 const multiAgentModeCommand=(enabled=useWorkspace.getState().multiAgentEnabled)=>({type:'prompt' as const,message:`/gui-agent-mode ${JSON.stringify({enabled})}`})
 const computerUseModeCommand=(enabled=useWorkspace.getState().computerUseEnabled)=>({type:'prompt' as const,message:`/gui-computer-use-mode ${JSON.stringify({enabled})}`})
+const browserUseModeCommand=(enabled=useWorkspace.getState().browserUseEnabled)=>({type:'prompt' as const,message:`/gui-browser-use-mode ${JSON.stringify({enabled})}`})
 export const syncMultiAgentMode=(target:string,enabled=useWorkspace.getState().multiAgentEnabled)=>request(multiAgentModeCommand(enabled),30000,target)
 export const syncComputerUseMode=(target:string,enabled=useWorkspace.getState().computerUseEnabled)=>request(computerUseModeCommand(enabled),30000,target)
+export const syncBrowserUseMode=(target:string,enabled=useWorkspace.getState().browserUseEnabled)=>request(browserUseModeCommand(enabled),30000,target)
 // 模式开关记在 Pi 进程内，会话文件和开关值不变时没必要在每次发送前再往返两次。
 // key = 会话文件 + 两个开关值；切会话/开关变化/连接关闭时自然失效。
 const syncedModes=new Map<string,string>()
-const modesKey=(id:string)=>{const s=useWorkspace.getState();return `${current(id).state?.sessionFile??''}|${s.multiAgentEnabled}|${s.computerUseEnabled}`}
+const modesKey=(id:string)=>{const s=useWorkspace.getState();return `${current(id).state?.sessionFile??''}|${s.multiAgentEnabled}|${s.computerUseEnabled}|${s.browserUseEnabled}`}
 const syncSessionModes=async(target:string)=>{
  const id=route(target),key=modesKey(id)
  syncedModes.delete(id)
- await Promise.all([syncMultiAgentMode(target),syncComputerUseMode(target)])
+ await Promise.all([syncMultiAgentMode(target),syncComputerUseMode(target),syncBrowserUseMode(target)])
  syncedModes.set(id,key)
 }
 /** 发送前调用：模式已同步过就直接返回，不再产生 RPC 往返。 */
@@ -383,6 +385,7 @@ export {
   sendCommand,
   multiAgentModeCommand,
   computerUseModeCommand,
+  browserUseModeCommand,
   syncedModes,
   modesKey,
   syncSessionModes,

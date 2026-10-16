@@ -24,7 +24,7 @@ if(!isBuild){
 }
 if(androidIndex<0&&['dev','build'].includes(args[0])){
   const profile=args[0]==='dev'?'debug':'release'
-  for(const name of ['computer-use','node_modules','node-runtime','pi-computer-use','pi-runtime'])rmSync(resolve(root,'src-tauri/target',profile,'resources',name),{recursive:true,force:true})
+  for(const name of ['browser-use','computer-use','node_modules','node-runtime','pi-computer-use','pi-runtime'])rmSync(resolve(root,'src-tauri/target',profile,'resources',name),{recursive:true,force:true})
   rmSync(resolve(root,'src-tauri/target',profile,'bundle'),{recursive:true,force:true})
 }
 // Keep macOS signing ad-hoc: self-signing the large Orbit executable can hang

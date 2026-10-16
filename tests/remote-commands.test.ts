@@ -87,6 +87,27 @@ const EXCLUDED: Record<string, string> = {
   git_checkpoint_restore: "writes this machine's working tree",
   // 语音转写在桌面今天就是仅本机的：读写这台机器的 speech.json / auth.json，
   // 转写请求也从桌面的网络发出。镜像到手机等手机端麦克风权限打通后再说。
+  // 浏览器栏在桌面上（screencast 帧 + 真实 Chrome 进程），手机端没有这一栏：
+  // 它的「屏幕」通道给的是桌面像素，不是浏览器的 DOM，因此这三个命令先只在桌面。
+  // 第三栏的引擎视图是窗口里的一个子视图，不是可以远端调用的东西：它没有
+  // 客户端连接的概念，而且 `browser_view_eval` 能在这个页面上执行任意脚本。
+  browser_view_sync: "places the desktop window's own child web view",
+  browser_view_navigate: "drives the desktop window's own child web view",
+  browser_view_go: "drives the desktop window's own child web view",
+  browser_view_reload: "drives the desktop window's own child web view",
+  browser_view_stop: "drives the desktop window's own child web view",
+  browser_view_eval: "runs a script inside the desktop window's child web view",
+  browser_view_status: "reports the desktop window's own child web view",
+  browser_view_activate: "says which desktop browser tab is in front",
+  browser_view_page: "reads the title, address and load flag of the desktop's browser tab",
+  browser_view_close: "closes the desktop window's own child web view",
+  browser_open: "starts the desktop's own Chrome and its screencast",
+  browser_status: "reports the desktop's Chrome session",
+  browser_close: "stops the desktop's Chrome process",
+  browser_client_report: "writes the desktop's own log; there is no browser column on the phone",
+  // Pre-existing gap, recorded here rather than left undecided: this writes the
+  // desktop's mcp.json, which the phone cannot read back or act on.
+  set_mcp_auto_codemode: "writes the desktop's mcp.json configuration",
   speech_config: "reads the desktop's speech.json; the phone has no agent dir",
   save_speech_config: "writes the desktop's speech.json",
   save_speech_api_key: "writes the desktop's auth.json",

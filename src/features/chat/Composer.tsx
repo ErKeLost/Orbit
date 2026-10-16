@@ -4,7 +4,7 @@ import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useWorkspace } from "../../lib/store";
 import { perfMarkSend } from "../../lib/perf-log";
-import { ensureSessionModes, recallQueue, report, sendPrompt, setComputerUseMode, setMultiAgentMode, steerFollowUp, stop, transcribeAudio } from "../../lib/rpc";
+import { ensureSessionModes, recallQueue, report, request, sendPrompt, setBrowserUseMode, setComputerUseMode, setMultiAgentMode, steerFollowUp, stop, transcribeAudio } from "../../lib/rpc";
 import { useSessionTarget } from "../shell/use-session-target";
 import { base64ToBlob } from "../../lib/image-bytes";
 import { encodeBlobToBase64, encodeClipboardImage } from "../../lib/image-encode";
@@ -14,7 +14,7 @@ import { useMetrics } from "../../hooks/use-metrics";
 import { Popover } from "../../shared/ui/Popover";
 import { ImageLightbox } from "../../shared/ui/ImageLightbox";
 import { toast } from "../../shared/ui/toast";
-import { ArrowUp, CursorMagicSelection, ImagePlus, Square, Ungroup, X, Plus } from "../../shared/ui/icons";
+import { ArrowUp, CursorMagicSelection, Globe, ImagePlus, Square, Sparkles, Ungroup, X, Plus } from "../../shared/ui/icons";
 import { FileTypeIcon } from "../shell/FileTypeIcon";
 import { ADD_NOTE_TO_CHAT_EVENT, appendNoteReference, type NoteComposerCard } from "../notes/notes";
 import { ModelPicker } from "./ModelPicker";
@@ -25,6 +25,18 @@ import { useComposerTokens } from "./composerTokens";
 import { expandMentionLabels, type MentionFile } from "./fileMentions";
 import { ContextMeter } from "./ContextMeter";
 import { stepInputHistory, inputHistoryEntries } from "./input-history";
+import {
+  PROMPT_SUGGESTION_DEBOUNCE_MS,
+  PROMPT_SUGGESTION_STATUS,
+  acceptSuggestion,
+  claimTurnSuggestion,
+  loadPromptSuggestion,
+  parseSuggestion,
+  savePromptSuggestion,
+  shouldAskNextStep,
+  suggestionFor,
+  transcriptTurn,
+} from "./promptSuggestion";
 import { userText } from "./turnModel";
 import { SpeechInput } from "../../components/ai-elements/speech-input";
 import { WorkspaceRoots } from "./WorkspaceRoots";
@@ -194,6 +206,10 @@ type DraftHandle = {
  * The textarea is its own leaf so keystrokes never re-render the toolbar. Its
  * text is transparent: `ComposerHighlight` paints the same draft underneath, so
  * `/` and `@` tokens keep their palette styling once they land in the text.
+ *
+ * The prompt suggestion (联想) lives here too, for the same reason: the draft,
+ * the caret and the ghost text are one piece of state, and the toolbar has no
+ * business re-rendering when a suggestion lands.
  */
 const DraftField = memo(
   forwardRef<DraftHandle, {
@@ -203,9 +219,16 @@ const DraftField = memo(
     paletteOpen: boolean;
     skillNames: ReadonlySet<string>;
     mentionLabels: ReadonlyMap<string, MentionFile>;
+    /** Ask Pi for a "what next" guess once a turn settles. */
+    suggestEnabled: boolean;
+    /** Identity of the conversation, so a stale "what next" guess can be dropped. */
+    turnKey: string;
+    /** Increments when a turn settles; 0 means "no turn finished in this view". */
+    nextStepSeq: number;
     onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
     onHasValue: (has: boolean) => void;
     onPalette: (request: PaletteRequest | null) => void;
+    onSuggest: (draft: string, turn: string) => void;
 
     /**
      * Shell-style recall of what the reader already sent. Returns true when the
@@ -215,13 +238,34 @@ const DraftField = memo(
      */
     onHistory: (direction: "up" | "down", caret: { start: number; end: number; length: number }) => boolean;
   }>(function DraftField(
-    { composerKey, placeholder, disabled, paletteOpen, skillNames, mentionLabels, onKeyDown, onHasValue, onPalette, onHistory },
+    { composerKey, placeholder, disabled, paletteOpen, skillNames, mentionLabels, suggestEnabled, turnKey, nextStepSeq, onKeyDown, onHasValue, onPalette, onSuggest, onHistory },
     ref,
   ) {
       const [draft, setDraft] = useState(() => useWorkspace.getState().draft || draftCache.get(composerKey) || "");
       const field = useRef<HTMLTextAreaElement>(null);
       const highlight = useRef<HTMLDivElement>(null);
       const caret = useRef(0);
+      // The continuation is only ever appended, so "caret at the very end" is
+      // the whole condition. Tracking the *boundary* rather than the offset
+      // keeps moving the caret from re-rendering this leaf.
+      const [atEnd, setAtEnd] = useState(true);
+      /**
+       * What the reader pressed Escape on. The "what next" guess is dismissed
+       * per turn: it has no draft to be keyed on.
+       */
+      const ghostKey = draft.trim() ? draft : `turn:${turnKey}`;
+      const [dismissed, setDismissed] = useState<string | null>(null);
+      /**
+       * Which finished turn we already paid for. Counted in turns, not in
+       * `turnKey`: that key is derived from the transcript and can shift right
+       * after a settle (Pi drops still-queued previews), which would otherwise
+       * buy the same turn a second call.
+       */
+      const askedTurn = useRef(0);
+      const reply = parseSuggestion(useWorkspace((state) => state.statuses[PROMPT_SUGGESTION_STATUS]));
+      // A reply is used only for the draft (or the turn) it was asked about, so
+      // a slow answer can never land on newer text or a newer conversation.
+      const ghost = suggestEnabled && dismissed !== ghostKey ? suggestionFor(reply, draft, atEnd, turnKey) : null;
       const resize = (el: HTMLTextAreaElement | null) => {
         if (!el) return;
         el.style.height = "auto";
@@ -255,6 +299,20 @@ const DraftField = memo(
         onHasValue(Boolean(draft.trim()));
         resize(field.current);
       }, [composerKey, draft, onHasValue]);
+      // 回合结束、输入框空着：猜「你下一句想说什么」。**一轮只问一次** ——
+      // 重渲染、切光标、开合面板、把草稿删回空白都不会再花一次调用。
+      // 打字过程本身永远不调模型：联想只在 agent 每次 run 结束时产生一次。
+      useEffect(() => {
+        const wanted = shouldAskNextStep({ enabled: suggestEnabled, paletteOpen, atEnd, draft, settleSeq: nextStepSeq, askedSeq: askedTurn.current });
+        if (!wanted) return;
+        const timer = window.setTimeout(() => {
+          // 认领在真正发请求的那一刻才算数：分屏里另一个 pane 先到就它发。
+          if (!claimTurnSuggestion(composerKey, turnKey)) return;
+          askedTurn.current = nextStepSeq;
+          onSuggest("", turnKey);
+        }, PROMPT_SUGGESTION_DEBOUNCE_MS);
+        return () => window.clearTimeout(timer);
+      }, [atEnd, composerKey, draft, nextStepSeq, onSuggest, paletteOpen, suggestEnabled, turnKey]);
       // Extensions can push text into the editor (Pi `set_editor_text`).
       const external = useWorkspace((state) => state.draft);
       useEffect(() => {
@@ -262,7 +320,19 @@ const DraftField = memo(
       }, [external]);
       const syncCaret = (el: HTMLTextAreaElement) => {
         caret.current = el.selectionStart ?? el.value.length;
+        setAtEnd(caret.current >= el.value.length);
         onPalette(paletteRequest(el.value, caret.current));
+      };
+      /** Tab / →: take the continuation as real text. */
+      const takeGhost = () => {
+        const accepted = acceptSuggestion(draft, atEnd, ghost);
+        if (!accepted) return false;
+        caret.current = accepted.caret;
+        setDraft(accepted.text);
+        setAtEnd(true);
+        onPalette(paletteRequest(accepted.text, accepted.caret));
+        requestAnimationFrame(() => field.current?.setSelectionRange(accepted.caret, accepted.caret));
+        return true;
       };
       return (
         <div className="relative">
@@ -271,7 +341,7 @@ const DraftField = memo(
             aria-hidden
             className="composer-highlight pointer-events-none absolute inset-0 max-h-40 overflow-hidden whitespace-pre-wrap break-words px-3 py-3 font-sans text-sm leading-5.5 text-content"
           >
-            <ComposerHighlight text={draft} names={skillNames} mentions={mentionLabels} />
+            <ComposerHighlight text={draft} names={skillNames} mentions={mentionLabels} ghost={ghost} />
           </div>
           <textarea
             ref={field}
@@ -279,7 +349,7 @@ const DraftField = memo(
             spellCheck={false}
             value={draft}
             disabled={disabled}
-            placeholder={placeholder}
+            placeholder={ghost ? "" : placeholder}
             aria-label="消息"
             onChange={(event) => {
               setDraft(event.currentTarget.value);
@@ -295,6 +365,22 @@ const DraftField = memo(
                 const el = event.currentTarget;
                 if (onHistory(event.key === "ArrowUp" ? "up" : "down", { start: el.selectionStart ?? 0, end: el.selectionEnd ?? 0, length: el.value.length })) {
                   event.preventDefault();
+                  return;
+                }
+              }
+              // While an IME is composing, Tab and → belong to the candidate list.
+              if (ghost && !event.nativeEvent.isComposing) {
+                if (event.key === "Tab" || (event.key === "ArrowRight" && !event.shiftKey && !event.altKey && !event.metaKey)) {
+                  // ArrowRight at the very end of the text does nothing otherwise,
+                  // so taking it costs the reader nothing.
+                  if (takeGhost()) {
+                    event.preventDefault();
+                    return;
+                  }
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setDismissed(ghostKey);
                   return;
                 }
               }
@@ -330,6 +416,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
   const runtimePlatform = useWorkspace((state) => state.runtimePlatform);
   const multiAgent = useWorkspace((state) => state.multiAgentEnabled);
   const computerUse = useWorkspace((state) => state.computerUseEnabled);
+  const browserUse = useWorkspace((state) => state.browserUseEnabled);
   const homeDir = useWorkspace((state) => state.homeDir);
   const dialog = useWorkspace((state) => state.dialogs[0]);
   const composerKey = connectionId || project;
@@ -339,7 +426,21 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
   const [hasValue, setHasValue] = useState(false);
   const [palette, setPalette] = useState<PaletteRequest | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
+  // 提示词联想（ghost text）：只在每个 run 结束时猜一次，所以默认开着。
+  const [suggestEnabled, setSuggestEnabled] = useState(loadPromptSuggestion);
+  // 只有当前运行的 Pi 真的注册了这条命令才启用：否则 `/gui-suggest …` 会被当成
+  // 普通消息发给模型。
+  const suggestAvailable = tokens.commands.some((command) => command.name === "gui-suggest");
   const [fileDrag, setFileDrag] = useState(false);
+  // 回合结束的计数：联想猜的是「你下一句想说什么」，得等 agent 说完再看，
+  // 所以触发点是 running 真的从 true 落到 false，而不是每次重渲染。
+  const [settleSeq, setSettleSeq] = useState(0);
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (wasRunning.current && !running) setSettleSeq((value) => value + 1);
+    wasRunning.current = running;
+  }, [running]);
+  const turnKey = transcriptTurn(useWorkspace((state) => state.transcript.messages));
   const draftRef = useRef<DraftHandle>(null);
   // Shell-style recall of what the reader already sent. Kept in refs, and the
   // transcript is read lazily inside the handler: subscribing to it here would
@@ -547,6 +648,17 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
     [attachments, composerKey, mentionLabels, onSubmitted, project, running, target],
   );
 
+  /** 把草稿交给 Pi 的扩展命令续写；结果由 `gui-suggest` 的 status 回来。 */
+  const requestSuggestion = useCallback(
+    (draft: string, turn: string) => {
+      if (!online || !suggestAvailable) return;
+      // The response only acknowledges the prompt; the suggestion itself arrives
+      // later as a status and is matched against the draft (or the turn) there.
+      void request({ type: "prompt", message: `/gui-suggest ${JSON.stringify({ draft, turn })}` }, 30000, target).catch(() => undefined);
+    },
+    [online, suggestAvailable, target],
+  );
+
   const onKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
       if (!shouldSubmitComposer({ key: event.key, shiftKey: event.shiftKey, isComposing: event.nativeEvent.isComposing, keyCode: event.keyCode }, false)) return;
@@ -641,6 +753,10 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
             paletteOpen={palette !== null}
             skillNames={tokens.skills}
             mentionLabels={mentionLabels}
+            suggestEnabled={suggestEnabled && suggestAvailable}
+            turnKey={turnKey}
+            nextStepSeq={settleSeq}
+            onSuggest={requestSuggestion}
             placeholder={running ? "引导当前回复，⌥Enter 排队…" : "Ask, build, / for commands, @ for references..."}
             onKeyDown={onKeyDown}
             onHasValue={setHasValue}
@@ -669,6 +785,24 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
                       <span className="block text-[13px] font-medium leading-5">图片</span>
                       <span className="mt-0.5 block text-[11px] leading-4 text-content/50">从磁盘选择，或直接粘贴截图</span>
                     </span>
+                  </button>
+                  <p className="px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-content/40">输入</p>
+                  <button
+                    type="button"
+                    disabled={!suggestAvailable}
+                    className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left text-content hover:bg-content/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => {
+                      const next = !suggestEnabled;
+                      setSuggestEnabled(next);
+                      savePromptSuggestion(next);
+                    }}
+                  >
+                    <Sparkles className={`mt-0.5 size-3.5 shrink-0 ${suggestEnabled ? "text-accent" : "text-content/70"}`} strokeWidth={1.75} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[13px] font-medium leading-5">提示词联想</span>
+                      <span className="mt-0.5 block text-[11px] leading-4 text-content/50">每轮回答结束后，猜你下一句想说什么填进输入框；打字过程不会调用模型。Tab 或 → 采纳，Esc 忽略。每轮只算一次模型调用</span>
+                    </span>
+                    {suggestEnabled && suggestAvailable ? <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent" /> : null}
                   </button>
                   <p className="px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-content/40">模式</p>
                   <button
@@ -707,6 +841,24 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
                       {computerUse ? <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent" /> : null}
                     </button>
                   ) : null}
+                  <button
+                    type="button"
+                    disabled={!online || running}
+                    className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left text-content hover:bg-content/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    onClick={() => {
+                      setPlusOpen(false);
+                      void setBrowserUseMode(!browserUse)
+                        .then(() => toast.success(browserUse ? "浏览器操作已关闭" : "浏览器操作已开启，可以直接给出网址和目标"))
+                        .catch(report);
+                    }}
+                  >
+                    <Globe className={`mt-0.5 size-3.5 shrink-0 ${browserUse ? "text-accent" : "text-content/70"}`} strokeWidth={1.75} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[13px] font-medium leading-5">操作浏览器</span>
+                      <span className="mt-0.5 block text-[11px] leading-4 text-content/50">在右侧第三栏里用真实 Chrome 打开并操作网页</span>
+                    </span>
+                    {browserUse ? <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent" /> : null}
+                  </button>
                 </Popover>
               ) : null}
             </div>
@@ -739,6 +891,18 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
                 }
               >
                 <Ungroup className="size-3.5" strokeWidth={1.75} />
+              </ToolButton>
+              <ToolButton
+                active={browserUse}
+                disabled={!online || running}
+                label={running ? "任务运行中不可切换" : browserUse ? "浏览器操作（已开启）" : "开启浏览器操作"}
+                onClick={() =>
+                  void setBrowserUseMode(!browserUse)
+                    .then(() => toast.success(browserUse ? "浏览器操作已关闭" : "浏览器操作已开启，可以直接给出网址和目标"))
+                    .catch(report)
+                }
+              >
+                <Globe className="size-3.5" strokeWidth={1.75} />
               </ToolButton>
               {desktopMac ? (
                 <ToolButton

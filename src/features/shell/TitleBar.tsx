@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
 import { useWorkspace } from "../../lib/store";
 import { useTitleTabDrop } from "./paneDrop";
-import { PanelLeft, Plus, Settings, Terminal, X } from "../../shared/ui/icons";
+import { Globe, PanelLeft, Plus, Settings, Terminal, X } from "../../shared/ui/icons";
 import { IS_MAC, MOD, TitleIconButton } from "./chrome";
 import { useWorkspaceTabs } from "./use-workspace-tabs";
 import { projectWorkspaceTabs, useShell, type WorkspaceTab } from "./shellStore";
@@ -130,6 +130,7 @@ function WorkspaceTabItem({
  */
 export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
   const terminalOpen = useShell((state) => state.terminalOpen);
+
   // The hidden home workspace is not a tab: it only appears as the 首页 once
   // every tab has been closed.
   const allWorkspaces = useShell((state) => state.workspaces);
@@ -220,6 +221,17 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
           onClick={() => useShell.getState().setTerminalOpen(!terminalOpen)}
         >
           <Terminal className="size-3.5" strokeWidth={1.75} />
+        </TitleIconButton>
+        <TitleIconButton
+          label="新建浏览器标签页"
+          onClick={() => {
+            // Its own pane: a page needs width, and a browser tab squeezed into a
+            // narrow editor pane lays out wider than it can show. It is an
+            // ordinary tab from there on — drag it wherever it belongs.
+            useShell.getState().openBrowser("", { edge: "right" });
+          }}
+        >
+          <Globe className="size-3.5" strokeWidth={1.75} />
         </TitleIconButton>
         {railsHidden ? (
           <TitleIconButton

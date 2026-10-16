@@ -57,6 +57,25 @@ function connectionInUseElsewhere(id: string, exceptWorkspaceId: string): boolea
 }
 
 /**
+ * 正在被放弃的连接（用户关了标签页、面板，或范围切换把它换掉了）。
+ *
+ * `closeConnection` 只有在会话空闲时才同步从 `connections` 里消失；会话还在跑/
+ * 压缩时它先 `clear_queue` + `abort`（最长 60s），这期间连接仍然是「活着的孤儿」。
+ * 对账（`reconcileOrphans`）救的是真正的孤儿，但它分不清「没人要了」和「正在关」——
+ * 于是每次关标签页都会再把同一条连接收养回一个新标签页，表现就是标签页关不完。
+ */
+const closing = new Set<string>();
+
+/** 关掉一条已经没有任何面在用的连接；对账立刻知道它已经被放弃，不会再收养。 */
+function retireConnection(id: string, message: string): Promise<void> {
+  if (!id) return Promise.resolve();
+  closing.add(id);
+  return closeWorkspaceConnection(id, message)
+    .catch(() => undefined)
+    .finally(() => closing.delete(id));
+}
+
+/**
  * The shell's one way to put a surface on screen.
  *
  * A *surface* is either the 首页 (a fresh, tab-less session on the current
@@ -100,7 +119,7 @@ async function runShow(id: string, cwd: string) {
       shell.promoteHomeWorkspace();
     } else if (previousHomeConnection) {
       shell.bindWorkspaceConnection(HOME_WORKSPACE_ID, "");
-      void closeWorkspaceConnection(previousHomeConnection, "首页已关闭").catch(() => undefined);
+      void retireConnection(previousHomeConnection, "首页已关闭");
     }
   }
   shell.activateWorkspace(id);
@@ -160,7 +179,7 @@ async function runShow(id: string, cwd: string) {
   // 旧连接只有在没被别的标签页引用、也没有会话内容时才收掉；否则它就是一条要
   // 留在后台继续跑的会话。
   if (stale && stale !== target && !connectionHasWork(stale) && !connectionInUseElsewhere(stale, id)) {
-    void closeWorkspaceConnection(stale, "已切换范围").catch(() => undefined);
+    void retireConnection(stale, "已切换范围");
   }
   // 启动进程不能抢走原来那个工作区的路由。
   if (previous && previous !== target) restoreProjectRoute(workspace.cwd, previous);
@@ -187,7 +206,7 @@ async function showHomeScope(path: string, mode: WorkspaceMode) {
       shell.promoteHomeWorkspace();
     } else if (changed && !connectionInUseElsewhere(bound, HOME_WORKSPACE_ID)) {
       useShell.getState().bindWorkspaceConnection(HOME_WORKSPACE_ID, "");
-      void closeWorkspaceConnection(bound, "已切换范围").catch(() => undefined);
+      void retireConnection(bound, "已切换范围");
     }
   }
   const nextHome = useShell.getState().workspaces.find(isHomeWorkspace);
@@ -256,7 +275,7 @@ async function closeSessionPane(paneId: string) {
   if (id && !connectionInUseElsewhere(id, workspace.id) && !Object.values(next.sessions).some((item) => item.connectionId === id)) {
     // 在异步关闭进程之前摘掉投影，避免 effects 把已关闭的连接重新绑回工作区。
     if (useWorkspace.getState().connectionId === id) useWorkspace.getState().set({ connectionId: "" });
-    await closeWorkspaceConnection(id, "会话面板已关闭");
+    await retireConnection(id, "会话面板已关闭");
   }
   if (next.connectionId) focusWorkspaceConnection(next.connectionId, next.cwd);
 }
@@ -267,9 +286,17 @@ async function close(id: string) {
   const workspace = shell.workspaces.find((item) => item.id === id);
   if (!workspace || isHomeWorkspace(workspace)) return;
   const wasActive = shell.activeWorkspaceId === id;
+  // 先标记再切面：`show` 会改全局投影并触发一次对账，那一次对账必须已经知道这条
+  // 连接被放弃了，否则它会被当成孤儿再收养回一个新标签页。
+  const connection = workspace.connectionId;
+  if (connection) closing.add(connection);
   shell.closeWorkspace(id);
-  if (wasActive) await show(useShell.getState().activeWorkspaceId);
-  await closeWorkspaceConnection(workspace.connectionId, "工作区已关闭");
+  try {
+    if (wasActive) await show(useShell.getState().activeWorkspaceId);
+  } finally {
+    // 切面失败也不能把连接留在「正在关」里：那样它既关不掉、也不会再被收养。
+    await retireConnection(connection, "工作区已关闭");
+  }
 }
 
 /** 首页发出第一条消息：把它升格成一个正常的会话标签页。 */
@@ -398,7 +425,8 @@ function reconcileOrphans() {
   const active = useWorkspace.getState().connectionId;
   if (active) held.add(active);
   for (const id of workspaceConnectionIds()) {
-    if (held.has(id)) continue;
+    // 正在关的连接不是孤儿：它有主，只是主人刚走。
+    if (held.has(id) || closing.has(id)) continue;
     const cwd = connectionCwd(id);
     if (!cwd) continue;
     adoptConnection(id, cwd);
@@ -422,7 +450,8 @@ function lastActiveAt(id: string): number {
  */
 function enforceConnectionBudget() {
   const shell = useShell.getState();
-  const live = workspaceConnectionIds();
+  // 正在关的连接不占预算，也不能被休眠逻辑再算一遍。
+  const live = workspaceConnectionIds().filter((id) => !closing.has(id));
   if (live.length <= MAX_LIVE_CONNECTIONS) return;
   const active = useWorkspace.getState().connectionId;
   const scored = live
@@ -440,7 +469,7 @@ function enforceConnectionBudget() {
         connectionId: "",
       });
     }
-    void closeWorkspaceConnection(item.id, "连接预算：后台会话已休眠").catch(() => undefined);
+    void retireConnection(item.id, "连接预算：后台会话已休眠");
   }
 }
 
@@ -519,7 +548,7 @@ export function useWorkspaceTabsEffects() {
     const next = useShell.getState().workspaces.find((item) => item.id === HOME_WORKSPACE_ID);
     if (!next) return;
     if (cwd && next.cwd !== cwd) {
-      if (next.connectionId) void closeWorkspaceConnection(next.connectionId, "已切换范围").catch(() => undefined);
+      if (next.connectionId) void retireConnection(next.connectionId, "已切换范围");
       useShell.getState().setWorkspaceCwd(HOME_WORKSPACE_ID, cwd);
       useShell.getState().bindWorkspaceConnection(HOME_WORKSPACE_ID, "");
     }

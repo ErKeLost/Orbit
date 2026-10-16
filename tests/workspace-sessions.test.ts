@@ -19,9 +19,12 @@ type Model = {
   sessionOwners: Map<string, string>
   closed: string[]
   opened: string[]
+  /** 模拟真实实现在会话还跑着时的 abort 窗口（`closeConnection` 先 abort 才摘连接）。 */
+  deferClose: boolean
+  releaseClose: (() => void) | null
 }
 
-const model: Model = { connections: new Map(), snapshots: new Map(), projectActive: new Map(), sessionOwners: new Map(), closed: [], opened: [] }
+const model: Model = { connections: new Map(), snapshots: new Map(), projectActive: new Map(), sessionOwners: new Map(), closed: [], opened: [], deferClose: false, releaseClose: null }
 const fresh = (): Snap => ({ connection: "offline", transcript: { messages: [], running: false, compacting: false }, dialogs: [], state: null })
 const snap = (id: string) => model.snapshots.get(id) ?? fresh()
 const patch = (id: string, value: Partial<Snap>) => model.snapshots.set(id, { ...snap(id), ...value })
@@ -62,7 +65,14 @@ mock.module("../src/lib/rpc", () => ({
     if (command.sessionPath) { s.state = { sessionFile: command.sessionPath }; model.sessionOwners.set(command.sessionPath, active) }
     model.snapshots.set(active, s)
   },
-  async closeWorkspaceConnection(id: string) { if (id) { model.closed.push(id); model.connections.delete(id) } },
+  async closeWorkspaceConnection(id: string) {
+    if (!id) return
+    model.closed.push(id)
+    // 真实实现里会话还在跑时会先 abort（最长 60s）才从 `connections` 里摘掉。
+    // `deferClose` 把这段窗口显式拉长，好检查窗口里的对账。
+    if (model.deferClose) await new Promise<void>((resolve) => { model.releaseClose = resolve })
+    model.connections.delete(id)
+  },
   connectionCwd: (id: string) => model.connections.get(id)?.cwd ?? null,
   connectionOwningSession: (path: string) => { const owner = model.sessionOwners.get(path); return owner && model.connections.has(owner) ? owner : "" },
   connectionSnapshot: (id: string) => model.snapshots.get(id) ?? null,
@@ -109,6 +119,7 @@ const { useShell, HOME_WORKSPACE_ID } = await import("../src/features/shell/shel
 
 function reset(cwd = "/p") {
   model.connections.clear(); model.snapshots.clear(); model.projectActive.clear(); model.sessionOwners.clear(); model.closed.length = 0; model.opened.length = 0
+  model.deferClose = false; model.releaseClose = null
   currentCwd = cwd
   useShell.setState({
     workspaces: [{ id: HOME_WORKSPACE_ID, cwd, connectionId: "", layout: { kind: "leaf", id: "chat" }, panes: {}, sessions: { chat: { connectionId: "" } }, activePane: "chat" } as never],
@@ -215,6 +226,33 @@ describe("多 session 后台运行", () => {
     // 它不该被 close，也不影响 A
     expect(model.closed).not.toContain(orphan)
     expect(alive()).toContain(aConn)
+  })
+
+  test("关掉的标签页不会被对账当成孤儿再收养回来（连接还在 abort 时也一样）", async () => {
+    const tabs = useWorkspaceTabs()
+    await tabs.show(HOME_WORKSPACE_ID)
+    await tabs.openSession({ path: "/p/a.jsonl", cwd: "/p" })
+    const aConn = useWorkspace.getState().connectionId
+    snap(aConn).transcript.messages = [{ message: { role: "user" } }]
+    snap(aConn).transcript.running = true
+    const aTab = useShell.getState().workspaces.find(w => w.connectionId === aConn)!
+    // 前台在另一条会话上：关掉 a 时它已经不在任何标签页里，连接却还在（abort 中）。
+    await tabs.openSession({ path: "/p/b.jsonl", cwd: "/p" })
+
+    model.deferClose = true
+    const pending = tabs.close(aTab.id)
+    expect(useShell.getState().workspaces.some(w => w.id === aTab.id)).toBe(false)
+
+    // 这段窗口里对账跑一次：已经关掉的连接不能再被收养成一个新标签页，
+    // 否则点一次 × 就换回来一个同样的标签页——「标签页永远关不完」。
+    tabs.reconcile()
+    expect(useShell.getState().workspaces.some(w => w.connectionId === aConn)).toBe(false)
+
+    model.releaseClose?.()
+    model.deferClose = false
+    await pending
+    expect(model.closed).toContain(aConn)
+    expect(alive()).not.toContain(aConn)
   })
 
   test("连接预算：超过上限时空闲后台连接被休眠，标签页保留 sessionPath", async () => {

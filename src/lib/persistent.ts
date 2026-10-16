@@ -45,6 +45,9 @@ const DURABLE_KEYS = [
   // behaviour of the app rather than costing one click.
   "orbit.startup.panel",
   "orbit.keepAwake",
+  // Whether the composer offers prompt completions. It is a deliberate choice
+  // (each one costs a model call), so it should not be forgotten by a storage clear.
+  "orbit.promptSuggestion",
   "pi-gui.sidebarOpen",
   "pi-gui.sidebarOpen.narrow",
   // Whether the phone should hold its pairing connection while the app is in

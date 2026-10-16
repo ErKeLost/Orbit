@@ -4,5 +4,8 @@
   "rules": {
     "react/rules-of-hooks": "error",
     "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
+  },
+  "ignorePatterns": [
+    "src-tauri/resources/browser-use/snapshot.js"
+  ]
 }

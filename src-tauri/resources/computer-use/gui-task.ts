@@ -4,6 +4,9 @@ import type { DesktopDriver } from "./desktop-driver.ts"
 import type { GuiTaskEvent, GuiTaskInput, GuiTaskResult } from "./gui-task-contract.ts"
 import { runGuiTaskEngine } from "./gui-task-engine.ts"
 import { createFileMemory, memoryEnabled } from "./affordance-memory.ts"
+import { connectDriver } from "./cua/driver.ts"
+import { DriverUnavailableError } from "./cua/errors.ts"
+import { runCuaTask, visionMode } from "./loop/engine.ts"
 
 const taskSchema = {
   type: "object",
@@ -54,6 +57,30 @@ export function registerGuiTask(pi: ExtensionAPI): void {
     parameters: taskSchema,
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
       const input = params as GuiTaskInput
+      const emit = (event: GuiTaskEvent) => publishProgress(onUpdate, event)
+      // The Cua Driver engine is the default; the legacy ax_control engine stays
+      // selectable until parity is verified on real tasks.
+      if (engineName() === "cua") {
+        let driver: Awaited<ReturnType<typeof connectDriver>> | undefined
+        try {
+          driver = await connectDriver({ signal })
+          const result = await runCuaTask(input, {
+            driver,
+            signal,
+            emit,
+            // Screenshot to the chooser: ORBIT_CU_VISUAL=1 (auto) | always | off.
+            vision: visionMode(process.env.ORBIT_CU_VISUAL),
+            // Perception-extension regions (AGPL; never bundled) are separate.
+            visualFallback: process.env.ORBIT_CU_VISUAL_REGIONS === "1",
+            confirm: ctx?.hasUI ? (summary: string) => ctx.ui.confirm("确认桌面操作", summary, { signal }) : undefined,
+          })
+          return { content: [{ type: "text", text: formatResult(input, result) }], details: result }
+        } catch (error) {
+          return { content: [{ type: "text", text: formatResult(input, failureResult(error, signal)) }], details: failureResult(error, signal) }
+        } finally {
+          await driver?.dispose().catch(() => undefined)
+        }
+      }
       let client: DesktopDriver | undefined
       try {
         client = await createXa11yClient(signal)
@@ -61,7 +88,7 @@ export function registerGuiTask(pi: ExtensionAPI): void {
           input,
           client,
           signal,
-          emit: event => publishProgress(onUpdate, event),
+          emit,
           // Local learned trajectories (no slot values); ORBIT_CU_MEMORY=0 disables.
           ...(memoryEnabled() ? { memory: createFileMemory() } : {}),
           // Irreversible steps (send, delete, purchase) pause for an in-app
@@ -73,24 +100,35 @@ export function registerGuiTask(pi: ExtensionAPI): void {
         })
         return { content: [{ type: "text", text: formatResult(input, result) }], details: result }
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        const status = signal?.aborted ? "aborted" : "error"
-        const result: GuiTaskResult = {
-          status,
-          appLaunched: false,
-          goalVerified: false,
-          actions: 0,
-          decisions: 0,
-          evidence: "",
-          metrics: { elapsedMs: 0, launchMs: 0, observationMs: 0, decisionMs: 0, actionMs: 0, inputTokens: 0, outputTokens: 0, jevCalls: 0, replayedSteps: 0, settleMs: 0, settleEvents: 0 },
-          trace: [{ step: 0, stateId: "unobserved", note: message }],
-        }
-        return { content: [{ type: "text", text: status === "aborted" ? "[aborted]" : `[error] ${message}` }], details: result }
+        const result = failureResult(error, signal)
+        return { content: [{ type: "text", text: result.status === "aborted" ? "[aborted]" : `[error] ${String((error as Error)?.message ?? error)}` }], details: result }
       } finally {
         await client?.dispose().catch(() => undefined)
       }
     },
   })
+}
+
+/** `cua` (Cua Driver) is the default; `legacy` keeps the ax_control worker. */
+export function engineName(): "cua" | "legacy" {
+  return process.env.ORBIT_CU_ENGINE?.trim().toLowerCase() === "legacy" ? "legacy" : "cua"
+}
+
+function failureResult(error: unknown, signal?: AbortSignal): GuiTaskResult {
+  const message = error instanceof Error ? error.message : String(error)
+  const unavailable = error instanceof DriverUnavailableError
+  const status: GuiTaskResult["status"] = signal?.aborted ? "aborted" : "error"
+  return {
+    status,
+    appLaunched: false,
+    goalVerified: false,
+    actions: 0,
+    decisions: 0,
+    evidence: "",
+    metrics: { elapsedMs: 0, launchMs: 0, observationMs: 0, decisionMs: 0, actionMs: 0, inputTokens: 0, outputTokens: 0, jevCalls: 0, replayedSteps: 0, settleMs: 0, settleEvents: 0 },
+    trace: [{ step: 0, stateId: "unobserved", note: message }],
+    ...(unavailable ? { failure: { stage: "launch" as const, branch: error.code, detail: message, hint: "安装 Cua Driver 并在系统设置中授予辅助功能与屏幕录制" } } : {}),
+  }
 }
 
 function publishProgress(onUpdate: ((result: { content: [{ type: "text"; text: string }]; details: Record<string, unknown> }) => void) | undefined, event: GuiTaskEvent): void {

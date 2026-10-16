@@ -17,6 +17,7 @@ import { MarkdownViewShell, useMarkdownMode } from "../chat/MarkdownModeToggle";
 import { ChevronDown, ChevronRight, ImagePlus, Loader, Pause, Play } from "../../shared/ui/icons";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { SurfaceTabs } from "./SurfaceTabs";
+import { BrowserTab } from "../browser/BrowserTab";
 import { useActiveWorkspace, useShell } from "./shellStore";
 import { DirectoryView } from "./DirectoryView";
 import { usePathMeta } from "../../lib/path-meta";
@@ -320,6 +321,8 @@ export function FileView({
   const pane = useActiveWorkspace((workspace) => workspace.panes[paneId]);
   const file = pane?.files.find((item) => item.path === pane.activeFile) ?? pane?.files[0] ?? null;
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
+  // A browser tab's content is a real web view, not a file to read.
+  const browser = file?.browser ? file : null;
   // 审阅标签页（单文件 diff、整版变更、历史提交）都是合成路径，后面没有
   // 真实文件，磁盘相关的 stat / 读取 / 监听全部跳过。
   const review = file != null && (file.diff != null || file.changes != null || file.commit != null);
@@ -395,7 +398,9 @@ export function FileView({
       {/* Orbit keeps a pane's tabs inside the pane (`FilePane` → `SurfaceTabs`),
           so the file name sits above the content it belongs to. */}
       <SurfaceTabs paneId={paneId} showGrip={showGrip} onPaneDragStart={onPaneDragStart} />
-      {file?.commit ? (
+      {browser ? (
+        <BrowserTab paneId={paneId} path={browser.path} />
+      ) : file?.commit ? (
         <CommitDiffView cwd={cwd} sha={file.commit.sha} />
       ) : file?.changes && file.diff ? (
         <WorkingTreeDiffView cwd={cwd} focusKind={file.diff} />
@@ -452,7 +457,7 @@ export function FileView({
           )}
         </div>
       )}
-      <div className={`flex h-7 shrink-0 items-center gap-2 border-t border-stroke px-3 font-mono text-[11px] text-content/45 ${review ? "hidden" : ""}`}>
+      <div className={`flex h-7 shrink-0 items-center gap-2 border-t border-stroke px-3 font-mono text-[11px] text-content/45 ${review || browser ? "hidden" : ""}`}>
         <span className="min-w-0 truncate">{relative}</span>
         {remote && dirty ? (
           <button

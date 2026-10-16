@@ -32,6 +32,15 @@ import {
 } from "./shellModel";
 
 export { CHAT_PANE_ID, HOME_WORKSPACE_ID, isHomeWorkspace, projectWorkspaceTabs, newHomeWorkspace, newWorkspaceTab } from "./shellModel";
+
+/** The tab strip's label for a page: its host, until the page reports its title. */
+function browserTabName(url: string): string {
+  try {
+    return new URL(url).host || "新标签页";
+  } catch {
+    return url || "新标签页";
+  }
+}
 export type { CollapsedRailMode, DockPosition, OpenFile, PaneState, SidebarTab, WorkspaceTab } from "./shellModel";
 
 /**
@@ -101,6 +110,13 @@ type ShellState = {
   terminalPosition: DockPosition;
   terminalSize: number;
   terminalOpen: boolean;
+  /**
+   * Browser Use's第三栏 (`docs/BROWSER_USE.md`). A shell-level column, not a
+   * pane: it belongs to the window, not to one workspace, because the Chrome
+   * behind it outlives any single session — the agent may start a task from
+   * another workspace, and the picture must not disappear when the user
+   * switches tabs.
+   */
   setTerminalSize: (size: number) => void;
   setTerminalOpen: (open: boolean) => void;
   setTerminalPosition: (position: DockPosition) => void;
@@ -135,6 +151,10 @@ type ShellState = {
    * `diff` opens the tab as a working-tree diff instead of an editable file;
    * `changes`/`commit` open the review tabs (synthetic paths, no real file). */
   openFile: (path: string, options?: { pin?: boolean; pane?: string; diff?: "staged" | "unstaged"; isDir?: boolean; changes?: true; commit?: { sha: string; shortSha: string; subject: string }; name?: string }) => void;
+  /** Open a browser tab (a real web view) in a pane, and return its tab path. */
+  openBrowser: (url: string, options?: { pane?: string; edge?: PaneEdge }) => string;
+  /** The page a browser tab is showing, as the tab strip's label and the page itself report it. */
+  updateBrowser: (path: string, patch: { url?: string; title?: string }) => void;
   pinFile: (path: string, pane?: string) => void;
   closeFile: (path: string, pane?: string) => void;
   focusFile: (path: string | null, pane?: string) => void;
@@ -212,6 +232,9 @@ export const useShell = create<ShellState>((set, get) => {
     terminalOpen: (() => { try { return localStorage.getItem("orbit.terminal.open") === "true"; } catch { return false; } })(),
     setTerminalSize: (terminalSize) => { write("orbit.terminal.size", String(terminalSize)); set({ terminalSize }); },
     setTerminalOpen: (terminalOpen) => { write("orbit.terminal.open", String(terminalOpen)); set({ terminalOpen }); },
+    // On by default, and off only when the user said so: the column is where
+    // the browser lives, and a task's page has to stay visible while the user
+    // works in other panels.
     collapsedRailMode: (() => { try { return localStorage.getItem("orbit.shell.collapsedRail") === "hidden" ? "hidden" : "compact"; } catch { return "compact"; } })() as CollapsedRailMode,
     setCollapsedRailMode: (mode) => { write("orbit.shell.collapsedRail", mode); set({ collapsedRailMode: mode }); },
     projectRailWidth: readNumber(PROJECT_RAIL_WIDTH_KEY, 240),
@@ -416,6 +439,55 @@ export const useShell = create<ShellState>((set, get) => {
         }),
         { entering: { ...state.entering, [paneId]: "right" as PaneEdge } },
       );
+    },
+
+    openBrowser: (url, options) => {
+      const state = get();
+      const index = activeIndex(state);
+      const workspace = state.workspaces[index];
+      const path = `browser:${crypto.randomUUID().slice(0, 8)}`;
+      const name = browserTabName(url);
+      const entry: OpenFile = { path, name, preview: false, browser: { url } };
+      const requested = options?.pane && workspace.panes[options.pane] ? options.pane : null;
+      const target = requested ?? (workspace.panes[workspace.activePane] ? workspace.activePane : Object.keys(workspace.panes)[0] ?? null);
+      if (target && !options?.edge) {
+        patchActive((current) => {
+          const pane = current.panes[target];
+          return { ...current, panes: { ...current.panes, [target]: { files: [...pane.files, entry], activeFile: path } }, activePane: target };
+        });
+        return path;
+      }
+      // No editor pane (or an edge was asked for): the browser gets its own.
+      const paneId = nextEditorPaneId(workspace.panes);
+      const edge = options?.edge ?? "right";
+      patchActive(
+        (current) => ({
+          ...current,
+          layout: placeNewPane(current.layout, current.activePane, paneId, edge),
+          panes: { ...current.panes, [paneId]: { files: [entry], activeFile: path } },
+          activePane: paneId,
+        }),
+        { entering: { ...state.entering, [paneId]: edge } },
+      );
+      return path;
+    },
+
+    updateBrowser: (path, patch) => {
+      patchActive((current) => {
+        let changed = false;
+        const panes = Object.fromEntries(Object.entries(current.panes).map(([paneId, pane]) => {
+          if (!pane.files.some((file) => file.path === path && file.browser)) return [paneId, pane];
+          const files = pane.files.map((file) => {
+            if (file.path !== path || !file.browser) return file;
+            const next = { ...file.browser, ...patch };
+            if (next.url === file.browser.url && next.title === file.browser.title) return file;
+            changed = true;
+            return { ...file, browser: next, name: patch.title?.trim() || file.name };
+          });
+          return [paneId, { ...pane, files }];
+        }));
+        return changed ? { ...current, panes } : current;
+      });
     },
 
     pinFile: (path, paneId) => {
