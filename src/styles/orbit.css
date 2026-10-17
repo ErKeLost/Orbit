@@ -292,6 +292,31 @@ html:not(.theme-light) .shiki span {
   object-fit: cover;
 }
 
+/* ---- Context meter（composer 右上角那颗环弹出的占用卡）------------------- */
+/*
+ * 四类来源各一色。深色底用 400 系，浅色底换同色阶的深色版：400 系放在 97% 的
+ * 白底上几乎看不见，而这条条形图靠颜色分辨来源。
+ */
+
+:root {
+  --color-context-system: #a78bfa;
+  --color-context-conversation: #60a5fa;
+  --color-context-tools: #fbbf24;
+  --color-context-attachment: #2dd4bf;
+}
+
+html.theme-light {
+  --color-context-system: #7c3aed;
+  --color-context-conversation: #2563eb;
+  --color-context-tools: #d97706;
+  --color-context-attachment: #0d9488;
+}
+
+.context-swatch-system { background-color: var(--color-context-system); }
+.context-swatch-conversation { background-color: var(--color-context-conversation); }
+.context-swatch-tools { background-color: var(--color-context-tools); }
+.context-swatch-attachment { background-color: var(--color-context-attachment); }
+
 /* ---- Generated images (Orbit's grid reveal keeps its own canvas) --------- */
 
 .tool-image-generation {
