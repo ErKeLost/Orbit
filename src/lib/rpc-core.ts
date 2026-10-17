@@ -156,7 +156,7 @@ function patch(id:string,value:Partial<Snapshot>){
  if(activityChanged)syncLiveSessions()
  // 会话级生命周期事件：每条连接各自发，后台会话和前台会话一视同仁（通知、自动化回写、检查点都挂在这上面）。
  const sessionFile=next.state?.sessionFile,cwd=connections.get(id)?.cwd
- if(previous.transcript.running&&!next.transcript.running&&sessionFile&&cwd)window.dispatchEvent(new CustomEvent('orbit-turn-settled',{detail:{cwd,sessionFile,connectionId:id,title:firstUserTitle(next.transcript),error:next.transcript.error??null}}))
+ if(previous.transcript.running&&!next.transcript.running&&sessionFile&&cwd)window.dispatchEvent(new CustomEvent('orbit-turn-settled',{detail:{cwd,sessionFile,connectionId:id,title:firstUserTitle(next.transcript),error:next.transcript.error??null,aborted:next.transcript.aborted}}))
  if(next.dialogs.length>previous.dialogs.length&&cwd)window.dispatchEvent(new CustomEvent('orbit-session-needs-input',{detail:{cwd,sessionFile:sessionFile??'',connectionId:id,title:firstUserTitle(next.transcript)}}))
  if(previous.state?.sessionFile!==next.state?.sessionFile&&next.state?.sessionFile)invalidateSessionList(id)
 }

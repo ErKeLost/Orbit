@@ -8,7 +8,7 @@ export type DisplayMessageGroup = { id: string; items: DisplayMessage[]; indexes
 export type ToolUsage = { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost?: { total?: number } }
 export type ToolImage = { data: string; mimeType: string }
 export type ToolImageInfo = { model?: string; size?: string; paths?: string[] }
-export type Tool = { name: string; args?: Record<string, Json>; result?: unknown; details?: { patch: string }; images?: ToolImage[]; image?: ToolImageInfo; running: boolean; isError?: boolean; usage?: ToolUsage }
+export type Tool = { name: string; args?: Record<string, Json>; result?: unknown; details?: { patch: string }; images?: ToolImage[]; image?: ToolImageInfo; running: boolean; isError?: boolean; usage?: ToolUsage; durationMs?: number }
 export type Event = { type: string; message?: PiMessage; toolCallId?: string; toolName?: string; args?: Record<string, Json>; result?: unknown; partialResult?: unknown; isError?: boolean; details?: unknown; errorMessage?: string; assistantMessageEvent?: { type: string; contentIndex: number; delta?: string; content?: string; id?: string; toolName?: string; toolCall?: Part }; steering?: string[]; followUp?: string[]; [key: string]: unknown }
 /**
  * ``submitted`` 是「已经提交、但 Pi 还没宣告这一轮开始」的等待位。回车到
@@ -16,12 +16,12 @@ export type Event = { type: string; message?: PiMessage; toolCallId?: string; to
  * 这段时间 ``running`` 还是 false，屏幕上此前没有任何指示。它只在空闲提交时置位，
  * ``agent_start`` / ``agent_settled`` / ``prompt_settled`` 时撤下。
  */
-export type Transcript = { messages: DisplayMessage[]; active: number; running: boolean; submitted: boolean; compacting: boolean; loading: boolean; phase: string; tools: Record<string, Tool>; error: string | null; queue: { steering: string[]; followUp: string[] }; bash: { id?: string; command?: string; output: string; running: boolean } | null; turnStartedAt: number | null }
+export type Transcript = { messages: DisplayMessage[]; active: number; running: boolean; submitted: boolean; compacting: boolean; loading: boolean; phase: string; tools: Record<string, Tool>; error: string | null; aborted: boolean; queue: { steering: string[]; followUp: string[] }; bash: { id?: string; command?: string; output: string; running: boolean } | null; turnStartedAt: number | null }
 /**
  * `loading` 是骨架屏的开关：切换会话/项目时置位，`hydrate` 换上一份真正的 transcript
  * 就自然把它清掉（见 `lib/rpc.ts` 的 `loadMessages`）。
  */
-export const emptyTranscript = (): Transcript => ({ messages: [], active: -1, running: false, submitted: false, compacting: false, loading: false, phase: '就绪', tools: {}, error: null, queue: { steering: [], followUp: [] }, bash: null, turnStartedAt: null })
+export const emptyTranscript = (): Transcript => ({ messages: [], active: -1, running: false, submitted: false, compacting: false, loading: false, phase: '就绪', tools: {}, error: null, aborted: false, queue: { steering: [], followUp: [] }, bash: null, turnStartedAt: null })
 /** 会话切换期间先上骨架屏，别让上一个会话的消息停在原地再突然换掉。 */
 export const transcriptLoading = (transcript: Transcript, loading: boolean): Transcript => transcript.loading === loading ? transcript : { ...transcript, loading }
 
@@ -276,7 +276,7 @@ export function reduceEvent(previous: Transcript, event: Event): Transcript {
       ? { ...state, submitted: false, ...(state.running ? {} : { phase: '就绪', turnStartedAt: null }) }
       : state
     case 'bash_execution_update': return { ...state, bash: { id: typeof event.id === 'string' ? event.id : undefined, command: typeof event.command === 'string' ? event.command : state.bash?.command, output: `${state.bash?.output ?? ''}${String(event.delta ?? '')}`, running: true } }
-    case 'agent_start': return { ...state, active: -1, running: true, submitted: false, phase: '正在思考', error: null, turnStartedAt: state.turnStartedAt ?? Date.now() }
+    case 'agent_start': return { ...state, active: -1, running: true, submitted: false, phase: '正在思考', error: null, aborted: false, turnStartedAt: state.turnStartedAt ?? Date.now() }
     case 'agent_settled': {
       const elapsedMs = state.turnStartedAt == null ? undefined : Math.max(0, Date.now() - state.turnStartedAt)
       let durationOwner = false
@@ -284,6 +284,9 @@ export function reduceEvent(previous: Transcript, event: Event): Transcript {
         ...state,
         running: false,
         submitted: false,
+        // Pi 1.1.0 起 agent_settled 带 aborted：这是「这一轮是被中止的」唯一权威信号。
+        // 只靠 error 字段判断会把取消记成成功（自动化回写就踩这个坑）。
+        aborted: event.aborted === true,
         phase: '就绪',
         bash: state.bash ? { ...state.bash, running: false } : null,
         turnStartedAt: null,
@@ -387,7 +390,10 @@ export function reduceEvent(previous: Transcript, event: Event): Transcript {
       const details=event.result!==undefined?toolCodeDetails(name,event.result)??tool?.details:tool?.details
       const images=event.result!==undefined?toolResultImages(event.result):tool?.images
       const image=event.result!==undefined?toolImageInfo(name,event.result):tool?.image
-      return { ...state, phase: event.type === 'tool_execution_end' ? '正在运行' : `执行 ${event.toolName}`, tools: {...state.tools,[event.toolCallId]:{...tool,name,args:event.args ?? tool?.args,result,details,images,image,running:event.type !== 'tool_execution_end',isError:event.isError}} }
+      // Pi 1.1.0 起 tool_execution_end 带 durationMs（execute() 的单调时钟耗时）。只有实时
+      // 事件有它：历史会话 hydrate 出来的 toolResult 不带这个字段，所以必须容忍 undefined。
+      const durationMs = event.type === 'tool_execution_end' && typeof event.durationMs === 'number' ? event.durationMs : tool?.durationMs
+      return { ...state, phase: event.type === 'tool_execution_end' ? '正在运行' : `执行 ${event.toolName}`, tools: {...state.tools,[event.toolCallId]:{...tool,name,args:event.args ?? tool?.args,result,details,images,image,durationMs,running:event.type !== 'tool_execution_end',isError:event.isError}} }
     }
     default: return state
   }

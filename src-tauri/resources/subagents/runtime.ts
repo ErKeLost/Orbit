@@ -406,10 +406,14 @@ export class SubagentRuntime {
     if (type === "agent_settled") {
       const current = this.nodes.get(node.id)
       if (current && !TERMINAL_STATUSES.has(current.status)) {
+        // Pi reports `aborted` on settle (1.1.0+), which is authoritative: a run
+        // aborted before its first assistant message leaves no `stopReason`
+        // behind, so message_end alone would report it as completed.
+        const failure = handle.failure ?? (event.aborted === true ? { status: "aborted" as const, message: "子 agent 已中止" } : undefined)
         this.update(node.id, {
-          status: handle.failure?.status || "completed",
-          summary: handle.failure?.message || (handle.output ? safeSummary(handle.output) : current.summary || "已完成"),
-          ...(handle.failure ? { error: handle.failure.message } : {}),
+          status: failure?.status || "completed",
+          summary: failure?.message || (handle.output ? safeSummary(handle.output) : current.summary || "已完成"),
+          ...(failure ? { error: failure.message } : {}),
           endedAt: Date.now(),
         })
       }

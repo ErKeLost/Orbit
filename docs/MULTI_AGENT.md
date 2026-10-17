@@ -1,12 +1,97 @@
-# Multi-agent architecture
+# 多 Agent 架构
 
-Orbit adds a collaboration control plane on top of Pi 1.0.0. Pi remains the execution engine for every agent; Orbit owns parent/child lifecycle, transport projection, and UI.
+Orbit 在 Pi 1.3.0 之上加了一层「协作控制面」。干活仍然是 Pi：每个 agent 都是一个真的 Pi 进程；父子的生命周期、消息投递和界面显示由 Orbit 负责。
 
-The interaction model follows Codex's V2 multi-agent surface: **delegation is asynchronous**. `spawn_agent` returns as soon as a worker has started, and the worker's answer arrives later as a message injected into the supervisor's own conversation. The supervisor is never blocked while workers run.
+## 先用一个例子讲清
 
-## Runtime model
+下面所有机制，都可以挂在这一个场景上。
 
-The parent Pi session receives exactly the Codex V2 collaboration surface:
+你对主 agent 说：
+
+> 帮我分析 github 上的 a 仓库和 b 仓库
+
+先看整张图，再逐条解释：
+
+```mermaid
+flowchart TD
+    A(["你：帮我分析 github 上的 a 仓库和 b 仓库"]) --> B{"用户是否明确要求<br/>用子 agent / 并行？"}
+    B -- "否：只是说“分析仔细点”" --> B1["主 agent 自己顺序做完"]
+    B -- "是：这次就是" --> C["主 agent /root 读任务，决定拆成两件独立活"]
+
+    C --> D1["spawn_agent<br/>task_name = repo_a"]
+    C --> D2["spawn_agent<br/>task_name = repo_b"]
+
+    D1 --> E{"三道闸<br/>admit_start → 并发上限（默认 3）→ residency"}
+    D2 --> E
+    E -- "名额不够" --> E1["AgentLimitReached<br/>派活直接失败，不排队"]
+    E -- "通过" --> ACK["立刻返回回执：只有 id + 昵称<br/>★ 回执里没有答案"]
+
+    E -- "同进程新建两个子 session" --> F1["子 session /root/repo_a"]
+    E --> F2["子 session /root/repo_b"]
+
+    F1 --> G1["读 a 仓库并分析"]
+    F2 --> G2["读 b 仓库并分析"]
+
+    G1 --> H1["FINAL_ANSWER 信封"]
+    G2 --> H2["FINAL_ANSWER 信封"]
+
+    H1 --> M[("父的 mailbox")]
+    H2 --> M
+    M -- "trigger_turn = false，不叫醒父" --> W["主 agent 自己调 wait_agent"]
+    W -- "只返回 Wait completed<br/>不说谁完成了、更不含内容" --> X["两条 FINAL_ANSWER 已在上下文里"]
+    X --> Y(["主 agent 写对比结论，回你一段话"])
+```
+
+下面按顺序走一遍。
+
+**第 1 步：主 agent 读一下，决定怎么拆**
+
+主 agent 就是你在对话里直接说话的那一个，它的固定路径是 `/root`。它看到这是两件互不依赖的活，于是连着调两次 `spawn_agent`，每次给子 agent 起一个名字：`repo_a`、`repo_b`。
+
+**第 2 步：派活立刻返回，回执里没有答案**
+
+两次调用都是秒回，回给你的东西只有一行：
+
+```text
+/root/repo_a (agent_id: 7c1e) 已启动，结果稍后以消息形式送达
+```
+
+这是整套设计里最反直觉的一点：**派活返回的是回执，不是成果**。
+
+**第 3 步：两个子 agent 真的同时在跑**
+
+`/root/repo_a` 和 `/root/repo_b` 是两个独立的 Pi 进程，但都在**同一个项目目录**里。它们各自去读自己的仓库、各自分析，互不等待。
+
+**第 4 步：子 agent 干完，结果自己飞回来**
+
+`repo_a` 跑完之后，它最后那段总结会被装进一个信封，**自动注入到主 agent 的对话里**：
+
+```text
+Message Type: FINAL_ANSWER
+Task name: /root
+Sender: /root/repo_a
+Status: completed
+Payload:
+a 仓库主要用的是……（子 agent 的最终回答）
+```
+
+对主 agent 来说，这跟你自己发了一条消息没什么区别，它就是普通上下文里的一条消息。
+
+**第 5 步：主 agent 去「敲门」看谁交了活**
+
+主 agent 会调用 `wait_agent(timeout_ms)`。它拿到的只有一句话，比如"`repo_a`、`repo_b` 有更新了"，**不包含它们写了什么**。内容就是第 4 步那个信封。
+
+这也是为什么「子 agent 的成果永远不会出现在工具返回值里」——工具只负责告诉你信箱里有信，不负责把信念出来。
+
+**第 6 步：主 agent 综合**
+
+它把两个信封读完，写出一段对比结论给你。你只看到最后这一条回答，但中间是两个 agent 并行干出来的。
+
+后面每一节，都是给这个例子补上机制部分。
+
+## 运行时模型
+
+主 Pi 会话拿到的协作工具就是这 6 个：
 
 - `spawn_agent`
 - `send_message`
@@ -15,111 +100,117 @@ The parent Pi session receives exactly the Codex V2 collaboration surface:
 - `interrupt_agent`
 - `list_agents`
 
-There is deliberately **no batch spawner**. Because spawning does not block, independent work is requested by emitting several `spawn_agent` calls in one turn; they start concurrently. Adding a batch primitive on top of a non-blocking spawn would be redundant.
+**故意没有「批量派活」工具**。因为派活本身不阻塞，要并行就在同一轮里连着调几次 `spawn_agent`，它们会同时启动。在非阻塞的派活上再套一个批量原语是多余的。
 
-There is no artificial concurrency or tree-depth limit. The parent model chooses whether to delegate, how many children to create, and whether children should delegate further. The runtime bounds process pressure instead: at most 8 active workers, and settled workers are evicted oldest-first once 12 are alive.
+除了准入之外没有任何调度策略——没有队列、没有批量原语、也没有树深度上限。派不派、派几个、子 agent 要不要再往下派，全都由主模型自己决定。被约束的只有进程压力：**最多 8 个 worker 同时活跃**，跑完的进程会保留，攒到 **12 个**时按「最先结束的先清理」淘汰。这个 8 是**每个 supervisor 进程各自**的额度，所以嵌套树是逐层相乘，而不是共用一份全局预算（`MAX_ACTIVE_CHILDREN`、`MAX_LIVE_CHILDREN`，见 `src-tauri/resources/subagents/runtime.ts`）。
 
-### Agent paths
+### Agent 路径
 
-Every agent has a canonical path, borrowed from Codex's `AgentPath`: the supervisor is `/root`, and a worker spawned with `task_name` takes `<spawner path>/<task_name>`. A worker is told its own path, receives it in the environment as `PI_GUI_AGENT_PATH`, and passes it on to its own children, so a nested tree branches correctly.
+每个 agent 都有一个固定路径，沿用 Codex 的 `AgentPath`：主 agent 是 `/root`，用 `task_name` 派出来的子 agent 则是 `<派出者路径>/<task_name>`。上面例子里就是 `/root/repo_a`。
 
-A path segment must be lowercase letters, digits and underscores; `root`, `.` and `..` are reserved and a `/` is rejected. An unusable `task_name` fails the spawn with a clear message rather than being silently rewritten, so the name a model asks for is the name it gets.
+子 agent 会被告知自己的路径，同时通过环境变量 `PI_GUI_AGENT_PATH` 拿到它，并在自己派活时继续往下传，所以多层嵌套的树不会串路径。
 
-Targets resolve by agent id, by absolute path (`/root/a/b`), or by a reference relative to the caller (`b`), matching Codex's `AgentPath::resolve`. `list_agents` filters on real path prefixes.
+路径段只允许小写字母、数字和下划线；`root`、`.`、`..` 是保留字，出现 `/` 会被拒绝。名字不合法时**派活直接报错，而不是悄悄改名**——模型要的名字就是它得到的名字。
 
-Each child is an isolated Pi RPC process using the exact Pi runtime bundled with Orbit. Children inherit the parent model and thinking level unless the spawn request overrides them. A child receives a persistent session directory and a minimal explicit extension; ordinary user/project extensions are disabled for that process to prevent accidental duplicate registration. The minimal child extension still exposes the collaboration tools, so nested delegation remains possible.
+定位目标支持三种写法：agent id、绝对路径（`/root/a/b`）、相对调用者的引用（`b`），与 Codex 的 `AgentPath::resolve` 一致。`list_agents` 按真实路径前缀过滤。
 
-Workers also keep the capability-bearing built-in extensions. `--no-extensions` turns off extension *discovery* and built-in extensions in one switch, which is what keeps Orbit's own GUI extension from registering itself inside a worker — but it also strips MCP, codemode, tool search, and the local model provider. Those four are therefore re-added explicitly (`--extension builtin:mcp`, `builtin:codemode`, `builtin:tool-search`, `builtin:llama.cpp`). A worker reaches MCP servers from `mcp.json` through codemode, exactly as the supervisor does by default. Discovery stays off, so no GUI command ever exists in a worker.
+每个子 agent 都是一个独立的 Pi RPC 进程，用的是 Orbit 内置的那份 Pi 运行时。子 agent 默认继承父的模型和 thinking 级别，也可以在这次派活里覆盖。子进程有自己持久的会话目录，并且只加载一个最小扩展；普通用户扩展和项目扩展在该进程里是关闭的，避免重复注册。这个最小扩展仍然暴露协作工具，所以子 agent 还能继续往下派。
 
-## Delivering results
+worker 同时保留几个「有实际能力」的内置扩展。`--no-extensions` 一个开关同时关掉了扩展**发现**和内置扩展——这正是防止 Orbit 自己的 GUI 扩展在 worker 里又注册一遍的关键，但它也顺手剥掉了 MCP、codemode、tool search 和本地模型提供方。因此这四项被显式加回来（`--extension builtin:mcp`、`builtin:codemode`、`builtin:tool-search`、`builtin:llama.cpp`）。worker 通过 codemode 访问 `mcp.json` 里的 MCP 服务器，和主 agent 默认行为一致。扩展发现始终是可关的，所以 worker 里不会出现任何 GUI 命令。
 
-`spawn_agent` returns an acknowledgement — the worker's canonical path and id — never its answer. When a worker's turn reaches a terminal state, `SubagentRuntime` hands the result to the host, which injects it with `pi.sendMessage(..., { triggerTurn: true })`:
+## 结果怎么送回来
+
+`spawn_agent` 只返回一个确认——子 agent 的固定路径和 id，**永远不是它的答案**。当子 agent 这一轮走到终态时，`SubagentRuntime` 把结果交给宿主，由宿主用 `pi.sendMessage(..., { triggerTurn: true })` 注入：
 
 ```text
 Message Type: FINAL_ANSWER
-Task name: <recipient path>
-Sender: <worker path>
+Task name: <收件人路径>
+Sender: <worker 路径>
 Status: <completed | failed | aborted>
 Payload:
-<the worker's final assistant text, truncated at 50 KB>
+<worker 的最终回答，超过 50 KB 会被截断>
 ```
 
-The initial task uses the same envelope in the other direction, so one format covers both ways a message crosses the tree:
+派发任务时用的是同一个信封、反方向：
 
 ```text
 Message Type: NEW_TASK
-Task name: <worker path>
-Sender: <spawner path>
+Task name: <worker 路径>
+Sender: <派出者路径>
 Payload:
-<the task>
+<任务内容>
 ```
 
-`triggerTurn: true` covers both cases correctly. While the supervisor is running, Pi steers the message into its next request, so a `wait_agent` call returns and the model immediately sees the result. When the supervisor is idle, Pi starts a turn instead, so a result is never stranded.
+`triggerTurn: true` 在两种情况下都正确：主 agent 正在跑的时候，Pi 会把这条消息 steer 进它下一次请求，所以 `wait_agent` 一返回，模型立刻就能看到结果；主 agent 空闲的时候，Pi 直接起一轮，所以结果不会被搁在那儿没人看。
 
-`wait_agent` therefore only waits for a **signal** and returns a summary of which workers have updates — never their content. This is the Codex contract, and it is why worker output does not appear inside a tool result.
+这也解释了 `wait_agent` 的语义：它只等一个**信号**，返回「哪些 worker 有更新」的摘要，**从不返回内容**。这是 Codex 的契约，也是 worker 的输出不会出现在工具返回值里的原因。
 
-## Worker context
+## 子 agent 拿到什么上下文
 
-`spawn_agent` accepts `context: "inherit" | "isolated"`, defaulting to `inherit`. An inherited worker starts with Pi's `--fork <source>` flag, so Pi copies entries into a fresh session inside the worker's own session directory and keeps the `parentSession` link in the header. Orbit never re-serializes the conversation into the prompt.
+`spawn_agent` 接受 `context: "inherit" | "isolated"`，默认 `inherit`。选 inherit 时，子 agent 用 Pi 的 `--fork <source>` 启动，Pi 会把父会话的条目复制到子 agent 自己会话目录下的新会话里，并在头部保留 `parentSession` 血缘。Orbit 从不把对话重新序列化塞进提示词。
 
-The fork source is **filtered**, mirroring Codex's `keep_forked_rollout_item`: the supervisor's entries are rewritten into a tool-free transcript first. Kept are the user turns and the assistant's prose; dropped are tool results, tool calls inside assistant content, thinking blocks, compactions, and inter-agent messages. Retained entries get a linear `parentId` chain so Pi can still walk the history.
+fork 的来源是**过滤过的**，对应 Codex 的 `keep_forked_rollout_item`：先把主 agent 的条目重写成一棵「没有工具记录」的对话树。保留的是用户的每一轮话和助手的正文；丢掉的是工具结果、助手内容里的工具调用、思考块、压缩记录，以及 agent 之间的消息。保留下来的条目会被接成一条线性的 `parentId` 链，这样 Pi 仍然能往回走历史。
 
-This is where most of the saving comes from. Tool results — file contents, diffs, command output — dominate a coding session's bytes, and a worker can read any of it again for itself. Measured on real sessions, pure-code sessions shrink by 93–97%; sessions dominated by base64 images shrink much less, because the images live in user turns, which are kept.
+绝大部分节省就来自这里。工具结果——文件内容、diff、命令输出——占了编码会话字节数的大头，而 worker 完全可以自己再读一遍。在真实会话上测过：纯代码会话能缩掉 93–97%；以 base64 图片为主的会话缩得少很多，因为图片存在于用户轮次里，而用户轮次是保留的。
 
-`context: "isolated"` starts an empty session instead, for self-contained work where the shared history would only add cost and noise. Pi persists a session lazily (on the first conversation entry), so if the supervisor's session file does not exist yet, an inheritance request degrades to an isolated worker rather than failing the delegation. The same fallback applies if filtering throws: the raw session file is used rather than failing the spawn.
+`context: "isolated"` 则是空白开局，适合那些「带着共享历史只会增加成本和噪音」的自包含任务。上面 `repo_a` / `repo_b` 的例子如果用 isolated，两个 worker 只看得到任务那一句，看不到你们之前聊过什么。
 
-Because the supervisor's own delegation call is stripped along with the other tool calls, a forked worker never sees a dangling tool call, so no synthetic tool result is needed.
+Pi 的会话是懒持久化的（有第一条对话内容才落盘），所以如果主 agent 的会话文件还不存在，继承请求会降级成 isolated，而不是让派活失败。过滤抛错时同理：宁可退回原始会话文件，也不让这次派活失败。
 
-## Lifecycle and communication
+因为主 agent 自己那次派活调用也属于「工具调用」被一起剥掉了，所以 fork 出来的 worker 不会看到悬空的工具调用，也就不需要补一个假的工具结果。
 
-`send_message` and `followup_task` match Codex's two delivery modes. `send_message` queues onto a running worker without starting a turn; `followup_task` also starts a turn when the worker is idle. Pi has no "queue without starting" for an idle RPC agent, so a `send_message` to an idle worker is buffered in Orbit and prepended to that worker's next task instead of being lost.
+## 生命周期与通信
 
-Targets resolve by agent id or by task name. An ambiguous name is rejected rather than guessed.
+`send_message` 和 `followup_task` 对应 Codex 的两种投递模式。`send_message` 只是排进正在跑的 worker，不额外起一轮；`followup_task` 在 worker 空闲时也会起一轮。Pi 对空闲的 RPC agent 没有「只排队不起轮」的语义，所以发给**空闲** worker 的 `send_message` 会先缓存在 Orbit，等这个 worker 下一次有任务时前置拼进去，而不是丢掉。
 
-All worker processes are reclaimed when the supervisor session shuts down, and settled workers are evicted oldest-first once 12 are alive. A new top-level user turn does **not** reclaim anything: the GUI sends its mode-sync prompts concurrently with the user's own message, so reclaiming on input can race a spawn and kill live work. Process pressure is bounded by eviction, which only ever touches workers that have already finished. Cancellation sends Pi's `clear_queue` and `abort` commands before terminating the process. Child sessions are persisted and become openable from the activity panel after settlement.
+目标可以用 agent id 或 task name 定位；名字有歧义时直接报错，而不是猜一个。
 
-## Shared working directory
+主 agent 会话关闭时，所有 worker 进程都会被回收；跑完的 worker 攒到 12 个时按最旧优先淘汰。**新的用户轮次不会回收任何东西**：GUI 的模式同步提示词和你的消息是并发发出的，如果在这时候回收，可能正好撞上派活、把活着的 worker 杀掉。进程压力只靠淘汰来兜底，而淘汰只碰已经结束的 worker。取消会先发 Pi 的 `clear_queue` 和 `abort`，再终止进程。子会话会持久化，结束后可以从活动面板打开。
 
-Every agent in the tree runs in the same working directory and sees the same filesystem, so a worker's edit is immediately visible to its supervisor and to its siblings. The orchestration instructions say so explicitly, together with the concurrency budget and the advice to prefer long waits over polling. Codex states the same constraint the same way: as a warning to the model, not as a runtime lock. Orbit adds one line Codex does not have — do not silently revert another agent's changes — because that is the failure mode a shared directory actually produces.
+## 共享工作目录
 
-## Event flow
+树里每个 agent 都在**同一个工作目录**里跑，看到同一个文件系统，所以某个 worker 的改动，主 agent 和它的兄弟 agent 立刻就能看见。编排指令里明确写了这一点，同时也写了并发额度和「用长等待代替轮询」的建议。Codex 也是同样的处理方式：**这是给模型的警告，不是运行时锁**。Orbit 比 Codex 多一句——不要静默回滚别的 agent 的改动——因为共享目录真正会产生的失败就是这一种。
+
+回到例子：如果只是读这两个仓库，共享目录没有任何风险；但如果让两个 worker 都去改同一个文件，后写的会覆盖先写的，运行时不加锁。
+
+## 事件流
 
 ```text
-parent model
-  -> collaboration tool
+父模型
+  -> 协作工具
   -> SubagentRuntime
-  -> child Pi RPC process
-  -> Pi message/tool/lifecycle events
-  -> versioned AgentSnapshot
-  -> extension setStatus("gui-agents")
-  -> Tauri JSONL bridge
-  -> Zustand projection
-  -> inline AgentActivityFeed inside the turn timeline
+  -> 子 Pi RPC 进程
+  -> Pi 的消息 / 工具 / 生命周期事件
+  -> 带版本号的 AgentSnapshot
+  -> 扩展 setStatus("gui-agents")
+  -> Tauri JSONL 桥
+  -> Zustand 状态投影
+  -> 时间线里内嵌的 AgentActivityFeed
 ```
 
-`AgentSnapshot` is the sole wire contract between the runtime and React. The UI parses it strictly instead of guessing aliases. Nested snapshots are attached to their spawning parent, producing a real agent tree.
+`AgentSnapshot` 是运行时和 React 之间**唯一的**线上契约。UI 严格解析它，不去猜别名。嵌套的快照会挂到派出它的父节点上，从而形成真正的 agent 树。
 
-Pi's delta-only `message_update`, `tool_execution_*`, `message_end`, `agent_end`, and `agent_settled` events drive live summaries and terminal state. Snapshot publication is trailing-throttled to 64 ms so token streaming does not trigger a webview IPC/render for every delta.
+Pi 那些只发增量的 `message_update`、`tool_execution_*`、`message_end`、`agent_end`、`agent_settled` 事件，驱动实时摘要和终态。快照发布做了 64 ms 的尾随节流，免得每个 token 都触发一次 webview IPC 和渲染。
 
-## Bundled Pi
+## 内置 Pi
 
-`scripts/bundle-pi.mjs` builds the locked `@earendil-works/pi-coding-agent` dependency into a self-contained Node bundle and stages required themes, HTML-export assets, and Photon resources. Tauri resolves this application resource first, then supports project/global Pi only as compatibility fallbacks. Parent and child processes receive the same resolved CLI and Node paths through `ORBIT_PI_*` environment variables.
+`scripts/bundle-pi.mjs` 把锁定的 `@earendil-works/pi-coding-agent` 打成一个自包含的 Node bundle，并准备好主题、HTML 导出资源和 Photon 资源。Tauri 优先解析这个应用资源，只有在兼容场景下才回退到项目级或全局的 Pi。父进程和子进程通过 `ORBIT_PI_*` 环境变量拿到同一份 CLI 与 Node 路径。
 
-Users therefore do not need a separate Pi installation. A compatible Node runtime is still required by the desktop application.
+所以用户不需要另外装 Pi。桌面应用仍然需要一个兼容的 Node 运行时。
 
-## Pi API coverage
+## Pi API 覆盖
 
-The primary Orbit integration retains its typed coverage of all 33 Pi RPC commands. The multi-agent runtime uses the subset appropriate to child control: prompt/steer/follow-up behavior, state, streaming messages, tool execution, queue clearing, abort, and session persistence. It does not proxy unrelated commands merely to duplicate the parent API surface.
+主集成保留了对 Pi 全部 33 个 RPC 命令的类型化覆盖。多 agent 运行时只用适合控制子进程的那一部分：prompt/steer/follow-up、状态、流式消息、工具执行、清队列、中止、会话持久化。它不会为了「和父 API 一样全」而去转发无关命令。
 
-The composer's **Pi / Multi Agent** segmented control enables or disables all collaboration tools as one capability set. New installations default to Pi mode; the user's choice is persisted. Tool membership is derived from one exported protocol list so the extension command and registered tool surface cannot drift.
+输入框上的 **Pi / Multi Agent** 分段控件把整套协作工具当作一个能力整体来开关。新安装默认是 Pi 模式，用户的选择会被持久化。工具清单来自同一份导出的协议列表，所以扩展命令和实际注册的工具面不会各说各话。
 
-## Not carried over from Codex
+## 没有从 Codex 搬过来的部分
 
-Codex has two collaboration features Orbit does not implement, and two remaining differences:
+Codex 有两个协作功能 Orbit 没有实现，另有两处差异：
 
-- **Message board** — Codex ships channels, posts, subscriptions and search (`create_channel`, `post`, `subscribe`, …) with optional SQLite persistence. Pi has no equivalent channel model; building one is a separate project.
-- **Named agent roles** — Codex loads `agent_type` definitions from TOML that can change a child's model, instructions and features. Orbit only supports the model/thinking overrides on the spawn call.
-- **Session-temporary MCP servers.** Servers persisted to `~/.pi/agent/mcp.json` (or a trusted project's `.pi/mcp.json`) reach workers, because the built-in MCP extension reads the same files. Servers registered for one session through `/gui-mcp add` live only in the supervisor's process memory, so a worker does not see them.
-- **Concurrent edits.** Codex's supervisor and workers share one working directory and may edit it concurrently. Orbit no longer blocks the supervisor either, so the same hazard applies: nothing in the runtime serializes repository writes between agents. Both the supervisor and every worker are told this explicitly — the same note Codex injects — including that another agent's edits are immediately visible, that another agent's changes must not be silently reverted, and how many workers may run at once. The constraint is advisory in both systems.
+- **消息板**——Codex 有频道、帖子、订阅和搜索（`create_channel`、`post`、`subscribe`……），可选 SQLite 持久化。Pi 没有对应的频道模型，要做得另立项目。
+- **命名角色**——Codex 从 TOML 加载 `agent_type` 定义，可以改变子 agent 的模型、指令和功能开关。Orbit 只支持在派活时覆盖 model / thinking。
+- **会话级临时 MCP 服务器。** 持久化到 `~/.pi/agent/mcp.json`（或受信任项目的 `.pi/mcp.json`）的服务器，worker 也能用，因为内置 MCP 扩展读的是同一批文件。但通过 `/gui-mcp add` 为某次会话临时注册的服务器只活在主 agent 的进程内存里，worker 看不到。
+- **并发编辑。** Codex 的主 agent 和 worker 共享一个工作目录、可能并发编辑。Orbit 现在也不阻塞主 agent，所以同样的风险存在：运行时不会把仓库写入串行化。主 agent 和每个 worker 都会被明确告知这一点——和 Codex 注入的是同一段提示——包括「别的 agent 的改动立刻可见」「不要静默回滚别人的改动」「同时允许多少个 worker」。两边都只是提示，不是强制。
 
-`tsconfig.subagents.json` type-checks this directory; it is separate from the app configs and runs as `check:subagents`.
+`tsconfig.subagents.json` 对这个目录做类型检查；它独立于应用配置，命令是 `check:subagents`。

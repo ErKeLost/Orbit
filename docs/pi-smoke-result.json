@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-16T01:02:15.947Z",
+  "checkedAt": "2026-10-17T01:20:15.763Z",
   "results": [
     "bundled codemode sandbox: worker + quickjs wasm start",
     "SDK live context and compaction configuration",
@@ -14,7 +14,7 @@
     "GUI extension: computer-use mode disabled",
     "real Bash execution through RPC",
     "commands enumerated",
-    "Pi 1.0 capability snapshot: tool exposure, MCP, media, virtual models",
+    "Pi capability snapshot: tool exposure, MCP, media, virtual models",
     "image and classifier model catalog",
     "MCP server registration through pi.registerMcpServer",
     "virtual model registration through pi.registerVirtualModel"

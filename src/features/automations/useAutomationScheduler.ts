@@ -37,17 +37,21 @@ export function useAutomationScheduler() {
   const runtimeTarget = useWorkspace((state) => state.runtimeTarget);
   const running = useWorkspace((state) => state.transcript.running);
   const error = useWorkspace((state) => state.transcript.error);
+  const aborted = useWorkspace((state) => state.transcript.aborted);
 
   // 后台会话的完成回写：settled 事件带 connectionId，和前台 running 无关。
   useEffect(() => {
     if (runtimeTarget !== "desktop") return;
     const settle = (event: Event) => {
-      const detail = (event as CustomEvent<{ connectionId?: string; error?: string | null }>).detail ?? {};
+      const detail = (event as CustomEvent<{ connectionId?: string; error?: string | null; aborted?: boolean }>).detail ?? {};
       if (!detail.connectionId) return;
       for (const [id, entry] of [...inFlight]) {
         if (entry.connectionId !== detail.connectionId) continue;
         inFlight.delete(id);
-        void automationRunUpdate(entry.run.id, detail.error ? "failed" : "succeeded", entry.run.sessionId ?? null, detail.error ?? null)
+        // aborted 优先于 error：被取消的一轮既没有错误也不算成功，记成 succeeded 会让
+        // 自动化把「用户按了停止」当成完成。
+        const outcome = detail.aborted ? "cancelled" : detail.error ? "failed" : "succeeded";
+        void automationRunUpdate(entry.run.id, outcome, entry.run.sessionId ?? null, detail.error ?? null)
           .catch(() => undefined);
       }
     };
@@ -119,13 +123,14 @@ export function useAutomationScheduler() {
     if (running || inFlight.size === 0) return;
     for (const [runId, entry] of [...inFlight]) {
       inFlight.delete(runId);
-      const failed = Boolean(error);
-      void automationRunUpdate(runId, failed ? "failed" : "succeeded", entry.run.sessionId ?? null, error)
+      // 被中止的一轮不是成功也不是失败：cancel 掉，不要写进 succeeded。
+      const outcome = aborted ? "cancelled" : error ? "failed" : "succeeded";
+      void automationRunUpdate(runId, outcome, entry.run.sessionId ?? null, error)
         .then(() => {
           // One-shot schedules never come back; weekly ones get their next slot
           // when the claim advanced it, so nothing to do here.
         })
         .catch(() => undefined);
     }
-  }, [error, running]);
+  }, [aborted, error, running]);
 }

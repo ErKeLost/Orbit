@@ -45,7 +45,7 @@ function mcpViewToConfig(view: McpServerView): Record<string, unknown> {
   return config;
 }
 
-/** Pi 1.0 surfaces that the RPC protocol does not cover: MCP, codemode, tool search, media and routing models. */
+/** Pi surfaces that the RPC protocol does not cover: MCP, codemode, tool search, media and routing models. */
 function PiCapabilitiesSettings({ desktop, online, running, tools }: { desktop: boolean; online: boolean; running: boolean; tools: GuiTools }) {
   const ask = usePrompt();
   const capabilitiesText = useWorkspace(state => state.statuses["gui-capabilities"]);
@@ -665,7 +665,7 @@ export function GeneralSettingsPanel() {
     <SettingsGroup title="运行环境" icon="terminal-window" description="Pi、Node、配置和资源目录的实际解析结果。"><RuntimeSettings desktop={desktop} cwd={cwd} /></SettingsGroup>
     <SettingsGroup title="更新" icon="arrows-clockwise"><DesktopUpdateSettings desktop={desktop} /></SettingsGroup>
     <SettingsGroup title="工具与终端" icon="wrench"><ToolsSettings tools={tools} running={running} /><TerminalSettings cwd={cwd} desktop={desktop} /></SettingsGroup>
-    <SettingsGroup title="Pi 1.0 能力" icon="plugs-connected" description="MCP、Codemode、Tool Search、图片与分类器模型、虚拟路由模型。"><PiCapabilitiesSettings desktop={desktop} online={status === "online"} running={running} tools={tools} /></SettingsGroup>
+    <SettingsGroup title="Pi 能力" icon="plugs-connected" description="MCP、Codemode、Tool Search、图片与分类器模型、虚拟路由模型。"><PiCapabilitiesSettings desktop={desktop} online={status === "online"} running={running} tools={tools} /></SettingsGroup>
     <SettingsGroup title="数据管理" icon="trash" description="管理保存在电脑上的会话历史。"><HistorySettings cwd={cwd} desktop={desktop} busy={historyBusy} setBusy={setHistoryBusy} /></SettingsGroup>
   </>;
 }

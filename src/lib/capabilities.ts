@@ -1,4 +1,4 @@
-// Pi 1.0 capability snapshots. The RPC protocol has no commands for MCP servers,
+// Pi capability snapshots. The RPC protocol has no commands for MCP servers,
 // media models, virtual models, or tool exposure, so the GUI extension publishes
 // them as `setStatus` payloads; this module parses them for the UI.
 
