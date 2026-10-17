@@ -46,6 +46,17 @@ export class ViewDriver {
 
   /** The engine this driver reports in the run's metrics. */
   readonly engine = "view" as const
+  /**
+   * Trusted inputs the user made in this tab, as the page counted them.
+   *
+   * The user shares this web view: they can click, type and scroll in the very
+   * tab this run drives, and a decision made a second earlier may now be aimed
+   * at something they moved. Synthetic events this driver dispatches are not
+   * trusted, so `isTrusted` counts exactly the human. `0` means the counter is
+   * not installed (a fresh document after navigation), which is not evidence of
+   * anything and never raises a refusal.
+   */
+  private observedInput = 0
 
   private constructor(private url: string, private tab: string) {}
 
@@ -169,9 +180,33 @@ export class ViewDriver {
   }
 
   async observe(): Promise<BrowserObservation> {
+    // Re-installed on every observation because navigation drops it. The script
+    // is guarded, so on an unchanged document this costs one no-op evaluation.
+    await this.installUserWatch().catch(() => undefined)
+    this.observedInput = await this.userInputCount().catch(() => this.observedInput)
     const raw = await this.send<BrowserObservation>(SNAPSHOT, 20_000)
     if (!raw || typeof raw !== "object") throw new StalePage("页面没有返回可读状态")
     return { ...raw, fingerprint: fingerprint(raw) }
+  }
+
+  /** Count trusted user input in this document, exactly once per document. */
+  private installUserWatch(): Promise<unknown> {
+    return this.send(
+      `(() => {
+        if (typeof window.__orbitUserEpoch === "number") return "ready";
+        window.__orbitUserEpoch = 0;
+        const bump = event => { if (event.isTrusted) window.__orbitUserEpoch += 1 };
+        for (const name of ["pointerdown", "keydown", "wheel", "touchstart"]) {
+          addEventListener(name, bump, { capture: true, passive: true });
+        }
+        return "installed";
+      })()`,
+    )
+  }
+
+  private async userInputCount(): Promise<number> {
+    const value = await this.send<unknown>("window.__orbitUserEpoch ?? 0")
+    return typeof value === "number" ? value : 0
   }
 
   /**
@@ -209,6 +244,13 @@ export class ViewDriver {
       return
     }
     if (typeof action.node !== "number") throw new Error("观察到的目标节点无效")
+    // The user is allowed to be in this page. Acting on top of their typing is
+    // the same class of mistake as acting on a page that moved, and is reported
+    // as its own reason so the next decision knows to wait rather than retry.
+    const inputs = await this.userInputCount().catch(() => this.observedInput)
+    if (inputs !== 0 && inputs !== this.observedInput) {
+      throw new StalePage("用户刚刚在这个标签页上操作过，先让开，重新观察后再继续", "taken-over")
+    }
     if (!(await this.fresh(page, action))) throw new StalePage("页面在决策之后已经变化，请重新观察")
     if (action.kind === "click" && this.tab) {
       // Trusted first: a real mouse event at the point, through the system. The

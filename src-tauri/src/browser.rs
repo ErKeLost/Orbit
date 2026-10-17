@@ -840,7 +840,7 @@ pub fn browser_client_report(message: String) {
 /// and walks the pages, so a database the *source* browser currently holds open
 /// still yields a whole snapshot. A plain file copy does not — it can catch the
 /// file mid-transaction and produce a database that will not open.
-const SQLITE3: &str = "/usr/bin/sqlite3";
+use crate::cookie_import::SQLITE3;
 
 /// One profile a session can be imported from. `path` is the profile directory
 /// (`…/Google/Chrome/Default`), which is what the cookies live in.
@@ -999,39 +999,81 @@ fn now_seconds() -> u64 {
         .unwrap_or(0)
 }
 
-/// Every profile the launcher's browser has that carries something to import.
+/// Every profile the launcher's browser has that carries something to import,
+/// followed by every other browser whose session can be read directly.
+///
+/// The two kinds of source are listed together because they answer the same
+/// question — "which of my logins can Orbit have" — but they do not travel the
+/// same way. The launcher's own browser is copied whole, ciphertext included
+/// (`Device Bound Sessions` and all), because the same binary and the same
+/// Keychain entry decrypt it later. Any other browser is *read* here, with its
+/// own key, and the cookies are written straight into the column. Listing only
+/// the launcher's browser is what made a user who never opens Chrome see an
+/// empty list with no explanation.
 #[tauri::command(async)]
 pub fn browser_import_sources() -> Result<Vec<ImportSource>, String> {
     let home = home_dir()?;
-    let Some((browser, root)) = importable_browser(&home) else {
-        return Ok(Vec::new());
-    };
-    if !root.is_dir() {
-        return Ok(Vec::new());
-    }
+    let launched = importable_browser(&home);
+    // Kept separately from the tuple, because the second half of the list needs
+    // the *name* to skip the browser that is already listed above.
+    let launched_name = launched.as_ref().map(|(name, _)| *name);
     let mut sources = Vec::new();
-    for (profile, name, account) in profile_entries(&root) {
-        let path = root.join(&profile);
-        if !path.is_dir() {
-            continue;
+    if let Some((browser, root)) = launched {
+        if root.is_dir() {
+            for (profile, name, account) in profile_entries(&root) {
+                let path = root.join(&profile);
+                if !path.is_dir() {
+                    continue;
+                }
+                let cookies = count_cookies(&path.join("Cookies"));
+                // A profile with no cookie database is not a login anyone can
+                // import, and offering it would only produce an empty result.
+                if cookies.is_none() && !path.join("Cookies").is_file() {
+                    continue;
+                }
+                sources.push(ImportSource {
+                    browser: browser.to_string(),
+                    profile: profile.clone(),
+                    label: name.unwrap_or_else(|| profile.clone()),
+                    path: path.display().to_string(),
+                    cookies,
+                    account,
+                    running: profile_in_use(&path),
+                });
+            }
         }
-        let cookies = count_cookies(&path.join("Cookies"));
-        // A profile with no cookie database is not a login anyone can import,
-        // and offering it would only produce an empty result.
-        if cookies.is_none() && !path.join("Cookies").is_file() {
+    }
+    // The browser above is already listed, and its copy path is the better one:
+    // skipping it here keeps one profile from appearing twice with two different
+    // meanings.
+    for source in crate::cookie_import::sources(&home) {
+        if launched_name == Some(source.browser) {
             continue;
         }
         sources.push(ImportSource {
-            browser: browser.to_string(),
-            profile: profile.clone(),
-            label: name.unwrap_or_else(|| profile.clone()),
-            path: path.display().to_string(),
-            cookies,
-            account,
-            running: profile_in_use(&path),
+            browser: source.browser.to_string(),
+            profile: source.profile.clone(),
+            label: source.label.clone(),
+            path: source.path.display().to_string(),
+            cookies: crate::cookie_import::cookie_count(&source),
+            account: source.account.clone(),
+            running: profile_locked(&source.path, matches!(source.kind, crate::cookie_import::Kind::Firefox)),
         });
     }
     Ok(sources)
+}
+
+/// Whether another browser is holding this profile open right now.
+///
+/// Chromium marks it with the same `SingletonLock` the launcher's browser uses;
+/// Firefox writes a `lock` symlink next to its `cookies.sqlite`. Neither stops a
+/// read — both databases are opened read-only — but the picker is the place to
+/// warn that a copy taken now may miss what the running browser has not written.
+fn profile_locked(path: &Path, firefox: bool) -> bool {
+    if firefox {
+        return path.join("lock").exists();
+    }
+    profile_in_use(path)
 }
 
 /// What the copy half produced, before anything has reached the column.
@@ -1174,19 +1216,54 @@ fn commit_staged(staging: &Path, target: &Path, device_bound: bool) -> Result<()
 /// written after the copy alone claimed success for a session the agent could not
 /// use, and then suppressed every later offer: the worst of both, a silent
 /// failure and a silenced retry.
+///
+/// Two ways in, chosen by which browser the profile belongs to:
+///
+/// * the browser Orbit launches is **copied** whole, ciphertext included, and
+///   then asked for its own plaintext over DevTools — that is the only path that
+///   also carries `Device Bound Sessions`;
+/// * any other browser is **read** here, with that browser's own key (Firefox
+///   needs none), and the cookies are written straight into the column. Without
+///   this, a user who never opens Chrome had nothing to import and no way to
+///   find out why.
 #[tauri::command]
 pub async fn browser_import_session(
     app: tauri::AppHandle,
     browser: String,
     profile: String,
 ) -> Result<ImportReport, String> {
-    let copied = copy_profile(&browser, &profile)?;
-    let cookies = sync_cookies(&app).await? as u64;
+    let home = home_dir()?;
+    let launched = importable_browser(&home).map(|(name, _)| name.to_string());
+    let (report_browser, report_profile, cookies, device_bound) =
+        if launched.as_deref() == Some(browser.as_str()) {
+            let copied = copy_profile(&browser, &profile)?;
+            let cookies = sync_cookies(&app).await? as u64;
+            (copied.browser, copied.profile, cookies, copied.device_bound)
+        } else {
+            // Named rather than pathed: the only values accepted are the ones
+            // `browser_import_sources` reported, so this cannot be talked into
+            // reading an arbitrary directory.
+            let source = crate::cookie_import::sources(&home)
+                .into_iter()
+                .find(|source| source.browser == browser && source.profile == profile)
+                .ok_or_else(|| format!("找不到导入来源 {browser} / {profile}，请刷新列表"))?;
+            let values = crate::cookie_import::read_cookies(&source)?;
+            if values.is_empty() {
+                return Err(format!("{} 的这个 profile 里没有可导入的 cookie", source.browser));
+            }
+            let written = write_webview_cookies(&app, &values)? as u64;
+            // No `Device Bound Sessions` on this path: those records are sealed
+            // to the browser that made them, so sites that require them (Google
+            // among them) will ask for one sign-in. Reporting `false` is what
+            // keeps the result honest instead of promising a session that the
+            // next request quietly drops.
+            (browser, profile, written, false)
+        };
     let report = ImportReport {
-        browser: copied.browser,
-        profile: copied.profile,
+        browser: report_browser,
+        profile: report_profile,
         cookies,
-        device_bound: copied.device_bound,
+        device_bound,
         imported_at: now_seconds(),
         synced: true,
     };
@@ -1375,6 +1452,16 @@ struct ImportProgress {
 async fn sync_cookies(app: &tauri::AppHandle) -> Result<usize, String> {
     let session = ensure(None)?;
     let values = cdp_cookies(&session).await?;
+    write_webview_cookies(app, &values)
+}
+
+/// Put CDP-shaped cookies into the store the browser column reads.
+///
+/// Split out of `sync_cookies` because a source Orbit did not launch has no
+/// DevTools port to ask: its cookies are read straight out of its database
+/// (see `cookie_import`) and land here in the same shape, through the same
+/// writer. One place decides what "the column is signed in" means.
+fn write_webview_cookies(app: &tauri::AppHandle, values: &[Value]) -> Result<usize, String> {
     let total = values.len();
     let webview = app
         .get_webview("main")

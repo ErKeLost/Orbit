@@ -28,6 +28,8 @@ enum RemoteHostOperation {
     SessionTurnDurations { session_path: String },
     #[serde(rename = "session.delete", rename_all = "camelCase")]
     SessionDelete { session_path: String },
+    #[serde(rename = "session.rename", rename_all = "camelCase")]
+    SessionRename { session_path: String, title: String },
     /// Add a project to the desktop's own registry.
     ///
     /// The registry lives in the desktop window (it owns the names, the icon
@@ -881,10 +883,32 @@ mod desktop {
 
     /// The plain-HTTP answer, kept because `curl host:port` is how a person
     /// checks whether the Host is listening at all.
-    fn status_response() -> String {
-        let body = json!({"service":"Orbit Host","protocol":PROTOCOL,"running":true}).to_string();
+    ///
+    /// It also carries the Host's identity, unauthenticated on purpose: a phone
+    /// stores one pairing URI and keeps using it across Wi-Fi networks, so the
+    /// LAN address in it can belong to a different machine than it did last
+    /// time. The token never travels in the clear (it is inside the first
+    /// encrypted frame), so the risk is not disclosure but a wasted connect
+    /// timeout and a useless "无法连接 Orbit Host". Answering "which host am I"
+    /// lets the phone skip that address instead of waiting on it.
+    ///
+    /// Nothing here is a secret: `host_id` is already in the pairing URI and the
+    /// relay path, and the machine name is what the phone shows in its list.
+    fn status_response(host_id: &str, machine: &str) -> String {
+        let body = json!({
+            "service": "Orbit Host",
+            "protocol": PROTOCOL,
+            "running": true,
+            "hostId": host_id,
+            "machineName": machine,
+        })
+        .to_string();
+        // `Access-Control-Allow-Origin` is here because the phone's UI may be
+        // served from another origin (`tauri://localhost`), and without it the
+        // probe would read as "not my host" for every address. The response is
+        // public identity only — the same facts `curl` already prints.
         format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             body.len(), body
         )
     }
@@ -918,6 +942,11 @@ mod desktop {
             }
             super::RemoteHostOperation::SessionDelete { session_path } => {
                 crate::bridge::delete_session(session_path)
+                    .await
+                    .map(|()| Value::Null)
+            }
+            super::RemoteHostOperation::SessionRename { session_path, title } => {
+                crate::bridge::rename_session(session_path, title)
                     .await
                     .map(|()| Value::Null)
             }
@@ -1157,7 +1186,13 @@ mod desktop {
         let mut stream = BufStream::new(stream);
         match stream.fill_buf().await {
             Ok(head) if !looks_like_websocket(head) => {
-                let response = status_response();
+                let response = status_response(
+                    &host_id,
+                    &app.state::<RemoteHost>()
+                        .info()
+                        .map(|info| info.machine_name)
+                        .unwrap_or_else(|| "Orbit Desktop".into()),
+                );
                 let socket = stream.get_mut();
                 let _ = socket.write_all(response.as_bytes()).await;
                 let _ = socket.flush().await;

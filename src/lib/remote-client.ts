@@ -40,8 +40,18 @@ export type RemoteClientHandlers = {
   onError?: (error: Error) => void
 }
 
-export function remoteReconnectDelay(attempt: number, baseMs = 500, maxMs = 15_000): number {
-  return Math.min(maxMs, baseMs * 2 ** Math.max(0, attempt))
+/**
+ * How long to wait before reconnecting.
+ *
+ * Exponential, capped, and **jittered**. The jitter is not decoration: without
+ * it every client of a host that restarted — a phone, the screen channel, the
+ * desktop — comes back in the same millisecond, and a host that was already
+ * struggling gets the same burst again. Half-to-full of the computed delay
+ * keeps the backoff monotonic while spreading the retries out.
+ */
+export function remoteReconnectDelay(attempt: number, baseMs = 500, maxMs = 15_000, random: () => number = Math.random): number {
+  const delay = Math.min(maxMs, baseMs * 2 ** Math.max(0, attempt))
+  return Math.round(delay * (0.5 + random() * 0.5))
 }
 
 type PendingRequest = {

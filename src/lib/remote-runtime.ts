@@ -17,6 +17,8 @@ import {
   type RemoteRequest,
   type RemoteScreenInput,
 } from "./remote-protocol"
+import { isBetterRoute, rankRemoteEndpoints, remoteRouteKey } from "./remote-route"
+import { probeRemoteHostIdentity } from "./remote-identity"
 
 const PAIRING_KEY = "orbit.remote.pairing.v1"
 let client: StableRemoteRuntime | null = null
@@ -32,15 +34,45 @@ export function forgetPairing(): void {
   client = null
 }
 
+/** How often a connected client asks whether a better route has come back. */
+const ROUTE_PREFLIGHT_MS = 60_000
+/** How long to wait after a drop before trying the other routes. */
+const ROUTE_FAILOVER_MS = 1_500
+
+/** Fired when the connection moved to a different route (LAN ⇄ relay). */
+const routeListeners = new Set<(endpoint: RemoteEndpoint) => void>()
+
+/**
+ * Let the other sockets follow the control connection's route.
+ *
+ * The screen channel is its own WebSocket with its own endpoint, so a route
+ * change on the control connection would otherwise leave the picture streaming
+ * over the relay while the control traffic is on the LAN — the exact split that
+ * makes a preview feel slow for no visible reason.
+ */
+export function addRemoteRouteChangeListener(listener: (endpoint: RemoteEndpoint) => void): () => void {
+  routeListeners.add(listener)
+  return () => {
+    routeListeners.delete(listener)
+  }
+}
+
 class StableRemoteRuntime {
   private active: OrbitRemoteClient | null = null
-  private readonly candidates = new Set<OrbitRemoteClient>()
+  /** Which route the live client is on. `null` before the first connection. */
+  private activeEndpoint: RemoteEndpoint | null = null
+  /** In-flight candidates, each with the route it is trying. */
+  private readonly candidates = new Map<OrbitRemoteClient, RemoteEndpoint>()
   private closed = false
+  /** Ranked once: a stable sort keeps the pairing URI's own order within a rank. */
   private readonly endpoints: RemoteEndpoint[]
   private readonly handlers: RemoteClientHandlers
+  private preflightTimer: ReturnType<typeof setTimeout> | null = null
+  private failoverTimer: ReturnType<typeof setTimeout> | null = null
+  private failoverAttempt = 0
 
   constructor(endpoints: RemoteEndpoint[], handlers: RemoteClientHandlers) {
-    this.endpoints = endpoints
+    this.endpoints = rankRemoteEndpoints(endpoints)
     this.handlers = handlers
   }
 
@@ -54,7 +86,7 @@ class StableRemoteRuntime {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       if (this.closed) break
       try {
-        await this.race(false)
+        await this.race("initial")
         return
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error))
@@ -71,7 +103,13 @@ class StableRemoteRuntime {
         if (this.active === candidate) this.handlers.onHandshake?.(serverTime)
       },
       onState: (state) => {
-        if (this.active === candidate) this.handlers.onState?.(state)
+        if (this.active !== candidate) return
+        this.handlers.onState?.(state)
+        // The client retries the endpoint it was given, forever and always with
+        // the same jittered backoff. That is right for a blip and wrong for a
+        // phone that has left the house: the LAN address it keeps retrying is
+        // not going to answer. Walking the other routes is this layer's job.
+        if (state === "offline") this.scheduleFailover()
       },
       onReconnected: () => {
         if (this.active === candidate) this.handlers.onReconnected?.()
@@ -86,51 +124,196 @@ class StableRemoteRuntime {
         if (this.active === candidate) this.handlers.onError?.(error)
       },
     })
-    this.candidates.add(candidate)
     return candidate
   }
 
-  private async race(replacement: boolean): Promise<void> {
-    if (this.closed || this.endpoints.length === 0) throw new Error("Orbit Host 没有可用连接地址")
-    if (!replacement && this.active) return
-    if (this.candidates.size > 0) return
-    const attempts = this.endpoints.map((endpoint) => {
-      const candidate = this.makeCandidate()
-      return candidate.connect(endpoint).then(() => candidate)
-    })
+  /**
+   * One attempt at one route.
+   *
+   * A direct address is asked who it is first. The token never travels in the
+   * clear — it is inside the first encrypted frame — so a stranger at a reused
+   * LAN address gets ciphertext, not a credential; what the probe buys is the
+   * difference between a 2-second "this is not my computer" and a full connect
+   * timeout followed by "无法连接 Orbit Host". The relay path needs no probe:
+   * the host is named in the URL and the host id is checked at handshake.
+   */
+  private async connectCandidate(endpoint: RemoteEndpoint): Promise<OrbitRemoteClient> {
+    if (endpoint.mode === "direct") await probeRemoteHostIdentity(endpoint)
+    const candidate = this.makeCandidate()
+    this.candidates.set(candidate, endpoint)
     try {
-      const winner = await Promise.any(attempts)
-      if (this.closed) {
-        winner.close()
-        throw new Error("Orbit Host 连接已关闭")
-      }
-      const previous = this.active
-      this.active = winner
-      for (const candidate of [...this.candidates]) {
-        if (candidate !== winner) candidate.close()
-        this.candidates.delete(candidate)
-      }
-      previous?.close()
-      this.handlers.onState?.("online")
-      if (previous) this.handlers.onReconnected?.()
+      await candidate.connect(endpoint)
+      return candidate
     } catch (error) {
-      for (const candidate of this.candidates) candidate.close()
-      this.candidates.clear()
-      if (!replacement) this.handlers.onState?.("offline")
+      this.candidates.delete(candidate)
+      candidate.close()
+      throw error
+    }
+  }
+
+  private closeCandidates(): void {
+    for (const candidate of [...this.candidates.keys()]) {
+      candidate.close()
+      this.candidates.delete(candidate)
+    }
+  }
+
+  /** Whether some route ranks strictly better than the one carrying traffic. */
+  private hasBetterRoute(): boolean {
+    const current = this.activeEndpoint
+    return current !== null && this.endpoints.some(endpoint => isBetterRoute(endpoint, current))
+  }
+
+  /**
+   * Try the given routes in parallel and return the first that answers.
+   *
+   * Parallel on purpose: a LAN handshake that never completes must not delay the
+   * relay behind it, and the losers are closed as soon as there is a winner.
+   * Throws when every route fails, having closed all of them.
+   */
+  private async attempt(targets: readonly RemoteEndpoint[]): Promise<{ client: OrbitRemoteClient; endpoint: RemoteEndpoint }> {
+    let winner: OrbitRemoteClient
+    try {
+      winner = await Promise.any(targets.map(endpoint => this.connectCandidate(endpoint)))
+    } catch (error) {
+      this.closeCandidates()
       throw error instanceof Error ? error : new Error(String(error))
     }
+    // Losing the route would mean acting on a connection nobody can name, which
+    // is a bug here rather than a page condition.
+    const endpoint = this.candidates.get(winner)
+    if (!endpoint) throw new Error("连接候选丢失了它的地址（内部错误）")
+    return { client: winner, endpoint }
+  }
+
+  /** Make a won attempt the live connection, and tell everyone it moved. */
+  private adopt(client: OrbitRemoteClient, endpoint: RemoteEndpoint): void {
+    const previous = this.active
+    const previousEndpoint = this.activeEndpoint
+    this.active = client
+    this.activeEndpoint = endpoint
+    this.candidates.delete(client)
+    this.closeCandidates()
+    previous?.close()
+    this.failoverAttempt = 0
+    this.clearFailover()
+    this.handlers.onState?.("online")
+    if (previous) this.handlers.onReconnected?.()
+    const moved = previousEndpoint === null || remoteRouteKey(previousEndpoint) !== remoteRouteKey(endpoint)
+    if (previous !== null && moved) this.notifyRouteChange(endpoint)
+    this.startPreflight()
+  }
+
+  private async race(mode: "initial" | "replace" | "upgrade"): Promise<void> {
+    if (this.closed || this.endpoints.length === 0) throw new Error("Orbit Host 没有可用连接地址")
+    if (this.candidates.size > 0) return
+    // An upgrade only ever considers *better* routes: re-racing everything would
+    // let a relay that answers marginally faster replace a working LAN session,
+    // which costs the user bandwidth and latency to gain nothing.
+    const current = this.activeEndpoint
+    const targets = mode !== "upgrade"
+      ? this.endpoints
+      : current === null
+        ? []
+        : this.endpoints.filter(endpoint => isBetterRoute(endpoint, current))
+    if (targets.length === 0) return
+    let won: { client: OrbitRemoteClient; endpoint: RemoteEndpoint }
+    try {
+      won = await this.attempt(targets)
+    } catch (error) {
+      if (mode === "initial") this.handlers.onState?.("offline")
+      throw error
+    }
+    if (this.closed) {
+      won.client.close()
+      this.closeCandidates()
+      throw new Error("Orbit Host 连接已关闭")
+    }
+    // A network-change event fires on every Wi-Fi hiccup. Re-adopting a worse
+    // route than the one already carrying traffic is not a recovery.
+    if (mode !== "initial" && current !== null && isBetterRoute(current, won.endpoint)) {
+      won.client.close()
+      this.closeCandidates()
+      return
+    }
+    this.adopt(won.client, won.endpoint)
+  }
+
+  private notifyRouteChange(endpoint: RemoteEndpoint): void {
+    for (const listener of routeListeners) {
+      try {
+        listener(endpoint)
+      } catch {
+        // A listener that throws is not allowed to undo a route change.
+      }
+    }
+  }
+
+  /**
+   * Try another route after a drop, backing off if the whole list fails.
+   *
+   * Bounded by `remoteReconnectDelay`'s cap rather than by a counter: a phone
+   * that is out of range should keep trying forever, just not every second.
+   */
+  private scheduleFailover(): void {
+    if (this.failoverTimer || this.closed || this.endpoints.length < 2) return
+    const delay = remoteReconnectDelay(this.failoverAttempt, ROUTE_FAILOVER_MS, 30_000)
+    this.failoverAttempt += 1
+    this.failoverTimer = setTimeout(() => {
+      this.failoverTimer = null
+      if (this.closed) return
+      void this.race("replace").catch(() => this.scheduleFailover())
+    }, delay)
+  }
+
+  private clearFailover(): void {
+    if (this.failoverTimer) clearTimeout(this.failoverTimer)
+    this.failoverTimer = null
+  }
+
+  /**
+   * While connected, keep asking whether a better route has come back.
+   *
+   * Leaving the house moves the phone from LAN to relay; coming home does not
+   * produce an event that says so on every platform, so the connection would
+   * stay on the relay — correct, but hundreds of kilobytes per second through a
+   * server on another continent. A minute is short enough to notice and long
+   * enough that a flapping Wi-Fi cannot turn it into a reconnect loop; the
+   * attempt itself is a probe that only replaces the live session when it wins.
+   */
+  private startPreflight(): void {
+    this.stopPreflight()
+    if (this.closed || this.endpoints.length < 2) return
+    this.preflightTimer = setTimeout(() => {
+      this.preflightTimer = null
+      if (this.closed) return
+      if (!this.hasBetterRoute() || this.active?.connectionState !== "online") {
+        this.startPreflight()
+        return
+      }
+      void this.race("upgrade").catch(() => undefined).finally(() => this.startPreflight())
+    }, ROUTE_PREFLIGHT_MS)
+  }
+
+  private stopPreflight(): void {
+    if (this.preflightTimer) clearTimeout(this.preflightTimer)
+    this.preflightTimer = null
   }
 
   notifyForeground(reason: RemoteForegroundReason): void {
     if (this.closed) return
     if (reason === "network-change") {
-      void this.race(true).catch(() => {})
+      void this.race("replace").catch(() => this.scheduleFailover())
       return
     }
     if (!this.active) {
-      void this.race(false).catch(() => {})
+      void this.race("initial").catch(() => this.scheduleFailover())
       return
     }
+    // Coming back to the app is the other moment a better route is likely to be
+    // there: the user just unlocked the phone, possibly on a different network.
+    // Cheap to check, because an upgrade only tests better-ranked routes.
+    if (this.hasBetterRoute()) void this.race("upgrade").catch(() => undefined)
     this.active.notifyForeground(reason)
   }
 
@@ -140,10 +323,13 @@ class StableRemoteRuntime {
 
   close(): void {
     this.closed = true
+    this.stopPreflight()
+    this.clearFailover()
     this.active?.close()
-    for (const candidate of this.candidates) candidate.close()
-    this.active = null
+    for (const candidate of this.candidates.keys()) candidate.close()
     this.candidates.clear()
+    this.active = null
+    this.activeEndpoint = null
   }
 
   attach(connectionId: string, timeoutMs?: number) {
@@ -320,16 +506,22 @@ export function notifyRemoteForeground(reason: RemoteForegroundReason = "app-res
 export async function screenRemoteChannel(handlers: RemoteClientHandlers): Promise<OrbitRemoteClient> {
   const uri = storedPairingUri()
   if (!uri) throw new Error("尚未配对 Orbit Host")
-  const endpoints = parsePairingEndpoints(uri.trim())
-  const attempts = endpoints.map(endpoint => {
+  // Ranked so the better route is not the one that loses a tie on a slow
+  // socket: `Promise.any` takes the first to *finish*, and an unfinished LAN
+  // handshake is still a better outcome than a relay that answered in 30 ms.
+  // The probe makes a wrong address fail in ~2 s instead of at the connect
+  // timeout, which is what lets the ranking matter at all.
+  const endpoints = rankRemoteEndpoints(parsePairingEndpoints(uri.trim()))
+  const attempts = endpoints.map(async endpoint => {
+    if (endpoint.mode === "direct") await probeRemoteHostIdentity(endpoint)
     const candidate = new OrbitRemoteClient(handlers)
-    return candidate.connect(endpoint).then(
-      () => candidate,
-      (error: unknown) => {
-        candidate.close()
-        throw error
-      },
-    )
+    try {
+      await candidate.connect(endpoint)
+      return candidate
+    } catch (error) {
+      candidate.close()
+      throw error
+    }
   })
   let winner: OrbitRemoteClient | null = null
   try {

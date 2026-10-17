@@ -20,6 +20,7 @@ pub mod disclaim;
 mod screen;
 pub mod browser;
 pub mod browser_view;
+mod cookie_import;
 mod bridge;
 mod sessions;
 mod git;
@@ -250,6 +251,8 @@ pub fn run() {
             bridge::mcp_config_location,
             bridge::get_gui_settings,
             bridge::set_gui_setting,
+            bridge::get_request_budget,
+            bridge::save_request_budget,
             bridge::computer_use_key_status,
             // Browser Use (`docs/BROWSER_USE.md`): the third column's Chrome.
             // Screencast frames and input forwarding are CDP work and live in
@@ -289,6 +292,7 @@ pub fn run() {
             bridge::list_sessions,
             bridge::list_project_files,
             bridge::delete_session,
+            bridge::rename_session,
             bridge::clear_sessions,
             bridge::session_turn_durations,
             bridge::open_pi_terminal,

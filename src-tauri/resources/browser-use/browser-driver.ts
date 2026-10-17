@@ -32,11 +32,40 @@ import { CdpClient } from "./cdp.ts"
 /** The page observer, evaluated inside the tab. */
 const SNAPSHOT = readFileSync(new URL("./snapshot.js", import.meta.url), "utf8")
 
+/**
+ * Why a decision could not be delivered.
+ *
+ * The engine turns this into the note the decision model reads on its next turn,
+ * and the two cases need different advice: a covered target is fixed by removing
+ * what is on top of it, a navigating page only needs another look.
+ */
+export type StaleReason = "changed" | "covered" | "navigating" | "taken-over";
+
 /** A decision that no longer refers to the observed page. */
 export class StalePage extends Error {
-  constructor(message: string) {
+  readonly reason: StaleReason
+  /** What the page said was on top of the target, when it could name it. */
+  readonly coverer?: string
+
+  constructor(message: string, reason: StaleReason = "changed", coverer?: string) {
     super(message)
     this.name = "StalePage"
+    this.reason = reason
+    if (coverer !== undefined) this.coverer = coverer
+  }
+}
+
+/**
+ * The page never reached a state worth deciding about.
+ *
+ * Distinct from `StalePage` on purpose: nothing was decided and nothing was
+ * delivered, so the loop's answer is to wait and read again, not to re-decide
+ * an action against a page it has already seen.
+ */
+export class PageBusy extends Error {
+  constructor(message = "页面一直没有读完（可能正在加载或渲染阻塞）") {
+    super(message)
+    this.name = "PageBusy"
   }
 }
 
@@ -46,6 +75,30 @@ export class DetachedTarget extends Error {
     super(message)
     this.name = "DetachedTarget"
   }
+}
+
+/**
+ * One console argument as a short string.
+ *
+ * `Runtime.consoleAPICalled` reports remote objects, not values: a logged string
+ * arrives as `value`, a logged number as `value`, a logged object only as a
+ * description. Quoting the description's first line is enough to recognise
+ * "Uncaught TypeError: cannot read properties of undefined" — which is the whole
+ * reason these lines are collected.
+ */
+function consoleText(args: unknown): string {
+  if (!Array.isArray(args)) return ""
+  return args
+    .map(arg => {
+      const remote = arg as { value?: unknown; description?: string; unserializableValue?: string }
+      if (typeof remote.value === "string") return remote.value
+      if (remote.value !== undefined) return JSON.stringify(remote.value)
+      if (typeof remote.unserializableValue === "string") return remote.unserializableValue
+      if (typeof remote.description === "string") return remote.description.split("\n")[0] ?? ""
+      return "?"
+    })
+    .join(" ")
+    .slice(0, 400)
 }
 
 export type BrowserKind = "click" | "fill" | "select" | "scroll" | "wait"
@@ -72,6 +125,21 @@ export type BrowserAction = {
   covered?: boolean
   /** A readable description of the covering element, when the observer has one. */
   covered_by?: string
+  /**
+   * The control lives in a same-origin frame. `rect` is still in top-level
+   * pixels, which is what input dispatch needs, but an overlay inside the frame
+   * cannot be hit-tested from here — so the model is told where the control is
+   * instead of being refused later without an explanation.
+   */
+  frame?: boolean
+  /**
+   * The page draws this field's value as dots (`-webkit-text-security`, OTP and
+   * card widgets). `value` carries the dots; the real value stays out of the
+   * decision context and is kept in `raw` only so the loop can still tell that a
+   * field already holds the value it would type.
+   */
+  masked?: boolean
+  raw?: string
   /** Filled in by `actionSpace`, not by the page. */
   options?: { index: string; label: string; value: string }[]
 }
@@ -82,6 +150,12 @@ export type BrowserObservation = {
   w: number
   h: number
   text: string
+  /**
+   * What the page reported about itself since the previous observation: console
+   * errors, uncaught exceptions, 4xx/5xx responses, failed loads. Absent when
+   * nothing new happened, which is the common case.
+   */
+  errors?: string[]
   scroll: { y: number; height: number }
   actions: BrowserAction[]
   marker: unknown
@@ -206,6 +280,26 @@ export class BrowserDriver {
   private closed = false
   /** Set when every attached target is gone; every later send fails with it. */
   private detached?: string
+  /**
+   * A `confirm()`/`alert()` the page opened and that was dismissed for it.
+   *
+   * An open JavaScript dialog blocks the renderer, so every `Runtime.evaluate`
+   * after it hangs until the socket times out — the run appeared to freeze for
+   * no reason at all. Dismissing it is what keeps the loop able to see the page;
+   * the notice travels with the next observation so the model learns that
+   * something on the page asked a question (and that the answer was "no").
+   */
+  private dialogNotice: string | null = null
+  /**
+   * Errors the page reported about itself, newest last.
+   *
+   * Bounded, deduplicated by text, and delivered *once*: they are the evidence a
+   * decision is missing when a click produces nothing visible, and repeating the
+   * same eight lines on every turn would spend the observation budget on noise.
+   */
+  private pageProblems: { seq: number; text: string }[] = []
+  private problemSeq = 0
+  private reportedProblemSeq = 0
 
   /** The engine this driver reports in the run's metrics. */
   readonly engine = "chrome" as const
@@ -237,6 +331,7 @@ export class BrowserDriver {
     // this tab, and pausing a target pauses it for every session — including
     // the one this driver is using. Resuming that session immediately is what
     // keeps the first `Runtime.evaluate` from hanging forever.
+    const stops: Array<() => void> = []
     const detach = client.on("Target.attachedToTarget", params => {
       const info = params.targetInfo as { targetId?: string; type?: string } | undefined
       const sessionId = params.sessionId ? String(params.sessionId) : undefined
@@ -261,9 +356,11 @@ export class BrowserDriver {
       if (sessionId) driver.onDetached(sessionId)
     })
     await client.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true })
+    for (const stop of await BrowserDriver.watchPage(client, driver)) stops.push(stop)
     void client.closed.then(() => {
       detach()
       detached()
+      for (const stop of stops) stop()
     })
     // `session.url` is a record of intent, not of fact. The session file is
     // shared by every run and every Orbit instance, and `ensure` closes the tab
@@ -285,6 +382,77 @@ export class BrowserDriver {
     // fired. Waiting here means the first decision is about the real page.
     await driver.settle()
     return driver
+  }
+
+  /**
+   * Watch what the page says about itself.
+   *
+   * Two things, and they answer the same question — "why did nothing happen":
+   *
+   * * a JavaScript dialog **blocks the renderer**, so an open one stalls every
+   *   later `Runtime.evaluate` until the socket times out, which reads as a
+   *   frozen run. It is dismissed and reported, never left open;
+   * * console errors, uncaught exceptions, 4xx/5xx responses and failed loads,
+   *   which a DOM-only observer cannot see at all: it sees a page that stopped
+   *   changing, not the 500 that stopped it.
+   *
+   * Scoped to the session being driven. Auto-attach makes the browser emit
+   * events for every tab, and another tab's failing analytics request must not
+   * change a decision here. Returns the disposers so `open` can stop watching.
+   */
+  private static async watchPage(client: CdpClient, driver: BrowserDriver): Promise<Array<() => void>> {
+    const drives = (sessionId?: string): boolean =>
+      sessionId !== undefined && driver.stack[driver.stack.length - 1]?.sessionId === sessionId
+    // The domains are what make the events arrive; a control that only reads the
+    // DOM would never see any of them. Best effort: an older Chrome refusing one
+    // loses a signal, not the run.
+    for (const domain of ["Page", "Runtime", "Log", "Network"]) {
+      await driver.send(`${domain}.enable`).catch(() => undefined)
+    }
+    return [
+      client.on("Page.javascriptDialogOpening", (params, sessionId) => {
+        if (!drives(sessionId)) return
+        const type = String(params.type ?? "dialog")
+        const message = String(params.message ?? "").trim()
+        driver.dialogNotice = message ? `${type}：${message}` : type
+        void driver.send("Page.handleJavaScriptDialog", { accept: false }).catch(() => undefined)
+      }),
+      client.on("Runtime.consoleAPICalled", (params, sessionId) => {
+        const level = String(params.type ?? "")
+        if (!drives(sessionId)) return
+        if (level !== "error" && level !== "warning" && level !== "assert") return
+        driver.notePageProblem(`${level}: ${consoleText(params.args)}`, sessionId)
+      }),
+      client.on("Runtime.exceptionThrown", (params, sessionId) => {
+        if (!drives(sessionId)) return
+        const details = params.exceptionDetails as
+          | { text?: string; exception?: { description?: string } }
+          | undefined
+        const message = details?.exception?.description?.split("\n")[0] ?? details?.text ?? ""
+        driver.notePageProblem(`未捕获异常: ${message}`, sessionId)
+      }),
+      client.on("Log.entryAdded", (params, sessionId) => {
+        if (!drives(sessionId)) return
+        const entry = params.entry as { level?: string; text?: string; url?: string } | undefined
+        if (entry?.level !== "error" && entry?.level !== "warning") return
+        driver.notePageProblem(`${entry.level}: ${entry.text ?? ""}${entry.url ? ` (${entry.url})` : ""}`, sessionId)
+      }),
+      client.on("Network.responseReceived", (params, sessionId) => {
+        if (!drives(sessionId)) return
+        const response = params.response as { status?: number; url?: string } | undefined
+        const status = Number(response?.status ?? 0)
+        // 3xx is a page doing its job; 4xx/5xx is the page explaining itself.
+        if (!Number.isFinite(status) || status < 400) return
+        driver.notePageProblem(`HTTP ${status} ${response?.url ?? ""}`, sessionId)
+      }),
+      client.on("Network.loadingFailed", (params, sessionId) => {
+        if (!drives(sessionId)) return
+        const errorText = String(params.errorText ?? "")
+        // A cancelled load is what a normal SPA navigation produces.
+        if (!errorText || errorText === "net::ERR_ABORTED") return
+        driver.notePageProblem(`请求失败: ${errorText}`, sessionId)
+      }),
+    ]
   }
 
   /** Move this driver onto another tab (a popup) and let it run. */
@@ -423,8 +591,54 @@ export class BrowserDriver {
       if (ready || attempt === 11) return await this.withAria(last)
       await new Promise(resolve => setTimeout(resolve, 150))
     }
-    if (!last) throw new StalePage("页面没有稳定下来")
+    if (!last) throw new PageBusy("页面一直没有读完（可能正在加载或渲染阻塞）")
     return last
+  }
+
+  /**
+   * Report a dialog the page opened or an error it logged, once each.
+   *
+   * Both are prepended to the page text rather than carried as new fields: the
+   * text is what the element table and the decision prompt already include, so
+   * the notice reaches the model without touching the contract with the View
+   * path. The fingerprint was taken before this, so a notice does not read as a
+   * change.
+   */
+  private decorate<T extends { text: string; errors?: string[] }>(page: T): T {
+    const problems = this.takePageProblems()
+    if (!this.dialogNotice && problems === undefined) return page
+    const notice = this.dialogNotice ? `【页面弹窗】${this.dialogNotice}（已自动取消）` : null
+    this.dialogNotice = null
+    return {
+      ...page,
+      text: notice ? `${notice}\n${page.text}` : page.text,
+      ...(problems ? { errors: problems } : {}),
+    }
+  }
+
+  /**
+   * Record one page-reported problem for the page this run is driving.
+   *
+   * A session filter rather than a tab filter: auto-attach means the browser
+   * also emits events for tabs this run is not driving, and another tab's
+   * failing analytics request is not a reason to change a decision here.
+   */
+  private notePageProblem(text: string, sessionId?: string): void {
+    const current = this.stack[this.stack.length - 1]
+    if (!current || !sessionId || sessionId !== current.sessionId) return
+    const clean = text.replace(/\s+/g, " ").trim().slice(0, 200)
+    if (!clean) return
+    // The same error often repeats (a retry loop, a broken asset on every
+    // navigation): the newest copy is the one worth keeping.
+    this.pageProblems = [...this.pageProblems.filter(entry => entry.text !== clean), { seq: ++this.problemSeq, text: clean }].slice(-8)
+  }
+
+  /** The problems recorded since the last observation, or `undefined` when none. */
+  private takePageProblems(): string[] | undefined {
+    const fresh = this.pageProblems.filter(entry => entry.seq > this.reportedProblemSeq)
+    if (fresh.length === 0) return undefined
+    this.reportedProblemSeq = fresh[fresh.length - 1]!.seq
+    return fresh.map(entry => entry.text)
   }
 
   private async read(): Promise<BrowserObservation> {
@@ -434,7 +648,7 @@ export class BrowserDriver {
       // navigation in flight. Reported as an empty page so the readiness loop
       // in `observe` can wait for it instead of failing the run.
       const href = await this.evaluate("location.href").catch(() => "")
-      return {
+      return this.decorate({
         url: typeof href === "string" ? href : "",
         title: "",
         w: 0,
@@ -447,10 +661,10 @@ export class BrowserDriver {
         guards: {},
         omitted_actions: 0,
         fingerprint: "empty",
-      }
+      })
     }
-    if (typeof state !== "object") throw new StalePage("Document is navigating")
-    return { ...state, fingerprint: fingerprint(state) }
+    if (typeof state !== "object") throw new StalePage("页面正在导航（document 还没就绪），请稍后再看", "navigating")
+    return this.decorate({ ...state, fingerprint: fingerprint(state) })
   }
 
   /**
@@ -546,32 +760,68 @@ export class BrowserDriver {
     }
     if (typeof action.node !== "number") throw new Error("观察到的目标节点无效")
     // Resolve the node again, in the page, immediately before input: it must
-    // still be connected, enabled, visible, on screen, and not covered.
-    const target = await this.evaluate(`(action => {
+    // still be connected, enabled, visible, on screen, and not covered. Every
+    // refusal names itself, because "this is unclickable" is much less useful to
+    // a decision model than "a cookie banner is on top of it".
+    type Delivery =
+      | { x: number; y: number }
+      | { blocked: { reason: "gone" | "readonly" | "offscreen" | "covered"; coverer?: string } }
+      | null
+    const delivered = await this.evaluate(`(action => {
+      const named = e => (e.getAttribute('aria-label') || e.innerText || '').trim().replace(/\\s+/g,' ').slice(0, 40) || e.tagName.toLowerCase();
       const e = window.__jevFast?.nodes.get(action.node);
       if (!e?.isConnected || e.matches(':disabled') || e.closest('[aria-disabled="true"],[inert]') ||
-          !e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return null;
-      if (action.kind === 'fill' && (e.readOnly || e.getAttribute('aria-readonly') === 'true')) return null;
-      const r = e.getBoundingClientRect(), x = r.x + r.width / 2, y = r.y + r.height / 2;
-      if (!r.width || !r.height || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return null;
-      if (!e.contains(document.elementFromPoint(x, y))) return null;
+          !e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return { blocked: { reason: 'gone' } };
+      if (action.kind === 'fill' && (e.readOnly || e.getAttribute('aria-readonly') === 'true')) return { blocked: { reason: 'readonly' } };
+      // The dispatch happens in top-level pixels, so an element inside a frame
+      // needs its ancestors' offsets added. The chain is that walk, kept because
+      // the coverage test needs the outermost frame element too.
+      const chain = [];
+      let rect = e.getBoundingClientRect(), win = e.ownerDocument.defaultView, guard = 0;
+      while (win && win !== window && guard++ < 4) {
+        const frame = win.frameElement;
+        if (!frame) break;
+        chain.push(frame);
+        const outer = frame.getBoundingClientRect();
+        rect = { x: rect.x + outer.x, y: rect.y + outer.y, width: rect.width, height: rect.height };
+        win = frame.ownerDocument.defaultView;
+      }
+      const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
+      if (!rect.width || !rect.height || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return { blocked: { reason: 'offscreen' } };
+      const at = document.elementFromPoint(x, y);
+      // From the top document, everything inside a frame resolves to the frame
+      // itself. A point that lands on this element's outermost frame is inside
+      // the frame, not under an overlay.
+      const owned = chain.length > 0 && at === chain[chain.length - 1];
+      if (!owned && !e.contains(at)) return { blocked: { reason: 'covered', coverer: at ? named(at) : '' } };
       if (action.kind === 'select') {
         if (e.tagName !== 'SELECT' || ![...e.options].some(o => o.value === action.value &&
-            !o.disabled && !o.closest('optgroup[disabled]'))) return null;
+            !o.disabled && !o.closest('optgroup[disabled]'))) return { blocked: { reason: 'gone' } };
         e.value = action.value;
         e.dispatchEvent(new Event('input', { bubbles: true }));
         e.dispatchEvent(new Event('change', { bubbles: true }));
         // A controlled (React/Vue) select re-renders and restores its own value.
         // Reading the value back is what separates "selected" from "submit sent";
         // without it the loop logs success for a value that never took.
-        if (e.value !== action.value) return null;
+        if (e.value !== action.value) return { blocked: { reason: 'gone' } };
       }
       return { x, y };
-    })(${JSON.stringify(action)})`) as { x: number; y: number } | null
-    if (!target) {
+    })(${JSON.stringify(action)})`) as Delivery
+    if (delivered === null || "blocked" in delivered) {
       if (action.kind === "select") throw new Error("下拉框执行未获确认，请先观察再重试")
-      throw new StalePage("目标已变化或被遮挡，请重新观察")
+      const blocked = delivered !== null && "blocked" in delivered ? delivered.blocked : { reason: "gone" as const }
+      if (blocked.reason === "covered") {
+        throw new StalePage(
+          `目标被「${blocked.coverer || "另一个元素"}」遮住了：先关掉它再重新观察`,
+          "covered",
+          blocked.coverer || undefined,
+        )
+      }
+      if (blocked.reason === "offscreen") throw new StalePage("目标已经滚出屏幕，请重新观察", "changed")
+      if (blocked.reason === "readonly") throw new StalePage("这个字段变成了只读，写不进去了", "changed")
+      throw new StalePage("目标已变化，请重新观察", "changed")
     }
+    const target = delivered
     if (action.kind === "select") {
       this.afterInput = action
       return

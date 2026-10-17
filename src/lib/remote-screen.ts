@@ -18,7 +18,7 @@
  *    codec the phone can actually render.
  */
 import type { OrbitRemoteClient } from "./remote-client"
-import { addRemoteForegroundListener, sendRemoteScreenAck, sendRemoteScreenInput, screenRemoteChannel } from "./remote-runtime"
+import { addRemoteForegroundListener, addRemoteRouteChangeListener, sendRemoteScreenAck, sendRemoteScreenInput, screenRemoteChannel } from "./remote-runtime"
 import type {
   RemoteDisplay,
   RemoteScreenCodec,
@@ -205,6 +205,18 @@ class ScreenChannel {
   private closed = false
   private settings: RemoteScreenSettings = {}
   private detachForeground: (() => void) | null = null
+  /**
+   * The control connection moved to another route (LAN ⇄ relay).
+   *
+   * This socket picked its own endpoint when it opened and would keep streaming
+   * over that one forever: the preview would stay on the relay while the control
+   * traffic had already moved to the Wi-Fi, which looks like "the phone is on
+   * the same network but the picture is slow". Following the route costs one
+   * reconnect and one `screen.start`.
+   */
+  private detachRoute: (() => void) | null = null
+  /** The channel being opened, so two callers cannot both open one. */
+  private connecting: Promise<OrbitRemoteClient> | null = null
   /**
    * Host clock minus phone clock, in milliseconds.
    *
@@ -420,6 +432,8 @@ class ScreenChannel {
     this.releaseDecoder()
     this.detachForeground?.()
     this.detachForeground = null
+    this.detachRoute?.()
+    this.detachRoute = null
     this.client?.close()
     this.client = null
     this.snapshot = EMPTY
@@ -432,6 +446,19 @@ class ScreenChannel {
 
   private async ensureClient(): Promise<OrbitRemoteClient> {
     if (this.client && this.client.connectionState === "online") return this.client
+    // Exactly one channel may be opening. `onState("online")` fires while
+    // `screenRemoteChannel` is still connecting — before `this.client` is
+    // assigned — so a handler that reacted to it by opening another channel
+    // would leak the first socket.
+    if (this.connecting) return this.connecting
+    const connecting = this.openClient().finally(() => {
+      if (this.connecting === connecting) this.connecting = null
+    })
+    this.connecting = connecting
+    return connecting
+  }
+
+  private async openClient(): Promise<OrbitRemoteClient> {
     // `screenRemoteChannel` reuses the pairing endpoints and the same E2EE
     // key as the control connection; it is a second socket, not a second
     // pairing.
@@ -475,10 +502,34 @@ class ScreenChannel {
     if (!this.detachForeground) {
       this.detachForeground = addRemoteForegroundListener(reason => this.notifyForeground(reason))
     }
+    if (!this.detachRoute) {
+      this.detachRoute = addRemoteRouteChangeListener(() => this.followRoute())
+    }
     return client
   }
 
+  /**
+   * Re-open this channel on the control connection's new route.
+   *
+   * Dropping the socket is the only way: an `OrbitRemoteClient` is bound to the
+   * endpoint it was constructed with, and its own reconnect logic keeps
+   * returning to that one. The subscription then has to be re-issued, which is
+   * the same path a network blip already takes.
+   */
+  private followRoute(): void {
+    if (this.closed) return
+    const wasLive = this.wasLive
+    this.client?.close()
+    this.client = null
+    if (!wasLive) return
+    void this.resubscribe()
+  }
+
   private async resubscribe(): Promise<void> {
+    if (this.closed) return
+    // A route change drops the socket before asking for this, so opening one is
+    // part of the job; `ensureClient` is idempotent and single-flight.
+    await this.ensureClient().catch(() => undefined)
     if (this.closed || !this.client) return
     try {
       await this.start(this.settings)

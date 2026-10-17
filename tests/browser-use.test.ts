@@ -9,7 +9,7 @@ import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { Window } from "happy-dom"
 import { actionSpace, choose, runBrowserTask, type BrowserDriverLike } from "../src-tauri/resources/browser-use/browser-engine"
-import { StalePage, fingerprint, sameLocation, stable } from "../src-tauri/resources/browser-use/browser-driver"
+import { PageBusy, StalePage, fingerprint, sameLocation, stable } from "../src-tauri/resources/browser-use/browser-driver"
 import type { BrowserAction, BrowserObservation } from "../src-tauri/resources/browser-use/browser-driver"
 import type { BrowserDecision, TextSlot } from "../src-tauri/resources/browser-use/browser-contract"
 import { parseText, prompt } from "../src-tauri/resources/browser-use/text-helper"
@@ -109,8 +109,9 @@ const helper = (answer: string | null | Error) => async () => {
 }
 
 /** A driver whose page the test controls, plus the calls it received. */
-function fakeDriver(pages: BrowserObservation[], options: { stale?: number; unreadableAfter?: number; engine?: "view" | "chrome" } = {}): BrowserDriverLike & { acts: { id: string; text?: string }[]; observes: number } {
+function fakeDriver(pages: BrowserObservation[], options: { stale?: number; unreadableAfter?: number; engine?: "view" | "chrome"; fail?: Error[]; busy?: boolean } = {}): BrowserDriverLike & { acts: { id: string; text?: string }[]; observes: number } {
   const state = { acts: [] as { id: string; text?: string }[], observes: 0, stale: options.stale ?? 0 }
+  const failures = [...(options.fail ?? [])]
   return {
     acts: state.acts,
     ...(options.engine ? { engine: options.engine } : {}),
@@ -119,6 +120,7 @@ function fakeDriver(pages: BrowserObservation[], options: { stale?: number; unre
     },
     async observe() {
       state.observes += 1
+      if (options.busy) throw new PageBusy()
       if (options.unreadableAfter !== undefined && state.observes > options.unreadableAfter) throw new Error("renderer gone")
       return pages[Math.min(state.observes - 1, pages.length - 1)]!
     },
@@ -126,6 +128,7 @@ function fakeDriver(pages: BrowserObservation[], options: { stale?: number; unre
       return true
     },
     async act(action, _page, text) {
+      if (failures.length > 0) throw failures.shift()
       if (state.stale > 0) {
         state.stale -= 1
         throw new StalePage("page moved")
@@ -365,6 +368,42 @@ describe("loop rules", () => {
     expect(result.steps).toBe(2)
   })
 
+  test("the page's own errors reach the decision, and only when there are new ones", async () => {
+    const page = observation([click("e3", 20, "Search"), ...controls], {
+      errors: ["error: Uncaught TypeError: cannot read properties of undefined", "HTTP 500 https://example.test/api/search"],
+    })
+    const seen: { state?: Record<string, unknown> } = {}
+    const client = {
+      systemOne: async (request: { state: Record<string, unknown>; questions: Record<string, { criteria?: Record<string, unknown> }> }) => {
+        seen.state = request.state
+        const criteria = Object.keys(request.questions.operation!.criteria!)
+        const chosen = criteria.includes("DONE") ? "DONE" : "CLICK"
+        return {
+          model: "test",
+          answers: {
+            operation: {
+              type: "choice",
+              choice: chosen,
+              confidence: 1,
+              probabilities: Object.fromEntries(criteria.map(key => [key, key === chosen ? 1 : 0])),
+            },
+          },
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }
+      },
+    }
+    await choose(page, "find a flight", [], [], { readOnly: true, client: client as never })
+    const state = seen.state as { page?: { errors?: string[] } }
+    expect(state.page?.errors).toEqual([
+      "error: Uncaught TypeError: cannot read properties of undefined",
+      "HTTP 500 https://example.test/api/search",
+    ])
+    // An observation without new errors carries no key at all, so a decision is
+    // never re-reading yesterday's failure.
+    await choose(observation([click("e3", 20, "Search"), ...controls]), "find a flight", [], [], { readOnly: true, client: client as never })
+    expect((seen.state as { page?: { errors?: string[] } }).page?.errors).toBeUndefined()
+  })
+
   test("read-only never offers a mutation, and the offer set pairs values with fields", async () => {
     const page = observation([
       fill("e1", 10, "Where from?"),
@@ -464,6 +503,37 @@ describe("loop rules", () => {
       decide: async () => decision(click("e3", 20, "Go")),
     })
     expect(result.metrics.engine).toBe("view")
+  })
+})
+
+/**
+ * A refusal has to say *why*, because the two cases need different next moves:
+ * an overlay is removed, a moving page is re-read, a busy page is waited for.
+ */
+describe("refusals that name themselves", () => {
+  test("a covered target names the coverer and the loop re-observes instead of stopping", async () => {
+    const page = observation([click("e3", 20, "Pay"), ...controls])
+    const driver = fakeDriver([page], { fail: [new StalePage("目标被「Cookie 横幅」遮住了：先关掉它再重新观察", "covered", "Cookie 横幅")] })
+    const result = await runBrowserTask({
+      input: { goal: "pay", budget: { ...budget, maxActions: 1 } },
+      driver,
+      decide: async () => decision(click("e3", 20, "Pay")),
+    })
+    // The refusal is recorded with the coverer's name, and the click that was
+    // refused is not counted as a step that happened.
+    expect(result.trace[0]?.note).toContain("Cookie 横幅")
+    expect(result.steps).toBe(1)
+    expect(driver.acts.map(action => action.id)).toEqual(["e3"])
+  })
+
+  test("a page that never becomes readable ends as blocked, not as an error to retry blindly", async () => {
+    const result = await runBrowserTask({
+      input: { goal: "pay", budget },
+      driver: fakeDriver([observation(controls)], { busy: true }),
+      decide: async () => decision(click("e3", 20, "Pay")),
+    })
+    expect(result.status).toBe("blocked")
+    expect(result.failure?.branch).toBe("busy")
   })
 })
 
@@ -606,6 +676,48 @@ describe("page observer budgets", () => {
     const page = observeDocument(`<button>Only</button><div onclick="1">Box</div>`)
     expect(page.omitted_actions).toBe(0)
     expect(page.actions.map(action => action.label)).toEqual(["Only", "Box", "Wait for the page to update"])
+  })
+
+  test("a field the page draws as dots keeps its value out of the table", () => {
+    // An OTP / card widget: an ordinary text input whose CSS draws the value as
+    // dots. The field stays actionable — the model may need to type into it —
+    // but the value itself is the page saying "nobody should read this".
+    const page = observeDocument(
+      `<input aria-label="验证码" style="-webkit-text-security: disc" value="482913">` +
+        `<input aria-label="数量" value="2">`,
+    )
+    const otp = page.actions.find(action => action.label === "验证码" && action.kind === "fill")!
+    expect(otp.value).toBe("••••••••")
+    expect(otp.masked).toBe(true)
+    // Kept for the loop's own "this field already holds it" check, never for the
+    // decision context: `actionSpace` only copies the fields it names.
+    expect(otp.raw).toBe("482913")
+    const quantity = page.actions.find(action => action.label === "数量")!
+    expect(quantity.value).toBe("2")
+    expect(quantity.masked).toBeUndefined()
+  })
+
+  test("an empty dotted field still reads as empty", () => {
+    const page = observeDocument(`<input aria-label="验证码" style="-webkit-text-security: disc">`)
+    const otp = page.actions.find(action => action.label === "验证码" && action.kind === "fill")!
+    expect(otp.value).toBe("")
+    expect(otp.masked).toBeUndefined()
+  })
+
+  test("a control inside a same-origin frame is observed and marked", () => {
+    // Payment and login forms are often an <iframe>. A walk of the top document
+    // cannot see one, which is exactly why those pages looked empty: the fields
+    // existed, one document down.
+    const page = observeDocument(
+      `<button>Pay</button><iframe srcdoc='<input aria-label="Card number" value="4242"><button>Confirm</button>'></iframe>`,
+    )
+    const card = page.actions.find(action => action.label === "Card number")
+    expect(card).toBeDefined()
+    expect(card?.frame).toBe(true)
+    expect(card?.value).toBe("4242")
+    expect(page.actions.some(action => action.label === "Confirm")).toBe(true)
+    // The top document's own controls are unaffected.
+    expect(page.actions.some(action => action.label === "Pay" && !action.frame)).toBe(true)
   })
 })
 

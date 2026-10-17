@@ -23,7 +23,7 @@
 import { choice, noul, type TypeSafeClient } from "@typesafe-ai/sdk"
 import { createDecisionClient } from "../computer-use/decision-provider.ts"
 import { isRetryableJevError, loadApiKey, redactLocalSlots } from "../computer-use/jev.ts"
-import { BrowserDriver, StalePage, type BrowserAction, type BrowserObservation } from "./browser-driver.ts"
+import { BrowserDriver, PageBusy, StalePage, type BrowserAction, type BrowserObservation } from "./browser-driver.ts"
 import { ViewDriver } from "./view-driver.ts"
 import {
   EVIDENCE_CHARS,
@@ -136,7 +136,15 @@ export function actionSpace(actions: readonly BrowserAction[]): {
         // Reachability travels with the element, not only with its input attempt.
         ...(action.offscreen ? { offscreen: true } : {}),
         ...(action.covered ? { covered: true, ...(action.covered_by ? { covered_by: action.covered_by } : {}) } : {}),
+        // The value is dots because the page hides it, not because the field
+        // literally contains dots. Saying so is what keeps the model from
+        // "cleaning up" a value it thinks is junk.
+        ...(action.masked ? { masked: true } : {}),
         ...(action.kind === "select" ? { options: [] } : {}),
+        // Says where the control is: a same-origin frame's contents are observed
+        // now, and a model that is not told so reads their page coordinates as
+        // "the top of the page".
+        ...(action.frame ? { in_frame: true } : {}),
       }
       elements.push(element)
     }
@@ -194,7 +202,15 @@ export async function choose(
   const offeredTargets = Object.fromEntries(Object.entries(targets).filter(([operation, group]) => offered[operation] && Object.keys(group).length))
 
   const rawState: Record<string, unknown> = {
-    page: { url: page.url, title: page.title, text: page.text },
+    page: {
+      url: page.url,
+      title: page.title,
+      text: page.text,
+      // The page's own failures. Without them "I clicked and nothing happened"
+      // is the only thing a decision can conclude; with them it can retry, pick
+      // another route through the site, or report what actually broke.
+      ...(page.errors?.length ? { errors: page.errors } : {}),
+    },
     elements,
     recent_actions: history.slice(-10).map(step => ({
       action: step.label ?? step.target ?? "",
@@ -237,6 +253,7 @@ export async function choose(
     // Told before the decision, not after the input fails.
     ...(action.offscreen ? { offscreen: true } : {}),
     ...(action.covered ? { covered: true, ...(action.covered_by ? { covered_by: action.covered_by } : {}) } : {}),
+    ...(action.masked ? { masked: true } : {}),
   })
   // A text field has no DOM options, so the caller's prepared values become
   // them: the target `19:query` means "type the prepared value called query
@@ -263,8 +280,11 @@ export async function choose(
       if (operation === "TYPE_TEXT") {
         // A fill whose exact value is already in the field changes nothing, and
         // offering it again is how a run spends its budget re-typing one input
-        // while the page waits to be submitted.
-        const current = (action.current_value ?? action.value ?? "").trim()
+        // while the page waits to be submitted. A dotted field is compared
+        // through its raw value: the table only carries dots, and comparing
+        // those would offer the same value over and over.
+        const held = action.masked ? action.raw : (action.current_value ?? action.value)
+        const current = (held ?? "").trim()
         if (paired) {
           for (const slot of usableSlots) {
             if (current && current === slot.value.trim()) continue
@@ -516,6 +536,9 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
   const usedSlots = new Set<string>()
   let decisions = 0
   let actions = 0
+  /** Observations that never produced a page. Bounded, so a page that never
+   *  settles fails the run instead of looping until the duration budget. */
+  let busyRetries = 0
   let status: BrowserTaskStatus = "blocked"
   let failure: BrowserTaskFailure | undefined
   let goalVerified = false
@@ -653,15 +676,35 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
         ...(decision.slotId ? { slotId: decision.slotId } : {}),
       }
       const stepStarted = Date.now()
+      // A refusal delivered nothing, so it is recorded in the trace but never
+      // counted as a step that happened. Both kinds share this bookkeeping; what
+      // differs is the remedy.
+      const refuse = (error: Error) => {
+        step.note = `未执行：${error.message}`
+        step.ms = Date.now() - stepStarted
+        trace.push(step)
+      }
       try {
         await time(metrics, "action", () => driver!.act(action, page!, text))
       } catch (error) {
+        if (error instanceof PageBusy) {
+          // Nothing was decided and nothing was delivered: the page simply never
+          // became readable. Waiting and reading again is the whole remedy, and
+          // the action budget must not pay for it.
+          refuse(error)
+          busyRetries += 1
+          if (busyRetries > 2) {
+            stop("blocked", error.message, "busy", "页面一直没稳定下来；稍后重试，或换一个入口页面", "observe")
+            break
+          }
+          await new Promise(resolve => setTimeout(resolve, 600 * busyRetries))
+          page = await time(metrics, "observation", () => driver!.observe())
+          continue
+        }
         if (error instanceof StalePage) {
           // Nothing was delivered: the page moved first. Re-observe and decide
           // again. This is the one case where an action is not counted.
-          step.note = `未执行：${error.message}`
-          step.ms = Date.now() - stepStarted
-          trace.push(step)
+          refuse(error)
           page = await time(metrics, "observation", () => driver!.observe())
           continue
         }
@@ -699,7 +742,11 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     const aborted = signal?.aborted
-    stop(aborted ? "aborted" : "error", detail, undefined, undefined, aborted ? "observe" : (page ? "observe" : "launch"))
+    if (error instanceof PageBusy && !aborted) {
+      stop("blocked", detail, "busy", "页面一直没稳定下来；稍后重试，或换一个入口页面", "observe")
+    } else {
+      stop(aborted ? "aborted" : "error", detail, undefined, undefined, aborted ? "observe" : (page ? "observe" : "launch"))
+    }
   } finally {
     driver?.close()
   }

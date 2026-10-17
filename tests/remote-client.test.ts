@@ -133,7 +133,11 @@ const endpoint = { mode: "direct", host: "127.0.0.1", port: 17777, token: "12345
 
 describe("remote client reconnect", () => {
   test("uses bounded exponential backoff", () => {
-    expect([0, 1, 2, 8].map(attempt => remoteReconnectDelay(attempt, 100, 500))).toEqual([100, 200, 400, 500])
+    // `random` is injected so the shape is asserted exactly; the jitter itself is
+    // covered in `remote-route.test.ts`. A full-jitter draw is the old value, and
+    // a zero draw is half of it — never less, so the backoff stays monotonic.
+    expect([0, 1, 2, 8].map(attempt => remoteReconnectDelay(attempt, 100, 500, () => 1))).toEqual([100, 200, 400, 500])
+    expect([0, 1, 2].map(attempt => remoteReconnectDelay(attempt, 100, 500, () => 0))).toEqual([50, 100, 200])
   })
 
   test("reconnects after an unexpected close and stops after an explicit close", async () => {
