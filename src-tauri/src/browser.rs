@@ -24,6 +24,9 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+// The DevTools cookie read is the only async WebSocket user here, and the
+// desktop-only crates below are not compiled for mobile targets.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use futures_util::{SinkExt, StreamExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -32,7 +35,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::webview::cookie::{self as web_cookie, Cookie, SameSite};
 use tauri::Manager;
 use tauri::Emitter;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tokio_tungstenite::connect_async;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use tokio_tungstenite::tungstenite::Message;
 
 /// The viewport the agent assumes when the dock is closed. The dock overrides
@@ -1221,6 +1226,7 @@ pub fn browser_import_state() -> Result<Option<ImportReport>, String> {
 /// ("Cannot start a runtime from within a runtime") on a worker thread that
 /// nothing is catching — which leaves the caller's promise unsettled forever, and
 /// looks exactly like an import stuck at "导入中" with no error anywhere.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 async fn cdp_cookies(session: &BrowserSession) -> Result<Vec<Value>, String> {
     let url = format!("ws://127.0.0.1:{}{}", session.port, session.browser_ws);
     (async move {
@@ -1306,6 +1312,14 @@ fn webkit_cookie(value: &Value) -> Option<Cookie<'static>> {
         }
     }
     Some(cookie)
+}
+
+/// Mobile has no Orbit-owned browser to read cookies out of, and the WebSocket
+/// crates are desktop-only in `Cargo.toml`, so this target gets a stub with the
+/// same signature instead of a second dependency tree.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+async fn cdp_cookies(_session: &BrowserSession) -> Result<Vec<Value>, String> {
+    Err("导入浏览器登录只在桌面端可用".to_string())
 }
 
 /// The domain string the `cookie` crate must hold, so WebKit receives the one
