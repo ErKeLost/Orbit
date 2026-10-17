@@ -49,6 +49,19 @@ export function browserViewClose(tab: string): Promise<void> {
 }
 
 /**
+ * Close every browser view the frontend no longer has a tab for.
+ *
+ * A reload rebuilds the frontend's state from nothing, so its tabs are gone —
+ * but the native views are owned by the app process and outlive that document,
+ * leaving a page on screen with no tab and no way to close it. Called once on
+ * startup with the tabs that do exist, which is the only moment the frontend
+ * knows the whole truth.
+ */
+export function browserViewReconcile(tabs: string[]): Promise<number> {
+  return invoke<number>("browser_view_reconcile", { tabs })
+}
+
+/**
  * The page's own words, plus whether it is still loading.
  *
  * One call, not two: the toolbar's title, its address and its stop/reload button

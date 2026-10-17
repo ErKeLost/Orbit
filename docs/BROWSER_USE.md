@@ -23,25 +23,29 @@ Orbit has two Computer-Use-class tools and they are deliberately separate:
 这一栏现在走第二条：`Window::add_child`（Tauri 的 multi-webview，`unstable`）把一块真实的 web view 放进窗口，位置由这一栏的矩形决定（`browser_view.rs`）。**iframe 依然不行**（跨域拿不到 DOM、CSP 直接拒载），但「子 web view 是另一个内核、没有 CDP」这个代价现在由第三栏承担，而**不是**由 agent 的决策能力承担：
 
 - **第三栏（用户看的）**：WebKit 子视图，原生渲染。它没有 CDP，但可以被脚本驱动 —— `browser_view_eval` 在页面里执行脚本并取回 JSON（实测能读到 `document.title` 与 `location.href`），而且这个页面**不在任何 capability 里**，网页碰不到 app 的任何命令。
-- **agent（`browser_task`）**：仍然用 Orbit 自己启动的 Chrome + CDP。CDP 给的是 DOM 级别的观察与**可信输入**（`Input.*`，真实站点会当真人点击处理），这是 Jev 那套「元素编号 + 目标」决策最需要的东西，也是 WebKit 侧给不了的。
+- **agent（`browser_task`）**：默认驱动**第三栏里的一个属于本次运行的 tab**，回退才是 Orbit 自己启动的 Chrome + CDP。两条路都保留：视图是用户看得见的那块面板，而 CDP 给的是 `Input.*` 可信输入与无障碍大纲，视图给不了。
 
-> 目前这两者是**两个浏览器**：栏里是 WebKit（用户看的），agent 跑在 headless Chrome 上（没有窗口）。把 agent 也接到子视图上（脚本点击/输入，必要时再用 Orbit 已有的物理输入通道产生可信事件）是下一步；那一步做完，栏里就是 agent 正在操作的那个页面。在此之前，栏是**给用户用的真实浏览器**，`browser_task` 是**agent 自己的浏览器**。
+> 两个引擎今天**都在用**，而且用哪个不再由配置决定、也不再是隐形的：`browser_task` 先向 app 要一个 tab（`op:"open"`，tab id 由 app 生成并返回，**每个 run 一个**，不再借用用户正在读的那个 tab），驱动它；app 不可达时才回退 Chrome。跑完的结果里带 `engine=view|chrome`，回退时还带上 `engineFallback`（视图为什么不可用），所以「跑在哪个浏览器上、为什么」都是可诊断的事实。
+>
+> 两者的取舍必须说清楚：视图里的输入是合成的（`dispatchEvent`），**只有点击走系统级鼠标**（`viewClickAt` → `trusted_click`，点击前重新校验窗口仍在最前台、且该点仍在页面矩形内，否则拒点）；判断 `event.isTrusted` 的页面（部分 Google 流程）会忽略脚本输入。Chrome 的 `Input.*` 始终是可信输入 —— 这正是它不可被删除的原因。
+
+### tab 的归属与生命周期
+
+- **每个 run 一个 tab**：`view.sock` 的 `open` 由 app 生成 `browser:<id>`，写进 `browser:open` 事件并作为应答返回；此后这个 run 的每一次 `eval`/`navigate`/`go`/`reload`/`geometry`/`clickAt` 都**显式带这个 tab**。两个并发 run 因此不可能读到或点到对方的页面。没给地址时，地址从栏里当前页面继承到新 tab（仍然是自己的 tab，不会把用户正在读的页面导航走）。
+- **run 结束时关掉自己的 tab**：run 结束（成功或失败）会 `close` 它自己 mint 的那个 tab，app 同时发出 `browser:close`，前端据此移除标签项——否则每跑一次就多一个常驻标签。**已经被打开的 tab 永远不会被关**（那种情况 `ownsTab` 为 false）。一个 run 最终停留在哪个地址、页面上有什么文字，都在它的结果里，不依赖那个标签还开着。
+- **视图的生死跟 tab 走，不跟「谁在前台」走**：切换标签页只是把视图 `hide()`（页面、滚动、登录态都留着），真正关闭标签页才由 `browser_view_reconcile` 把原生视图销毁 —— 前端启动时与标签集合每次变化时都会调用它，这也是刷新后孤儿视图的清理通道。副作用说明：前端刷新后 shell 状态是空的，启动那次 reconcile 会把包括**进行中 run** 的视图一起关掉（run 随后会在下一次 `eval` 上失败）——这是“刷新后不留孤儿视图”与“让进行中的 run 活过刷新”之间的取舍，选了前者。
 
 ```text
 agent：Pi ──browser_task──► 扩展里的循环（jev-ultrafast 的移植）
                               │  observe / act
-                              ▼
-                        CDP（loopback ws）
-                              │
             ┌─────────────────┴──────────────────┐
-            │  Orbit 拥有的 Chrome（headless）    │
-            └────────────────────────────────────┘
-                              ▲
-            Rust（browser.rs）：启动/复用/关闭 + session.json
+            ▼                                    ▼
+  view.sock（0600，app 内部）              CDP（loopback ws，回退）
+  窗口里的 WKWebView（本次 run 自己的 tab）   Orbit 拥有的 Chrome（headless）
+            ▲                                    ▲
+  Rust（browser_view.rs）：建/摆/隐藏/销毁 + eval/clickAt   Rust（browser.rs）
 
-用户：第三栏 ──► Rust（browser_view.rs）──► 窗口里的 WKWebView 子视图
-                              ▲
-                          browser_view_eval（读页面/驱动页面）
+用户：第三栏 ──► 同一个子视图；切标签只 hide，关标签才销毁
 ```
 
 ## 谁在驾驶
@@ -95,7 +99,9 @@ agent：Pi ──browser_task──► 扩展里的循环（jev-ultrafast 的移
 - 有交互界面 → 弹确认，用户同意后继续；
 - 没有 → 以 `needs_review` 停下，不执行。
 
-`readOnly` 运行根本不提供 `CLICK` / `TYPE_TEXT` / `SELECT`，只剩观察、滚动与两个终态。
+- **观察里带上「能不能点」的事实**：每个候选都标了 `offscreen`（在视口外：先滚动，别硬点）与 `covered`（被别的东西挡住，并尽量写明是谁挡的），后者不再等到投递时才以失败的形式出现。
+
+`readOnly` 运行根本不提供 `CLICK` / `TYPE_TEXT` / `SELECT`，只剩观察、滚动与两个终态；`DONE` 与 `gui_task` 一样有置信度下限（`DONE_CONFIDENCE_FLOOR`），低于它就只记一笔、下一轮仍可再提，**不会**把 `DONE` 从候选中摘掉。
 
 ## 第三栏（BrowserDock）
 
@@ -126,7 +132,8 @@ Chrome 用资料目录里的 `SingletonLock` 保证同一 profile 只有一个�
 
 ### agent 的浏览器（Chrome）
 
-- `~/.pi/agent/browser/session.json`：`{port, targetId, url, pid, executable, startedAt, browserVersion, browserWs, userAgent}`。Rust 写，扩展读；两边都靠它定位同一个 tab。
+- `~/.pi/agent/browser/session.json`：`{port, targetId, url, pid, executable, startedAt, browserVersion, browserWs, userAgent, targetOwnerPid}`。Rust 写，扩展读；两边都靠它定位同一个 tab。写入是原子的（临时文件名带 pid 与纳秒），读到损坏内容按「没有会话」处理，并且这些临界区由一个 `session.lock`（`flock`）串起来 —— `--browser-ensure` 是独立进程，没有这把锁时两个进程会同时启动、互相关掉对方的 tab。
+- **tab 的归属也是持久事实**：`targetOwnerPid` 记下谁建的这个 target（helper 进程记的是它的父进程，也就是发起 run 的那个 Pi 进程）。换地址时只关**自己的**或者**持有者已死**的 target，绝不关另一个活着的 run 的 tab。
 - `~/.pi/agent/browser/profile/`：专用 Chrome 资料目录（首次运行是干净的，登录信息只属于这一栏）。
 - `~/.pi/agent/browser/chrome.log`：内核自己的 stderr —— 被拒绝的调试连接、渲染进程崩溃、资料目录被别的实例占用，都只在这里出现。
 - `ORBIT_BROWSER_HOME` 整体挪走浏览器目录（测试与沙箱用；`scripts/check-browser-guards.ts` 就靠它，绝不碰用户自己的资料目录）。
@@ -155,16 +162,24 @@ Chrome 用资料目录里的 `SingletonLock` 保证同一 profile 只有一个�
 
 | 文件 | 职责 |
 | --- | --- |
-| `src-tauri/src/browser_view.rs` | **第三栏的引擎视图**：创建/摆放/隐藏子 web view、导航、在页面里执行脚本并取回 JSON、加载状态 |
+| `src-tauri/src/browser_view.rs` | **第三栏的引擎视图**：创建/摆放/隐藏/销毁子 web view、tab id、导航、在页面里执行脚本并取回 JSON、可信点击 `clickAt`、加载状态、`view.sock` 通道、孤儿视图 reconcile |
 | `src/lib/browser-view.ts` | 上面那些命令的前端封装 + 地址栏的 omnibox 规则 |
-| `src-tauri/src/browser.rs` | agent 的 Chrome：发现/启动/复用/关闭、session.json、`--browser-*` 帮助入口 |
-| `src/features/browser/BrowserDock.tsx` | 第三栏本体：工具栏、画面、坐标换算、横幅、空态、四边 dock |
-| `src/features/shell/dock.ts` | dock 几何（尺寸/下限/四边/拖拽→尺寸），终端栏与浏览器栏共用 |
-| `src-tauri/resources/browser-use/snapshot.js` | 页面观察器（上游原样，MIT） |
-| `src-tauri/resources/browser-use/browser-driver.ts` | CDP 驱动：观察/新鲜度/执行（`browser.py` 的移植） |
+| `src/features/browser/BrowserTab.tsx` | 一个浏览器标签页的界面本体：工具栏、地址栏、横幅、舞台矩形上报（切走时 hide） |
+| `src/features/browser/use-browser-views.ts` | 浏览器功能的 app 级接线：启动 reconcile、`browser:open` 开标签（用 app 给的 tab id）、`browser:close` 关标签、标签集合变化时再 reconcile |
+| `src/features/browser/BrowserImportPrompt.tsx` | 首启/需要登录时的导入横幅（在面板内部，否则被原生视图盖住） |
+| `src/lib/browser-import.ts` | 导入的前端封装：列来源、执行导入、导入后重载已打开的页面 |
+| `src/features/settings/BrowserPage.tsx` | 设置 → 浏览器：来源列表、导入、上次导入结果 |
+| `src-tauri/src/browser.rs` | agent 的 Chrome（也是回退引擎）：发现/启动/复用/关闭、session.json + `flock` + target 归属、`--browser-*` 帮助入口、登录导入的 Rust 一半 |
+| `src-tauri/resources/browser-use/snapshot.js` | 页面观察器（上游为基底，MIT；本仓库加了 offscreen/covered/启发式控件三段附加通道） |
+| `src-tauri/resources/browser-use/browser-driver.ts` | CDP 驱动：观察/新鲜度/可信输入/无障碍大纲（`browser.py` 的移植） |
+| `src-tauri/resources/browser-use/view-driver.ts` | 第三栏那个 tab 的驱动：同一套契约，走 `view.sock`；点击走系统鼠标，其余合成 |
+| `src-tauri/resources/browser-use/view-channel.ts` | `view.sock` 的前端封装（每个 op 都显式带 tab） |
+| `src-tauri/resources/browser-use/browser-contract.ts` | `browser_task` 的输入/输出/预算契约与 metrics（含 `engine`/`engineFallback`） |
 | `src-tauri/resources/browser-use/browser-engine.ts` | 循环：候选表、Jev 请求、预算、文本槽、风险门 |
 | `src-tauri/resources/browser-use/browser-task.ts` | 工具注册与结果格式化 |
-| `src-tauri/resources/browser-use/mode.ts` | `browser_task` 的激活与系统提示 |
+| `src-tauri/resources/browser-use/mode.ts` | `browser_task` 的激活与系统提示（默认开） |
+| `src-tauri/resources/browser-use/cdp.ts` | 最小 CDP 客户端 |
+| `src-tauri/resources/browser-use/questions.ts` | 决策问题的规则文本 |
 | `src-tauri/resources/browser-use/text-helper.ts` | 用用户自己的模型为单个字段写值（上游 `TEXT_VALUE` 的移植） |
 
 ## 验证
@@ -176,7 +191,7 @@ bun run check:browser-guards              # 真实 Chrome + 本地 fixture，无
 
 `tests/browser-use.test.ts` 覆盖：元素编号与下拉框目标编码、几何变化不影响指纹、**动作先记账后观察**、过期决策不执行也不计数、缺少槽位时 `needs_text` 而不是编造、连续三步无变化即停、不可撤销步骤必须有确认、预算即停止线、以及 read-only 不提供任何改动操作。
 
-`scripts/check-browser-guards.ts` 移植自上游 `scripts/check_guards.py`（MIT），32 项，包含：移动后的控件仍在原决策的目标上被点击；9 种真实变化（可见上下文、无障碍名、字段值、勾选状态、禁用、只读、隐藏、节点替换、下拉选项）必须让决策作废；无文字遮罩不改语义状态但必须挡住点击；密码值不暴露；禁用控件不出现；原生下拉真的选中；输入后等待异步候选。实测中还确认了一处上游注释与行为不符：**同 scope 内「视口外」的文本仍然在守卫范围内**，因此它的变化会作废决策（代价是多一次决策，不是错点一次）；没有渲染的文本才不在范围内。脚本在缺少 Chrome 或未构建 Orbit 时自行 skip。
+`scripts/check-browser-guards.ts` 移植自上游 `scripts/check_guards.py`（MIT），**41 项**，包含：移动后的控件仍在原决策的目标上被点击；9 种真实变化（可见上下文、无障碍名、字段值、勾选状态、禁用、只读、隐藏、节点替换、下拉选项）必须让决策作废；无文字遮罩不改语义状态但必须挡住点击；密码值不暴露；禁用控件不出现；原生下拉真的选中；输入后等待异步候选；视口外的控件被保留并标 `offscreen`、被遮挡的控件在观察阶段就标 `covered`（含遮挡者）、`label[for]` 关联到隐藏控件时以 label 作为代理目标、Chrome 路径额外带一份有界的无障碍大纲。实测中还确认了一处上游注释与行为不符：**同 scope 内「视口外」的文本仍然在守卫范围内**，因此它的变化会作废决策（代价是多一次决策，不是错点一次）；没有渲染的文本才不在范围内。脚本在缺少 Chrome 或未构建 Orbit 时自行 skip。
 
 实测（2026-10-15，Chrome 155，Jev 1.14，macOS arm64）：
 

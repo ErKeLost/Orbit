@@ -83,29 +83,45 @@ export async function viewRequest<T = unknown>(
   })
 }
 
-/** Whether the column has a page right now. */
-export async function viewStatus(): Promise<ViewStatus | null> {
-  return viewRequest<ViewStatus>({ op: "status" }, { timeoutMs: 3_000 })
+/**
+ * Whether the column has a page right now, and which tab it describes.
+ *
+ * A tab is named explicitly wherever the caller has one: the channel's default
+ * is "whatever is in front", and a run that reads one tab while it clicks another
+ * is the bug this parameter exists to prevent.
+ */
+export async function viewStatus(tab?: string): Promise<ViewStatus | null> {
+  return viewRequest<ViewStatus>({ op: "status", ...(tab ? { tab } : {}) }, { timeoutMs: 3_000 })
 }
 
-/** Run a script in the column's page and return its result. */
-export async function viewEval<T = unknown>(script: string, timeoutMs = 10_000): Promise<T | null> {
-  return viewRequest<T>({ op: "eval", script, timeoutMs }, { timeoutMs: timeoutMs + 2_000 })
+/** Run a script in one tab's page and return its result. */
+export async function viewEval<T = unknown>(script: string, options: { tab?: string; timeoutMs?: number } = {}): Promise<T | null> {
+  const timeoutMs = options.timeoutMs ?? 10_000
+  return viewRequest<T>(
+    { op: "eval", script, timeoutMs, ...(options.tab ? { tab: options.tab } : {}) },
+    { timeoutMs: timeoutMs + 2_000 },
+  )
 }
 
-export async function viewNavigate(url: string): Promise<void> {
-  await viewRequest({ op: "navigate", url })
+/** Navigate one tab. Without a tab the app navigates the active one. */
+export async function viewNavigate(url: string, tab?: string): Promise<void> {
+  await viewRequest({ op: "navigate", url, ...(tab ? { tab } : {}) })
 }
 
 /**
  * Ask the app for a browser tab.
  *
- * A tab, not a rectangle: the pane owns where its page goes. This resolves as
- * soon as the app has been asked; the caller then waits for the tab to appear
- * (`viewStatus`), which is what keeps placement out of the agent's hands.
+ * A tab, not a rectangle: the pane owns where its page goes. The app generates
+ * the tab id and returns it, so the run owns one named tab instead of driving
+ * "whatever is in front" — which is how it used to navigate the page the user
+ * was reading.
+ *
+ * An older app that does not return a tab id answers with `null`; the caller
+ * treats that as "ask for a tab and then use the active one", which is the
+ * previous behaviour.
  */
-export async function viewOpen(url: string): Promise<void> {
-  await viewRequest({ op: "open", url }, { timeoutMs: 5_000 })
+export async function viewOpen(url: string, tab?: string): Promise<{ tab: string } | null> {
+  return viewRequest<{ tab: string } | null>({ op: "open", url, ...(tab ? { tab } : {}) }, { timeoutMs: 5_000 })
 }
 
 /**

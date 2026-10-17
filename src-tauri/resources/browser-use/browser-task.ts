@@ -131,7 +131,7 @@ const OPERATION_LABELS: Record<string, string> = {
 
 export function formatResult(input: BrowserTaskInput, result: BrowserTaskResult): string {
   const last = result.trace.at(-1)
-  const timing = `elapsed=${result.metrics.elapsedMs}ms observe=${Math.round(result.metrics.observationMs)}ms decide=${Math.round(result.metrics.decisionMs)}ms act=${Math.round(result.metrics.actionMs)}ms jev_calls=${result.metrics.jevCalls}`
+  const timing = `engine=${result.metrics.engine ?? "?"}${result.metrics.engineFallback ? ` (fallback: ${result.metrics.engineFallback})` : ""} elapsed=${result.metrics.elapsedMs}ms observe=${Math.round(result.metrics.observationMs)}ms decide=${Math.round(result.metrics.decisionMs)}ms act=${Math.round(result.metrics.actionMs)}ms jev_calls=${result.metrics.jevCalls}`
   const outcome = result.goalVerified
     ? "Jev 根据当前页面判断目标已完成"
     : result.status === "needs_text"

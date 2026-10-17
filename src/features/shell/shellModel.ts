@@ -40,6 +40,15 @@ export function isBrowserPath(path: string): boolean {
   return path.startsWith(BROWSER_PATH_PREFIX);
 }
 
+/** Every browser tab open in any workspace, by tab path (`browser:<id>`). */
+export function browserTabPaths(workspaces: WorkspaceTab[]): string[] {
+  return workspaces.flatMap((workspace) =>
+    Object.values(workspace.panes).flatMap((pane) =>
+      pane.files.filter((file) => file.browser).map((file) => file.path),
+    ),
+  );
+}
+
 /** The session pane's leaf id; editor panes use `editor:<n>`. */
 export const CHAT_PANE_ID = "chat";
 

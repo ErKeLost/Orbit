@@ -258,6 +258,9 @@ pub fn run() {
             browser::browser_status,
             browser::browser_close,
             browser::browser_client_report,
+            browser::browser_import_sources,
+            browser::browser_import_session,
+            browser::browser_import_state,
             // The column's engine view: a real child web view, not a frame
             // stream. See `browser_view.rs`.
             browser_view::browser_view_sync,
@@ -270,6 +273,7 @@ pub fn run() {
             browser_view::browser_view_status,
             browser_view::browser_view_page,
             browser_view::browser_view_close,
+            browser_view::browser_view_reconcile,
             bridge::save_computer_use_key,
             bridge::computer_use_config,
             bridge::save_computer_use_config,

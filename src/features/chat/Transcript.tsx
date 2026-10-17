@@ -178,7 +178,7 @@ function ThinkingRow({ step }: { step: TurnStep }) {
       )}
       {open && expandable ? (
         <div className="min-w-0 pb-2">
-          <Markdown className="agent-reasoning" content={full} />
+          <Markdown className="agent-reasoning" content={full} links="panel" />
         </div>
       ) : null}
     </div>
@@ -204,7 +204,7 @@ function NoteRow({ step }: { step: TurnStep }) {
       )}
       {open && expandable ? (
         <div className="min-w-0 pb-2">
-          <Markdown content={full} />
+          <Markdown content={full} links="panel" />
         </div>
       ) : null}
     </div>
@@ -409,7 +409,7 @@ function PhaseGroup({ phase, tools, live }: { phase: Phase; tools: Record<string
       <div className="flex min-w-0 items-start gap-1.5">
         <PhaseIcon kind={phase.kind} className="mt-[7px]" />
         <div className="min-w-0 flex-1">
-          {phase.headline?.text ? <Markdown content={phase.headline.text} animated={live} /> : null}
+          {phase.headline?.text ? <Markdown content={phase.headline.text} animated={live} links="panel" /> : null}
         </div>
       </div>
     );
@@ -438,7 +438,7 @@ function PhaseGroup({ phase, tools, live }: { phase: Phase; tools: Record<string
             <div className="flex min-w-0 flex-col">
               {open && headlineDetail ? (
                 <div className="zen-phase-step py-1">
-                  <Markdown content={headlineDetail} animated={live} />
+                  <Markdown content={headlineDetail} animated={live} links="panel" />
                 </div>
               ) : null}
               {phase.steps.map((step) => (
@@ -632,7 +632,7 @@ function CompactionNotice({ message }: { message: PiMessage }) {
       <span className="h-px flex-1 bg-stroke" />
       {open && summary ? (
         <div className="basis-full">
-          <Markdown className="agent-reasoning" content={summary} />
+          <Markdown className="agent-reasoning" content={summary} links="panel" />
         </div>
       ) : null}
     </div>
@@ -734,7 +734,7 @@ const AssistantTurn = memo(
               data-chat-message-role="assistant"
               className={`min-w-0 px-4 pb-1 text-content ${index === 0 ? (workVisible ? "pt-5" : "pt-3") : "pt-3"}`}
             >
-              <Markdown content={step.text ?? ""} animated={streaming && step.live} />
+              <Markdown content={step.text ?? ""} animated={streaming && step.live} links="panel" />
             </div>
           ) : (
             <div key={step.key} className="px-4 py-1">

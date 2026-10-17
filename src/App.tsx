@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { MetricsSync } from "./lib/metrics";
 import { useWorkspace } from "./lib/store";
@@ -24,6 +23,7 @@ import { InboxView } from "./features/inbox/InboxView";
 import { SearchView } from "./features/search/SearchView";
 import { AutomationsView } from "./features/automations/AutomationsView";
 import { useAutomationScheduler } from "./features/automations/useAutomationScheduler";
+import { useBrowserViews } from "./features/browser/use-browser-views";
 import { PaneDropHint, PaneSash, SessionPaneHeader } from "./features/shell/PaneChrome";
 import { layoutLeaves, layoutSashes, leafIds, removePane, setSplitRatio as setSplitRatioLayout, type LayoutNode } from "./features/shell/paneLayout";
 import { paneDropFromPoint, setTitleTabDrop, titleTabDropFromPoint, useTabDrop, type PaneDrop } from "./features/shell/paneDrop";
@@ -333,16 +333,9 @@ export default function App() {
     shell.setSessionSidebarOpen(next);
   });
   useDesktopNotifications();
-  // The agent's channel can ask for a tab, never for a rectangle: a tab gets the
-  // pane's geometry, which is the only placement that stays right.
-  useEffect(() => {
-    const pending = listen<{ url?: string }>("browser:open", event => {
-      useShell.getState().openBrowser(event.payload?.url ?? "");
-    });
-    return () => {
-      void pending.then(unlisten => unlisten());
-    };
-  }, []);
+  // The browser column's own startup (orphaned views, `browser:open`) belongs to
+  // the browser feature, not to this root.
+  useBrowserViews();
   const openSearch = () => useWorkspace.getState().set({ panel: "search" });
 
   if (bootstrap.runtimeTarget === "mobile" && bootstrap.pairing.required) {

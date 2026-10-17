@@ -32,6 +32,7 @@ import {
   type BrowserDecision,
   type BrowserTaskFailure,
   type BrowserTaskInput,
+  type BrowserTaskMetrics,
   type BrowserTaskResult,
   type BrowserTaskStatus,
   type BrowserTaskStep,
@@ -61,6 +62,12 @@ const OPERATION_LABELS: Record<string, string> = {
 const MAX_PAIRED_TARGETS = 120
 const STATE_CHARS = 100_000
 const RISK_THRESHOLD = 0.6
+/**
+ * Below this, a `DONE` is the model's weakest opinion rather than evidence that
+ * the goal is met. The Claude-guided loop (`loop/engine.ts`) runs the same check;
+ * the browser loop used to accept any `DONE` its freshness guard allowed.
+ */
+export const DONE_CONFIDENCE_FLOOR = 0.6
 
 export type BrowserTaskEvent = {
   type: "launching" | "observed" | "decided" | "acted" | "status"
@@ -80,6 +87,11 @@ type ElementView = {
   expanded?: string
   operations: string[]
   options?: { index: string; label: string; value: string }[]
+  /** Outside the viewport: reachable only after a scroll. */
+  offscreen?: boolean
+  /** Something is over it; a click would land there instead. */
+  covered?: boolean
+  covered_by?: string
 }
 
 /**
@@ -121,6 +133,9 @@ export function actionSpace(actions: readonly BrowserAction[]): {
         ...(action.checked !== undefined ? { checked: action.checked } : {}),
         ...(action.selected !== undefined ? { selected: action.selected } : {}),
         ...(action.expanded !== undefined ? { expanded: action.expanded } : {}),
+        // Reachability travels with the element, not only with its input attempt.
+        ...(action.offscreen ? { offscreen: true } : {}),
+        ...(action.covered ? { covered: true, ...(action.covered_by ? { covered_by: action.covered_by } : {}) } : {}),
         ...(action.kind === "select" ? { options: [] } : {}),
       }
       elements.push(element)
@@ -157,24 +172,49 @@ export async function choose(
   const { elements, targets, controls } = actionSpace(page.actions)
   const readOnly = options.readOnly ?? false
   const offered: Record<string, string> = {}
+  // Every targeted operation (CLICK / TYPE_TEXT / SELECT) mutates the page, so a
+  // read-only run offers none of them. Scrolling is an observation, not a change,
+  // and it stays available: removing it once left read-only runs offering only
+  // WAIT while the rules text still told the model to scroll.
   for (const [operation, group] of Object.entries(targets)) {
-    if (readOnly && operation !== "SCROLL_DOWN" && operation !== "SCROLL_UP") continue
+    if (readOnly) continue
     if (Object.keys(group).length === 0) continue
     offered[operation] = OPERATION_LABELS[operation] ?? operation
   }
   for (const [name, criteria] of Object.entries(CONTROL_OPERATIONS)) {
-    if (readOnly && (name === "SCROLL_DOWN" || name === "SCROLL_UP")) continue
+    // Scroll is offered only when the page reported it can scroll. WAIT and the
+    // two terminal operations always exist. Offering a scroll the page cannot
+    // perform would let the model choose an operation with no action behind it,
+    // which the engine then has to reject as an internal error.
+    const scroll = name === "SCROLL_DOWN" || name === "SCROLL_UP"
+    if (scroll && !controls[name]) continue
     offered[name] = criteria
   }
   if (Object.keys(offered).length === 0) throw new Error("页面没有可用的操作目标")
   const offeredTargets = Object.fromEntries(Object.entries(targets).filter(([operation, group]) => offered[operation] && Object.keys(group).length))
 
-  const state: Record<string, unknown> = {
-    page: { url: page.url, title: page.title, text: redactLocalSlots(page.text, slots) },
+  const rawState: Record<string, unknown> = {
+    page: { url: page.url, title: page.title, text: page.text },
     elements,
-    recent_actions: history.slice(-10).map(step => ({ action: step.label ?? step.target ?? "", kind: step.operation, text: step.slotId ? "[slot]" : "", page_changed: step.verdict === "changed" })),
+    recent_actions: history.slice(-10).map(step => ({
+      action: step.label ?? step.target ?? "",
+      kind: step.operation,
+      text: step.slotId ? "[slot]" : "",
+      page_changed: step.verdict === "changed",
+      // Why a step was refused (a DONE below the confidence floor, a stale
+      // action) has to reach the next decision, or it will simply repeat itself.
+      ...(step.note ? { note: step.note } : {}),
+    })),
     ...(page.omitted_actions ? { elements_omitted: page.omitted_actions } : {}),
+    // Chrome's own AX outline, when the driver could read it. Never a replacement
+    // for `elements`: it is extra structure over the same page.
+    ...(page.aria ? { aria: page.aria } : {}),
   }
+  // Nothing the caller prepared may reach the decision model, wherever on the page
+  // it happens to sit: page text, a field's current value, a dropdown option, an
+  // AX value. Redaction happens once, over the finished payload — the local
+  // "this field already holds the value" checks below still read the raw page.
+  let state = redactTree(rawState, slots)
   // The offer set and the observation share one request budget. Page text is
   // the least actionable part, so it is what yields first.
   let stateChars = JSON.stringify(state).length
@@ -194,6 +234,9 @@ export async function choose(
     ...(action.checked !== undefined ? { checked: action.checked } : {}),
     ...(action.selected !== undefined ? { selected: action.selected } : {}),
     ...(action.expanded !== undefined ? { expanded: action.expanded } : {}),
+    // Told before the decision, not after the input fails.
+    ...(action.offscreen ? { offscreen: true } : {}),
+    ...(action.covered ? { covered: true, ...(action.covered_by ? { covered_by: action.covered_by } : {}) } : {}),
   })
   // A text field has no DOM options, so the caller's prepared values become
   // them: the target `19:query` means "type the prepared value called query
@@ -276,10 +319,13 @@ export async function choose(
   const client = options.client ?? sharedClient()
   const started = Date.now()
   // Two halves of one request budget: the observation and the offer set. Both
-  // are measured before sending, because a rejected request is a failed run.
-  const requestChars = stateChars + JSON.stringify(questions).length
+  // are measured before sending, because a rejected request is a failed run. The
+  // offer set carries labels, current values and option text, so it gets the same
+  // redaction the observation did.
+  const redactedQuestions = redactTree(questions, slots)
+  const requestChars = stateChars + JSON.stringify(redactedQuestions).length
   if (requestChars > REQUEST_CHARS) throw new Error(`页面状态与选项合计过大（${requestChars} 字符），无法安全地交给决策模型`)
-  const response = await callJev(client, { state, questions }, options.signal)
+  const response = await callJev(client, { state, questions: redactedQuestions }, options.signal)
   const answers = response.answers as Record<string, { type?: string; choice?: string; confidence?: number; probabilities?: Record<string, number>; noul?: number }>
   const operationAnswer = validateChoice(answers.operation, offered)
   const operation = operationAnswer.choice
@@ -331,6 +377,28 @@ export async function choose(
 }
 
 let cachedClient: TypeSafeClient | undefined
+
+/**
+ * Redact caller-prepared values from every string in a request payload.
+ *
+ * The decision model is promised it never sees a `textSlot` value. Applying the
+ * redaction to the finished payload — not to `page.text` alone, which is where it
+ * used to stop — is what keeps that promise for fields the run had already typed:
+ * an element's `value`, a select's `current_value`, its option labels and the
+ * accessibility tree are all covered by one pass. Object keys are preserved, and
+ * a run with no slots returns the input unchanged.
+ */
+function redactTree<T>(value: T, slots: readonly TextSlot[]): T {
+  if (!slots.some(slot => slot.value.length > 0)) return value
+  if (typeof value === "string") return redactLocalSlots(value, slots) as unknown as T
+  if (Array.isArray(value)) return value.map(item => redactTree(item, slots)) as unknown as T
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(value)) out[key] = redactTree(item, slots)
+    return out as T
+  }
+  return value
+}
 function sharedClient(): TypeSafeClient {
   cachedClient ??= createDecisionClient(loadApiKey)
   return cachedClient
@@ -370,23 +438,34 @@ function validateChoice(
 }
 
 /**
- * The column's view when the user has it, the agent's own Chrome otherwise.
+ * The column's own view when the app is reachable, the agent's own Chrome otherwise.
  *
- * Preferring the view is the whole point: the work then happens on the screen
- * the user is looking at, in the session they are signed into. Chrome is the
- * fallback because it is the only one with trusted input (see `view-driver.ts`),
- * and because a run must still work with the column closed.
+ * The view comes first because it is the panel the user can see, and asking the
+ * app for a tab is what makes that panel appear at all. Driving Chrome instead
+ * produces a browser with no UI anywhere in this app, so the run reports "opened"
+ * and nothing happens on screen.
+ *
+ * The trade is real and worth naming: input in the view is synthesized
+ * (`dispatchEvent`), except for clicks, which go through the system's own mouse
+ * (`viewClickAt`). A page that inspects `event.isTrusted` (some Google flows)
+ * ignores scripted input, so the view is the weaker engine for those. Chrome's
+ * CDP `Input.*` is always trusted — which is why it is the fallback, and why the
+ * engine a run used is now reported in its metrics: a fall back is never silent
+ * again.
  */
-async function openDriver(url: string | undefined, signal?: AbortSignal): Promise<BrowserDriverLike> {
+async function openDriver(url: string | undefined, signal?: AbortSignal): Promise<{ driver: BrowserDriverLike; fallback?: string }> {
   if (await ViewDriver.available().catch(() => false)) {
     try {
-      return await ViewDriver.open(url, signal)
-    } catch {
-      // A view that cannot be driven (mid-navigation, a page that refuses
-      // scripts) must not fail the run: fall through to Chrome.
+      return { driver: await ViewDriver.open(url, signal) }
+    } catch (error) {
+      // A view that cannot be driven (no tab appeared, a page that refuses
+      // scripts) must not fail the run — but *why* it fell back is the fact that
+      // used to be swallowed by this catch while a run quietly drove a browser
+      // nobody could see. It travels with the result instead.
+      return { driver: await BrowserDriver.open(url, signal), fallback: error instanceof Error ? error.message : String(error) }
     }
   }
-  return BrowserDriver.open(url, signal)
+  return { driver: await BrowserDriver.open(url, signal) }
 }
 
 /**
@@ -400,6 +479,9 @@ export type BrowserDriverLike = {
   fresh(page: BrowserObservation, action?: BrowserAction): Promise<boolean>
   act(action: BrowserAction, page: BrowserObservation, text?: string): Promise<void>
   close(): void
+  /** Which engine is actually driving. Recorded in the run's metrics so a silent
+   * fall back to Chrome is visible in the result instead of inferred from logs. */
+  readonly engine?: "view" | "chrome"
 }
 
 export type RunBrowserTaskOptions = {
@@ -427,7 +509,7 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
   const started = Date.now()
   const deadline = started + input.budget.maxDurationMs
   const trace: BrowserTaskStep[] = []
-  const metrics = { elapsedMs: 0, observationMs: 0, decisionMs: 0, actionMs: 0, inputTokens: 0, outputTokens: 0, jevCalls: 0, generatedValues: 0 }
+  const metrics: BrowserTaskMetrics = { elapsedMs: 0, observationMs: 0, decisionMs: 0, actionMs: 0, inputTokens: 0, outputTokens: 0, jevCalls: 0, generatedValues: 0 }
   const maxActions = input.budget.maxActions
   let driver = options.driver
   let page: BrowserObservation | null = null
@@ -447,8 +529,14 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
   try {
     if (!driver) {
       emit?.({ type: "launching", step: 0, status: "running", payload: { url: input.url ?? "" } })
-      driver = await openDriver(input.url, signal)
+      const opened = await openDriver(input.url, signal)
+      driver = opened.driver
+      if (opened.fallback) {
+        metrics.engineFallback = opened.fallback
+        emit?.({ type: "status", step: 0, status: "running", payload: { note: `the browser column could not be driven, using Chrome: ${opened.fallback}` } })
+      }
     }
+    metrics.engine = driver.engine ?? "chrome"
     const observation = await time(metrics, "observation", () => driver!.observe())
     page = observation
     emit?.({ type: "observed", step: 0, status: "running", payload: { url: page.url, candidates: page.actions.length } })
@@ -495,6 +583,20 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
           const next = await time(metrics, "observation", () => driver!.observe())
           page = next
           trace.push({ step: actions, operation: decision.operation, note: "决策后页面已变化，重新观察" })
+          continue
+        }
+        // A `DONE` with no confidence behind it is not evidence that the goal is
+        // met, so it is refused and recorded — but it stays on the table. Taking
+        // it away (as the desktop loop does) would mean a page that has genuinely
+        // finished but whose screenshot-less judgement is weak can never be closed,
+        // turning a false success into a false failure.
+        if (decision.operation === "DONE" && decision.confidence < DONE_CONFIDENCE_FLOOR) {
+          trace.push({
+            step: actions,
+            operation: "DONE",
+            confidence: decision.confidence,
+            note: `本轮完成判断的置信度 ${decision.confidence.toFixed(2)} 低于阈值 ${DONE_CONFIDENCE_FLOOR}；如果目标确实已完成，请下一轮给出更有把握的判断，否则继续推进`,
+          })
           continue
         }
         goalVerified = decision.operation === "DONE"

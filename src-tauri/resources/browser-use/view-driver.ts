@@ -25,42 +25,96 @@
  */
 
 import { readFileSync } from "node:fs"
-import { fingerprint, StalePage, stable, type BrowserAction, type BrowserObservation } from "./browser-driver.ts"
+import { fingerprint, sameLocation, StalePage, stable, type BrowserAction, type BrowserObservation } from "./browser-driver.ts"
 import { viewClickAt, viewClose, viewEval, viewNavigate, viewOpen, viewStatus } from "./view-channel.ts"
 
 /** The page observer, evaluated inside the view. */
 const SNAPSHOT = readFileSync(new URL("./snapshot.js", import.meta.url), "utf8")
 
 const READY_DEADLINE_MS = 20_000
+const OPEN_DEADLINE_MS = 8_000
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 export class ViewDriver {
   private closed = false
+  /**
+   * Whether this run asked the app for its tab (as opposed to adopting one that
+   * was already open). Only a tab this run created may be closed by it.
+   */
+  private ownsTab = false
+
+  /** The engine this driver reports in the run's metrics. */
+  readonly engine = "view" as const
 
   private constructor(private url: string, private tab: string) {}
 
-  /** Attach to the tab in front, asking the app for one when there is none. */
+  /**
+   * Ask the app for a tab of this run's own, then drive only that tab.
+   *
+   * The previous version attached to "the tab in front" (`viewStatus()` with no
+   * name) and then clicked through a *different* tab it had captured at open
+   * time — the channel defaulted to whoever the user was looking at. A run now
+   * names its tab in every request: it cannot read one page while clicking
+   * another, and it cannot navigate the page the user is reading.
+   */
   static async open(url: string | undefined, signal?: AbortSignal): Promise<ViewDriver> {
-    let status = await viewStatus()
-    const target = url?.trim()
-    if (!status?.open) {
-      // No tab: the app opens one — its pane decides where the page sits — and
-      // the wait is bounded, because a tab that never appears must not hang a run.
-      await viewOpen(target ?? "")
-      const deadline = Date.now() + 8_000
+    const asked = url?.trim()
+    // No address means "start from the page the column is showing", which is the
+    // tool's documented default. The run still gets a tab of its own: the address
+    // is copied into it rather than the user's tab being driven, because
+    // `viewNavigate` on the active tab is exactly how a run used to navigate away
+    // the page the user was reading. A blank column with no address asked for
+    // stays blank, and the run reports that truthfully instead of guessing.
+    const current = asked ? undefined : await viewStatus().catch(() => null)
+    const inherited = current?.url && current.url !== "about:blank" ? current.url : ""
+    const target = asked || inherited || undefined
+    const opened = await viewOpen(target ?? "")
+    let tab = opened?.tab?.trim() ?? ""
+    // A tab id minted by the app is a tab this run owns; adopting the active tab
+    // (an older app, or mobile) is not, and must never be closed on the way out.
+    const ownsTab = Boolean(tab)
+    if (tab) {
+      // The app generated an id; wait for that exact tab to have a view.
+      let ready = false
+      const deadline = Date.now() + OPEN_DEADLINE_MS
       while (Date.now() < deadline) {
-        await new Promise(resolve => setTimeout(resolve, 200))
-        status = await viewStatus()
-        if (status?.open) break
+        const current = await viewStatus(tab)
+        if (current?.open) {
+          ready = true
+          break
+        }
+        await sleep(200)
       }
-      if (!status?.open) throw new Error("无法在应用里打开浏览器标签页")
+      if (!ready) throw new Error(`浏览器标签页 ${tab} 没有在应用里出现`)
+    } else {
+      // An older app answers `open` without a tab id (and mobile has no views at
+      // all). A tab was still requested; use the active one, which is the
+      // previous behaviour, but remember the id so later ops still name it.
+      const deadline = Date.now() + OPEN_DEADLINE_MS
+      while (Date.now() < deadline) {
+        const current = await viewStatus()
+        if (current?.open) {
+          tab = current.tab?.trim() ?? ""
+          break
+        }
+        await sleep(200)
+      }
+      if (!tab) throw new Error("无法在应用里打开浏览器标签页")
     }
-    // An empty tab is blank: the task's address is what gives it a page.
-    if (target && target !== status.url) {
-      await viewNavigate(target)
-      await new Promise(resolve => setTimeout(resolve, 300))
+    const driver = new ViewDriver(target ?? "", tab)
+    driver.ownsTab = ownsTab
+    // The app opens the tab at the requested address; a blank or wrong landing
+    // gets the task's address. This goes through the tab we own, never through
+    // "active", so a tab the user switched to is not what gets navigated.
+    if (target) {
+      const landed = await viewStatus(tab)
+      if (!landed?.url || landed.url === "about:blank" || !sameLocation(landed.url, target)) {
+        await viewNavigate(target, tab)
+        await sleep(300)
+      }
     }
     void signal
-    const driver = new ViewDriver(target ?? status.url, status.tab ?? "")
     await driver.settle()
     return driver
   }
@@ -76,13 +130,14 @@ export class ViewDriver {
   }
 
   /** Close the tab this run opened (used only when the run created it). */
+  /** Close the tab this driver opened. Only ever the one it minted. */
   static async closeTab(tab: string): Promise<void> {
     await viewClose(tab).catch(() => undefined)
   }
 
   private send<T = unknown>(script: string, timeoutMs?: number): Promise<T | null> {
     if (this.closed) return Promise.resolve(null)
-    return viewEval<T>(script, timeoutMs)
+    return viewEval<T>(script, { ...(this.tab ? { tab: this.tab } : {}), ...(timeoutMs ? { timeoutMs } : {}) })
   }
 
   /** Wait until the document is complete and the page has drawn controls. */
@@ -91,18 +146,26 @@ export class ViewDriver {
     while (Date.now() < deadline) {
       const ready = await this.send<string>("document.readyState").catch(() => null)
       if (ready === "complete") break
-      await new Promise(resolve => setTimeout(resolve, 60))
+      await sleep(60)
     }
     let last: BrowserObservation | null = null
+    let problem: unknown
     while (Date.now() < deadline) {
-      last = await this.observe().catch(() => null)
+      try {
+        last = await this.observe()
+      } catch (error) {
+        // Keep the reason: a tab that was closed mid-open must report why, not
+        // a generic "never settled".
+        problem = error
+        last = null
+      }
       if (last && last.actions.some(action => action.kind !== "wait")) {
         this.url = last.url
         return
       }
-      await new Promise(resolve => setTimeout(resolve, 150))
+      await sleep(150)
     }
-    if (!last) throw new Error("第三栏的页面没有稳定下来")
+    if (!last) throw new Error(`第三栏的页面没有稳定下来：${problem instanceof Error ? problem.message : "未知原因"}`)
   }
 
   async observe(): Promise<BrowserObservation> {
@@ -147,7 +210,7 @@ export class ViewDriver {
     }
     if (typeof action.node !== "number") throw new Error("观察到的目标节点无效")
     if (!(await this.fresh(page, action))) throw new StalePage("页面在决策之后已经变化，请重新观察")
-    if (action.kind === "click") {
+    if (action.kind === "click" && this.tab) {
       // Trusted first: a real mouse event at the point, through the system. The
       // scripted click below only runs when that path is unavailable, because a
       // JS-driven control ignores synthesized events.
@@ -175,8 +238,20 @@ export class ViewDriver {
   }
 
   /** The view belongs to the user: a finished task must not close it. */
+  /**
+   * The view belongs to the user: a finished task must not close it.
+   *
+   * The tab does not, when this run minted it. A run that asks the app for a tab
+   * and never gives it back leaves one behind per run, and the strip fills up
+   * with pages nobody asked for — so a tab this driver opened is closed here, on
+   * success and failure alike. The run's final address and the page's own visible
+   * text are in its result, which is what the caller actually reads. A tab that
+   * was already open is the user's and is never touched.
+   */
   close(): void {
     this.closed = true
+    if (!this.ownsTab || !this.tab) return
+    void viewClose(this.tab).catch(() => undefined)
   }
 }
 
@@ -195,6 +270,10 @@ const ACTION_SCRIPT = (action: string, text: string | null): string => `((action
   const style = getComputedStyle(e);
   if (style.visibility === 'hidden' || style.display === 'none' || Number(style.opacity) === 0) return fail('hidden');
   if (action.kind === 'fill' && (e.readOnly || e.getAttribute('aria-readonly') === 'true')) return fail('readonly');
+  // Scroll first, then measure, then hit-test and dispatch — all against one set
+  // of coordinates. Measuring before scrollIntoView produced a point that
+  // described where the element used to be, and every event landed there.
+  e.scrollIntoView({ block: 'center', inline: 'center' });
   const r = e.getBoundingClientRect();
   const x = r.x + r.width / 2;
   const y = r.y + r.height / 2;
@@ -213,10 +292,13 @@ const ACTION_SCRIPT = (action: string, text: string | null): string => `((action
     e.value = action.value;
     e.dispatchEvent(new Event('input', { bubbles: true }));
     e.dispatchEvent(new Event('change', { bubbles: true }));
+    // Read back: a controlled (React/Vue) select re-renders and restores its own
+    // value, and reporting success for a value that did not stick is a false
+    // step. "Unconfirmed" makes the caller observe again instead.
+    if (e.value !== action.value) return fail('select-unconfirmed');
     return { ok: true };
   }
 
-  e.scrollIntoView({ block: 'center', inline: 'center' });
   if (typeof e.focus === 'function') e.focus({ preventScroll: true });
   // A real click targets the *deepest* element at the point and lets the event
   // bubble; activation (a link's navigation, a button's default action) then runs

@@ -94,6 +94,11 @@ export type BrowserTaskMetrics = {
   jevCalls: number
   /** Values the run's own model wrote (no prepared slot covered the field). */
   generatedValues: number
+  /** Which engine actually drove the run: `view` is the app's own browser tab,
+   * `chrome` the CDP fallback. Reported so a silent fall back is visible. */
+  engine?: "view" | "chrome"
+  /** Why the view was not the engine, when it was tried and failed. */
+  engineFallback?: string
 }
 
 export type BrowserTaskResult = {

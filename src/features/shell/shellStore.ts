@@ -18,6 +18,7 @@ import {
   findFile,
   HOME_WORKSPACE_ID,
   insertTab,
+  isBrowserPath,
   isHomeWorkspace,
   newHomeWorkspace,
   newWorkspaceId,
@@ -31,7 +32,7 @@ import {
   type WorkspaceTab,
 } from "./shellModel";
 
-export { CHAT_PANE_ID, HOME_WORKSPACE_ID, isHomeWorkspace, projectWorkspaceTabs, newHomeWorkspace, newWorkspaceTab } from "./shellModel";
+export { CHAT_PANE_ID, HOME_WORKSPACE_ID, isHomeWorkspace, projectWorkspaceTabs, browserTabPaths, newHomeWorkspace, newWorkspaceTab } from "./shellModel";
 
 /** The tab strip's label for a page: its host, until the page reports its title. */
 function browserTabName(url: string): string {
@@ -152,7 +153,7 @@ type ShellState = {
    * `changes`/`commit` open the review tabs (synthetic paths, no real file). */
   openFile: (path: string, options?: { pin?: boolean; pane?: string; diff?: "staged" | "unstaged"; isDir?: boolean; changes?: true; commit?: { sha: string; shortSha: string; subject: string }; name?: string }) => void;
   /** Open a browser tab (a real web view) in a pane, and return its tab path. */
-  openBrowser: (url: string, options?: { pane?: string; edge?: PaneEdge }) => string;
+  openBrowser: (url: string, options?: { pane?: string; edge?: PaneEdge; path?: string }) => string;
   /** The page a browser tab is showing, as the tab strip's label and the page itself report it. */
   updateBrowser: (path: string, patch: { url?: string; title?: string }) => void;
   pinFile: (path: string, pane?: string) => void;
@@ -445,7 +446,20 @@ export const useShell = create<ShellState>((set, get) => {
       const state = get();
       const index = activeIndex(state);
       const workspace = state.workspaces[index];
-      const path = `browser:${crypto.randomUUID().slice(0, 8)}`;
+      // An agent can name the tab (`browser:open` carries the id the app itself
+      // generated), which is what lets a run address the page it asked for
+      // instead of whatever happens to be in front. Two rules keep that honest:
+      // the same request twice focuses the existing tab instead of adding a
+      // second one, and only a real browser path is accepted as a name.
+      const asked = options?.path?.trim();
+      if (asked) {
+        const existing = findFile(workspace, asked);
+        if (existing) {
+          get().focusFile(asked, existing.paneId);
+          return asked;
+        }
+      }
+      const path = asked && isBrowserPath(asked) ? asked : `browser:${crypto.randomUUID().slice(0, 8)}`;
       const name = browserTabName(url);
       const entry: OpenFile = { path, name, preview: false, browser: { url } };
       const requested = options?.pane && workspace.panes[options.pane] ? options.pane : null;

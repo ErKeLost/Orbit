@@ -24,10 +24,10 @@
 //! (`browser_view_eval`).
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::webview::PageLoadEvent;
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, Webview, WebviewBuilder, WebviewUrl};
 
@@ -158,12 +158,24 @@ fn parse(url: &str) -> Result<Url, String> {
     Url::parse(value).map_err(|error| format!("无效地址 {value}：{error}"))
 }
 
+/// The one rule for turning a tab argument into a tab id: an empty name means
+/// "the tab the user is looking at", anything else is that exact tab.
+fn choose_tab_id(active: &str, tab: &str) -> String {
+    if tab.is_empty() { active.to_string() } else { tab.to_string() }
+}
+
+/// The one place a tab argument is resolved, shared by every op on purpose.
+///
+/// Two resolvers is how "observe reads the active tab while the click goes to
+/// the tab captured at open time" happened: the caller named a tab and half the
+/// channel ignored it.
+fn resolve_tab_id(host: &BrowserViewHost, tab: &str) -> Result<String, String> {
+    let active = host.active.lock().map_err(|error| error.to_string())?.clone();
+    Ok(choose_tab_id(&active, tab))
+}
+
 fn with_tab<T>(host: &BrowserViewHost, tab: &str, run: impl FnOnce(&Tab) -> T) -> Result<T, String> {
-    let id = if tab.is_empty() {
-        host.active.lock().map(|value| value.clone()).unwrap_or_default()
-    } else {
-        tab.to_string()
-    };
+    let id = resolve_tab_id(host, tab)?;
     let tabs = host.tabs.lock().map_err(|error| error.to_string())?;
     let state = tabs.get(&id).ok_or_else(|| "浏览器标签页尚未打开".to_string())?;
     Ok(run(state))
@@ -174,11 +186,7 @@ fn status(host: &BrowserViewHost, tab: &str) -> BrowserViewStatus {
 }
 
 fn with_tab_status(host: &BrowserViewHost, tab: &str) -> Result<BrowserViewStatus, String> {
-    let id = if tab.is_empty() {
-        host.active.lock().map(|value| value.clone()).unwrap_or_default()
-    } else {
-        tab.to_string()
-    };
+    let id = resolve_tab_id(host, tab)?;
     let tabs = host.tabs.lock().map_err(|error| error.to_string())?;
     Ok(tabs
         .get(&id)
@@ -354,12 +362,8 @@ pub fn browser_view_navigate(
     url: String,
 ) -> Result<BrowserViewStatus, String> {
     let target = parse(&url)?;
+    let id = resolve_tab_id(&host, &tab)?;
     let mut tabs = host.tabs.lock().map_err(|error| error.to_string())?;
-    let id = if tab.is_empty() {
-        host.active.lock().map(|value| value.clone()).unwrap_or_default()
-    } else {
-        tab
-    };
     let state = tabs.get_mut(&id).ok_or_else(|| "浏览器标签页尚未打开".to_string())?;
     state.view.navigate(target.clone()).map_err(|error| error.to_string())?;
     state.url = target.to_string();
@@ -413,17 +417,78 @@ pub fn browser_view_status(host: tauri::State<'_, BrowserViewHost>, tab: String)
 
 #[cfg(desktop)]
 #[tauri::command(async)]
-pub fn browser_view_close(_app: AppHandle, host: tauri::State<'_, BrowserViewHost>, tab: String) -> Result<(), String> {
+pub fn browser_view_close(app: AppHandle, host: tauri::State<'_, BrowserViewHost>, tab: String) -> Result<(), String> {
+    let id = resolve_tab_id(&host, &tab)?;
     let mut tabs = host.tabs.lock().map_err(|error| error.to_string())?;
-    let id = if tab.is_empty() {
-        host.active.lock().map(|value| value.clone()).unwrap_or_default()
-    } else {
-        tab
-    };
     if let Some(state) = tabs.remove(&id) {
         state.view.close().map_err(|error| error.to_string())?;
     }
+    // A tab that is gone cannot still be the one the user is looking at, and a
+    // stale `active` makes every later op that does not name a tab fail with
+    // "浏览器标签页尚未打开".
+    if let Ok(mut active) = host.active.lock() {
+        if *active == id {
+            *active = tabs.keys().next().cloned().unwrap_or_default();
+        }
+    }
+    drop(tabs);
+    // The frontend owns the tab strip, so a view closed without telling it leaves
+    // a tab with no page behind it. The agent's own tab — closed when its run ends
+    // — is exactly that case, which is why this is announced rather than silent.
+    let _ = app.emit("browser:close", serde_json::json!({ "tab": id }));
     Ok(())
+}
+
+/// Close every browser view whose tab the frontend no longer has.
+///
+/// The views are native child web views that **this** process owns, while the
+/// **frontend** owns the tabs that describe them — the tab strip, the address
+/// bar, the close button. A frontend reload rebuilds its state from nothing, so
+/// every tab is gone, and nothing in the outgoing document gets to run a cleanup
+/// handler on the way out. What that left behind was a page drawn on screen with
+/// no tab, no address bar and no way to close it: two sides disagreeing about
+/// what existed, with a live web view as the evidence.
+///
+/// Called once on startup with the tabs the frontend actually has, so the two
+/// sides start out agreeing. Views the frontend does name are left alone: they
+/// are about to be re-synced by their own component anyway, and closing them
+/// would only make a live page flash blank.
+#[cfg(desktop)]
+#[tauri::command(async)]
+pub fn browser_view_reconcile(
+    host: tauri::State<'_, BrowserViewHost>,
+    tabs: Vec<String>,
+) -> Result<usize, String> {
+    let keep: HashSet<&str> = tabs.iter().map(String::as_str).collect();
+    let mut state = host.tabs.lock().map_err(|error| error.to_string())?;
+    let stale: Vec<String> = state
+        .keys()
+        .filter(|tab| !keep.contains(tab.as_str()))
+        .cloned()
+        .collect();
+    for tab in &stale {
+        if let Some(view) = state.remove(tab) {
+            // Best effort: a view that refuses to close must not abort the sweep,
+            // because the ones after it are just as orphaned.
+            let _ = view.view.close();
+        }
+    }
+    if let Ok(mut active) = host.active.lock() {
+        if stale.contains(&*active) {
+            *active = state.keys().next().cloned().unwrap_or_default();
+        }
+    }
+    Ok(stale.len())
+}
+
+/// Same as `browser_view_close`: reconciling views is a desktop operation.
+#[cfg(mobile)]
+#[tauri::command(async)]
+pub fn browser_view_reconcile(
+    _host: tauri::State<'_, BrowserViewHost>,
+    _tabs: Vec<String>,
+) -> Result<usize, String> {
+    Ok(0)
 }
 
 /// Same as `browser_view_sync`: closing is a desktop view operation.
@@ -557,9 +622,14 @@ fn handle(app: &AppHandle, request: ViewRequest) -> Result<String, String> {
         // happened when this op took a rect).
         "open" => {
             let url = request.url.unwrap_or_default();
-            app.emit("browser:open", serde_json::json!({ "url": url }))
+            // A caller may name the tab it wants — the agent does, so it can
+            // address its own tab on every later op. When it does not, this side
+            // mints one and hands it back, so "the tab the app made" and "the tab
+            // the agent drives" never depend on guessing the active tab.
+            let tab = if request.tab.trim().is_empty() { new_tab_id() } else { request.tab.clone() };
+            app.emit("browser:open", serde_json::json!({ "url": url, "tab": tab }))
                 .map_err(|error| error.to_string())?;
-            Ok("null".to_string())
+            Ok(serde_json::json!({ "tab": tab }).to_string())
         }
         "close" => browser_view_close(app.clone(), host, request.tab).map(|_| "null".to_string()),
         "geometry" => {
@@ -593,6 +663,23 @@ fn handle(app: &AppHandle, request: ViewRequest) -> Result<String, String> {
         }
         other => Err(format!("未知操作 {other}")),
     }
+}
+
+/// A tab id this process mints for a caller that did not name one.
+///
+/// No RNG dependency: nanos, pid and a counter mixed together are unique for
+/// this process, and the caller immediately names the id back on every op, so
+/// the only property that matters is that two ids never collide within a run.
+fn new_tab_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos() as u64)
+        .unwrap_or(0);
+    let mixed = nanos ^ (u64::from(std::process::id()) << 32) ^ seq.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    format!("browser:{:08x}", mixed as u32)
 }
 
 fn eval_in(app: &AppHandle, view: Webview, script: String, timeout_ms: u64) -> Result<String, String> {
@@ -689,6 +776,22 @@ pub fn serve(app: AppHandle) {
     });
 }
 
+/// Whether a page point may be delivered as a screen click, given the view's box
+/// and the main window's content box.
+///
+/// An injected click goes to whichever window is in front, so a point that is no
+/// longer inside the window — it moved, the pane was resized, the user switched
+/// apps — would land in someone else's lap. Refusing is the only safe answer.
+fn click_is_inside(rect: ViewRect, x: f64, y: f64, inner: (f64, f64)) -> bool {
+    if x < 0.0 || y < 0.0 || x > rect.width || y > rect.height {
+        return false;
+    }
+    if rect.x < 0.0 || rect.y < 0.0 {
+        return false;
+    }
+    rect.x + rect.width <= inner.0 + 1.0 && rect.y + rect.height <= inner.1 + 1.0
+}
+
 /// Click once, through the system, at a point inside a tab's page.
 ///
 /// `x`/`y` are CSS pixels inside the view; the window's own position turns them
@@ -707,15 +810,30 @@ fn trusted_click(app: &AppHandle, rect: ViewRect, x: f64, y: f64) -> Result<Stri
     let window = app
         .get_window("main")
         .ok_or_else(|| "主窗口不存在".to_string())?;
-    let origin = window.outer_position().map_err(|error| error.to_string())?;
-    let scale = window.scale_factor().map_err(|error| error.to_string())?;
-    let screen_x = (origin.x as f64 / scale + rect.x + x).round() as i32;
-    let screen_y = (origin.y as f64 / scale + rect.y + y).round() as i32;
     // Activate first, exactly as the desktop pointer path does: an injected
     // click goes to whatever window is in front, so delivering one without
-    // focusing puts it in someone else's lap — and the page sees nothing.
-    let _ = window.set_focus();
+    // focusing puts it in someone else's lap — and the page sees nothing. A
+    // focus that fails is not something to shrug off: the next step would then
+    // deliver the click to whichever app *is* in front.
+    window
+        .set_focus()
+        .map_err(|error| format!("无法激活主窗口，未点击：{error}"))?;
     std::thread::sleep(Duration::from_millis(180));
+    // Re-read the geometry *after* the wait. The window can move, the pane can be
+    // resized and the user can switch apps while the loop waits; a point
+    // computed from a stale origin is a click at the wrong place.
+    let origin = window.outer_position().map_err(|error| error.to_string())?;
+    let scale = window.scale_factor().map_err(|error| error.to_string())?;
+    let size = window.inner_size().map_err(|error| error.to_string())?;
+    let inner = (size.width as f64 / scale, size.height as f64 / scale);
+    if !click_is_inside(rect, x, y, inner) {
+        return Err("浏览器视图已不在主窗口内，未点击".to_string());
+    }
+    if !window.is_focused().unwrap_or(false) {
+        return Err("主窗口不再处于前台，未点击".to_string());
+    }
+    let screen_x = (origin.x as f64 / scale + rect.x + x).round() as i32;
+    let screen_y = (origin.y as f64 / scale + rect.y + y).round() as i32;
     let input = xa11y::input_sim().map_err(|error| error.to_string())?;
     input
         .mouse()
@@ -735,7 +853,44 @@ fn trusted_click(_app: &AppHandle, _rect: ViewRect, _x: f64, _y: f64) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use super::channel_reply;
+    use super::{channel_reply, choose_tab_id, click_is_inside, new_tab_id, ViewRect};
+
+    /// A named tab is that tab, even when it is not the one the user is looking
+    /// at: this is the whole bug behind "observe read one tab, the click hit
+    /// another".
+    #[test]
+    fn a_named_tab_is_not_the_active_tab() {
+        assert_eq!(choose_tab_id("browser:aaaa1111", "browser:bbbb2222"), "browser:bbbb2222");
+        assert_eq!(choose_tab_id("browser:aaaa1111", ""), "browser:aaaa1111");
+    }
+
+    /// The generated ids are well-formed and distinct, because the caller names
+    /// one back on every later op and a collision would address the wrong page.
+    #[test]
+    fn generated_tab_ids_are_unique_and_well_formed() {
+        let first = new_tab_id();
+        let second = new_tab_id();
+        assert_eq!(first.len(), "browser:".len() + 8);
+        assert!(first.starts_with("browser:"));
+        assert!(first["browser:".len()..].chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert_ne!(first, second);
+    }
+
+    /// A view that has drifted outside the window, or a wholly off-screen point,
+    /// must never become a screen click.
+    #[test]
+    fn a_click_outside_the_window_is_refused() {
+        let rect = ViewRect { x: 100.0, y: 50.0, width: 400.0, height: 300.0 };
+        // Inside the window (needs room for the view's own box).
+        assert!(click_is_inside(rect, 10.0, 10.0, (1280.0, 840.0)));
+        // The pane has been pushed past the window edge.
+        assert!(!click_is_inside(ViewRect { x: 1000.0, ..rect }, 10.0, 10.0, (1280.0, 840.0)));
+        // A point outside the view's own box.
+        assert!(!click_is_inside(rect, -1.0, 10.0, (1280.0, 840.0)));
+        assert!(!click_is_inside(rect, 10.0, 999.0, (1280.0, 840.0)));
+        // A negative view origin (a hidden pane) is not clickable.
+        assert!(!click_is_inside(ViewRect { x: -5.0, ..rect }, 10.0, 10.0, (1280.0, 840.0)));
+    }
 
     #[test]
     fn an_empty_evaluation_is_still_valid_json() {

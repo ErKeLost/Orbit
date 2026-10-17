@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { FileTypeIcon } from "../features/shell/FileTypeIcon";
+import { useShell } from "../features/shell/shellStore";
 import type { RenderOptions } from "beautiful-mermaid";
 
 /**
@@ -288,6 +289,7 @@ export function MarkdownLink({
   children,
   className = "",
   node: _node,
+  onClick,
   ...rest
 }: ComponentPropsWithoutRef<"a"> & { node?: unknown }) {
   if (href?.startsWith("mention:")) {
@@ -295,7 +297,32 @@ export function MarkdownLink({
   }
   const external = Boolean(href && /^https?:\/\//.test(href));
   const attrs = external ? { target: "_blank" as const, rel: "noreferrer" } : {};
-  return <a {...rest} {...attrs} href={href} dir="auto" className={`text-sky-400/90 hover:text-sky-300 hover:underline ${className}`.trim()}>{children}</a>;
+  return (
+    <a
+      {...rest}
+      {...attrs}
+      href={href}
+      dir="auto"
+      className={`text-sky-400/90 hover:text-sky-300 hover:underline ${className}`.trim()}
+      onClick={(event) => {
+        onClick?.(event);
+        if (event.defaultPrevented || !external || !href) return;
+        // Leave the deliberate gestures alone: a modified or middle click is
+        // "open this in my real browser", and `target="_blank"` above already
+        // says that.
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        // Only where the surface says so. A link in the transcript belongs in
+        // the browser panel beside it; a link in a README being read, or in an
+        // issue body in the inbox, belongs in the user's own browser — which is
+        // what every other link in those views already does.
+        if (!event.currentTarget.closest('[data-link-surface="panel"]')) return;
+        event.preventDefault();
+        useShell.getState().openBrowser(href, { edge: "right" });
+      }}
+    >
+      {children}
+    </a>
+  );
 }
 
 const LANGUAGE_LABELS: Record<string, string> = {

@@ -40,6 +40,14 @@ export class StalePage extends Error {
   }
 }
 
+/** The tab (or popup) this run was driving is gone and nothing can replace it. */
+export class DetachedTarget extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "DetachedTarget"
+  }
+}
+
 export type BrowserKind = "click" | "fill" | "select" | "scroll" | "wait"
 
 /** One observed control the model may choose, exactly as the page reports it. */
@@ -56,6 +64,14 @@ export type BrowserAction = {
   selected?: string
   expanded?: string
   current_value?: string
+  /** The control is outside the viewport: nothing can be delivered until the
+   * page scrolls, and the observer keeps it so the model can decide to scroll. */
+  offscreen?: boolean
+  /** Something else sits over the control's centre; a click would land on that
+   * instead. Reported during observation, not only refused at input time. */
+  covered?: boolean
+  /** A readable description of the covering element, when the observer has one. */
+  covered_by?: string
   /** Filled in by `actionSpace`, not by the page. */
   options?: { index: string; label: string; value: string }[]
 }
@@ -73,6 +89,9 @@ export type BrowserObservation = {
   guards: Record<string, unknown>
   omitted_actions: number
   fingerprint: string
+  /** An optional accessibility outline (Chrome path only). Never a replacement
+   * for `actions`: the element table stays the contract. */
+  aria?: string
 }
 
 /** Mirror of the Rust session file (`browser.rs`). */
@@ -174,15 +193,26 @@ function runHelper(binary: string, url: string | undefined, signal?: AbortSignal
  */
 export class BrowserDriver {
   private readonly client: CdpClient
-  private sessionId: string
+  /**
+   * Every target this run has attached to, oldest first. The last entry is the
+   * page `send` talks to. A popup the page opens is pushed on top (that is
+   * "following" it); when it detaches the run drops back to the page that
+   * opened it instead of sending into a dead session.
+   */
+  private readonly stack: { sessionId: string; targetId: string }[] = []
   private readonly session: BrowserSession
   /** Set by the last non-wait action: the settle read happens in `observe`. */
   private afterInput: BrowserAction | null = null
   private closed = false
+  /** Set when every attached target is gone; every later send fails with it. */
+  private detached?: string
+
+  /** The engine this driver reports in the run's metrics. */
+  readonly engine = "chrome" as const
 
   private constructor(client: CdpClient, sessionId: string, session: BrowserSession) {
     this.client = client
-    this.sessionId = sessionId
+    this.stack.push({ sessionId, targetId: session.targetId })
     this.session = session
   }
 
@@ -221,14 +251,35 @@ export class BrowserDriver {
       }
       known.add(info.targetId)
       // Follow the tab the page opened, exactly as a browser would.
-      void driver.follow(sessionId).catch(() => undefined)
+      void driver.follow({ sessionId, targetId: info.targetId }).catch(() => undefined)
+    })
+    // A popup that closes takes its session with it. Without this the run keeps
+    // sending into a session that no longer exists and fails the whole task; the
+    // right answer is to fall back to the page that opened it.
+    const detached = client.on("Target.detachedFromTarget", params => {
+      const sessionId = params.sessionId ? String(params.sessionId) : undefined
+      if (sessionId) driver.onDetached(sessionId)
     })
     await client.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true })
-    void client.closed.then(() => detach())
-    // `ensureBrowser` already opened the tab at the requested address, so a
-    // navigation here would only restart a load in flight. It is needed in the
-    // fallback path, where the browser was already showing something else.
-    if (url && session.url !== url) await driver.navigate(url)
+    void client.closed.then(() => {
+      detach()
+      detached()
+    })
+    // `session.url` is a record of intent, not of fact. The session file is
+    // shared by every run and every Orbit instance, and `ensure` closes the tab
+    // it replaced — so the tab attached to above can be a page nobody asked for,
+    // or one another run swapped out a moment ago. Ask the tab where it actually
+    // is; that is the only answer that cannot be stale.
+    //
+    // The comparison is origin + path (+ query): a blank tab is wrong, and so is
+    // the right host on the wrong page — requesting `/login` while the shared tab
+    // sat on the same site's `/` used to skip the navigation and start the run on
+    // the wrong page. The cost is one extra navigation when a site's own redirect
+    // lands somewhere else, which is cheaper than driving the wrong page.
+    if (url) {
+      const landed = await driver.evaluate("location.href").catch(() => null)
+      if (typeof landed !== "string" || landed === "about:blank" || !sameLocation(landed, url)) await driver.navigate(url)
+    }
     // A freshly created tab is still loading when the helper returns, and a
     // single-page app finishes drawing its controls after `load` has already
     // fired. Waiting here means the first decision is about the real page.
@@ -237,14 +288,33 @@ export class BrowserDriver {
   }
 
   /** Move this driver onto another tab (a popup) and let it run. */
-  private async follow(sessionId: string): Promise<void> {
-    this.sessionId = sessionId
+  private async follow(target: { sessionId: string; targetId: string }): Promise<void> {
+    this.stack.push(target)
     await this.send("Runtime.runIfWaitingForDebugger").catch(() => undefined)
     await this.send("Page.enable").catch(() => undefined)
   }
 
+  /**
+   * A target this run was attached to has gone.
+   *
+   * If it was the page on top (a popup the page opened, since closed), the run
+   * falls back to the page that opened it — which is still the same session. If
+   * the original page detached too, there is nothing left to drive and every
+   * later call fails with `DetachedTarget` instead of driving some other tab.
+   */
+  private onDetached(sessionId: string): void {
+    const index = this.stack.findIndex(entry => entry.sessionId === sessionId)
+    if (index < 0) return
+    const wasCurrent = index === this.stack.length - 1
+    this.stack.splice(index, 1)
+    if (this.stack.length === 0) this.detached = "本次运行驱动的浏览器标签页已经关闭"
+    else if (wasCurrent) this.afterInput = null
+  }
+
   private send<T = Record<string, unknown>>(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<T> {
-    return this.client.send<T>(method, params, { sessionId: this.sessionId, ...(timeoutMs ? { timeoutMs } : {}) })
+    const current = this.stack[this.stack.length - 1]
+    if (!current || this.detached) return Promise.reject(new DetachedTarget(this.detached ?? "本次运行驱动的浏览器标签页已经关闭"))
+    return this.client.send<T>(method, params, { sessionId: current.sessionId, ...(timeoutMs ? { timeoutMs } : {}) })
   }
 
   private async evaluate(expression: string, options: { awaitPromise?: boolean } = {}): Promise<unknown> {
@@ -350,7 +420,7 @@ export class BrowserDriver {
       // document whose controls have not been painted. Re-reading is cheap next
       // to a decision made about a blank screen.
       const ready = last.url !== "about:blank" && last.actions.some(action => action.kind !== "wait")
-      if (ready || attempt === 11) return last
+      if (ready || attempt === 11) return await this.withAria(last)
       await new Promise(resolve => setTimeout(resolve, 150))
     }
     if (!last) throw new StalePage("页面没有稳定下来")
@@ -381,6 +451,61 @@ export class BrowserDriver {
     }
     if (typeof state !== "object") throw new StalePage("Document is navigating")
     return { ...state, fingerprint: fingerprint(state) }
+  }
+
+  /**
+   * Attach an accessibility outline to an observation.
+   *
+   * The element table stays the contract — it is what the decision model picks
+   * indices from, and it is the contract with the View path. This is *added*
+   * structure for the same page, taken from Chrome's own AX tree, so roles,
+   * names and states survive even where `snapshot.js`'s fixed selector does not
+   * recognise a control. It is bounded, best-effort, and never fatal: a failed
+   * read simply leaves the observation without it.
+   */
+  private async withAria(page: BrowserObservation): Promise<BrowserObservation> {
+    const aria = await this.ariaOutline().catch(() => "")
+    return aria ? { ...page, aria } : page
+  }
+
+  private async ariaOutline(): Promise<string> {
+    const result = await this.send<{ nodes?: AxNode[] }>("Accessibility.getFullAXTree")
+    const nodes = (result.nodes ?? []).filter(node => !node.ignored && node.role?.value && node.nodeId)
+    if (!nodes.length) return ""
+    const byId = new Map(nodes.map(node => [node.nodeId!, node]))
+    const children = new Map<string, AxNode[]>()
+    const roots: AxNode[] = []
+    for (const node of nodes) {
+      const parent = node.parentId ? byId.get(node.parentId) : undefined
+      if (!parent) {
+        roots.push(node)
+        continue
+      }
+      const list = children.get(parent.nodeId!) ?? []
+      list.push(node)
+      children.set(parent.nodeId!, list)
+    }
+    const lines: string[] = []
+    let chars = 0
+    const walk = (node: AxNode, depth: number): void => {
+      if (lines.length >= 400 || chars >= 6_000) return
+      const role = node.role?.value ?? "?"
+      const name = (node.name?.value ?? "").replace(/\s+/g, " ").trim().slice(0, 120)
+      const states: string[] = []
+      for (const property of node.properties ?? []) {
+        const value = property.value?.value
+        if (value === undefined || value === null || value === false || value === "") continue
+        if (["checked", "selected", "expanded", "disabled", "required", "invalid", "focused", "pressed", "value"].includes(property.name)) {
+          states.push(`${property.name}=${String(value).slice(0, 80)}`)
+        }
+      }
+      const line = `${"  ".repeat(Math.min(depth, 12))}${role}${name ? ` "${name}"` : ""}${states.length ? ` [${states.join(", ")}]` : ""}`
+      lines.push(line)
+      chars += line.length + 1
+      for (const child of children.get(node.nodeId!) ?? []) walk(child, depth + 1)
+    }
+    for (const root of roots) walk(root, 0)
+    return lines.join("\n")
   }
 
   /** Is this decision still about the page in front of us? */
@@ -436,6 +561,10 @@ export class BrowserDriver {
         e.value = action.value;
         e.dispatchEvent(new Event('input', { bubbles: true }));
         e.dispatchEvent(new Event('change', { bubbles: true }));
+        // A controlled (React/Vue) select re-renders and restores its own value.
+        // Reading the value back is what separates "selected" from "submit sent";
+        // without it the loop logs success for a value that never took.
+        if (e.value !== action.value) return null;
       }
       return { x, y };
     })(${JSON.stringify(action)})`) as { x: number; y: number } | null
@@ -476,6 +605,17 @@ export class BrowserDriver {
   }
 }
 
+/** One node of Chrome's accessibility tree, as `Accessibility.getFullAXTree`
+ * returns it (only the fields the outline reads). */
+type AxNode = {
+  nodeId?: string
+  parentId?: string
+  ignored?: boolean
+  role?: { value?: string }
+  name?: { value?: string }
+  properties?: { name: string; value?: { value?: unknown } }[]
+}
+
 /** Upstream's fingerprint: the parts of an observation that mean "same page". */
 export function fingerprint(state: Pick<BrowserObservation, "url" | "text" | "actions" | "scroll">): string {
   const content = {
@@ -485,6 +625,31 @@ export function fingerprint(state: Pick<BrowserObservation, "url" | "text" | "ac
     scroll: state.scroll,
   }
   return createHash("sha256").update(stable(content)).digest("hex")
+}
+
+/**
+ * Whether two addresses name the same page, for "did I land where I asked".
+ *
+ * Origin + path (+ query), with the trailing slash ignored: the same host on a
+ * different path is a different page, and treating it as "close enough" is how a
+ * run used to start on `/` when the goal asked for `/login`. A site's own
+ * redirect to a slightly different path costs one extra navigation, which is the
+ * accepted price of never driving the wrong page.
+ */
+export function sameLocation(left: string, right: string): boolean {
+  const a = landingTarget(left)
+  const b = landingTarget(right)
+  return a !== null && a === b
+}
+
+function landingTarget(raw: string): string | null {
+  try {
+    const url = new URL(raw)
+    const path = url.pathname.replace(/\/+$/, "")
+    return `${url.origin}${path}${url.search}`
+  } catch {
+    return null
+  }
 }
 
 /** Key-sorted JSON, the equivalent of Python's `sort_keys=True`. */

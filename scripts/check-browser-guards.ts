@@ -65,6 +65,26 @@ const SECOND = `<form id="form"><p id="price">Total $10</p>
 <option>All</option><option>Design</option><option disabled>Unavailable</option>
 </select><aside id="unrelated">News</aside></form><div id="other">Other form</div>`
 
+const THIRD = `<!doctype html><title>Reachability</title>
+<style>#offscreen{position:absolute;top:3000px} .row{cursor:pointer} #hiddenBox{display:none}</style>
+<div id="row" class="row">Row action</div>
+<span id="chip" style="cursor:pointer">Chip</span>
+<div id="handler" onclick="window.handled=(window.handled||0)+1">Handler only</div>
+<label for="hiddenBox">Hidden box</label>
+<input id="hiddenBox" type="checkbox">
+<input id="secret2" type="password" value="never expose this either">
+<div id="offscreen"><button id="below">Below the fold</button></div>`
+
+// The page this port exists for: the fixed selector alone finds far more than the
+// table's cap (260 real buttons), so the heuristic control that the selector misses
+// only survives if the heuristic channel has its own budget rather than taking what
+// the selector left. `jsOnly` is the assertion's target.
+const denseButtons = Array.from({ length: 260 }, (_, index) => `<button id="dense${index}">Dense ${index}</button>`).join("")
+const FOURTH = `<!doctype html><title>Dense selector</title>
+<style>button{display:block}</style>
+<div id="dense">${denseButtons}</div>
+<div id="heuristicHost"><div id="jsOnly" onclick="window.jsOnly=(window.jsOnly||0)+1">Book now</div></div>`
+
 const passed: string[] = []
 const failures: string[] = []
 
@@ -243,6 +263,44 @@ async function main() {
     const after = await browser!.observe()
     check("text replacement leaves exactly the typed value", (await evaluate<string>("document.querySelector('#query').value")) === "Generated")
     check("typing waits for asynchronous suggestions", after.actions.some(action => action.role === "option"))
+  }
+
+  // 7. Reachability: controls the fixed selector used to drop, and the two flags
+  //    that let a decision scroll or close an overlay before trying to click.
+  {
+    await load(THIRD)
+    const page = await browser!.observe()
+    const row = page.actions.find(action => action.label.trim() === "Row action")
+    const chip = page.actions.find(action => action.label.trim() === "Chip")
+    check("a cursor:pointer box is offered as a control", Boolean(row))
+    check("a cursor:pointer span is offered as a control", Boolean(chip))
+    check("an element with an onclick handler is offered", page.actions.some(action => action.label.trim() === "Handler only"))
+    check("a label for a hidden input is offered as its proxy", page.actions.some(action => action.label.trim() === "Hidden box"))
+    const below = page.actions.find(action => action.label.trim() === "Below the fold")
+    check("an offscreen control is kept and flagged", Boolean(below) && below!.offscreen === true)
+    check("a password field is still never exposed", !page.actions.some(action => action.value === "never expose this either"))
+    check("the AX outline is attached on the Chrome path", typeof page.aria === "string" && page.aria.length > 0)
+
+    await evaluate("(() => { const shield=document.createElement('div');shield.style.cssText='position:fixed;left:0;top:0;right:0;height:120px;z-index:99999;background:white';document.body.append(shield) })()")
+    const covered = await browser!.observe()
+    const coveredRow = covered.actions.find(action => action.label.trim() === "Row action")
+    check("a control under an overlay is flagged covered during observation", coveredRow?.covered === true)
+    check("the covering element is named", typeof coveredRow?.covered_by === "string" && coveredRow.covered_by.length > 0)
+  }
+
+  // 8. The heuristic channel keeps its reserved share of the table even when the
+  //    fixed selector alone finds more controls than the table can hold. This is
+  //    the regression the table budgets exist to prevent: the selector used to
+  //    fill the cap first and the `<div onClick>` was never collected at all.
+  {
+    await load(FOURTH)
+    const page = await browser!.observe()
+    const buttons = page.actions.filter(action => action.role === "button" && /^Dense \d+$/.test(action.label.trim()))
+    check("the dense selector page really overflows the table", page.omitted_actions > 0)
+    check("the selector channel alone could fill the table", buttons.length > 0)
+    check("a heuristic control survives a selector that fills the table", page.actions.some(action => action.label.trim() === "Book now"))
+    const jsOnly = page.actions.find(action => action.label.trim() === "Book now")
+    check("the surviving heuristic control is still actionable", jsOnly?.kind === "click")
   }
 }
 

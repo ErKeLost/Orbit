@@ -6,8 +6,10 @@
  * pairing rules Orbit's port adds, which are the parts most likely to drift.
  */
 import { describe, expect, test } from "bun:test"
+import { readFileSync } from "node:fs"
+import { Window } from "happy-dom"
 import { actionSpace, choose, runBrowserTask, type BrowserDriverLike } from "../src-tauri/resources/browser-use/browser-engine"
-import { StalePage, fingerprint, stable } from "../src-tauri/resources/browser-use/browser-driver"
+import { StalePage, fingerprint, sameLocation, stable } from "../src-tauri/resources/browser-use/browser-driver"
 import type { BrowserAction, BrowserObservation } from "../src-tauri/resources/browser-use/browser-driver"
 import type { BrowserDecision, TextSlot } from "../src-tauri/resources/browser-use/browser-contract"
 import { parseText, prompt } from "../src-tauri/resources/browser-use/text-helper"
@@ -67,6 +69,19 @@ describe("action space", () => {
     expect(elements[0]!.options?.map(option => option.index)).toEqual(["1:1", "1:2"])
     expect(Object.keys(targets.SELECT!)).toEqual(["1:1", "1:2"])
   })
+
+  test("an element carries its reachability, so the model can scroll or close an overlay first", () => {
+    const { elements, targets } = actionSpace([
+      click("e1", 10, "Accept cookies", { covered: true, covered_by: "Cookie banner" }),
+      click("e2", 11, "Submit", { offscreen: true }),
+    ])
+    // The flags travel with the element and with the offered target, not only
+    // with the input attempt that would fail.
+    expect(elements[0]).toMatchObject({ covered: true, covered_by: "Cookie banner" })
+    expect(elements[1]).toMatchObject({ offscreen: true })
+    expect(targets.CLICK!["1"]).toMatchObject({ covered: true, covered_by: "Cookie banner" })
+    expect(targets.CLICK!["2"]).toMatchObject({ offscreen: true })
+  })
 })
 
 describe("fingerprint", () => {
@@ -94,10 +109,11 @@ const helper = (answer: string | null | Error) => async () => {
 }
 
 /** A driver whose page the test controls, plus the calls it received. */
-function fakeDriver(pages: BrowserObservation[], options: { stale?: number; unreadableAfter?: number } = {}): BrowserDriverLike & { acts: { id: string; text?: string }[]; observes: number } {
+function fakeDriver(pages: BrowserObservation[], options: { stale?: number; unreadableAfter?: number; engine?: "view" | "chrome" } = {}): BrowserDriverLike & { acts: { id: string; text?: string }[]; observes: number } {
   const state = { acts: [] as { id: string; text?: string }[], observes: 0, stale: options.stale ?? 0 }
   return {
     acts: state.acts,
+    ...(options.engine ? { engine: options.engine } : {}),
     get observes() {
       return state.observes
     },
@@ -355,6 +371,7 @@ describe("loop rules", () => {
       fill("e2", 11, "Where to?"),
       click("e3", 20, "Search"),
       ...controls,
+      { id: "scroll_up", kind: "scroll", label: "Scroll up", delta: -560 },
     ])
     const seen: { questions: Record<string, { criteria?: Record<string, unknown> }> } = { questions: {} }
     // Answers are built from the request's own criteria, so the test fails if
@@ -382,7 +399,14 @@ describe("loop rules", () => {
     const operation = seen.questions.operation!.criteria!
     expect(Object.keys(operation)).not.toContain("CLICK")
     expect(Object.keys(operation)).not.toContain("TYPE_TEXT")
+    expect(Object.keys(operation)).not.toContain("SELECT")
     expect(Object.keys(operation)).toContain("DONE")
+    // Scrolling is observation, not mutation, and it is what a read-only run on
+    // a long page needs. It used to be removed along with the real targets.
+    expect(Object.keys(operation)).toContain("SCROLL_DOWN")
+    expect(Object.keys(operation)).toContain("SCROLL_UP")
+    expect(seen.questions.type_text_target).toBeUndefined()
+    expect(seen.questions.click_target).toBeUndefined()
 
     await choose(page, "find a flight", [], slots, { client: client as never })
     // One offered target per field × prepared value, and the field it belongs to
@@ -393,7 +417,95 @@ describe("loop rules", () => {
     // A dropdown option keeps its own encoding, so a value is never quoted.
     expect(Object.keys(seen.questions.click_target!.criteria!)).toEqual(["3"])
   })
+
+  test("a DONE below the confidence floor is refused, and DONE stays on the table", async () => {
+    const page = observation([click("e3", 20, "Go"), ...controls])
+    const driver = fakeDriver([page])
+    let calls = 0
+    const result = await runBrowserTask({
+      input: { goal: "go", budget },
+      driver,
+      decide: async () => {
+        calls += 1
+        // A weak "done", then the same decision with a real answer.
+        return calls === 1
+          ? decision(click("e3", 20, "Go"), { action: undefined, operation: "DONE", confidence: 0.4 })
+          : { ...decision(click("e3", 20, "Go")), action: undefined, operation: "DONE", confidence: 0.95 }
+      },
+    })
+    expect(driver.acts).toHaveLength(0)
+    expect(result.decisions).toBe(2)
+    expect(result.status).toBe("done")
+    // The refusal is written down, so the next decision can see why it happened
+    // instead of repeating the same weak answer forever.
+    expect(result.trace.some(step => step.operation === "DONE" && step.note?.includes("置信度"))).toBe(true)
+  })
+
+  test("no prepared value reaches the decision model, wherever it sits on the page", async () => {
+    const page = observation([
+      fill("e1", 10, "Search", { value: "private song" }),
+      { id: "e2", kind: "select", node: 30, label: "Category → private song", role: "combobox", value: "private song", current_value: "private song" },
+      ...controls,
+    ])
+    const { client, seen } = captureClient()
+    await choose(page, "search", [], slots, { client: client as never })
+    // Observation *and* offer set: the value used to survive in an element's own
+    // `value`, a select's `current_value` and its option labels.
+    const payload = JSON.stringify({ state: seen.state, questions: seen.questions })
+    expect(payload).not.toContain("private song")
+    expect(payload).toContain("[slot:query]")
+  })
+
+  test("the result reports which engine actually drove the run", async () => {
+    const page = observation([click("e3", 20, "Go"), ...controls])
+    const result = await runBrowserTask({
+      input: { goal: "go", budget: { ...budget, maxActions: 1 } },
+      driver: fakeDriver([page], { engine: "view" }),
+      decide: async () => decision(click("e3", 20, "Go")),
+    })
+    expect(result.metrics.engine).toBe("view")
+  })
 })
+
+describe("landing address", () => {
+  test("the same host on a different page is a different page", () => {
+    expect(sameLocation("https://example.test/", "https://example.test/")).toBe(true)
+    // A trailing slash never means a different page.
+    expect(sameLocation("https://example.test/", "https://example.test")).toBe(true)
+    // The bug this replaced: `/login` requested, tab parked on the same site's `/`.
+    expect(sameLocation("https://example.test/login", "https://example.test/")).toBe(false)
+    // A different query is a different page; the fragment is not.
+    expect(sameLocation("https://example.test/login", "https://example.test/login?next=1")).toBe(false)
+    expect(sameLocation("https://example.test/login#a", "https://example.test/login#b")).toBe(true)
+    expect(sameLocation("about:blank", "https://example.test/")).toBe(false)
+  })
+})
+
+/** A client that answers without a model and records the request it was sent. */
+function captureClient(pick: (criteria: string[]) => string = criteria => (criteria.includes("DONE") ? "DONE" : criteria[0]!)) {
+  const seen: { state?: Record<string, unknown>; questions?: Record<string, unknown> } = {}
+  const client = {
+    systemOne: async (request: { state: Record<string, unknown>; questions: Record<string, { criteria?: Record<string, unknown> }> }) => {
+      seen.state = request.state
+      seen.questions = request.questions as never
+      const criteria = Object.keys(request.questions.operation!.criteria!)
+      const chosen = pick(criteria)
+      return {
+        model: "test",
+        answers: {
+          operation: {
+            type: "choice",
+            choice: chosen,
+            confidence: 1,
+            probabilities: Object.fromEntries(criteria.map(key => [key, key === chosen ? 1 : 0])),
+          },
+        },
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }
+    },
+  }
+  return { client, seen }
+}
 
 describe("the text helper's contract", () => {
   test("accepts exactly one text value", () => {
@@ -442,6 +554,58 @@ describe("the address bar is an omnibox", () => {
     expect(normalizeAddress("baidu")).toBe("https://www.baidu.com/s?wd=baidu")
     expect(normalizeAddress("百度 音乐")).toContain("wd=%E7%99%BE%E5%BA%A6%20%E9%9F%B3%E4%B9%90")
     expect(normalizeAddress("   ")).toBe("")
+  })
+})
+
+/**
+ * The page observer's own budgets, run against the real `snapshot.js` in a DOM.
+ *
+ * The guard script is the end-to-end check, but it needs a real browser. This
+ * runs the same observer with a stubbed layout so the rule that matters — the
+ * heuristic channel is not squeezed out by a selector that fills the table —
+ * cannot silently regress where no browser is available.
+ */
+describe("page observer budgets", () => {
+  const SNAPSHOT = readFileSync(new URL("../src-tauri/resources/browser-use/snapshot.js", import.meta.url), "utf8")
+
+  function observeDocument(html: string): BrowserObservation {
+    const window = new Window({ url: "http://localhost/" })
+    const document = window.document
+    document.body.innerHTML = html
+    // happy-dom does no layout, so every element needs a real on-screen box and
+    // the two probes the observer makes need an answer. `checkVisibility` stays
+    // true and `elementFromPoint` finds nothing, so nothing is dropped as hidden
+    // or covered and the budget is the only thing under test.
+    const prototype = (window as unknown as { HTMLElement: { prototype: Record<string, unknown> } }).HTMLElement.prototype
+    prototype.getBoundingClientRect = () => ({ x: 10, y: 10, width: 180, height: 40, top: 10, left: 10, right: 190, bottom: 50 })
+    prototype.checkVisibility = () => true
+    ;(document as unknown as { elementFromPoint: () => null }).elementFromPoint = () => null
+    const run = new Function(
+      "document", "window", "performance", "location", "getComputedStyle",
+      "innerWidth", "innerHeight", "scrollX", "scrollY", "NodeFilter",
+      // The parens matter: `return` followed by a newline is ASI, which would
+      // drop the whole observer expression instead of returning it.
+      `return (${SNAPSHOT})`,
+    ) as (...args: unknown[]) => BrowserObservation
+    return run(document, window, window.performance, window.location, window.getComputedStyle.bind(window), 1120, 780, 0, 0, window.NodeFilter)
+  }
+
+  test("a heuristic control survives a selector that fills the table", () => {
+    // Upstream spent the whole table cap on the fixed selector, so the heuristic
+    // pass — the reason a React page full of `<div onClick>` is visible at all —
+    // ran after the cap was full and collected nothing.
+    const buttons = Array.from({ length: 260 }, (_, index) => `<button>Dense ${index}</button>`).join("")
+    const page = observeDocument(`<div>${buttons}</div><div><div onclick="1">Book now</div></div>`)
+    expect(page.omitted_actions).toBeGreaterThan(0)
+    expect(page.actions.some(action => action.label.trim() === "Book now")).toBe(true)
+    // The selector still gets the rest of the table; the reserve is not a tax on it.
+    expect(page.actions.filter(action => /^Dense \d+$/.test(action.label.trim())).length).toBeGreaterThan(200)
+  })
+
+  test("a page that fits keeps every control", () => {
+    const page = observeDocument(`<button>Only</button><div onclick="1">Box</div>`)
+    expect(page.omitted_actions).toBe(0)
+    expect(page.actions.map(action => action.label)).toEqual(["Only", "Box", "Wait for the page to update"])
   })
 })
 

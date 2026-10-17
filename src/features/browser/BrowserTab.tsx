@@ -3,7 +3,6 @@ import { ArrowLeft, ArrowRight, Globe, RefreshCw, X } from "../../shared/ui/icon
 import { reportBrowserFailure, normalizeAddress } from "../../lib/browser"
 import {
   browserViewActivate,
-  browserViewClose,
   browserViewGo,
   browserViewPage,
   browserViewReload,
@@ -12,6 +11,7 @@ import {
   type ViewRect,
 } from "../../lib/browser-view"
 import { useShell, useActiveWorkspace } from "../shell/shellStore"
+import { BrowserImportPrompt } from "./BrowserImportPrompt"
 import "../../styles/browser-channel.css"
 
 /**
@@ -46,6 +46,14 @@ export function BrowserTab({ paneId, path }: { paneId: string; path: string }) {
   const editing = useRef(false)
   const [failure, setFailure] = useState<string | null>(null)
   const stage = useRef<HTMLDivElement | null>(null)
+  /**
+   * The last box this tab told the app about.
+   *
+   * Needed on the way out: a view is hidden at the rectangle it was last placed
+   * at, and by the time this component unmounts the layout that produced that
+   * rectangle is gone.
+   */
+  const lastBox = useRef<ViewRect | null>(null)
   const url = entry?.browser?.url ?? ""
   const live = url !== "" && url !== "about:blank"
   const title = entry?.browser?.title ?? ""
@@ -80,6 +88,7 @@ export function BrowserTab({ paneId, path }: { paneId: string; path: string }) {
       const rect = element.getBoundingClientRect()
       if (rect.width < 1 || rect.height < 1) return
       const box: ViewRect = { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+      lastBox.current = box
       const key = `${Math.round(box.x)}:${Math.round(box.y)}:${Math.round(box.width)}:${Math.round(box.height)}`
       if (key === last) return
       last = key
@@ -171,11 +180,20 @@ export function BrowserTab({ paneId, path }: { paneId: string; path: string }) {
     }
   }, [path, live, fail, updateBrowser])
 
-  // Closing the tab destroys its view. Hiding it would leave the page (and its
-  // timers, audio and memory) alive with nothing left to reach it — a closed tab
-  // is gone, exactly as in a browser.
+  // Switching away from this tab must not destroy its page.
+  //
+  // A pane renders only its *active* file, so this component unmounts whenever
+  // another tab comes to the front — while the tab itself, and the page behind
+  // it, still exist. Closing the view here (which is what this used to do) threw
+  // away the page's scroll, its form state and its session every time the user
+  // switched tabs, and read as "the page reloads by itself". Hiding keeps it
+  // alive and off screen; a tab that is actually *closed* has its view destroyed
+  // by the browser feature's reconciler, which is the only thing that knows the
+  // difference (`use-browser-views.ts`).
   useEffect(() => () => {
-    void browserViewClose(path).catch(() => undefined)
+    const box = lastBox.current
+    if (!box) return
+    void syncBrowserView(path, box, undefined, false).catch(() => undefined)
   }, [path])
 
   const run = (label: string, action: () => Promise<unknown>) => {
@@ -272,6 +290,9 @@ export function BrowserTab({ paneId, path }: { paneId: string; path: string }) {
           <button type="button" className="browser-banner-action" onClick={() => setFailure(null)}>知道了</button>
         </div>
       ) : null}
+      {/* Same reason as the banner above: the panel is where a login is needed,
+          and a toast at the bottom right is covered by the page's native view. */}
+      <BrowserImportPrompt />
       <div ref={stage} role="application" aria-label="浏览器页面" className="browser-stage relative min-h-0 min-w-0 flex-1 overflow-hidden outline-none">
         {!live ? <BrowserStart /> : null}
       </div>

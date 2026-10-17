@@ -74,7 +74,7 @@ const textComponents = {
  * Markdown keeps Orbit's renderer (LobeHub Streamdown + remark + the Shiki
  * `Pre` block) and takes Orbit's typography through `.agent-markdown`.
  */
-export const Markdown = memo(function Markdown({ content, animated = false, className = "" }: { content: string; animated?: boolean; className?: string }) {
+export const Markdown = memo(function Markdown({ content, animated = false, className = "", links = "external" }: { content: string; animated?: boolean; className?: string; links?: "external" | "panel" }) {
   const settleDelay = animated ? 180 : 0;
   const hasMath = MATH_PATTERN.test(content);
   const plugins = useSyncExternalStore(subscribeMath, mathSnapshot, mathSnapshot);
@@ -101,7 +101,14 @@ export const Markdown = memo(function Markdown({ content, animated = false, clas
   );
 
   return (
-    <div className={`agent-markdown min-w-0 font-sans text-sm leading-6 ${className} ${animated ? "is-streaming" : "markdown-static"}`.trim()}>
+    <div
+      // Where the links in this content should open. Left as a data attribute
+      // rather than a prop on `MarkdownLink` on purpose: `a: MarkdownLink` above
+      // has to stay one stable component or every re-render would remount every
+      // anchor on the page. The click handler reads the surface off the DOM.
+      data-link-surface={links}
+      className={`agent-markdown min-w-0 font-sans text-sm leading-6 ${className} ${animated ? "is-streaming" : "markdown-static"}`.trim()}
+    >
       <Streamdown
         content={content}
         remarkPlugins={remarkPlugins}
