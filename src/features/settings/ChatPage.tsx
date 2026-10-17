@@ -2,6 +2,7 @@ import { useWorkspace } from "../../lib/store";
 import { useMetrics } from "../../hooks/use-metrics";
 import { request, report } from "../../lib/rpc";
 import { Group, Row, Select, Toggle } from "../../shared/ui/controls";
+import { ImageHistorySettings } from "./ImageHistorySettings";
 import { toast } from "../../shared/ui/toast";
 
 /** Orbit's Chat section, backed by Pi's session RPCs. */
@@ -69,6 +70,7 @@ export function ChatPage() {
           />
         </Row>
       </Group>
+      <ImageHistorySettings />
     </>
   );
 }

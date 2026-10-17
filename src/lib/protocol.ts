@@ -16,7 +16,7 @@ export type Event = { type: string; message?: PiMessage; toolCallId?: string; to
  * 这段时间 ``running`` 还是 false，屏幕上此前没有任何指示。它只在空闲提交时置位，
  * ``agent_start`` / ``agent_settled`` / ``prompt_settled`` 时撤下。
  */
-export type Transcript = { messages: DisplayMessage[]; active: number; running: boolean; submitted: boolean; compacting: boolean; loading: boolean; phase: string; tools: Record<string, Tool>; error: string | null; aborted: boolean; queue: { steering: string[]; followUp: string[] }; bash: { id?: string; command?: string; output: string; running: boolean } | null; turnStartedAt: number | null }
+export type Transcript = { messages: DisplayMessage[]; active: number; running: boolean; submitted: boolean; compacting: boolean; loading: boolean; phase: string; tools: Record<string, Tool>; error: string | null; aborted: boolean; queue: { steering: string[]; followUp: string[] }; bash: { id?: string; command?: string; output: string; running: boolean } | null; turnStartedAt: number | null; /** 本轮提交带了图片、且还没拿到第一个 token：等待位说“正在发送图片”。 */ pendingImages?: number }
 /**
  * `loading` 是骨架屏的开关：切换会话/项目时置位，`hydrate` 换上一份真正的 transcript
  * 就自然把它清掉（见 `lib/rpc.ts` 的 `loadMessages`）。
@@ -262,21 +262,26 @@ export function hydrate(messages: PiMessage[]): Transcript {
 export function reduceEvent(previous: Transcript, event: Event): Transcript {
   const state = { ...previous }
   switch (event.type) {
-    case 'prompt_submitted': return {
-      ...state,
+    case 'prompt_submitted': {
       // 空闲提交才占等待位：流式中提交（steer）本来就有「正在处理」的面板，
       // 再补一个指示就是一轮两个（0.3.43 的回归）。
-      ...(state.running ? {} : { submitted: true, phase: '正在思考', turnStartedAt: state.turnStartedAt ?? Date.now() }),
-      error: null,
-      messages: state.messages.map(item => item.message.errorMessage ? {...item,message:{...item.message,errorMessage:undefined}} : item),
+      // 带图时先说“正在发送图片”：这一轮的等待大头是上传，而“正在思考”会让人
+      // 以为是模型慢。第一个 token 到了再恢复成普通的思考位（见 message_update）。
+      const images = typeof event.images === 'number' && event.images > 0 ? event.images : 0
+      return {
+        ...state,
+        ...(state.running ? {} : { submitted: true, phase: images ? '正在发送图片…' : '正在思考', pendingImages: images, turnStartedAt: state.turnStartedAt ?? Date.now() }),
+        error: null,
+        messages: state.messages.map(item => item.message.errorMessage ? {...item,message:{...item.message,errorMessage:undefined}} : item),
+      }
     }
     // Pi 没有真的开一轮：被扩展命令接管（disposition "handled"）、排队（"queued"）
     // 或直接发送失败。撤掉等待位，否则会留下一个永远转圈的「正在思考」。
     case 'prompt_settled': return state.submitted
-      ? { ...state, submitted: false, ...(state.running ? {} : { phase: '就绪', turnStartedAt: null }) }
+      ? { ...state, submitted: false, pendingImages: 0, ...(state.running ? {} : { phase: '就绪', turnStartedAt: null }) }
       : state
     case 'bash_execution_update': return { ...state, bash: { id: typeof event.id === 'string' ? event.id : undefined, command: typeof event.command === 'string' ? event.command : state.bash?.command, output: `${state.bash?.output ?? ''}${String(event.delta ?? '')}`, running: true } }
-    case 'agent_start': return { ...state, active: -1, running: true, submitted: false, phase: '正在思考', error: null, aborted: false, turnStartedAt: state.turnStartedAt ?? Date.now() }
+    case 'agent_start': return { ...state, active: -1, running: true, submitted: false, phase: (state.pendingImages ?? 0) > 0 ? '正在发送图片…' : '正在思考', error: null, aborted: false, turnStartedAt: state.turnStartedAt ?? Date.now() }
     case 'agent_settled': {
       const elapsedMs = state.turnStartedAt == null ? undefined : Math.max(0, Date.now() - state.turnStartedAt)
       let durationOwner = false
@@ -288,6 +293,7 @@ export function reduceEvent(previous: Transcript, event: Event): Transcript {
         // 只靠 error 字段判断会把取消记成成功（自动化回写就踩这个坑）。
         aborted: event.aborted === true,
         phase: '就绪',
+        pendingImages: 0,
         bash: state.bash ? { ...state.bash, running: false } : null,
         turnStartedAt: null,
         messages: (elapsedMs == null ? state.messages : state.messages.map(item => {
@@ -337,6 +343,11 @@ export function reduceEvent(previous: Transcript, event: Event): Transcript {
       const delta = event.assistantMessageEvent
       const original = state.messages[state.active]
       if (!delta || !original || original.message.role !== 'assistant') return state
+      // 第一个 token 说明图已经送达模型了：等待位从「正在发送图片」回到普通思考位。
+      if (state.pendingImages && (delta.type.startsWith('text_') || delta.type.startsWith('thinking_'))) {
+        state.phase = '正在思考'
+        state.pendingImages = 0
+      }
       const content = Array.isArray(original.message.content) ? [...original.message.content] : []
       const index = delta.contentIndex
       let part = { ...content[index] }

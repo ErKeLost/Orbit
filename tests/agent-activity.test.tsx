@@ -31,6 +31,20 @@ describe("agent activity feed", () => {
     expect(html).toBe("");
   });
 
+  test("lets a running worker be opened, not just a finished one", () => {
+    // Following a sub-agent while it works is the point of the feed: the tab is
+    // opened from the worker's session file, which exists after its first entry.
+    const html = renderToStaticMarkup(<AgentActivityFeed snapshot={{ ...snapshot, active: [{ ...snapshot.active[0], sessionPath: "/tmp/subagents/a/session.jsonl" }] }} />);
+    expect(html).toContain("<button");
+    expect(html).toContain("打开子会话");
+  });
+
+  test("explains why a worker with no session file cannot be opened", () => {
+    const html = renderToStaticMarkup(<AgentActivityFeed snapshot={{ ...snapshot, active: [], recent: [{ id: "gone", parentId: "root", name: "perf_audit_chat", task: "", status: "failed", startedAt: Date.now(), endedAt: Date.now(), error: "No API key found", childrenIds: [], children: [] }] }} />);
+    expect(html).not.toContain("<button");
+    expect(html).toContain("子会话没有落盘");
+  });
+
   test("marks status on the avatar without replacing the kind glyph", () => {
     const rows: AgentSnapshot = { ...snapshot, active: [worker({ id: "a", name: "repo_scan", task: "调研竞品" })] };
     const html = renderToStaticMarkup(<AgentActivityFeed snapshot={rows} />);

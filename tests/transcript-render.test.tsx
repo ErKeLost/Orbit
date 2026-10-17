@@ -98,4 +98,33 @@ describe("work fold rendering", () => {
     );
     expect(visibleCount(html, "Summarize.")).toBe(1);
   });
+
+  test("an image read shows the picture, not its placeholder note", () => {
+    const items = [
+      item("m1", {
+        role: "assistant",
+        stopReason: "toolUse",
+        content: [{ type: "toolCall", id: "c1", name: "read", arguments: { path: "/tmp/out/preview-1.png" } }],
+      }),
+    ];
+    const tools = {
+      c1: {
+        name: "read",
+        running: false,
+        result: [
+          { type: "text", text: "Read image file [image/png]" },
+          { type: "image", data: "AAAA", mimeType: "image/png" },
+        ],
+        images: [{ data: "AAAA", mimeType: "image/png" }],
+      },
+    } as unknown as Record<string, Tool>;
+    const html = renderToStaticMarkup(
+      <TranscriptGroupView group={{ id: "g", items }} tools={tools} streaming={foldOpen.streaming} />,
+    );
+    // The pixels are what the reader wants: render them, and drop the text that
+    // only existed to stand in for them.
+    expect(html).toContain("data:image/png;base64,AAAA");
+    expect(html).not.toContain("Read image file");
+    expect(html).not.toContain("未返回输出");
+  });
 });

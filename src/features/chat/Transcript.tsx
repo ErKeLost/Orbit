@@ -46,6 +46,22 @@ import {
 
 const clockFormatter = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 
+/**
+ * A read of an image returns its pixels plus a line of framing
+ * (`Read image file [image/png]`), and flattened content adds `[图片]` where the
+ * image was. Both are placeholders for something the preview already shows, so
+ * they are dropped once the image is on screen.
+ */
+const IMAGE_RESULT_NOTE = /^(Read image file \[[^\]]*\]|\[图片\])$/
+function withoutImageNotes(text: string) {
+  const kept = text.split("\n").filter((line) => !IMAGE_RESULT_NOTE.test(line.trim()));
+  return kept.join("\n").trim();
+}
+/** A tool that returned no pixels shares this, so the row allocates nothing. */
+const EMPTY_PREVIEWS: string[] = [];
+/** A read's path is only worth handing to the file manager when it is absolute. */
+const isAbsolutePath = (path: string | undefined): path is string => Boolean(path && /^([/\\]|[A-Za-z]:)/.test(path));
+
 function messageTime(message?: PiMessage) {
   const raw = message?.timestamp;
   if (typeof raw !== "number" || !Number.isFinite(raw)) return undefined;
@@ -223,9 +239,16 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
   const siteHost = web && href ? urlHost(href) : undefined;
   const failed = Boolean(tool?.isError);
   const running = Boolean(tool?.running);
-  const result = toolResultText(tool?.result);
+  const rawResult = toolResultText(tool?.result);
+  // Reads of images, PDFs, exports: anything the tool handed back as pixels is
+  // shown here rather than described. Only the image tool renders its own card.
+  // (Not memoized: the compiler gives up on the whole row when a memo's deps are
+  // narrower than the value it reads, and the data URLs are cached by object.)
+  const previews = failed || !tool?.images?.length ? EMPTY_PREVIEWS : tool.images.map(toolImageDataUrl);
+  const result = previews.length ? withoutImageNotes(rawResult) : rawResult;
+  const previewPath = typeof part.arguments?.path === "string" && isAbsolutePath(part.arguments.path) ? part.arguments.path : undefined;
   const searched = useMemo(() => (web && !href && !failed ? resultSites(result) : []), [web, href, failed, result]);
-  const request = part.argsText ?? JSON.stringify(part.arguments ?? {});
+  const request = useMemo(() => part.argsText ?? JSON.stringify(part.arguments ?? {}), [part.argsText, part.arguments]);
   const code = useMemo(
     () => (open ? getToolCodePresentation(name, part.arguments ?? {}, result, tool?.details) : {}),
     [open, name, part.arguments, result, tool?.details],
@@ -234,8 +257,17 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
   const actionTone = failed ? "text-red-400" : "text-content/50";
   const targetTone = failed ? "text-red-400" : "text-content/70";
   const patch = tool?.details?.patch;
-  const additions = patch ? patch.split("\n").filter((line) => /^\+(?!\+\+)/.test(line)).length : 0;
-  const deletions = patch ? patch.split("\n").filter((line) => /^-(?!--)/.test(line)).length : 0;
+  // patch 的增删行数扫两遍全量 diff：流式时这一行每帧重渲染，没必要重算。
+  const { additions, deletions } = useMemo(() => {
+    if (!patch) return { additions: 0, deletions: 0 };
+    let add = 0;
+    let del = 0;
+    for (const line of patch.split("\n")) {
+      if (/^\+(?!\+\+)/.test(line)) add += 1;
+      else if (/^-(?!--)/.test(line)) del += 1;
+    }
+    return { additions: add, deletions: del };
+  }, [patch]);
   return (
     <div className="flex min-w-0 flex-col">
       <button
@@ -263,7 +295,11 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
               </span>
             ) : file ? (
               <span className={`-my-0.5 flex min-w-0 max-w-full items-center gap-1 rounded bg-content/6 px-1 py-0.5 group-hover:bg-content/10 ${targetTone}`} title={target}>
-                <FileTypeIcon name={fileName} isDir={false} />
+                {previews.length ? (
+                  <img src={previews[0]} alt="" className="size-4 shrink-0 rounded-[4px] object-cover" draggable={false} />
+                ) : (
+                  <FileTypeIcon name={fileName} isDir={false} />
+                )}
                 <span className="min-w-0 truncate">{target}</span>
               </span>
             ) : (
@@ -291,6 +327,22 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
         {failed ? <X className="size-3.5 shrink-0 text-red-400" strokeWidth={2} /> : null}
         <ChevronRight className={`size-3.5 shrink-0 text-content/35 opacity-0 transition-[opacity,transform] group-hover:opacity-100 ${open ? "rotate-90 opacity-100" : ""}`} strokeWidth={1.75} />
       </button>
+      {previews.length ? (
+        <div className="flex flex-wrap gap-1.5 py-1 pl-5">
+          {previews.map((src, index) => (
+            <ImageActionsMenu key={`${part.id ?? "preview"}-${index}`} dataUrl={src} path={previewPath}>
+              <img
+                src={src}
+                alt={`${fileName} 预览`}
+                loading="lazy"
+                decoding="async"
+                draggable={false}
+                className="max-h-52 max-w-full rounded-xl border border-content/10 object-contain"
+              />
+            </ImageActionsMenu>
+          ))}
+        </div>
+      ) : null}
       {open ? (
         <div className="min-w-0 pb-1.5">
           {code.request ? <CodeChange change={code.request} compact /> : null}
@@ -298,7 +350,7 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
             <pre className="mt-1 max-h-64 min-w-0 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-content/4 px-2.5 py-2 font-mono text-[12px] leading-5 text-content/55">{request}</pre>
           ) : null}
           {code.result && !running ? <CodeChange change={code.result} compact /> : null}
-          {!code.result && (result || !running) ? (
+          {!code.result && !previews.length && (result || !running) ? (
             <pre
               className={`mt-1 max-h-72 min-w-0 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-content/4 px-2.5 py-2 font-mono text-[12px] leading-5 ${
                 failed ? "text-red-400/80" : "text-content/55"
@@ -844,6 +896,9 @@ export function InitialWorking({ label, startedAt }: { label: string; startedAt?
  * 会话加载中的骨架屏（`transcript.loading`）。形状照着对话走：一段提问加一段回答。
  * 切换会话时先把位置占住，hydrate 上来再换内容，不会先把上一个会话的内容留在原地
  * 再突然抽掉。
+ *
+ * 占位块是静态的：桌面端本地读取很快，呼吸/渐隐动画只会把一次几十毫秒的加载
+ * 放大成一次看得见的重绘，也白白让合成器在加载期间一直跑。
  */
 export function TranscriptSkeleton() {
   // 每段宽度差一点，避免像同一行复制了三遍。
@@ -862,13 +917,13 @@ export function TranscriptSkeleton() {
       <span className="sr-only">正在加载会话…</span>
       {blocks.map((block) => (
         <div key={block.ask} className="flex min-w-0 flex-col gap-2">
-          <div className={`h-4 animate-pulse rounded-md bg-content/6 ${block.ask}`} />
+          <div className={`h-4 rounded-md bg-content/6 ${block.ask}`} />
           {block.lines.map((width) => (
-            <div key={width} className={`h-3.5 animate-pulse rounded-md bg-content/6 ${width}`} />
+            <div key={width} className={`h-3.5 rounded-md bg-content/6 ${width}`} />
           ))}
         </div>
       ))}
-      <div className="h-4 w-[31%] animate-pulse rounded-md bg-content/6" />
+      <div className="h-4 w-[31%] rounded-md bg-content/6" />
     </div>
   );
 }

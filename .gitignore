@@ -42,3 +42,6 @@ src-tauri/resources/pi-computer-use/
 src-tauri/resources/computer-use/ax_control
 crates/target/
 crates/*/target/
+
+# Local Netlify folder
+.netlify

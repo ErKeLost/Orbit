@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { FileTypeIcon } from "../features/shell/FileTypeIcon";
 import { useShell } from "../features/shell/shellStore";
 import type { RenderOptions } from "beautiful-mermaid";
@@ -307,17 +308,23 @@ export function MarkdownLink({
       onClick={(event) => {
         onClick?.(event);
         if (event.defaultPrevented || !external || !href) return;
-        // Leave the deliberate gestures alone: a modified or middle click is
-        // "open this in my real browser", and `target="_blank"` above already
-        // says that.
-        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        // A modified click is "open this in my real browser", said the way every
+        // browser understands it: the panel is the default, the system browser is
+        // the deliberate exception. Elsewhere in the app a modified click falls
+        // through to the outer listener, which opens the same thing.
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+          event.preventDefault();
+          void openUrl(href).catch(() => undefined);
+          return;
+        }
+        if (event.button !== 0) return;
         // Only where the surface says so. A link in the transcript belongs in
         // the browser panel beside it; a link in a README being read, or in an
         // issue body in the inbox, belongs in the user's own browser — which is
         // what every other link in those views already does.
         if (!event.currentTarget.closest('[data-link-surface="panel"]')) return;
         event.preventDefault();
-        useShell.getState().openBrowser(href, { edge: "right" });
+        useShell.getState().openLink(href);
       }}
     >
       {children}

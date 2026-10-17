@@ -1,0 +1,414 @@
+/*
+ * One screen.
+ *
+ * A title card inside a sky: three rows — a thin bar, the centred copy, the
+ * availability strip — and a full-bleed ASCII galaxy behind them. Every size is a
+ * function of the viewport so the composition holds from 1440×900 down to a phone
+ * without scrolling.
+ */
+
+/* ==========================================================================
+   Shared vocabulary
+   ========================================================================== */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  height: 46px;
+  padding: 0 22px;
+  border: 1px solid transparent;
+  border-radius: var(--r-pill);
+  font-size: 14.5px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    transform var(--dur-1) var(--ease),
+    background var(--dur-2) var(--ease),
+    border-color var(--dur-2) var(--ease),
+    box-shadow var(--dur-2) var(--ease);
+}
+
+.btn:active {
+  transform: translateY(1px) scale(0.995);
+}
+
+.btn svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+}
+
+.btn--primary {
+  color: #180d33;
+  background: linear-gradient(135deg, #ece2ff 0%, #ffd9ec 52%, #ffe3c9 100%);
+  /* No outer glow: a halo makes the button read as taller than the one beside it.
+     The light stays inside the silhouette. */
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.8);
+}
+
+.btn--primary:hover {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.9),
+    0 0 0 1px rgb(255 255 255 / 0.35);
+}
+
+.btn--ghost {
+  border-color: rgb(245 242 255 / 0.22);
+  background: rgb(12 10 36 / 0.72);
+  color: var(--ink);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  backdrop-filter: blur(14px);
+}
+
+.btn--ghost:hover {
+  background: rgb(20 17 52 / 0.8);
+  border-color: rgb(245 242 255 / 0.32);
+}
+
+.lang {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--hair-soft);
+  border-radius: var(--r-pill);
+  background: rgb(5 4 23 / 0.35);
+  backdrop-filter: blur(8px);
+}
+
+.lang button {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-40);
+  cursor: pointer;
+  transition:
+    color var(--dur-1) var(--ease),
+    background var(--dur-2) var(--ease);
+}
+
+.lang button[aria-pressed="true"] {
+  background: rgb(245 242 255 / 0.1);
+  color: var(--ink);
+}
+
+/* ==========================================================================
+   The plate
+   ========================================================================== */
+
+.stage {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100svh;
+  min-height: 600px;
+  padding: clamp(16px, 2.6vh, 26px) clamp(18px, 4vw, 52px) clamp(22px, 3.6vh, 36px);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* The scrim is what lets type sit on a sky: a soft well of ground colour in the
+   middle, so the glyphs breathe at the edges and disappear behind the words. */
+.stage__scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  /* Deliberately shallow: the sky is the point, so the well only covers the copy
+     and lets the meteors and the grid read everywhere else. */
+  background:
+    radial-gradient(44% 34% at 50% 47%, rgb(5 4 23 / 0.92) 0%, rgb(5 4 23 / 0.66) 52%, rgb(5 4 23 / 0.12) 82%, transparent 100%),
+    linear-gradient(to bottom, rgb(5 4 23 / 0.5) 0%, transparent 22%, transparent 82%, rgb(5 4 23 / 0.6) 100%);
+}
+
+/* ---- bar ----------------------------------------------------------------- */
+
+.stage__top {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 16px;
+}
+
+.stage__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+/* Centre the wordmark on wide screens by centring the brand in the middle grid
+   cell; on phones it belongs at the left with the actions right. */
+@media (min-width: 861px) {
+  .stage__top {
+    grid-template-columns: 1fr auto 1fr;
+  }
+
+  .stage__brand {
+    grid-column: 2;
+  }
+
+  .stage__top-end.is-actions {
+    grid-column: 3;
+  }
+}
+
+.stage__brand img {
+  width: 30px;
+  height: 30px;
+  filter: drop-shadow(0 4px 16px rgb(185 139 255 / 0.5));
+}
+
+.stage__top-end {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.stage__top-end.is-actions {
+  justify-self: end;
+}
+
+.stage__icon-link {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--hair-soft);
+  border-radius: 50%;
+  background: rgb(6 5 24 / 0.4);
+  color: var(--ink-55);
+  backdrop-filter: blur(10px);
+  transition:
+    color var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease),
+    background var(--dur-1) var(--ease);
+}
+
+.stage__icon-link svg {
+  width: 16px;
+  height: 16px;
+}
+
+.stage__icon-link:hover {
+  color: var(--ink);
+  border-color: var(--hair-bright);
+  background: rgb(245 242 255 / 0.06);
+}
+
+/* ---- copy ---------------------------------------------------------------- */
+
+.stage__copy {
+  position: relative;
+  z-index: 2;
+  align-self: center;
+  justify-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  width: min(940px, 100%);
+  padding-block: clamp(8px, 2vh, 24px);
+}
+
+.stage__title {
+  font-size: clamp(44px, 7vw, 104px);
+  line-height: 0.96;
+  letter-spacing: -0.045em;
+  font-weight: 600;
+}
+
+.stage__title span {
+  display: block;
+  animation: rise 900ms var(--ease) both;
+}
+
+.stage__title span:first-child {
+  animation-delay: 60ms;
+}
+
+.stage__title span:last-child {
+  animation-delay: 140ms;
+}
+
+.stage__lede {
+  max-width: 58ch;
+  margin-top: clamp(16px, 2.4vh, 26px);
+  color: var(--ink-70);
+  font-size: clamp(14.5px, 1.15vw, 17px);
+  line-height: 1.6;
+  text-wrap: balance;
+  animation: rise 900ms var(--ease) 220ms both;
+}
+
+.stage__cta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: clamp(22px, 3.2vh, 34px);
+  animation: rise 900ms var(--ease) 300ms both;
+}
+
+.stage__title {
+  font-size: clamp(44px, 7vw, 104px);
+  line-height: 0.96;
+  letter-spacing: -0.045em;
+  font-weight: 600;
+}
+
+.stage__title span {
+  display: block;
+  animation: rise 900ms var(--ease) both;
+}
+
+.stage__title span:first-child {
+  animation-delay: 60ms;
+}
+
+.stage__title span:last-child {
+  animation-delay: 140ms;
+}
+
+.stage__lede {
+  max-width: 58ch;
+  margin-top: clamp(16px, 2.4vh, 26px);
+  color: var(--ink-70);
+  font-size: clamp(14.5px, 1.15vw, 17px);
+  line-height: 1.6;
+  text-wrap: balance;
+  animation: rise 900ms var(--ease) 220ms both;
+}
+
+.stage__cta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: clamp(22px, 3.2vh, 34px);
+  animation: rise 900ms var(--ease) 300ms both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+/* ---- floor --------------------------------------------------------------- */
+
+/* Flat, like a spec line: a label over the row, no chrome of its own. */
+.stage__foot {
+  position: relative;
+  z-index: 2;
+  justify-self: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 2px;
+}
+
+.stage__foot-label {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgb(245 242 255 / 0.46);
+  text-shadow: 0 1px 12px rgb(5 4 23 / 0.9);
+}
+
+.stage__platforms {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px clamp(16px, 2.4vw, 30px);
+}
+
+.stage__platforms li {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  letter-spacing: 0;
+  color: rgb(245 242 255 / 0.72);
+  white-space: nowrap;
+  text-shadow: 0 1px 12px rgb(5 4 23 / 0.9);
+}
+
+.stage__platforms svg {
+  width: 15px;
+  height: 15px;
+  color: rgb(245 242 255 / 0.9);
+}
+
+/* ==========================================================================
+   Smaller and shorter screens
+   ========================================================================== */
+
+@media (max-width: 860px) {
+  .stage {
+    height: auto;
+    min-height: 100svh;
+    padding-bottom: 18px;
+  }
+
+  .stage__title {
+    font-size: clamp(40px, 10.5vw, 64px);
+  }
+
+  .stage__scrim {
+    background:
+      radial-gradient(78% 48% at 50% 40%, rgb(5 4 23 / 0.95) 0%, rgb(5 4 23 / 0.85) 52%, rgb(5 4 23 / 0.35) 100%),
+      linear-gradient(to bottom, rgb(5 4 23 / 0.6) 0%, transparent 18%, transparent 62%, rgb(5 4 23 / 0.9) 100%);
+  }
+
+  .stage__lede {
+    max-width: 44ch;
+  }
+
+  .stage__foot {
+    gap: 8px;
+  }
+
+  .stage__platforms {
+    gap: 6px 16px;
+  }
+}
+
+@media (max-width: 620px) {
+
+  .stage__cta {
+    width: 100%;
+  }
+
+  .stage__cta .btn {
+    flex: 1 1 100%;
+  }
+}
+
+@media (max-height: 720px) and (min-width: 861px) {
+  .stage__title {
+    font-size: clamp(38px, 5.4vw, 76px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage__title span,
+  .stage__lede,
+  .stage__cta {
+    animation: none;
+  }
+}

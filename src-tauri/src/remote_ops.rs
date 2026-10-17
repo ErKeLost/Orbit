@@ -125,6 +125,7 @@ pub const REMOTE_COMMANDS: &[&str] = &[
     "pi_disconnect",
     "list_sessions",
     "delete_session",
+    "rename_session",
     "clear_sessions",
     "session_turn_durations",
     "open_pi_terminal",
@@ -154,6 +155,9 @@ pub const REMOTE_COMMANDS: &[&str] = &[
     // --- pi configuration --------------------------------------------------
     "get_gui_settings",
     "set_gui_setting",
+    // 历史图片上限等请求预算开关：桌面的请求也经这条路径，手机改了同一份文件。
+    "get_request_budget",
+    "save_request_budget",
     "list_provider_models",
     "list_provider_profiles",
     "probe_provider_models",
@@ -482,6 +486,9 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
         }
         "list_sessions" => json(bridge::list_sessions(app.clone(), text(&args, "cwd")?).await?),
         "delete_session" => json(bridge::delete_session(text(&args, "sessionPath")?).await?),
+        "rename_session" => json(
+            bridge::rename_session(text(&args, "sessionPath")?, text(&args, "name")?).await?,
+        ),
         "clear_sessions" => {
             let state = app.state::<bridge::Bridge>();
             bridge::clear_sessions(state).await
@@ -613,6 +620,10 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
         "get_gui_settings" => bridge::get_gui_settings(),
         "set_gui_setting" => {
             bridge::set_gui_setting(text(&args, "key")?, required(&args, "value")?)
+        }
+        "get_request_budget" => bridge::get_request_budget(),
+        "save_request_budget" => {
+            bridge::save_request_budget(required(&args, "settings")?)
         }
         "list_provider_models" => {
             json(bridge::list_provider_models(text(&args, "provider")?).await?)

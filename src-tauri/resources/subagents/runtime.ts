@@ -5,6 +5,7 @@ import { basename, dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core"
 import { filterForkSession } from "./fork.ts"
+import { modelReference, type WorkerModel } from "./model-ref.ts"
 import { joinAgentPath, resolveAgentPath, ROOT_PATH, validateAgentName } from "./paths.ts"
 import { TreeSlots } from "./tree-slots.ts"
 import type { AgentNode, AgentResult, AgentSnapshot, AgentStatus } from "./types.ts"
@@ -51,7 +52,8 @@ export interface TaskInput {
   name?: string
   task: string
   cwd?: string
-  model?: string
+  /** Provider and id travel apart; see `model-ref.ts` for why. */
+  model?: WorkerModel
   thinking?: string
   context?: AgentContextMode
 }
@@ -373,7 +375,7 @@ export class SubagentRuntime {
       startedAt: Date.now(),
       turn: this.turn,
       childrenIds: [],
-      ...(options.model ? { model: options.model } : {}),
+      ...(options.model ? { model: modelReference(options.model) } : {}),
     }
     this.nodes.set(id, node)
     this.attachChild(parentId, id)
@@ -622,7 +624,7 @@ export class SubagentRuntime {
     // lineage and isolation both survive.
     const forkFrom = this.forkSource(options, sessionDir)
     if (forkFrom) args.push("--fork", forkFrom)
-    if (options.model) args.push("--model", options.model)
+    if (options.model) args.push("--provider", options.model.provider, "--model", options.model.id)
     if (options.thinking) args.push("--thinking", options.thinking)
     const invocation = currentPiInvocation(args)
     const child = spawn(invocation.command, invocation.args, {

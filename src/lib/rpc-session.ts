@@ -65,6 +65,29 @@ export async function clearSessionHistory():Promise<number> {
  useWorkspace.getState().set({...fresh(),cwd,connectionId:'',workspaceMode})
  return typeof result?.removed==='number'?result.removed:0
 }
+/**
+ * 重命名一条会话。
+ *
+ * 已经打开的会话走 pi 自己的 `set_session_name`（它追加记录并同步内存里的名字），
+ * 没打开的会话往 JSONL 末尾追加同一条 `session_info`——两种写法在磁盘上等价，
+ * 差别只是前者顺便把活着的连接叫醒。
+ */
+export async function renameSession(sessionPath:string,name:string,connectionId?:string):Promise<void>{
+ const clean=name.replace(/[\r\n]+/g,' ').replace(/\s+/g,' ').trim().slice(0,80)
+ if(!clean)throw new Error('标题不能为空')
+ const cwd=useWorkspace.getState().cwd
+ if(mobileRuntime()){await runRemoteHostOperation<null>({name:'session.rename',sessionPath,title:clean})}
+ else{
+  const owner=(connectionId&&connections.has(connectionId)?connectionId:undefined)??sessionOwners.get(sessionPath)
+  if(owner&&connections.has(owner)){
+   await request({type:'set_session_name',name:clean} as RpcCommand,30000,owner)
+   // 连接自己的快照里也存着这个名字（抬头、标签页读它），顺手对齐。
+   await refresh(owner).catch(()=>undefined)
+  }
+  else{ if(!native)throw new Error('重命名会话需要桌面应用'); await invoke('rename_session',{sessionPath,name:clean}) }
+ }
+ await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
+}
 export async function retireSession(sessionPath:string){
  const cwd=useWorkspace.getState().cwd,owner=sessionOwners.get(sessionPath),wasActive=owner?useWorkspace.getState().connectionId===owner:useWorkspace.getState().state?.sessionFile===sessionPath
  if(mobileRuntime()&&wasActive){await changeSession({type:'new_session'});await deleteSession(sessionPath);sessionOwners.delete(sessionPath);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]});return}

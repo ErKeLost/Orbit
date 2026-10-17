@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { invoke } from "../../lib/native";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { MenuItem, PointMenu } from "../../shared/ui/controls";
@@ -42,6 +42,9 @@ function clampDockSize(side: DockPosition, value: number) {
   if (!Number.isFinite(value)) return DOCK_SIZE_DEFAULT[side];
   return Math.min(max, Math.max(min, Math.round(value)));
 }
+
+/** A resize in progress: where the pointer started and the size it has reached. */
+type DockDrag = { origin: number; size: number; reached: number };
 
 /** Where the drag handle sits: on the edge that faces the rest of the shell. */
 function dockSashClass(side: DockPosition) {
@@ -99,7 +102,7 @@ export function TerminalDock({ cwd, open }: { cwd: string; open: boolean }) {
   const [dragging, setDragging] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const sideButton = useRef<HTMLDivElement>(null);
-  const drag = useRef<{ start: number; size: number } | null>(null);
+  const drag = useRef<DockDrag | null>(null);
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const vertical = isVerticalDock(side);
   const SideIcon = sideIcon(side);
@@ -130,39 +133,71 @@ export function TerminalDock({ cwd, open }: { cwd: string; open: boolean }) {
     setTabs((current) => current.filter((tab) => tab.cwd === cwd));
   }, [cwd, tabs]);
 
-  // Opening comes from the footer button, ⌘J, or the "open" flag.
+  // Opening comes from the footer button, ⌘J, or the "open" flag. This has to be
+  // idempotent: React's StrictMode runs mount effects twice in development, and
+  // the second run still reads the pre-update `tabs` closure — which is how one
+  // click on "open terminal" produced two `pi` tabs and two PTYs.
+  const spawning = useRef(false);
   useEffect(() => {
-    if (open && tabs.length === 0) spawn();
+    if (!open) {
+      spawning.current = false;
+      return;
+    }
+    if (tabs.length > 0 || spawning.current) return;
+    spawning.current = true;
+    spawn();
   }, [open, spawn, tabs.length]);
 
-  const paint = (value: number) => {
-    setSize(value);
-  };
+  // Drag state lives here, not in the shell store: a pointermove should re-render
+  // this dock, not every subscriber of the store, and the size is only worth
+  // persisting once the user lets go.
+  const [draggedSize, setDraggedSize] = useState<number | null>(null);
+  const painted = draggedSize ?? size;
 
   const onResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     event.currentTarget.setPointerCapture(event.pointerId);
-    drag.current = { start: vertical ? event.clientY : event.clientX, size };
+    const origin = vertical ? event.clientY : event.clientX;
+    drag.current = { origin, size: painted, reached: painted };
     setDragging(true);
   };
 
   const onResizePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!drag.current) return;
+    const current = drag.current;
+    if (!current) return;
     const point = vertical ? event.clientY : event.clientX;
-    paint(dockSizeFromDrag(side, drag.current.size, drag.current.start, point));
+    const reached = dockSizeFromDrag(side, current.size, current.origin, point);
+    // Kept on the ref as well as in state: the commit on pointerup must use the
+    // value the pointer reached, not whatever this render's closure happens to
+    // hold if the last move has not painted yet.
+    current.reached = reached;
+    setDraggedSize(reached);
   };
 
   const onResizePointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!drag.current) return;
+    const current = drag.current;
+    if (!current) return;
     drag.current = null;
-    setSize(clampDockSize(side, size));
+    setSize(current.reached);
+    setDraggedSize(null);
     setDragging(false);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
-  if (!open) return null;
+  /** Arrow keys resize the focused sash; Shift takes a bigger step. */
+  const onResizeKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const towardsContent = vertical ? "ArrowUp" : "ArrowLeft";
+    const awayFromContent = vertical ? "ArrowDown" : "ArrowRight";
+    if (event.key !== towardsContent && event.key !== awayFromContent) return;
+    event.preventDefault();
+    // A bottom/right dock is anchored on the far edge, so the arrow that points
+    // away from the content is the one that makes it bigger.
+    const growKey = side === "bottom" || side === "right" ? awayFromContent : towardsContent;
+    const step = event.shiftKey ? 64 : 16;
+    setSize(clampDockSize(side, painted + (event.key === growKey ? step : -step)));
+  };
 
   const sash = dockSashClass(side);
 
@@ -170,21 +205,35 @@ export function TerminalDock({ cwd, open }: { cwd: string; open: boolean }) {
     <section
       data-project-terminal-dock=""
       aria-label="终端"
-      style={vertical ? { height: size } : { width: size }}
+      // A hidden dock keeps its tabs and PTYs: hiding a terminal panel is not the
+      // same gesture as killing its shells, and unmounting also threw away the tab
+      // list, so ⌘J followed by ⌘J left a fresh shell behind.
+      hidden={!open}
+      style={vertical ? { height: painted } : { width: painted }}
       className={`relative flex h-full min-h-0 min-w-0 shrink-0 flex-col bg-transparent ${dockBorderClass(side)} border-stroke`}
     >
       <div
         role="separator"
         aria-orientation={vertical ? "horizontal" : "vertical"}
         aria-label="调整终端大小"
-        aria-valuenow={size}
-        className={`${sash} ${dragging ? "bg-content/15" : "hover:bg-content/10"}`}
+        aria-valuenow={painted}
+        aria-valuemin={vertical ? VERTICAL_MIN : HORIZONTAL_MIN}
+        tabIndex={0}
+        className={`${sash} group/sash grid place-items-center outline-none`}
         onPointerDown={onResizePointerDown}
         onPointerMove={onResizePointerMove}
         onPointerUp={onResizePointerUp}
         onPointerCancel={onResizePointerUp}
+        onKeyDown={onResizeKeyDown}
         onDoubleClick={() => setSize(DOCK_SIZE_DEFAULT[side])}
-      />
+      >
+        {/* The grip is the affordance: a 6px hit strip with no ink reads as a
+            border, so the handle only shows itself on hover/drag. */}
+        <span
+          aria-hidden
+          className={`${vertical ? "h-0.5 w-10" : "h-10 w-0.5"} rounded-full transition-colors ${dragging ? "bg-content/40" : "bg-transparent group-hover/sash:bg-content/25"}`}
+        />
+      </div>
       <div className="flex h-9 min-w-0 shrink-0 border-b border-stroke">
         <div role="tablist" aria-label="终端标签" className="scrollbar-none flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overscroll-none pl-1.5 pr-2.5">
           {tabs.map((tab) => {
@@ -260,7 +309,7 @@ export function TerminalDock({ cwd, open }: { cwd: string; open: boolean }) {
       <div ref={lockOverscroll} className="relative min-h-0 min-w-0 flex-1">
         {tabs.map((tab) => (
           <div key={tab.id} aria-hidden={tab.id !== activeId} className={tab.id === activeId ? "absolute inset-0 h-full" : "hidden"}>
-            <TerminalView id={tab.id} cwd={tab.cwd} active={tab.id === activeId} />
+            <TerminalView id={tab.id} cwd={tab.cwd} active={open && tab.id === activeId} />
           </div>
         ))}
       </div>

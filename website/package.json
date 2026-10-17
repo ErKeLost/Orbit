@@ -1,0 +1,35 @@
+{
+  "name": "orbit-site",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*"
+  },
+  "scripts": {
+    "dev": "vite dev --port 8788 --strictPort",
+    "generate-routes": "tsr generate",
+    "build": "vite build",
+    "preview": "vite preview --port 8788 --strictPort"
+  },
+  "dependencies": {
+    "@tanstack/react-router": "1.170.45",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@tanstack/router-cli": "^1.132.0",
+    "@tanstack/router-plugin": "1.168.47",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "lightningcss"
+    ]
+  }
+}

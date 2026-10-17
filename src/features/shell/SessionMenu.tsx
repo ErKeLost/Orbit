@@ -4,7 +4,7 @@ import { report, retireSession } from "../../lib/rpc";
 import { sessionTitle } from "../../lib/session-visual";
 import { MenuItem, MenuSeparator, PointMenu } from "../../shared/ui/controls";
 import { toast } from "../../shared/ui/toast";
-import { Copy, MessageSquare, Trash2 as Trash } from "../../shared/ui/icons";
+import { Copy, MessageSquare, PenLine, Trash2 as Trash } from "../../shared/ui/icons";
 import { ConfirmDialog } from "./ConfirmDialog";
 
 type SessionMenuState = { session: Session; x: number; y: number };
@@ -15,10 +15,13 @@ type SessionMenuState = { session: Session; x: number; y: number };
  */
 export function useSessionContextMenu({
   onOpen,
+  onRename,
   canDelete,
   onDeleted,
 }: {
   onOpen: (session: Session) => void;
+  /** 提供时菜单里多一项「重命名」；调用方负责进入行内编辑。 */
+  onRename?: (session: Session) => void;
   /** 有些条目（还没落盘的活跃会话）删不了。 */
   canDelete?: (session: Session) => boolean;
   onDeleted?: (session: Session) => void;
@@ -57,6 +60,9 @@ export function useSessionContextMenu({
         <PointMenu x={menu.x} y={menu.y} label="会话操作" onClose={() => setMenu(null)}>
           <MenuItem icon={<MessageSquare strokeWidth={1.75} />} onClick={() => { onOpen(menu.session); setMenu(null); }}>打开会话</MenuItem>
           <MenuItem icon={<Copy strokeWidth={1.75} />} onClick={() => { copy(sessionTitle(menu.session)); setMenu(null); }}>复制标题</MenuItem>
+          {onRename ? (
+            <MenuItem icon={<PenLine strokeWidth={1.75} />} onClick={() => { onRename(menu.session); setMenu(null); }}>重命名</MenuItem>
+          ) : null}
           <MenuItem icon={<Copy strokeWidth={1.75} />} onClick={() => { copy(menu.session.path); setMenu(null); }}>复制路径</MenuItem>
           {canDelete?.(menu.session) === false ? null : (
             <>

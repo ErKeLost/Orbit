@@ -1,6 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
-import { queryClient, report, retireSession } from "../../lib/rpc";
+import { queryClient, renameSession, report, retireSession } from "../../lib/rpc";
 import { compactTitle } from "../../lib/session-visual";
 import { useWorkspace } from "../../lib/store";
 import { mergeProjectSessions, useProjectSessions } from "../../hooks/use-project-sessions";
@@ -8,6 +8,7 @@ import { setGrabbing, suppressTextSelection } from "../../shared/lib/drag";
 import { toast } from "../../shared/ui/toast";
 import { GripVertical, X } from "../../shared/ui/icons";
 import { TerminalSpinner } from "./TerminalSpinner";
+import { SessionTitleField } from "./SessionTitleField";
 import type { LayoutRect, LayoutSash, PaneEdge } from "./paneLayout";
 
 /**
@@ -197,6 +198,13 @@ export function SessionPaneHeader({
   );
   const session = merged.sessions.find((item) => item.path === sessionFile);
   const title = compactTitle(session?.name || session?.firstMessage, "新会话", 60);
+  // 双击抬头就能改名：这条路径改的就是用户正在看的那条会话。
+  const [renaming, setRenaming] = useState(false);
+  const commitTitle = (name: string) => {
+    setRenaming(false);
+    if (!session || name.trim() === title) return;
+    void renameSession(session.path, name, sessionFile ? liveSessions.find((item) => item.path === sessionFile)?.connectionId : undefined).catch(report);
+  };
 
   const closeSession = async () => {
     if (!session) return;
@@ -220,7 +228,20 @@ export function SessionPaneHeader({
     >
       {showGrip ? <GripVertical className="size-3.5 shrink-0 text-content/35" strokeWidth={1.75} /> : null}
       <span className={`size-2 shrink-0 rounded-full ${focused ? "bg-accent" : "bg-content/20"}`} />
-      <span className="min-w-0 flex-1 truncate text-xs text-content" title={title}>{title}</span>
+      {renaming && session ? (
+        <SessionTitleField value={title} onCommit={commitTitle} onCancel={() => setRenaming(false)} className="text-xs font-normal" />
+      ) : (
+        <span
+          data-no-drag
+          className="min-w-0 flex-1 truncate text-xs text-content"
+          title={`${title}（双击重命名）`}
+          onDoubleClick={() => {
+            if (session) setRenaming(true);
+          }}
+        >
+          {title}
+        </span>
+      )}
       {running ? <TerminalSpinner className="shrink-0 select-none text-[11px] leading-none text-accent" /> : null}
       <button
         type="button"

@@ -1163,6 +1163,23 @@ fn read_json_file(path: PathBuf, label: &str) -> Result<Value, String> {
         .map_err(|_| format!("{label} 不是有效 JSON"))
 }
 
+/// 写一份 0600 的 JSON：凭据和本机配置都落在这个形状上。
+///
+/// 权限是内容的一部分：`auth.json` 里是 API key，`request-budget.json` 决定请求带
+/// 多少历史，都不该比登录用户更公开。写失败要报出真实的 IO 错误，静默降级成 0644
+/// 才是更糟的那种“成功”。
+fn write_private_json(path: &Path, value: &Value) -> Result<(), String> {
+    let text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
+    fs::write(path, text + "\n").map_err(|e| format!("写入 {} 失败：{e}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("设置 {} 权限失败：{e}", path.display()))?;
+    }
+    Ok(())
+}
+
 fn complete_model_cost(model: &mut Value) -> usize {
     let Some(cost) = model.get_mut("cost").and_then(Value::as_object_mut) else {
         return 0;
@@ -2131,6 +2148,72 @@ pub fn set_gui_setting(key: String, value: Value) -> Result<Value, String> {
     Ok(json!({"key": key, "value": value}))
 }
 
+// --- 请求预算（历史图片上限） ---------------------------------------------
+//
+// 由 Pi 会话里的 `resources/request-budget.ts` 在每次请求前读取：每张历史图片都会
+// 跟着下一轮一起重传，所以「只带最近几张」是首字延迟的设置，不只是网关的体积防线。
+const REQUEST_BUDGET_MIN_BYTES: u64 = 512 * 1024;
+const REQUEST_BUDGET_MAX_BYTES: u64 = 512 * 1024 * 1024;
+/// 非负整数字段及其上限：`maxImages` 是「带几张图」，`keepRecentImages` 是下限。
+const REQUEST_BUDGET_COUNTS: [(&str, u64); 2] = [("maxImages", 64), ("keepRecentImages", 32)];
+
+fn request_budget_path(dir: &Path) -> PathBuf {
+    dir.join("request-budget.json")
+}
+
+/// 可选的非负整数字段：不在就交给 Pi 的默认值，在就必须是 0..=max。
+fn request_budget_count(object: &serde_json::Map<String, Value>, key: &str, max: u64) -> Result<(), String> {
+    match object.get(key) {
+        None => Ok(()),
+        Some(value) => match value.as_u64() {
+            Some(number) if number <= max => Ok(()),
+            Some(_) => Err(format!("{key} 不能超过 {max}")),
+            None => Err(format!("{key} 需要非负整数")),
+        },
+    }
+}
+
+fn validate_request_budget(settings: &Value) -> Result<(), String> {
+    let Some(object) = settings.as_object() else {
+        return Err("请求预算需要是一个对象".into());
+    };
+    if object.get("enabled").is_some_and(|value| !value.is_boolean()) {
+        return Err("enabled 需要 true 或 false".into());
+    }
+    if let Some(bytes) = object.get("maxRequestBytes") {
+        let bytes = bytes.as_u64().ok_or("maxRequestBytes 需要正整数")?;
+        if !(REQUEST_BUDGET_MIN_BYTES..=REQUEST_BUDGET_MAX_BYTES).contains(&bytes) {
+            return Err("maxRequestBytes 超出可用范围".into());
+        }
+    }
+    for (key, max) in REQUEST_BUDGET_COUNTS {
+        request_budget_count(object, key, max)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_request_budget() -> Result<Value, String> {
+    let dir = agent_dir()?;
+    let path = request_budget_path(&dir);
+    let settings = path
+        .exists()
+        .then(|| read_json_file(path.clone(), "请求预算 request-budget.json"))
+        .transpose()?
+        .unwrap_or_else(|| json!({}));
+    Ok(json!({ "path": path, "settings": settings }))
+}
+
+#[tauri::command]
+pub fn save_request_budget(settings: Value) -> Result<Value, String> {
+    validate_request_budget(&settings)?;
+    let dir = agent_dir()?;
+    fs::create_dir_all(&dir).map_err(|e| format!("无法创建 Pi 配置目录：{e}"))?;
+    let path = request_budget_path(&dir);
+    write_private_json(&path, &settings)?;
+    Ok(json!({ "path": path, "settings": settings }))
+}
+
 #[cfg(test)]
 mod gui_settings_tests {
     use super::*;
@@ -2161,6 +2244,20 @@ mod gui_settings_tests {
     fn unknown_settings_are_rejected_instead_of_written() {
         assert!(validate_gui_setting("deviceId", &json!("x")).is_err());
         assert!(validate_gui_setting("defaultProjectTrust", &json!("always")).is_err());
+    }
+
+    #[test]
+    fn request_budget_ranges_are_checked_before_writing() {
+        assert!(validate_request_budget(&json!({})).is_ok());
+        assert!(validate_request_budget(&json!({"enabled":false,"maxImages":10,"keepRecentImages":2})).is_ok());
+        // 0 是合法的：不按张数裁剪。
+        assert!(validate_request_budget(&json!({"maxImages":0})).is_ok());
+        assert!(validate_request_budget(&json!({"maxImages":-1})).is_err());
+        assert!(validate_request_budget(&json!({"maxImages":1000})).is_err());
+        assert!(validate_request_budget(&json!({"keepRecentImages":40})).is_err());
+        assert!(validate_request_budget(&json!({"maxRequestBytes":1024})).is_err());
+        assert!(validate_request_budget(&json!({"enabled":"yes"})).is_err());
+        assert!(validate_request_budget(&json!([])).is_err());
     }
 }
 
@@ -2251,19 +2348,7 @@ fn load_provider_store(dir: &std::path::Path) -> Result<Value, String> {
 }
 
 fn write_provider_store(dir: &std::path::Path, store: &Value) -> Result<(), String> {
-    let path = provider_store_path(dir);
-    fs::write(
-        &path,
-        serde_json::to_string_pretty(store).map_err(|e| e.to_string())? + "\n",
-    )
-    .map_err(|e| format!("写入 Provider 配置失败：{e}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("设置 Provider 配置权限失败：{e}"))?;
-    }
-    Ok(())
+    write_private_json(&provider_store_path(dir), store)
 }
 
 /// Write, or clear, one provider's key in Pi's `auth.json`.
@@ -2296,17 +2381,7 @@ pub(crate) fn store_provider_api_key(provider: &str, api_key: Option<&str>) -> R
             object.remove(provider);
         }
     }
-    fs::write(
-        &auth_path,
-        serde_json::to_string_pretty(&auth).map_err(|e| e.to_string())? + "\n",
-    )
-    .map_err(|e| format!("写入 Pi auth.json 失败：{e}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&auth_path, fs::Permissions::from_mode(0o600));
-    }
-    Ok(())
+    write_private_json(&auth_path, &auth)
 }
 
 pub(crate) fn stored_api_key(auth: &Value, provider: &str) -> Option<String> {
@@ -3289,6 +3364,28 @@ pub async fn delete_session(session_path: String) -> Result<(), String> {
             return Err("只能删除 Pi 会话目录中的 JSONL 文件".into());
         }
         fs::remove_file(target).map_err(|e| format!("删除会话失败：{e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 重命名会话：只往会话 JSONL 末尾追加一条 `session_info`（pi 的 setSessionName
+/// 写的也是这条），所以历史、树和缓存都不需要重建。
+#[tauri::command]
+pub async fn rename_session(session_path: String, name: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = sessions_dir()?
+            .canonicalize()
+            .map_err(|_| "Pi 会话目录不可用".to_string())?;
+        let target = PathBuf::from(&session_path)
+            .canonicalize()
+            .map_err(|_| "会话文件不存在".to_string())?;
+        if target.extension().and_then(|value| value.to_str()) != Some("jsonl")
+            || !target.starts_with(&root)
+        {
+            return Err("只能重命名 Pi 会话目录中的 JSONL 文件".into());
+        }
+        crate::sessions::rename_session_file(&target, &name)
     })
     .await
     .map_err(|e| e.to_string())?

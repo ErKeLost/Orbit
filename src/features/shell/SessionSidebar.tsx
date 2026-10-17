@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import type { Session } from "../../lib/protocol";
 import { useWorkspace } from "../../lib/store";
 import { useProjects } from "../../lib/projects";
-import { queryClient, report } from "../../lib/rpc";
+import { queryClient, renameSession, report } from "../../lib/rpc";
 import { mergeProjectSessions, useProjectSessions } from "../../hooks/use-project-sessions";
 import { useGitBranches } from "../../lib/git";
 import { useDragResize } from "../../shared/hooks/useDragResize";
@@ -16,6 +16,7 @@ import { FileTree } from "./FileTree";
 import { GitChangesPanel } from "../source-control/ui/GitChangesPanel";
 import { useSessionContextMenu } from "./SessionMenu";
 import { useWorkspaceTabs } from "./use-workspace-tabs";
+import { SessionTitleField } from "./SessionTitleField";
 import { TerminalSpinner } from "./TerminalSpinner";
 
 const SIDEBAR_MIN = 220;
@@ -35,6 +36,10 @@ function SessionCard({
   branch,
   onSelect,
   onContextMenu,
+  renaming,
+  onStartRename,
+  onCancelRename,
+  onRename,
 }: {
   session: Session;
   active: boolean;
@@ -43,13 +48,18 @@ function SessionCard({
   branch: string | null;
   onSelect: () => void;
   onContextMenu: (event: ReactMouseEvent) => void;
+  /** 这一行是否正在行内编辑标题（双击标题或右键菜单进入）。 */
+  renaming?: boolean;
+  onStartRename?: () => void;
+  onCancelRename?: () => void;
+  onRename?: (name: string) => void;
 }) {
   const title = sessionTitle(session);
   const statusClass = needsInput ? "text-amber-400" : working ? "text-accent" : "text-content/45";
   return (
     <li className="group relative">
       <div
-        title={title}
+        title={onStartRename ? `${title}\n双击或按 F2 重命名` : title}
         data-session-card={session.path}
         onClick={onSelect}
         onContextMenu={onContextMenu}
@@ -61,10 +71,36 @@ function SessionCard({
               : "border-transparent text-content/80 hover:bg-content/5 hover:text-content"
         }`}
       >
-        <div role="button" tabIndex={0} aria-current={active ? "true" : undefined} onKeyDown={(event) => { if (event.key === "Enter") onSelect(); }} className="rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-accent/50">
+        <div
+          role="button"
+          tabIndex={0}
+          aria-current={active ? "true" : undefined}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") onSelect();
+            else if (event.key === "F2" && onStartRename) {
+              event.preventDefault();
+              onStartRename();
+            }
+          }}
+          className="rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-accent/50"
+        >
           <span className="relative flex min-w-0 items-center gap-2">
             <Icon name={sessionGlyph(session.icon)} className="size-3.5 shrink-0 text-content/55" />
-            <span className="line-clamp-1 min-w-0 flex-1 text-[13px] font-semibold leading-snug text-content">{title}</span>
+            {renaming && onRename && onCancelRename ? (
+              <SessionTitleField value={title} onCommit={onRename} onCancel={onCancelRename} />
+            ) : (
+              <span
+                className="line-clamp-1 min-w-0 flex-1 text-[13px] font-semibold leading-snug text-content"
+                onDoubleClick={(event) => {
+                  if (!onStartRename) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onStartRename();
+                }}
+              >
+                {title}
+              </span>
+            )}
             <span className={`flex shrink-0 items-center gap-1 text-[11px] tabular-nums ${statusClass}`}>
               {needsInput ? (
                 <>
@@ -115,8 +151,17 @@ function SessionsList({ cwd, query }: { cwd: string; query: string }) {
   const tabs = useWorkspaceTabs();
   const openSession = (session: Session) => void tabs.openSession(session).catch(report);
 
+  // 行内改标题：同一时刻只允许一行在编辑，切走就当作取消。
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const commitRename = (session: Session, name: string) => {
+    setRenamingPath(null);
+    if (name.trim() === sessionTitle(session)) return;
+    void renameSession(session.path, name, liveSessions.find((item) => item.path === session.path)?.connectionId).catch(report);
+  };
+
   const { openMenu, menuNode } = useSessionContextMenu({
     onOpen: (session) => void openSession(session),
+    onRename: (session) => setRenamingPath(session.path),
     canDelete: (session) => merged.listedPaths.has(session.path),
     onDeleted: () => void queryClient.invalidateQueries({ queryKey: ["pi", "sessions", cwd] }),
   });
@@ -149,6 +194,10 @@ function SessionsList({ cwd, query }: { cwd: string; query: string }) {
               branch={branchLabel}
               onSelect={() => void openSession(session)}
               onContextMenu={(event) => openMenu(session, event)}
+              renaming={renamingPath === session.path}
+              onStartRename={() => setRenamingPath(session.path)}
+              onCancelRename={() => setRenamingPath(null)}
+              onRename={(name) => commitRename(session, name)}
             />
           );
         })}

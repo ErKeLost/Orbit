@@ -1,0 +1,215 @@
+/*
+ * Orbit — base layer.
+ *
+ * Reset, typography defaults, focus, and the sky that every section sits on. The
+ * sky is fixed so scrolling only moves content: a star field that slides with the
+ * page reads as a texture, one that stays put reads as space.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  color-scheme: dark;
+  background: var(--bg);
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  /* The ground is painted by `.sky` (fixed, behind everything) and by `html` for
+     the canvas. An opaque body background would sit *over* the negative-z sky
+     and flatten the whole page to one colour. */
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: var(--step-0);
+  line-height: 1.62;
+  font-synthesis-weight: none;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+p {
+  margin: 0;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.12;
+  text-wrap: balance;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+::selection {
+  background: rgb(185 139 255 / 0.32);
+  color: #fff;
+}
+
+:focus-visible {
+  outline: 2px solid var(--violet);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* ---- layout -------------------------------------------------------------- */
+
+.wrap {
+  width: 100%;
+  max-width: var(--wrap);
+  margin-inline: auto;
+  padding-inline: clamp(20px, 4.5vw, 44px);
+}
+
+.wrap-narrow {
+  width: 100%;
+  max-width: var(--wrap-narrow);
+  margin-inline: auto;
+  padding-inline: clamp(20px, 4.5vw, 44px);
+}
+
+.skip-link {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  z-index: 90;
+  translate: -50% -220%;
+  padding: 9px 16px;
+  border-radius: var(--r-pill);
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 13px;
+  font-weight: 500;
+  transition: translate var(--dur-2) var(--ease);
+}
+
+.skip-link:focus-visible {
+  translate: -50% 0;
+}
+
+/* ---- sky ----------------------------------------------------------------- */
+
+/*
+ * The app's new-session backdrop, full bleed. `GalaxySky` paints the whole thing
+ * (grid paper, galaxy plate, sweep, stars, motes, meteors), so this element only
+ * positions it: fixed, behind everything, out of the way of the pointer.
+ */
+.sky {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.galaxy-sky {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.galaxy-sky canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+/* ---- text helpers -------------------------------------------------------- */
+
+.mono {
+  font-family: var(--mono);
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--violet);
+}
+
+.eyebrow::before {
+  content: "";
+  width: 18px;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.5;
+}
+
+.gradient-text {
+  background: var(--accent-line);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ---- motion -------------------------------------------------------------- */
+
+.reveal {
+  opacity: 1;
+}
+
+.js .reveal {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity var(--dur-3) var(--ease), transform var(--dur-3) var(--ease);
+  transition-delay: var(--reveal-delay, 0ms);
+}
+
+.js .reveal.is-in {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .js .reveal {
+    opacity: 1;
+    transform: none;
+  }
+}

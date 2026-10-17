@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import {
   DEFAULT_KEEP_RECENT_IMAGES,
+  DEFAULT_MAX_IMAGES,
   DEFAULT_REQUEST_BUDGET_BYTES,
   applyRequestBudget,
   estimateRequestBytes,
@@ -18,13 +19,14 @@ const settings = (over: Partial<RequestBudgetSettings> = {}): RequestBudgetSetti
   enabled: true,
   maxRequestBytes: 1_000_000,
   keepRecentImages: DEFAULT_KEEP_RECENT_IMAGES,
+  maxImages: 0,
   ...over,
 });
 
 describe("request budget settings", () => {
-  test("defaults keep images, 24MiB, and the two most recent pictures", () => {
+  test("defaults keep images, 24MiB, the two most recent pictures, and a ten-image cap", () => {
     const resolved = resolveRequestBudgetSettings(null);
-    expect(resolved).toEqual({ enabled: true, maxRequestBytes: DEFAULT_REQUEST_BUDGET_BYTES, keepRecentImages: DEFAULT_KEEP_RECENT_IMAGES });
+    expect(resolved).toEqual({ enabled: true, maxRequestBytes: DEFAULT_REQUEST_BUDGET_BYTES, keepRecentImages: DEFAULT_KEEP_RECENT_IMAGES, maxImages: DEFAULT_MAX_IMAGES });
     expect(resolveRequestBudgetSettings("nonsense")).toEqual(resolved);
     expect(resolveRequestBudgetSettings({ maxRequestBytes: -1, keepRecentImages: "2" })).toEqual(resolved);
   });
@@ -41,6 +43,8 @@ describe("request budget settings", () => {
   test("enabled:false and a zero image floor survive the round trip", () => {
     expect(resolveRequestBudgetSettings({ enabled: false }).enabled).toBe(false);
     expect(resolveRequestBudgetSettings({ keepRecentImages: 0 }).keepRecentImages).toBe(0);
+    // 0 是“不按张数裁”，不是“一张都不带”。
+    expect(resolveRequestBudgetSettings({ maxImages: 0 }).maxImages).toBe(0);
   });
 });
 
@@ -105,6 +109,35 @@ describe("applyRequestBudget", () => {
     const blocks = (latest?.content ?? []) as { type?: string }[];
     expect(blocks.filter(block => block.type === "image")).toHaveLength(3);
     for (const index of [0, 1, 2, 3]) expect(JSON.stringify(result.messages[index])).not.toContain("A".repeat(200_000));
+  });
+
+  test("drops every picture older than the count cap, whatever the byte budget says", () => {
+    // 体积远没到上限，但历史里已经有 13 张图：只带最近 10 张。每轮都重传旧图
+    // 是首字延迟里能省下来的那一块。
+    const messages = Array.from({ length: 13 }, (_, index) => user([image(1000, `image/png#${index}`)]));
+    const result = applyRequestBudget(messages, settings({ maxImages: 10 }));
+    expect(result.dropped).toBe(3);
+    expect(result.droppedByCount).toBe(3);
+    expect(result.droppedByBudget).toBe(0);
+    // 最近 10 张（index 3..12）还在，最早 3 张换成了占位文本。
+    for (const index of [0, 1, 2]) expect(JSON.stringify(result.messages[index])).not.toContain("A".repeat(1000));
+    for (const index of [3, 12]) expect(JSON.stringify(result.messages[index])).toContain("A".repeat(1000));
+    expect(JSON.stringify(result.messages[0])).toContain("只保留最近 10 张");
+  });
+
+  test("the count cap is a cap on pictures sent, not a filename filter", () => {
+    const many = user([image(1000), image(1000), image(1000), image(1000)]);
+    const result = applyRequestBudget([many], settings({ maxImages: 2 }));
+    const blocks = result.messages[0].content as { type: string; text?: string }[];
+    expect(blocks.filter(block => block.type === "image")).toHaveLength(2);
+    expect(result.dropped).toBe(2);
+  });
+
+  test("maxImages: 0 leaves the whole history in place", () => {
+    const messages = Array.from({ length: 13 }, (_, index) => user([image(1000, `image/png#${index}`)]));
+    const result = applyRequestBudget(messages, settings({ maxImages: 0 }));
+    expect(result.dropped).toBe(0);
+    expect(result.messages).toBe(messages);
   });
 
   test("tool result images are history too", () => {

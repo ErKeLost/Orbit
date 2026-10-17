@@ -32,6 +32,32 @@ import { PromptOutline } from "./PromptOutline";
 const groupCache = new WeakMap<object, ReturnType<typeof groupDisplayMessages>>();
 
 /**
+ * 渲染层的分组对象也按原始分组缓存：`memo(TranscriptGroupView)` 比的是 props
+ * 引用，如果每帧都给所有分组新建一个 `{id, items, indexes, ...}` 包装对象，
+ * 那 memo 就等于没写——一条 300 组的长会话会跟着每个流式帧整屏重渲染。
+ * 值没变就交回同一个对象，只有真正在变的那一组（正在流式的那一组）换引用。
+ */
+const groupViewCache = new WeakMap<object, TranscriptGroup & { indexes: number[] }>();
+
+/**
+ * 一组的「基础时间」（提示段开始时间、从历史里读到的耗时）只跟这一组和
+ * `savedDurations` 有关。流式时每帧都会重算整张表，但它们没变：按组对象缓存，
+ * 每个流式帧就只剩正在变的那一组需要真算。
+ */
+type GroupBaseTimes = { durations: Readonly<Record<string, number>>; startedAt?: number; elapsedMs?: number };
+const groupTimeCache = new WeakMap<object, GroupBaseTimes>();
+
+function groupBaseTimes(group: { items: TranscriptGroup["items"] }, durations: Readonly<Record<string, number>>): GroupBaseTimes {
+  const cached = groupTimeCache.get(group);
+  if (cached && cached.durations === durations) return cached;
+  const startedAt = group.items.find((item) => item.startedAt !== undefined)?.startedAt;
+  const elapsedMs = ([...group.items].reverse().find((item) => item.elapsedMs !== undefined)?.elapsedMs ?? durations[turnDurationId(group.items) ?? ""]) as number | undefined;
+  const next = { durations, startedAt, elapsedMs };
+  groupTimeCache.set(group, next);
+  return next;
+}
+
+/**
  * Commits the streaming transcript to React once per animation frame while a
  * turn runs (Orbit's foreground cadence), and synchronously when idle.
  */
@@ -164,26 +190,33 @@ export function ChatPane({ onSubmitted }: { onSubmitted?: () => void } = {}) {
   const savedDurations = useMemo(() => ({ ...(historical.data ?? {}), ...readTurnDurations(sessionFile) }), [historical.data, sessionFile]);
   // 和 useFrameStream 读的是同一个 facade：用它作分组缓存的键，跨重挂命中。
   const store = useWorkspaceStore();
+  // 上一张分组表：整表没变时沿用它，下游（包括 effect）不会被无意义的引用变化叫醒。
+  const groupsRef = useRef<(TranscriptGroup & { indexes: number[] })[] | null>(null);
 
   const groups = useMemo<(TranscriptGroup & { indexes: number[] })[]>(() => {
     const raw = reuseGroups(groupCache.get(store) ?? [], groupDisplayMessages(transcript.messages));
     groupCache.set(store, raw);
     const claimed = new Set<number>();
-    return raw.map((group) => {
-      const startedAt = group.items.find((item) => item.startedAt !== undefined)?.startedAt;
-      let elapsedMs = ([...group.items].reverse().find((item) => item.elapsedMs !== undefined)?.elapsedMs ?? savedDurations[turnDurationId(group.items) ?? ""]) as number | undefined;
+    const mapped = raw.map((group) => {
+      const base = groupBaseTimes(group, savedDurations);
+      let elapsedMs = base.elapsedMs;
       if (elapsedMs !== undefined) {
         if (claimed.has(elapsedMs)) elapsedMs = undefined;
         else claimed.add(elapsedMs);
       }
-      return {
-        id: group.id,
-        items: group.items,
-        indexes: group.indexes,
-        startedAt: startedAt ?? (transcript.running && group.indexes.includes(transcript.active) ? transcript.turnStartedAt ?? undefined : undefined),
-        elapsedMs,
-      };
+      const startedAt = base.startedAt ?? (transcript.running && group.indexes.includes(transcript.active) ? transcript.turnStartedAt ?? undefined : undefined);
+      // 值没变就交回上一次的对象，否则 `memo(TranscriptGroupView)` 每帧都会失效。
+      const previous = groupViewCache.get(group);
+      if (previous && previous.startedAt === startedAt && previous.elapsedMs === elapsedMs) return previous;
+      const next = { id: group.id, items: group.items, indexes: group.indexes, startedAt, elapsedMs } as TranscriptGroup & { indexes: number[] };
+      groupViewCache.set(group, next);
+      return next;
     });
+    // 整张表都没变就交回同一个数组：下游的 effect 与 map 不必再跑一遍。
+    const last = groupsRef.current;
+    if (last && last.length === mapped.length && mapped.every((group, index) => group === last[index])) return last;
+    groupsRef.current = mapped;
+    return mapped;
   }, [store, transcript.messages, transcript.running, transcript.active, transcript.turnStartedAt, savedDurations]);
 
   useEffect(() => {
@@ -240,7 +273,7 @@ export function ChatPane({ onSubmitted }: { onSubmitted?: () => void } = {}) {
   }, [lastUserId]);
   const runningLabel = transcript.compacting ? "正在压缩上下文" : transcript.phase && transcript.phase !== "就绪" ? transcript.phase : "Working…";
   const dockVertical = dockPosition === "top" || dockPosition === "bottom";
-  const dock = dockOpen && terminalAvailable ? <TerminalDock cwd={project} open /> : null;
+  const dock = terminalAvailable ? <TerminalDock cwd={project} open={dockOpen} /> : null;
   // 终端是 Orbit 的 `ProjectTerminalDock`：首页（新会话面）也要能开。用一个统一的
   // 外框把 dock 撑在所有分支外面——空首页、骨架屏、正文共用同一个位置——这样
   // 「首页 → 第一条消息」以及切项目时 xterm 不会被卸载重挂，PTY 不重启、不闪。
@@ -316,7 +349,7 @@ export function ChatPane({ onSubmitted }: { onSubmitted?: () => void } = {}) {
             {transcript.error && !transcript.running && transcript.error !== lastMessageError ? <ErrorRow error={transcript.error} /> : null}
           </div>
         </div>
-        <PromptOutline messages={transcript.messages} scope={ref} />
+        <PromptOutline scope={ref} />
         <TranscriptJumpToBottom visibility={jumpVisibility} onJump={jumpToBottom} />
         <TranscriptSelectionMenu selection={textSelection} onDismiss={dismissTextSelection} />
       </div>

@@ -154,6 +154,15 @@ type ShellState = {
   openFile: (path: string, options?: { pin?: boolean; pane?: string; diff?: "staged" | "unstaged"; isDir?: boolean; changes?: true; commit?: { sha: string; shortSha: string; subject: string }; name?: string }) => void;
   /** Open a browser tab (a real web view) in a pane, and return its tab path. */
   openBrowser: (url: string, options?: { pane?: string; edge?: PaneEdge; path?: string }) => string;
+  /**
+   * Open an http(s) link from inside the app.
+   *
+   * A link in the transcript belongs beside the conversation, not in the user's
+   * own browser: this focuses the browser tab this workspace already has (and
+   * navigates it, the way a browser would) or opens one in a pane of its own on
+   * the right. It never grows a second `browser:` page per click.
+   */
+  openLink: (url: string) => string;
   /** The page a browser tab is showing, as the tab strip's label and the page itself report it. */
   updateBrowser: (path: string, patch: { url?: string; title?: string }) => void;
   pinFile: (path: string, pane?: string) => void;
@@ -461,7 +470,10 @@ export const useShell = create<ShellState>((set, get) => {
       }
       const path = asked && isBrowserPath(asked) ? asked : `browser:${crypto.randomUUID().slice(0, 8)}`;
       const name = browserTabName(url);
-      const entry: OpenFile = { path, name, preview: false, browser: { url } };
+      // A named tab is the agent's (`browser:open` carries the id the app minted
+      // for a run). Marking it is what keeps a link the user clicks from landing
+      // on a page that run will close the moment it finishes.
+      const entry: OpenFile = { path, name, preview: false, browser: { url, ...(asked ? { agent: true as const } : {}) } };
       const requested = options?.pane && workspace.panes[options.pane] ? options.pane : null;
       const target = requested ?? (workspace.panes[workspace.activePane] ? workspace.activePane : Object.keys(workspace.panes)[0] ?? null);
       if (target && !options?.edge) {
@@ -484,6 +496,26 @@ export const useShell = create<ShellState>((set, get) => {
         { entering: { ...state.entering, [paneId]: edge } },
       );
       return path;
+    },
+
+    openLink: (url) => {
+      const state = get();
+      const workspace = state.workspaces[activeIndex(state)];
+      const browserTabs = Object.entries(workspace.panes)
+        .flatMap(([paneId, pane]) => pane.files.filter((file) => file.browser).map((file) => ({ paneId, file })));
+      // The user's own page, if the workspace has one: a link navigates it and
+      // brings it forward, instead of leaving a stale page per click behind.
+      const own = browserTabs.find((entry) => !entry.file.browser?.agent);
+      if (own) {
+        get().updateBrowser(own.file.path, { url });
+        get().focusFile(own.file.path, own.paneId);
+        return own.file.path;
+      }
+      // Only a run's page exists: share its pane rather than opening a second
+      // split. The run closes its own tab when it ends, so the page the user
+      // clicked stays — as the one tab left in that pane.
+      const host = browserTabs[0];
+      return get().openBrowser(url, host ? { pane: host.paneId } : { edge: "right" });
     },
 
     updateBrowser: (path, patch) => {

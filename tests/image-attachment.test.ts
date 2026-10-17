@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import {
   MAX_ATTACHMENT_BYTES,
-  MAX_ATTACHMENT_EDGE,
+  MAX_IMAGE_EDGE as MAX_ATTACHMENT_EDGE,
   RECODE_ABOVE_BYTES,
+} from "../src/lib/image-limits"
+import {
   outputMimeFor,
   prepareImageAttachment,
   resolveImageMime,
@@ -113,6 +115,20 @@ describe("preparing an attachment", () => {
     expect(calls.rescale).toBe(0)
     expect(prepared.recoded).toBe(false)
     expect(prepared.blob).toBe(small.blob)
+  })
+
+  test("keeps PNG for a screenshot, but not when the lossless copy gets oversized", async () => {
+    // 1568px of UI text is a few hundred KB as PNG; a photo or a noisy capture
+    // is several MB, and those megabytes are exactly the upload latency the user
+    // waits on before the first token.
+    const screenshot = { name: "shot.png", type: "image/png", size: 3_000_000, blob: blob(3_000_000, "image/png") }
+    const small = await prepareImageAttachment(screenshot, fakeCodec({ rescale: async (_blob, _edge, mimeType) => blob(mimeType === "image/png" ? 400_000 : 120_000, mimeType) }).codec)
+    expect(small.mimeType).toBe("image/png")
+    expect(small.blob.size).toBe(400_000)
+
+    const oversized = await prepareImageAttachment(screenshot, fakeCodec({ rescale: async (_blob, _edge, mimeType) => blob(mimeType === "image/png" ? 4_000_000 : 300_000, mimeType) }).codec)
+    expect(oversized.mimeType).toBe("image/jpeg")
+    expect(oversized.blob.size).toBe(300_000)
   })
 
   test("names the type even when nothing had to be re-encoded", async () => {

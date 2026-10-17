@@ -5,10 +5,12 @@
  * 另外提供 base64 转换：把附件发给 Pi 前必须转成 base64，几 MB 的截图在主线程
  * 上转要几百毫秒（弱机器 1~2 秒），正是"发图片卡一下"的来源。
  */
+import { PNG_FALLBACK_BYTES } from "./image-limits";
+
 type EncodeRequest = { kind: "encode"; id: number; width: number; height: number; rgba: ArrayBuffer; mimeType: string; maxEdge: number };
 type Base64Request = { kind: "base64"; id: number; buffer: ArrayBuffer };
 type WorkerRequest = EncodeRequest | Base64Request;
-type WorkerResponse = { id: number; blob?: Blob; base64?: string; error?: string };
+type WorkerResponse = { id: number; blob?: Blob; mimeType?: string; base64?: string; error?: string };
 
 const post = (message: WorkerResponse) => (self as unknown as { postMessage: (message: WorkerResponse) => void }).postMessage(message);
 
@@ -24,6 +26,11 @@ function toBase64(buffer: ArrayBuffer) {
   return btoa(binary);
 }
 
+/**
+ * PNG 是截图的正确默认值（字形不带振铃），但一张 Retina 照片或噪声渐变仍能编到
+ * 好几 MB，而那些字节就是纯上传延迟。过了阈值就把同一块 canvas 再编一次 JPEG ——
+ * 不用重画，canvas 还在手上，代价只是多一遍编码。
+ */
 async function handleEncode(request: EncodeRequest) {
   const { width, height, rgba, mimeType, maxEdge } = request;
   const source = new OffscreenCanvas(width, height);
@@ -41,7 +48,11 @@ async function handleEncode(request: EncodeRequest) {
     scaledContext.drawImage(source, 0, 0, target.width, target.height);
   }
 
-  return target.convertToBlob({ type: mimeType });
+  const blob = await target.convertToBlob({ type: mimeType });
+  if (mimeType === "image/png" && blob.size > PNG_FALLBACK_BYTES) {
+    return { blob: await target.convertToBlob({ type: "image/jpeg", quality: 0.9 }), mimeType: "image/jpeg" };
+  }
+  return { blob, mimeType };
 }
 
 async function handleBase64(request: Base64Request) {
@@ -52,7 +63,7 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
   const work = request.kind === "base64"
     ? handleBase64(request).then(base64 => post({ id: request.id, base64 }))
-    : handleEncode(request).then(blob => post({ id: request.id, blob }));
+    : handleEncode(request).then(({ blob, mimeType: encoded }) => post({ id: request.id, blob, mimeType: encoded }));
   void work.catch(error => {
     post({ id: request.id, error: error instanceof Error ? error.message : String(error) });
   });

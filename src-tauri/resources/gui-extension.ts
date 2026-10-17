@@ -9,7 +9,7 @@ import {COMPUTER_USE_TOOL_NAMES,registerComputerUseMode} from './computer-use/mo
 import {BROWSER_USE_TOOL_NAMES,registerBrowserUseMode} from './browser-use/mode.ts'
 import {providerToolChars} from './context-payload.ts'
 import {applyRequestBudget,resolveRequestBudgetSettings} from './request-budget.ts'
-import type {BudgetMessage} from './request-budget.ts'
+import type {BudgetMessage,RequestBudgetSettings} from './request-budget.ts'
 import {enableFastSearchTools,FAST_SEARCH_GUIDELINE} from './search-tools.ts'
 import {enableWebSearchTool,registerWebSearch,resolveWebSearchSettings} from './web-search.ts'
 // Pi official docs/extensions.md: registerCommand, getAllTools, setActiveTools,
@@ -1045,6 +1045,16 @@ export function registerImages(pi:ExtensionAPI):void{
   }
 }
 
+/**
+ * 这一次为什么被略去。张数上限是常态（每轮都会命中），体积预算不是；把理由说成一句
+ * 话，用户才知道该调哪个开关。
+ */
+function dropReason(settings:RequestBudgetSettings,result:{droppedByCount:number;droppedByBudget:number}):string{
+  if(result.droppedByCount&&result.droppedByBudget)return `只保留最近 ${settings.maxImages} 张、且本次请求超出体积预算`
+  if(result.droppedByCount)return `只保留最近 ${settings.maxImages} 张`
+  return '本次请求超出体积预算'
+}
+
 export default async function (pi: ExtensionAPI) {
   let latestProviderToolChars: number | undefined
   registerSubagentTools(pi)
@@ -1065,11 +1075,11 @@ export default async function (pi: ExtensionAPI) {
     // content，所以在结构类型上过一道。
     const settings=readRequestBudgetSettings(ctx.model?.inputLimits?.maxRequestBytes)
     const result=applyRequestBudget(event.messages as unknown as BudgetMessage[],settings)
-    const summary=JSON.stringify({limitBytes:settings.maxRequestBytes,keepRecentImages:settings.keepRecentImages,dropped:result.dropped,bytesBefore:result.bytesBefore,bytesAfter:result.bytesAfter,overLimit:result.overLimit})
+    const summary=JSON.stringify({limitBytes:settings.maxRequestBytes,keepRecentImages:settings.keepRecentImages,maxImages:settings.maxImages,dropped:result.dropped,droppedByCount:result.droppedByCount,droppedByBudget:result.droppedByBudget,bytesBefore:result.bytesBefore,bytesAfter:result.bytesAfter,overLimit:result.overLimit})
     if(summary!==publishedBudget){publishedBudget=summary;ctx.ui.setStatus(REQUEST_BUDGET_STATUS,summary)}
     if(result.dropped&&!announcedDrop){
       announcedDrop=true
-      ctx.ui.notify(`本次请求超出体积预算，已略去较早的 ${result.dropped} 张截图（历史还在，压缩上下文或开新会话就能让它们回来）`,'info')
+      ctx.ui.notify(`${dropReason(settings,result)}，已略去较早的 ${result.dropped} 张截图（历史还在，界面里的图不受影响）`,'info')
     }
     if(!result.dropped)announcedDrop=false
     // 裁完还超，是预算器救不了的那种超（非图片部分自己就超了，或最近几张图加起来就超了）。

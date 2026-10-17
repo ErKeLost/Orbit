@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { Popover } from "../../shared/ui/Popover";
-import type { DisplayMessage } from "../../lib/protocol";
 
 /**
  * Orbit's `PromptOutline`: one short bar per prompt down the right edge of
@@ -18,7 +17,13 @@ const MIN_PROMPTS = 2;
 
 type Prompt = { id: string; text: string; preview: string };
 
-export function PromptOutline({ messages, scope }: { messages: DisplayMessage[]; scope: RefObject<HTMLElement | null> }) {
+function samePrompts(a: readonly Prompt[], b: readonly Prompt[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i].id !== b[i].id || a[i].text !== b[i].text) return false;
+  return true;
+}
+
+export function PromptOutline({ scope }: { scope: RefObject<HTMLElement | null> }) {
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hover, setHover] = useState<{ id: string; y: number } | null>(null);
@@ -26,30 +31,46 @@ export function PromptOutline({ messages, scope }: { messages: DisplayMessage[];
 
   // The rail is derived from the transcript's own DOM, so it stays correct even
   // while the message list is paged or filtered.
+  //
+  // 这里不拿 messages 当依赖：流式时它每帧都换引用，依赖它等于每帧拆掉重建一次
+  // MutationObserver 并重扫全部提示行。节点增删本身由 observer 捕捉（切会话、
+  // 新提示都是 childList 变动），流式 token 只是 characterData，不该触发扫描。
   useEffect(() => {
     const scroller = scope.current;
     if (!scroller) return;
+    let frame = 0;
     const collect = () => {
+      frame = 0;
       const rows = Array.from(scroller.querySelectorAll<HTMLElement>("[data-prompt-anchor]"));
-      setPrompts(
-        rows.map((row) => {
-          const id = row.dataset.promptAnchor ?? "";
-          const text = (row.textContent ?? "").replace(/\s+/g, " ").trim();
-          return { id, text, preview: text.slice(0, 120) };
-        }),
-      );
+      const next = rows.map((row) => {
+        const id = row.dataset.promptAnchor ?? "";
+        const text = (row.textContent ?? "").replace(/\s+/g, " ").trim();
+        return { id, text, preview: text.slice(0, 120) };
+      });
+      // 同一批提示行不要换新数组：没有变化就不必重渲染这条轨道。
+      setPrompts((current) => samePrompts(current, next) ? current : next);
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(collect);
     };
     collect();
-    const observer = new MutationObserver(collect);
-    observer.observe(scroller, { childList: true, subtree: true, characterData: true });
-    return () => observer.disconnect();
-  }, [scope, messages]);
+    const observer = new MutationObserver(schedule);
+    observer.observe(scroller, { childList: true, subtree: true });
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [scope]);
 
   // Which prompt the reader is currently looking at.
+  // 流式时编辑区每帧都贴底，scroll 事件跟着每帧来；直接在里面逐行量 rect 就是
+  // 每帧一次强制布局。这里合并到每帧最多量一次，结果与原来一致。
   useEffect(() => {
     const scroller = scope.current;
     if (!scroller) return;
+    let frame = 0;
     const update = () => {
+      frame = 0;
       const top = scroller.getBoundingClientRect().top;
       let current: string | null = null;
       for (const row of scroller.querySelectorAll<HTMLElement>("[data-prompt-anchor]")) {
@@ -58,9 +79,15 @@ export function PromptOutline({ messages, scope }: { messages: DisplayMessage[];
       }
       setActiveId(current);
     };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
     update();
-    scroller.addEventListener("scroll", update, { passive: true });
-    return () => scroller.removeEventListener("scroll", update);
+    scroller.addEventListener("scroll", schedule, { passive: true });
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      scroller.removeEventListener("scroll", schedule);
+    };
   }, [prompts.length, scope]);
 
   if (prompts.length < MIN_PROMPTS) return null;

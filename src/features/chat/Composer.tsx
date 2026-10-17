@@ -91,8 +91,10 @@ async function readClipboardImage(): Promise<ImageAttachment | null> {
   const image = await readImage();
   try {
     const [{ width, height }, rgba] = await Promise.all([image.size(), image.rgba()]);
-    const blob = await encodeClipboardImage({ width, height, rgba });
-    return { kind: "image", id: crypto.randomUUID(), name: "粘贴的图片.png", mimeType: "image/png", blob };
+    const { blob, mimeType } = await encodeClipboardImage({ width, height, rgba });
+    // 超大截图会被编码器回退成 JPEG，附件的类型跟着字节走，而不是假定 PNG。
+    const extension = mimeType === "image/jpeg" ? "jpg" : "png";
+    return { kind: "image", id: crypto.randomUUID(), name: `粘贴的图片.${extension}`, mimeType, blob };
   } finally {
     await image.close();
   }
@@ -585,13 +587,16 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
       // The composer shows `@name`; the harness gets a path it can resolve.
       const text = expandMentionLabels(draftText, mentionLabels);
       perfMarkSend();
-      useWorkspace.getState().event({ type: "prompt_submitted" });
+      const attachmentsAtSend = attachments;
+      const images = attachmentsAtSend.filter((item): item is ImageAttachment => item.kind === "image");
+      // 张数交给等待位：带图的一轮慢在上传，说“正在发送图片”比笼统的“正在思考”
+      // 更能区分“在干活”和“卡住了”。
+      useWorkspace.getState().event({ type: "prompt_submitted", images: images.length });
       const previewId = `queued-${crypto.randomUUID()}`;
-      const fileChips = attachments.filter((item): item is FileAttachment => item.kind === "file");
-      const images = attachments.filter((item): item is ImageAttachment => item.kind === "image");
+      const fileChips = attachmentsAtSend.filter((item): item is FileAttachment => item.kind === "file");
       const prefix = fileChips.map((item) => `[文件] ${item.path}`).join("\n");
       const message = prefix ? `${prefix}\n\n${text}`.trim() : text;
-      const before = attachments;
+      const before = attachmentsAtSend;
       setAttachments([]);
       draftRef.current?.clear();
       // A freshly sent message is now the newest history entry.

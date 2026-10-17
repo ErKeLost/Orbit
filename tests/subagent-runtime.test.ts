@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
+import { parseModelReference } from "../src-tauri/resources/subagents/model-ref"
 import { MAX_ACTIVE_CHILDREN, modelVisibleOutput, SubagentRuntime } from "../src-tauri/resources/subagents/runtime"
 import { filterForkSession } from "../src-tauri/resources/subagents/fork"
 import type { AgentNode, AgentSnapshot } from "../src-tauri/resources/subagents/types"
@@ -623,6 +624,31 @@ describe("agent addressing and lifecycle", () => {
     // The worker's own control surface is the only file extension.
     expect(extensions.filter((name) => name.endsWith(".ts"))).toHaveLength(1)
     expect(extensions.some((name) => name.includes("gui-extension"))).toBe(false)
+  })
+
+  test("passes the worker model as --provider/--model instead of one joined reference", async () => {
+    const paths = await fixture()
+    useFakePi()
+    const runtime = makeRuntime(paths.parentSession)
+    // Orbit's custom provider `Deepseek` only differs in case from the built-in
+    // catalog provider `deepseek`. Joined into `Deepseek/deepseek-flash`, Pi
+    // lowercases the prefix and binds the catalog provider, which has no key in
+    // auth.json — the worker then dies with "No API key found for deepseek".
+    const started = await runtime.spawn({ name: "worker", task: "x", cwd: paths.cwd, model: { provider: "Deepseek", id: "deepseek-flash" } })
+    const argv = await spawnArgv(paths.root, started.agent.id)
+    expect(argv).not.toContain("Deepseek/deepseek-flash")
+    expect(argv[argv.indexOf("--provider") + 1]).toBe("Deepseek")
+    expect(argv[argv.indexOf("--model") + 1]).toBe("deepseek-flash")
+  })
+
+  test("keeps model ids that contain slashes intact", async () => {
+    const paths = await fixture()
+    useFakePi()
+    const runtime = makeRuntime(paths.parentSession)
+    const started = await runtime.spawn({ name: "worker", task: "x", cwd: paths.cwd, model: parseModelReference("llmgate/devin/gpt-5.5") })
+    const argv = await spawnArgv(paths.root, started.agent.id)
+    expect(argv[argv.indexOf("--provider") + 1]).toBe("llmgate")
+    expect(argv[argv.indexOf("--model") + 1]).toBe("devin/gpt-5.5")
   })
 
   test("publishes snapshots for the activity panel", async () => {

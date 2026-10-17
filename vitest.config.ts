@@ -12,6 +12,7 @@ export default defineConfig({
       "src/features/source-control/ui/**/*.test.ts",
       "src/features/source-control/ui/**/*.test.tsx",
       "src/shared/hooks/**/*.test.ts",
+      "src/features/shell/**/*.test.tsx",
     ],
     environment: "happy-dom",
   },

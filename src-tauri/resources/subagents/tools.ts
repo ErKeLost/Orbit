@@ -1,5 +1,6 @@
 import type { AgentToolResult } from "@earendil-works/pi-agent-core"
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent"
+import { parseModelReference, type WorkerModel } from "./model-ref.ts"
 import { MAX_ACTIVE_CHILDREN, modelVisibleOutput, SubagentRuntime, type AgentContextMode, type TaskInput } from "./runtime.ts"
 import { ROOT_PATH } from "./paths.ts"
 import type { AgentNode, AgentSnapshot } from "./types.ts"
@@ -101,13 +102,27 @@ const TargetSchema = {
   additionalProperties: false,
 } as const
 
-type SpawnInput = Omit<TaskInput, "name" | "task"> & { task_name: string; message: string; context?: AgentContextMode }
+// The tool surface takes the model as one `provider/model` string (that is what
+// the model itself will type), while the runtime wants the two halves.
+type SpawnInput = Omit<TaskInput, "name" | "task" | "model"> & { task_name: string; message: string; model?: string; context?: AgentContextMode }
 
 function toolResult(text: string, snapshot: AgentSnapshot, agent?: AgentNode, output?: string): ToolResult {
   return {
     content: [{ type: "text", text: modelVisibleOutput(text) }],
     details: { ...snapshot, ...(agent ? { agent } : {}), ...(output !== undefined ? { output: modelVisibleOutput(output) } : {}) },
   }
+}
+
+function workerModel(input: SpawnInput, ctx: RuntimeContext): WorkerModel | undefined {
+  // The parent's own pair is already resolved, so it travels as two values:
+  // joining them into `provider/id` makes Pi re-parse the prefix, and a name
+  // that only differs in case from a built-in catalog provider resolves to that
+  // catalog entry instead of the authenticated one.
+  const requested = input.model?.trim()
+  if (!requested) return ctx.model ? { provider: ctx.model.provider, id: ctx.model.id } : undefined
+  // An explicit override stays `provider/model` on the tool surface. A bare id
+  // inherits the supervisor's provider rather than silently dropping the wish.
+  return parseModelReference(requested) ?? (ctx.model ? { provider: ctx.model.provider, id: requested } : undefined)
 }
 
 function taskOptions(input: SpawnInput, ctx: RuntimeContext): TaskInput {
@@ -117,7 +132,7 @@ function taskOptions(input: SpawnInput, ctx: RuntimeContext): TaskInput {
     name: input.task_name,
     task: input.message,
     cwd: input.cwd || ctx.cwd,
-    model: input.model || (ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined),
+    model: workerModel(input, ctx),
     thinking: input.thinking || ctx.thinkingLevel,
     context: input.context ?? "inherit",
   }

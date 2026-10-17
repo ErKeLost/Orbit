@@ -47,45 +47,39 @@ function MeterRing({ ratio, spinning }: { ratio: number; spinning?: boolean }) {
 const SOURCES: Record<ContextSourceKey, { label: string; note: string; swatch: string }> = {
   system: {
     label: "System",
-    note: "系统提示词、工具定义与 harness 控制信息。工具 schema 每次请求都要重发一遍。",
+    note: "System prompt, tool definitions and harness control text. The tool schema is re-sent on every request.",
     swatch: "context-swatch-system",
   },
   conversation: {
-    label: "对话",
-    note: "你发出的消息、模型的回复与思考过程。",
+    label: "Conversation",
+    note: "Your messages, the model's replies and its reasoning.",
     swatch: "context-swatch-conversation",
   },
   tools: {
-    label: "工具结果",
-    note: "工具调用的参数与输出。一次长输出会一直留在窗口里，直到压缩为止。",
+    label: "Tool results",
+    note: "Tool arguments and output. One long output stays in the window until the next compaction.",
     swatch: "context-swatch-tools",
   },
   app: {
-    label: "附件与图片",
-    note: "截图、图片附件，以及工具返回的图片。每张图按约 1.1K token 折算。",
+    label: "Attachments",
+    note: "Screenshots, image attachments and images returned by tools. Roughly 1.1K tokens each.",
     swatch: "context-swatch-attachment",
   },
 };
-
-const REMAINING = {
-  label: "剩余额度",
-  note: "窗口里还没被占用的部分。",
-  swatch: "bg-content/20",
-} as const;
 
 const percentLabel = (ratio: number) => `${Math.round(ratio * 1000) / 10}%`;
 
 /**
  * Orbit's context ring; its action is Pi's `compact`.
  *
- * 弹出的卡片把窗口拆成四类来源 + 剩余额度。总量是 provider 回报的真数，
+ * 弹出的卡片把窗口拆成四类来源。总量是 provider 回报的真数，
  * 分类是本地折算后按比例缩放的预估值（推导见 `contextBreakdown.ts`）：卡片上不写
  * 免责声明（用户要求去掉那两行），所以文案不能把分类说成实测值。
  */
 export function ContextMeter({ usage, compacting }: { usage?: { used: number; window: number }; compacting: boolean }) {
   const [hovered, setHovered] = useState(false);
   const [pinned, setPinned] = useState(false);
-  const [expanded, setExpanded] = useState<ContextSourceKey | "remaining" | null>(null);
+  const [expanded, setExpanded] = useState<ContextSourceKey | null>(null);
   const root = useRef<HTMLDivElement>(null);
   // 卡片比原来那颗环大得多：光标从环移到卡片上要跨过几像素空隙，所以“离开”
   // 得留一点余量，否则卡片会在用户伸手去点的那一瞬间消失。
@@ -129,9 +123,7 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
   // The ring, the headline and the bar share one scale: calm is neutral, 75%
   // turns amber, 90% turns red — the same thresholds everywhere.
   const levelClass = ratio >= 0.9 ? "text-red-400" : ratio >= 0.75 ? "text-amber-400" : "text-content";
-  const headline = compacting ? "正在压缩上下文" : `${Math.round(ratio * 100)}% context used`;
-  const contextWindow = usage?.window ?? 0;
-  const remaining = Math.max(0, contextWindow - used);
+  const headline = compacting ? "Compacting context" : `${Math.round(ratio * 100)}% context used`;
   const classified = CONTEXT_SOURCE_KEYS.reduce((total, key) => total + buckets[key], 0);
   const rows = CONTEXT_SOURCE_KEYS.filter((key) => buckets[key] > 0);
   const hasBreakdown = usage != null && !compacting && classified > 0;
@@ -141,7 +133,7 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
       <button
         type="button"
         title="Context usage"
-        aria-label={`${headline}, ${usage ? `${compact.format(usage.used)} / ${compact.format(usage.window)} tokens` : "等待 Pi 更新用量"}`}
+        aria-label={`${headline}, ${usage ? `${compact.format(usage.used)} / ${compact.format(usage.window)} tokens` : "waiting for Pi usage"}`}
         aria-expanded={pinned}
         onClick={() => {
           // 已固定时再点一次就是关掉：光标还停在环上，只清 pinned 的话卡片会赖着不走。
@@ -174,7 +166,7 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
           <div className="space-y-2.5">
             <div className="text-[13px] font-semibold leading-4 text-content">Context</div>
 
-            {/* A stale bar under “正在压缩” would be a lie: the old usage died with the compaction. */}
+            {/* A stale bar under “Compacting” would be a lie: the old usage died with the compaction. */}
             {usage && !compacting ? (
               <>
                 <div className="flex items-end justify-between gap-2">
@@ -226,38 +218,22 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
                       // 知道总量但拆不开（系统提示还没回传）：不编造四段，只把真数放上来。
                       <div className="flex items-center gap-2 py-[3px]">
                         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-content/30" />
-                        <span className="text-[12px] leading-4 text-content/75">已用量</span>
+                        <span className="text-[12px] leading-4 text-content/75">Used</span>
                         <span className="ml-auto font-mono text-[11.5px] tabular-nums text-content/85">{compact.format(usage.used)}</span>
                       </div>
                     )
                   ) : null}
-
-                  {used > 0 ? <div className="my-1.5 h-px bg-content/10" /> : null}
-
-                  <button
-                    type="button"
-                    onClick={() => setExpanded(expanded === "remaining" ? null : "remaining")}
-                    className="-mx-1 flex w-[calc(100%+0.5rem)] flex-col rounded px-1 text-left hover:bg-content/5"
-                    aria-expanded={expanded === "remaining"}
-                  >
-                    <span className="flex items-center gap-2 py-[3px]">
-                      <span className={`h-1.5 w-1.5 shrink-0 rounded-[2px] ${REMAINING.swatch}`} />
-                      <span className="text-[12px] leading-4 text-content/55">{REMAINING.label}</span>
-                      <span className="ml-auto font-mono text-[11.5px] tabular-nums text-content/60">{compact.format(remaining)}</span>
-                    </span>
-                    {expanded === "remaining" ? <span className="pb-1 pl-3.5 text-[10.5px] leading-4 text-content/40">{REMAINING.note}</span> : null}
-                  </button>
                 </div>
               </>
             ) : (
-              <div className="text-[11px] leading-4 text-content/50">{compacting ? "压缩完成后重新读取用量" : "等待 Pi 更新用量"}</div>
+              <div className="text-[11px] leading-4 text-content/50">{compacting ? "Usage returns after compaction" : "Waiting for Pi to report usage"}</div>
             )}
 
             {pinned ? (
               <button
                 type="button"
                 disabled={running || compacting}
-                title={running ? "等待当前回复结束" : "压缩这段对话的上下文"}
+                title={running ? "Wait for the current reply to finish" : "Compact this conversation"}
                 onClick={() => {
                   setPinned(false);
                   setExpanded(null);
@@ -265,7 +241,7 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
                 }}
                 className="w-full rounded-md border border-content/10 bg-content/5 px-2 py-1.5 text-[11px] text-content hover:bg-content/15 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                立即压缩
+                Compact now
               </button>
             ) : null}
           </div>

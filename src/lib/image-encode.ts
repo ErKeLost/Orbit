@@ -7,22 +7,24 @@
  * 的 OffscreenCanvas 上，RGBA 用 transferable 零拷贝过去。
  *
  * 另外顺手做长边降采样：截图常带 2x Retina 尺寸（14.7MP），编码耗时和 base64
- * 体积都随像素数走，降到长边 2048 之后文字依然清晰，但编码从 172ms 掉到 ~15ms。
+ * 体积都随像素数走，降到长边 1568 之后文字依然清晰，但编码从 172ms 掉到 ~15ms。
+ *
+ * 长边与体积阈值统一在 `image-limits.ts`（和「选文件」那条路共用同一套数字）。
  */
 
 import { bytesToBase64 } from "./image-bytes";
+import { MAX_IMAGE_EDGE } from "./image-limits";
 
 export type RgbaImage = { width: number; height: number; rgba: Uint8Array };
-
-/** 长边上限；只缩小不放大。 */
-export const MAX_IMAGE_EDGE = 2048;
 
 const ENCODE_TIMEOUT_MS = 20_000;
 
 type EncodeRequest = { kind: "encode"; id: number; width: number; height: number; rgba: ArrayBuffer; mimeType: string; maxEdge: number };
 type Base64Request = { kind: "base64"; id: number; buffer: ArrayBuffer };
 type WorkerRequest = EncodeRequest | Base64Request;
-type EncodeResponse = { id: number; blob?: Blob; base64?: string; error?: string };
+type EncodeResponse = { id: number; blob?: Blob; mimeType?: string; base64?: string; error?: string };
+/** 编码结果：PNG 可能是 JPEG（见 worker 的尺寸回退），所以 mimeType 跟着一起回来。 */
+export type EncodedImage = { blob: Blob; mimeType: string };
 
 let worker: Worker | null = null;
 let nextId = 1;
@@ -78,7 +80,7 @@ function postToWorker(request: WorkerRequest, transfer: Transferable[]): Promise
   });
 }
 
-function encodeInWorker(image: RgbaImage, mimeType: string): Promise<Blob> {
+function encodeInWorker(image: RgbaImage, mimeType: string): Promise<EncodedImage> {
   const id = nextId++;
   // 只有整块 buffer 就是这块像素时才敢 transfer（否则切片，避免把别人的内存搬走）。
   const exact = image.rgba.byteOffset === 0 && image.rgba.byteLength === image.rgba.buffer.byteLength;
@@ -93,7 +95,7 @@ function encodeInWorker(image: RgbaImage, mimeType: string): Promise<Blob> {
   };
   return postToWorker(request, [request.rgba]).then(response => {
     if (!response.blob) throw new Error("图片编码失败");
-    return response.blob;
+    return { blob: response.blob, mimeType: response.mimeType ?? mimeType };
   });
 }
 
@@ -105,8 +107,8 @@ function base64InWorker(buffer: ArrayBuffer): Promise<string> {
   });
 }
 
-function encodeOnMainThread(image: RgbaImage, mimeType: string): Promise<Blob> {
-  return new Promise<Blob>((resolve, reject) => {
+function encodeOnMainThread(image: RgbaImage, mimeType: string): Promise<EncodedImage> {
+  return new Promise<EncodedImage>((resolve, reject) => {
     const canvas = document.createElement("canvas");
     canvas.width = image.width;
     canvas.height = image.height;
@@ -115,7 +117,7 @@ function encodeOnMainThread(image: RgbaImage, mimeType: string): Promise<Blob> {
     context.putImageData(new ImageData(new Uint8ClampedArray(image.rgba), image.width, image.height), 0, 0);
     const scale = Math.min(1, MAX_IMAGE_EDGE / Math.max(image.width, image.height));
     if (scale >= 1) {
-      canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("图片编码失败")), mimeType);
+      canvas.toBlob(blob => blob ? resolve({ blob, mimeType }) : reject(new Error("图片编码失败")), mimeType);
       return;
     }
     const scaled = document.createElement("canvas");
@@ -125,15 +127,16 @@ function encodeOnMainThread(image: RgbaImage, mimeType: string): Promise<Blob> {
     if (!scaledContext) { reject(new Error("无法创建 2D 上下文")); return; }
     scaledContext.imageSmoothingQuality = "high";
     scaledContext.drawImage(canvas, 0, 0, scaled.width, scaled.height);
-    scaled.toBlob(blob => blob ? resolve(blob) : reject(new Error("图片编码失败")), mimeType);
+    scaled.toBlob(blob => blob ? resolve({ blob, mimeType }) : reject(new Error("图片编码失败")), mimeType);
   });
 }
 
 /**
- * RGBA → 图片 Blob（默认在 Worker 里做）。
+ * RGBA → 图片（默认在 Worker 里做）。
  * 只在 Worker 真的不可用时才退到主线程；调用方拿到异常时可以重新读一次剪贴板再试。
+ * 返回的 mimeType 可能是 `image/jpeg`：超大 PNG 会回退成 JPEG（见 worker）。
  */
-export async function encodeClipboardImage(image: RgbaImage, mimeType = "image/png"): Promise<Blob> {
+export async function encodeClipboardImage(image: RgbaImage, mimeType = "image/png"): Promise<EncodedImage> {
   if (workerSupported()) return encodeInWorker(image, mimeType);
   return encodeOnMainThread(image, mimeType);
 }

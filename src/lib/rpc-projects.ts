@@ -43,6 +43,14 @@ export async function mcpConfigLocation():Promise<{path:string;authPath:string;l
 export type GuiSettings={path:string;settings:{cacheWarming:string|null;codemode:{mode?:'on'|'only';inlineBudget?:number}|null}}
 export async function getGuiSettings():Promise<GuiSettings> { if(!workspaceBackend()) throw new Error('Pi 设置请在电脑端修改'); return invoke<GuiSettings>('get_gui_settings') }
 export async function setGuiSetting(key:'cacheWarming'|'codemode',value:unknown):Promise<{key:string;value:unknown}> { if(!workspaceBackend()) throw new Error('Pi 设置请在电脑端修改'); return invoke<{key:string;value:unknown}>('set_gui_setting',{key,value}) }
+/**
+ * Request budget: how much of the *history* goes out on every request. Images are
+ * re-uploaded each turn, so `maxImages` is a perceived-latency knob, not just a
+ * gateway guard. Read by `resources/request-budget.ts` inside the Pi session.
+ */
+export type RequestBudget={enabled?:boolean;maxRequestBytes?:number;keepRecentImages?:number;maxImages?:number}
+export async function getRequestBudget():Promise<{path:string;settings:RequestBudget}> { if(!workspaceBackend()) throw new Error('请求预算请在电脑端设置'); return invoke<{path:string;settings:RequestBudget}>('get_request_budget') }
+export async function saveRequestBudget(settings:RequestBudget):Promise<{path:string;settings:RequestBudget}> { if(!workspaceBackend()) throw new Error('请求预算请在电脑端设置'); return invoke<{path:string;settings:RequestBudget}>('save_request_budget',{settings}) }
 /** Ask the GUI extension to recompute and republish its capability snapshots. */
 export async function refreshCapabilities(target=activeTarget()){await request({type:'prompt',message:'/gui-capabilities'},30000,target)}
 /** Session-scoped MCP registration through the built-in MCP extension. */

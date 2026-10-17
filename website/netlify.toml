@@ -1,0 +1,32 @@
+# Netlify configuration for the landing page.
+#
+# The site is a static SPA (TanStack Router, router-only) — no functions, no
+# redirects to a backend. `dist/` is the whole deployment.
+
+[build]
+  # Same Bun version as the release workflow, fetched through npx so Netlify's
+  # build image does not have to ship it.
+  command = "npx --yes bun@1.4.2 install --frozen-lockfile && npx --yes bun@1.4.2 run build"
+  publish = "dist"
+
+[build.environment]
+  # A root deploy: `/assets/...` paths and the router basepath both need this.
+  SITE_BASE = "/"
+  NODE_VERSION = "22"
+
+# Hashed bundles never change; HTML always revalidates.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    cache-control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    cache-control = "public, max-age=0, must-revalidate"
+
+# One route today, but a client-side router should never 404 a deep link.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

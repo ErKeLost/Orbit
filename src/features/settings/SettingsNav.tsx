@@ -8,6 +8,7 @@ import {
   Globe,
   Inbox,
   Keyboard,
+  MessageSquare,
   Palette,
   Sparkles,
   SlidersHorizontal,
@@ -32,6 +33,7 @@ export const SETTINGS_GROUPS: { id: string; label: string; sections: SettingsSec
     id: "agents",
     label: "智能体",
     sections: [
+      { id: "chat", label: "对话", description: "上下文压缩、队列、重试与历史图片上限。", icon: MessageSquare },
       { id: "providers", label: "Providers", description: "Pi 的模型端点、API Key 与模型目录。", icon: Bot, desktopOnly: true },
       { id: "integrations", label: "第三方接入", description: "生成能力与 Web Search 的端点、开关和凭据。", icon: Wrench, desktopOnly: true },
       { id: "computer-use", label: "操作电脑", description: "让 Pi 用自然语言点选本机界面所用的决策模型。", icon: CursorMagicSelection, desktopOnly: true },

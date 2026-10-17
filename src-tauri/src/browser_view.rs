@@ -418,6 +418,13 @@ pub fn browser_view_status(host: tauri::State<'_, BrowserViewHost>, tab: String)
 #[cfg(desktop)]
 #[tauri::command(async)]
 pub fn browser_view_close(app: AppHandle, host: tauri::State<'_, BrowserViewHost>, tab: String) -> Result<(), String> {
+    // An unnamed close would mean "whatever is in front", and the one caller that
+    // closes tabs on its own (`a browser run taking its page back`) must never be
+    // able to take the page the reader is on. Every caller names its tab today;
+    // this keeps that true.
+    if tab.trim().is_empty() {
+        return Err("关闭浏览器标签页需要指定 tab".to_string());
+    }
     let id = resolve_tab_id(&host, &tab)?;
     let mut tabs = host.tabs.lock().map_err(|error| error.to_string())?;
     if let Some(state) = tabs.remove(&id) {

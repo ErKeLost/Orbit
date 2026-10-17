@@ -6,7 +6,7 @@
  *
  * * **It is huge.** A 12 MP camera JPEG is 4–6 MB, and base64 makes it a third
  *   larger again, in a single WebSocket frame. Pasting a screenshot already goes
- *   through `encodeClipboardImage` and its 2048px ceiling; picking a file did
+ *   through `encodeClipboardImage` and its 1568px ceiling; picking a file did
  *   not, which is the difference between the two ways in.
  * * **It may have no MIME type.** Android's picker hands back a `content://`
  *   source, and `File.type` is empty for enough of them that the desktop path
@@ -17,6 +17,8 @@
  * The decisions are pure and the pixels are behind `ImageCodec`, so the rules
  * below are testable without a canvas, a device or a 6 MB fixture.
  */
+
+import { MAX_ATTACHMENT_BYTES, MAX_IMAGE_EDGE, PNG_FALLBACK_BYTES, RECODE_ABOVE_BYTES } from "./image-limits";
 
 /** Extensions worth accepting when the picker does not say what it picked. */
 const MIME_BY_EXTENSION: Record<string, string> = {
@@ -31,12 +33,6 @@ const MIME_BY_EXTENSION: Record<string, string> = {
   avif: "image/avif",
 };
 
-/** The long-edge ceiling, the same one a pasted screenshot already gets. */
-export const MAX_ATTACHMENT_EDGE = 2048;
-/** Under this, an image is sent as it came: re-encoding a small image loses more than it saves. */
-export const RECODE_ABOVE_BYTES = 2 * 1024 * 1024;
-/** Above this, the attachment is refused by name rather than sent and dropped somewhere. */
-export const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
 /**
  * The type of an attachment, from the picker or from the name.
@@ -60,7 +56,7 @@ export function resolveImageMime(file: { name?: string; type?: string }): string
  */
 export function shouldReencode({ width, height, bytes }: { width: number; height: number; bytes: number }): boolean {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return true;
-  return Math.max(width, height) > MAX_ATTACHMENT_EDGE || bytes > RECODE_ABOVE_BYTES;
+  return Math.max(width, height) > MAX_IMAGE_EDGE || bytes > RECODE_ABOVE_BYTES;
 }
 
 /**
@@ -100,11 +96,14 @@ export async function prepareImageAttachment(
   if (!shouldReencode({ ...size, bytes: file.size })) {
     return { ...base, blob: file.blob, ...size, recoded: false };
   }
-  const blob = await codec.rescale(file.blob, MAX_ATTACHMENT_EDGE, outputMimeFor(mimeType));
-  if (blob.size > MAX_ATTACHMENT_BYTES) {
-    throw new Error(`${base.name} 压缩后仍有 ${(blob.size / 1024 / 1024).toFixed(1)} MB，超过 ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB`);
+  const rescale = await codec.rescale(file.blob, MAX_IMAGE_EDGE, outputMimeFor(mimeType));
+  const encoded = rescale.size > PNG_FALLBACK_BYTES && outputMimeFor(mimeType) === "image/png"
+    ? { blob: await codec.rescale(file.blob, MAX_IMAGE_EDGE, "image/jpeg"), mimeType: "image/jpeg" }
+    : { blob: rescale, mimeType: outputMimeFor(mimeType) };
+  if (encoded.blob.size > MAX_ATTACHMENT_BYTES) {
+    throw new Error(`${base.name} 压缩后仍有 ${(encoded.blob.size / 1024 / 1024).toFixed(1)} MB，超过 ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB`);
   }
-  return { ...base, blob, mimeType: outputMimeFor(mimeType), ...size, recoded: true };
+  return { ...base, blob: encoded.blob, mimeType: encoded.mimeType, ...size, recoded: true };
 }
 
 /** The real one: `createImageBitmap` where it exists, a DOM canvas otherwise. */

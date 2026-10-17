@@ -48,13 +48,15 @@ describe("transcript loading flag", () => {
 });
 
 describe("skeleton placeholder", () => {
-  test("announces itself and pulses placeholder rows", () => {
+  test("announces itself and lays out static placeholder rows", () => {
     const html = renderToStaticMarkup(<TranscriptSkeleton />);
     expect(html).toContain("data-transcript-skeleton");
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain('role="status"');
     expect(html).toContain("正在加载会话…");
-    expect(html.match(/animate-pulse/g)?.length).toBeGreaterThan(5);
+    // 桌面端本地加载很快，占位块不带动画：一次几十毫秒的加载不该被一段
+    // 呼吸/渐隐放大成看得见的重绘。
+    expect(html).not.toContain("animate-pulse");
   });
 
   test("shows no text that could be mistaken for session content", () => {

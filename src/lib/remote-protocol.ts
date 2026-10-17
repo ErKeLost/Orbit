@@ -14,6 +14,7 @@ export type RemoteHostOperation =
   | { name: "project.files"; cwd: string }
   | { name: "session.turnDurations"; sessionPath: string }
   | { name: "session.delete"; sessionPath: string }
+  | { name: "session.rename"; sessionPath: string; title: string }
   /**
    * A project change, which the desktop window applies to its own registry.
    *
@@ -283,6 +284,7 @@ export function isRemoteHostOperation(value: unknown): value is RemoteHostOperat
   if (!record(value) || typeof value.name !== "string") return false
   if (value.name === "session.list" || value.name === "project.files") return stringValue(value.cwd)
   if (value.name === "session.turnDurations" || value.name === "session.delete") return stringValue(value.sessionPath)
+  if (value.name === "session.rename") return stringValue(value.sessionPath) && stringValue(value.title)
   if (value.name === "project.add" || value.name === "project.forget" || value.name === "project.open" || value.name === "connection.resolve") return stringValue(value.path)
   return false
 }

@@ -196,6 +196,60 @@ fn ms_to_iso(ms: i64) -> String {
     )
 }
 
+/// 给会话追加一条 `session_info` —— 这正是 pi 的 `setSessionName` 写的那条记录。
+///
+/// 名字按「最后一条生效」覆盖，所以重命名只需要在文件末尾追加，既不改写历史，
+/// 也不会破坏会话树（`parentId` 取文件里最后一条记录的 id，等价于 pi 的 leafId）。
+pub fn rename_session_file(path: &Path, name: &str) -> Result<(), String> {
+    use std::io::Write;
+
+    let clean = name
+        .replace(['\r', '\n'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if clean.is_empty() {
+        return Err("标题不能为空".into());
+    }
+    let clean: String = clean.chars().take(80).collect();
+
+    let content = fs::read(path).map_err(|error| format!("读取会话失败：{error}"))?;
+    let mut parent: Option<String> = None;
+    for line in content.split(|byte| *byte == b'\n') {
+        let line = trim_line(line);
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(value) = serde_json::from_slice::<Value>(line) {
+            if let Some(id) = value.get("id").and_then(Value::as_str) {
+                parent = Some(id.to_string());
+            }
+        }
+    }
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as i64)
+        .unwrap_or(0);
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let entry = serde_json::json!({
+        "type": "session_info",
+        "id": &id[..8],
+        "parentId": parent,
+        "timestamp": ms_to_iso(now_ms),
+        "name": clean,
+    });
+
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .map_err(|error| format!("会话文件不可写：{error}"))?;
+    if !content.ends_with(b"\n") {
+        file.write_all(b"\n").map_err(|error| error.to_string())?;
+    }
+    writeln!(file, "{entry}").map_err(|error| format!("写入会话失败：{error}"))
+}
+
 // ---------------------------------------------------------------------------
 // 行级轻量解析
 // ---------------------------------------------------------------------------
@@ -810,6 +864,45 @@ mod tests {
         assert_eq!(summary.created.as_deref(), Some("2025-03-01T10:00:00.000Z"));
         assert_eq!(summary.modified, "2025-03-01T10:01:00.000Z");
         assert_eq!(summary.parent_session_path, None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_appends_a_session_info_entry() {
+        let dir = temp_dir("rename");
+        let path = dir.join("a.jsonl");
+        write_session(
+            &path,
+            &[
+                header_json("s1", "/tmp/demo", "2025-03-01T10:00:00.000Z"),
+                message_json("user", "第一句", "2025-03-01T10:00:02.000Z", T_10 + 2_000),
+            ],
+        );
+
+        rename_session_file(&path, "  发布  流程\n梳理  ").unwrap();
+
+        let summary = scan_session_file(&path, 0).unwrap();
+        assert_eq!(summary.name.as_deref(), Some("发布 流程 梳理"));
+        // 追加不动历史：消息还在，标题只是最后一条 session_info
+        assert_eq!(summary.message_count, 1);
+        assert_eq!(summary.first_message, "第一句");
+
+        let raw = fs::read_to_string(&path).unwrap();
+        let last = raw.lines().last().unwrap();
+        assert!(last.contains("\"type\":\"session_info\""));
+        assert!(last.contains("\"parentId\":\""));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rename_rejects_an_empty_name() {
+        let dir = temp_dir("rename-empty");
+        let path = dir.join("a.jsonl");
+        write_session(
+            &path,
+            &[header_json("s1", "/tmp/demo", "2025-03-01T10:00:00.000Z")],
+        );
+        assert!(rename_session_file(&path, "   \n  ").is_err());
         let _ = fs::remove_dir_all(&dir);
     }
 

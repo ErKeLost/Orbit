@@ -31,8 +31,21 @@ function statusText(agent: AgentNode) {
   return agent.summary || "状态更新";
 }
 
+/**
+ * Why a row is or is not clickable. A worker's session file exists from its first
+ * entry on, so a running worker opens too — the tab is how a user follows what a
+ * sub-agent is doing instead of waiting for its FINAL_ANSWER. A worker that died
+ * before writing anything (bad model, no API key) has nothing to open, and saying
+ * so is better than a row that silently ignores the click.
+ */
+function openHint(agent: AgentNode): string {
+  if (agent.sessionPath) return "打开子会话";
+  if (agent.status === "queued") return "子会话尚未启动";
+  return "子会话没有落盘（启动即失败），失败原因见上方";
+}
+
 function AgentLine({ agent, depth, now, onOpenAgent }: { agent: AgentNode; depth: number; now: number; onOpenAgent?: (agent: AgentNode) => void }) {
-  const canOpen = Boolean(agent.sessionPath) && ["completed", "failed", "aborted"].includes(agent.status);
+  const hint = openHint(agent);
   const content = <>
     <AgentAvatar agent={agent} />
     <span className="agent-feed-copy"><strong>{agent.name}</strong><span className={agent.status === "running" ? "agent-feed-shimmer" : undefined}>{statusText(agent)}</span></span>
@@ -40,9 +53,9 @@ function AgentLine({ agent, depth, now, onOpenAgent }: { agent: AgentNode; depth
   </>;
   const style = { "--agent-depth": depth } as CSSProperties;
   return <>
-    {canOpen
-      ? <button type="button" className={`agent-feed-line is-${agent.status}`} data-nested={depth > 0 || undefined} style={style} title="打开子会话" onClick={() => onOpenAgent?.(agent)}>{content}</button>
-      : <div className={`agent-feed-line is-${agent.status}`} data-nested={depth > 0 || undefined} style={style}>{content}</div>}
+    {agent.sessionPath
+      ? <button type="button" className={`agent-feed-line is-${agent.status}`} data-nested={depth > 0 || undefined} style={style} title={hint} onClick={() => onOpenAgent?.(agent)}>{content}</button>
+      : <div className={`agent-feed-line is-${agent.status}`} data-nested={depth > 0 || undefined} style={style} title={hint}>{content}</div>}
     {agent.children.map(child => <AgentLine key={child.id} agent={child} depth={depth + 1} now={now} onOpenAgent={onOpenAgent} />)}
   </>;
 }

@@ -35,6 +35,14 @@ export const DEFAULT_REQUEST_BUDGET_BYTES = 24 * 1024 * 1024
 /** 默认永远保留的最近图片张数：一轮问题里的图不该被自己挤掉。 */
 export const DEFAULT_KEEP_RECENT_IMAGES = 2
 /**
+ * 默认留在请求里的历史图片张数上限。
+ *
+ * 体积预算管的是「服务端肯不肯收」，这个管的是「值不值得一直发」。每张图都要重新
+ * 上传一遍（上下文每轮都重发），而模型真正在看的通常只有最近几张；10 张是「够回看、
+ * 又不会让每轮都在传老截图」的位置。0 表示不按张数裁剪。
+ */
+export const DEFAULT_MAX_IMAGES = 10
+/**
  * 估算只数了消息，没数 provider 的请求包装和工具 schema（`context` 事件里看不到
  * 它们）。这个预留就是为它们留的，同时吸收 JSON 估算的误差。
  */
@@ -43,6 +51,7 @@ export const REQUEST_BUDGET_RESERVE_BYTES = 512 * 1024
 const MIN_BUDGET_BYTES = 512 * 1024
 const MAX_BUDGET_BYTES = 512 * 1024 * 1024
 const MAX_KEEP_RECENT_IMAGES = 32
+const MAX_IMAGES_LIMIT = 64
 
 export type RequestBudgetSettings = {
   /** false 时原样放行，一次都不动。 */
@@ -51,6 +60,8 @@ export type RequestBudgetSettings = {
   maxRequestBytes: number
   /** 无论如何保留最近这几张图片。 */
   keepRecentImages: number
+  /** 一次请求最多带几张历史图片；0 表示不按张数裁剪。 */
+  maxImages: number
 }
 
 /** 只声明这个预算器真正读到的字段，别把一个包的内部类型引进来。 */
@@ -61,6 +72,10 @@ export type RequestBudgetResult<T extends BudgetMessage> = {
   messages: T[]
   /** 被换成占位文本的图片张数。 */
   dropped: number
+  /** 被张数上限挤掉的张数（包含在 dropped 里）。 */
+  droppedByCount: number
+  /** 被体积预算挤掉的张数（包含在 dropped 里）。 */
+  droppedByBudget: number
   /** 改动前后这一次请求的估算体积，字节。 */
   bytesBefore: number
   bytesAfter: number
@@ -75,6 +90,11 @@ export type RequestBudgetResult<T extends BudgetMessage> = {
    */
   overLimit: boolean
 }
+
+/** 一张图片在消息里的位置：用它做「留下还是略去」的键，位置比对象引用省。 */
+type ImageSlot = { message: number; block: number; bytes: number }
+
+const slotKey = (slot: { message: number; block: number }) => `${slot.message}:${slot.block}`
 
 function isImageBlock(block: unknown): block is { type: "image"; data: string; mimeType?: string } {
   if (!block || typeof block !== "object") return false
@@ -118,10 +138,12 @@ export function resolveRequestBudgetSettings(stored: unknown, modelLimitBytes?: 
   const fromModel = model === undefined ? undefined : Math.max(MIN_BUDGET_BYTES, model - REQUEST_BUDGET_RESERVE_BYTES)
   const budget = declared ?? fromModel ?? DEFAULT_REQUEST_BUDGET_BYTES
   const keep = finiteCount(raw.keepRecentImages)
+  const maxImages = finiteCount(raw.maxImages)
   return {
     enabled: raw.enabled !== false,
     maxRequestBytes: Math.min(MAX_BUDGET_BYTES, Math.max(MIN_BUDGET_BYTES, budget)),
     keepRecentImages: Math.min(MAX_KEEP_RECENT_IMAGES, keep === undefined ? DEFAULT_KEEP_RECENT_IMAGES : Math.max(0, keep)),
+    maxImages: Math.min(MAX_IMAGES_LIMIT, maxImages === undefined ? DEFAULT_MAX_IMAGES : Math.max(0, maxImages)),
   }
 }
 
@@ -146,17 +168,22 @@ export function estimateRequestBytes(messages: readonly BudgetMessage[]): number
   return serializedBytes(shimmed) + images
 }
 
-function placeholder(limit: number, count: number): string {
-  const value = limit / 1024 / 1024
-  return `[图片已省略：本次请求超出 ${Number.isInteger(value) ? value : value.toFixed(1)}MiB 预算，略去较早的 ${count} 张]`
+function placeholder(settings: RequestBudgetSettings, count: number, reason: "count" | "budget" | "both"): string {
+  const value = settings.maxRequestBytes / 1024 / 1024
+  const budget = `${Number.isInteger(value) ? value : value.toFixed(1)}MiB`
+  if (reason === "count") return `[图片已省略：只保留最近 ${settings.maxImages} 张，略去较早的 ${count} 张]`
+  if (reason === "both") return `[图片已省略：只保留最近 ${settings.maxImages} 张且本次请求超出 ${budget} 预算，略去较早的 ${count} 张]`
+  return `[图片已省略：本次请求超出 ${budget} 预算，略去较早的 ${count} 张]`
 }
 
 /**
- * 按预算改写这一次请求。
+ * 按预算改写这一次请求。两步，顺序固定：
  *
- * 从新到旧走一遍图片：`keepRecentImages` 张之内无条件保留；再往前的，只要「非图片部分
- * + 已保留的图 + 这张图」还在预算内就留，第一张放不下的连同它更早的全部略去 —— 单调的
- * 规则比「尽量塞满」好解释，也不会出现「留了更老的、丢了更新的」。
+ * 1. **张数**：只留最近 `maxImages` 张（0 = 不按张数裁）。每张历史图片每一轮都要重传，
+ *    省下来的就是首字延迟。
+ * 2. **体积**：在剩下的图里从新往旧收，`keepRecentImages` 张之内无条件保留；再往前的，
+ *    只要「非图片部分 + 已保留的图 + 这张图」还在预算内就留，第一张放不下的连同它更早的
+ *    全部略去 —— 单调的规则比「尽量塞满」好解释，也不会出现「留了更老的、丢了更新的」。
  *
  * 同一条消息里被略去的图合并成一行占位文本，插在第一张被略去的位置：模型要能看出
  * 这里本来有图，而不是以为对话断了一截。
@@ -169,6 +196,8 @@ export function applyRequestBudget<T extends BudgetMessage>(
   const unchanged: RequestBudgetResult<T> = {
     messages: messages as T[],
     dropped: 0,
+    droppedByCount: 0,
+    droppedByBudget: 0,
     bytesBefore: before,
     bytesAfter: before,
     limit: settings.maxRequestBytes,
@@ -176,7 +205,7 @@ export function applyRequestBudget<T extends BudgetMessage>(
   }
   if (!settings.enabled) return unchanged
 
-  const images: { message: number; block: number; bytes: number }[] = []
+  const images: ImageSlot[] = []
   for (const [message, entry] of messages.entries()) {
     const content = entry.content
     if (!Array.isArray(content)) continue
@@ -186,26 +215,33 @@ export function applyRequestBudget<T extends BudgetMessage>(
   }
   if (!images.length) return unchanged
 
-  const nonImageBytes = before - images.reduce((total, image) => total + image.bytes, 0)
-  const kept = new Set<string>()
-  let total = nonImageBytes
-  let floor = 0
-  for (const image of [...images].reverse()) {
-    const withinFloor = floor < settings.keepRecentImages
-    if (!withinFloor && total + image.bytes > settings.maxRequestBytes) break
-    kept.add(`${image.message}:${image.block}`)
-    total += image.bytes
-    floor += 1
+  // 1) 张数上限：最近 `maxImages` 张之外的全丢（0 = 不按张数裁）。
+  const droppedByCount = settings.maxImages > 0 ? Math.max(0, images.length - settings.maxImages) : 0
+  const candidates = images.slice(droppedByCount)
+
+  // 2) 体积预算：从新往旧收，最近 `keepRecentImages` 张无条件留下；第一张放不下的
+  //    连同它更早的一起略去 —— 单调规则比「尽量塞满」好解释，也不会出现「留着更
+  //    老的、丢了更新的」。
+  let keptBytes = before - images.reduce((total, image) => total + image.bytes, 0)
+  let keptCount = 0
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const image = candidates[index]!
+    const withinFloor = keptCount < settings.keepRecentImages
+    if (!withinFloor && keptBytes + image.bytes > settings.maxRequestBytes) break
+    keptCount += 1
+    keptBytes += image.bytes
   }
-  const dropped = images.length - kept.size
+  const droppedByBudget = candidates.length - keptCount
+  const dropped = droppedByCount + droppedByBudget
   if (dropped === 0) return unchanged
 
+  const kept = new Set(candidates.slice(candidates.length - keptCount).map(slotKey))
   const droppedByMessage = new Map<number, number>()
   for (const image of images) {
-    if (kept.has(`${image.message}:${image.block}`)) continue
+    if (kept.has(slotKey(image))) continue
     droppedByMessage.set(image.message, (droppedByMessage.get(image.message) ?? 0) + 1)
   }
-
+  const reason = droppedByCount && droppedByBudget ? "both" : droppedByCount ? "count" : "budget"
   const next = messages.map((message, index) => {
     const count = droppedByMessage.get(index)
     if (!count) return message
@@ -213,9 +249,9 @@ export function applyRequestBudget<T extends BudgetMessage>(
     const keptBlocks: unknown[] = []
     let placed = false
     for (const [position, block] of content.entries()) {
-      if (isImageBlock(block) && !kept.has(`${index}:${position}`)) {
+      if (isImageBlock(block) && !kept.has(slotKey({ message: index, block: position }))) {
         if (!placed) {
-          keptBlocks.push({ type: "text", text: placeholder(settings.maxRequestBytes, count) })
+          keptBlocks.push({ type: "text", text: placeholder(settings, count, reason) })
           placed = true
         }
         continue
@@ -228,5 +264,5 @@ export function applyRequestBudget<T extends BudgetMessage>(
   // 量发出去的东西本身，而不是用各部分拼一个预测值：裁剪自己插进去的占位文本也是请求
   // 体的一部分，把它漏掉会让这个数报出一个装得下、实际装不下的请求。
   const bytesAfter = estimateRequestBytes(next)
-  return { messages: next, dropped, bytesBefore: before, bytesAfter, limit: settings.maxRequestBytes, overLimit: bytesAfter > settings.maxRequestBytes }
+  return { messages: next, dropped, droppedByCount, droppedByBudget, bytesBefore: before, bytesAfter, limit: settings.maxRequestBytes, overLimit: bytesAfter > settings.maxRequestBytes }
 }

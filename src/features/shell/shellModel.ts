@@ -30,7 +30,11 @@ export type OpenFile = { path: string; name: string; preview: boolean; /** Set o
    * the page it is showing. A synthetic path (`browser:<id>`) makes it an
    * ordinary tab entry, which is what gives it tab reordering, dragging onto
    * another pane, splitting and closing without a second implementation.
-   */ browser?: { url: string; title?: string } };
+   *
+   * `agent` marks the page a browser run asked for: that run closes it when it
+   * ends (`browser:close`), so it is a scratch page, not somewhere a link the
+   * user clicked should be sent — it would vanish under them a moment later.
+   */ browser?: { url: string; title?: string; agent?: true } };
 export type PaneState = { files: OpenFile[]; activeFile: string | null };
 
 /** The path prefix that marks a tab as a browser page rather than a file. */
