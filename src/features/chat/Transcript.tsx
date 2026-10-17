@@ -283,6 +283,11 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
             </span>
           ) : null}
         </span>
+        {!running && typeof tool?.durationMs === "number" && tool.durationMs >= 1000 ? (
+          <span className="shrink-0 font-sans text-[11px] tabular-nums text-content/40" title={`工具执行耗时 ${tool.durationMs} ms`}>
+            {(tool.durationMs / 1000).toFixed(1)}s
+          </span>
+        ) : null}
         {failed ? <X className="size-3.5 shrink-0 text-red-400" strokeWidth={2} /> : null}
         <ChevronRight className={`size-3.5 shrink-0 text-content/35 opacity-0 transition-[opacity,transform] group-hover:opacity-100 ${open ? "rotate-90 opacity-100" : ""}`} strokeWidth={1.75} />
       </button>

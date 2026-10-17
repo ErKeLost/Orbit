@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
 import { useWorkspace } from "../../lib/store";
 import { useTitleTabDrop } from "./paneDrop";
-import { Globe, PanelLeft, Plus, Settings, Terminal, X } from "../../shared/ui/icons";
+import { Globe, Loader, PanelLeft, Plus, Settings, Terminal, X } from "../../shared/ui/icons";
 import { IS_MAC, MOD, TitleIconButton } from "./chrome";
 import { useWorkspaceTabs } from "./use-workspace-tabs";
 import { projectWorkspaceTabs, useShell, type WorkspaceTab } from "./shellStore";
@@ -69,6 +69,8 @@ function WorkspaceTabItem({
   // 还在连接、而且没有已知标题时，标签用骨架条，不要先闪一个目录名。
   const titled = Boolean(snapshot?.state?.sessionName) || Boolean(snapshot && firstUserTitle(snapshot.transcript));
   const loading = snapshot?.connection === "connecting" && !titled;
+  // 这条会话（后台标签也一样）正在跑：标题前面挂一个 loading，好认出是哪条在跑。
+  const working = Boolean(snapshot?.transcript.running || snapshot?.transcript.compacting);
   return (
     <div
       data-title-tab-id={workspace.id}
@@ -91,12 +93,18 @@ function WorkspaceTabItem({
         role="tab"
         data-tauri-drag-region="false"
         aria-selected={active}
-        title={label}
+        title={working ? `${label} · 运行中` : label}
         onClick={onOpen}
         className={`relative flex h-7.5 min-w-0 flex-1 cursor-default items-center gap-1.5 self-center rounded-md px-2 pr-6 text-left text-[13px] ${
           active ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
         }`}
       >
+        {working ? (
+          <>
+            <Loader className="size-3 shrink-0 animate-spin text-accent" strokeWidth={2} />
+            <span className="sr-only">运行中</span>
+          </>
+        ) : null}
         <span className="min-w-0 flex-1 truncate">{loading ? <span aria-hidden className="block h-3 w-20 animate-pulse rounded bg-content/15" /> : label}</span>
       </button>
       {closable ? (
