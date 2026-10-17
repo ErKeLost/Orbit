@@ -6,7 +6,7 @@ import { runGuiTaskEngine } from "./helpers/gui-task-engine"
 import { formatResult } from "../src-tauri/resources/computer-use/gui-task"
 import { OBSERVATION_CHARS, validateTaskInput, type DesktopDecision, type DesktopObservation, type GuiTaskInput } from "../src-tauri/resources/computer-use/gui-task-contract"
 import { isRetryableJevError, redactLocalSlots } from "../src-tauri/resources/computer-use/jev"
-import { applyComputerUseMode, COMPUTER_USE_INSTRUCTIONS } from "../src-tauri/resources/computer-use/mode"
+import { applyComputerUseMode, COMPUTER_USE_INSTRUCTIONS, computerUseInstructions, LEGACY_COMPUTER_USE_INSTRUCTIONS } from "../src-tauri/resources/computer-use/mode"
 
 const task = (overrides: Partial<GuiTaskInput> = {}): GuiTaskInput => ({
   goal: "search for the prepared song and play it",
@@ -60,6 +60,16 @@ describe("computer use tool surface", () => {
     expect(COMPUTER_USE_INSTRUCTIONS).toContain("does not capture screenshots")
     expect(() => validateTaskInput(task())).not.toThrow()
     expect(() => validateTaskInput(task({ target: { app: "" } }))).toThrow("Invalid GUI task contract")
+  })
+
+  test("the instructions follow the engine that is actually running", () => {
+    expect(computerUseInstructions("cua")).toBe(COMPUTER_USE_INSTRUCTIONS)
+    expect(computerUseInstructions("legacy")).toBe(LEGACY_COMPUTER_USE_INSTRUCTIONS)
+    // The default CUA engine has no DRILL/WIDEN operation and no native xa11y
+    // worker, so its guidance must not promise either.
+    expect(COMPUTER_USE_INSTRUCTIONS).not.toContain("It can drill, widen")
+    expect(COMPUTER_USE_INSTRUCTIONS).not.toContain("native accessibility worker")
+    expect(LEGACY_COMPUTER_USE_INSTRUCTIONS).toContain("drill into a region")
   })
 
   test("does not retry deterministic Jev request errors", () => {

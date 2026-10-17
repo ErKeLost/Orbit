@@ -36,6 +36,12 @@ export type BuildContext = {
   escalate?: ReadonlyMap<string, EscalationRung>
   /** Present only when the visual fallback was explicitly enabled and used. */
   visual?: { captureId: string; regions: readonly VisualRegion[] }
+  /**
+   * The loop's offer-set cap hid candidates. Scrolling is then the only way to
+   * reveal what was hidden, so the scroll candidates are built even when the
+   * accessibility walk itself was complete.
+   */
+  forceScroll?: boolean
 }
 
 type CuaElementLike = CuaObservation["elements"][number]
@@ -43,9 +49,15 @@ type CuaElementLike = CuaObservation["elements"][number]
 /** The maximum number of menu-bar commands offered, so they never crowd a window. */
 const MAX_MENU_CANDIDATES = 3
 
+/** Operations that can be re-delivered through the driver's next rung. */
+const ESCALATABLE_OPERATIONS = new Set(["click", "right_click", "type_text", "set_value", "scroll"])
+
 export function buildCandidates(observation: CuaObservation, context: BuildContext): CuaCandidate[] {
   const seen = new Set<string>()
   const candidates: CuaCandidate[] = []
+  // One identity per element, computed once: the same map is what the verifier
+  // uses to find the target again in the successor observation.
+  const identities = elementIdentities(observation.elements)
 
   const push = (candidate: CuaCandidate) => {
     let id = candidate.id
@@ -54,10 +66,12 @@ export function buildCandidates(observation: CuaObservation, context: BuildConte
     candidates.push({ ...candidate, id })
   }
   /** Push a candidate, and its explicit next-rung twin when the driver asked for one. */
-  const pushEscalated = (candidate: CuaCandidate) => {
+  const pushEscalated = (candidate: CuaCandidate, frame: CuaElementLike["frame"]) => {
     push(candidate)
     const rung = candidate.identity ? context.escalate?.get(candidate.identity) : undefined
-    const twin = foregroundTwin(candidate, rung, context.windowId)
+    // The pointer rung is capture-bound, so the twin needs the capture the
+    // coordinates were read from, not just the frame.
+    const twin = escalatedTwin(candidate, rung, { windowId: context.windowId, pid: context.pid, frame, captureId: observation.captureId })
     if (twin) push(twin)
   }
 
@@ -69,20 +83,21 @@ export function buildCandidates(observation: CuaObservation, context: BuildConte
   if (slot) {
     for (const element of editableElements(observation.elements)) {
       const label = elementLabel(element)
+      const info = identities.get(element) ?? { identity: identityOf("text_entry", label), count: 1 }
       pushEscalated({
         id: candidateId("ax", "text_entry", label, element.elementIndex),
-        description: `text_entry ${label ? `"${clip(label, 60)}"` : "(unlabelled)"}${element.inWebContent ? " in web content" : ""}; enter the caller-prepared text for ${clip(slot.description, 60)} (slot ${slot.id}) through this element's own text capability`,
+        description: `text_entry ${label ? `"${clip(label, 60)}"` : "(unlabelled)"}${element.inWebContent ? " in web content" : ""}${siblingNote(info)}; enter the caller-prepared text for ${clip(slot.description, 60)} (slot ${slot.id}) through this element's own text capability`,
         source: "ax",
         operation: "type_text",
         tool: "type_text",
         args: { element_token: element.elementToken, text: slot.value, delivery_mode: "background" },
         elementToken: element.elementToken,
-        identity: identityOf("text_entry", label, element.elementIndex),
+        identity: info.identity,
         slotId: slot.id,
         label,
         risky: isRisky(label),
         legacyOperation: "TYPE_TEXT",
-      })
+      }, element.frame)
     }
   }
 
@@ -101,18 +116,19 @@ export function buildCandidates(observation: CuaObservation, context: BuildConte
     if (!isActionable(cls) && !isTextRole(cls)) continue
     const label = elementLabel(element)
     if (!label && !element.inWebContent) continue
+    const info = identities.get(element) ?? { identity: identityOf(cls, label), count: 1 }
     const press = hasPress(element.actions)
     const menu = hasShowMenu(element.actions)
-    const base = { elementToken: element.elementToken, label, identity: identityOf(cls, label, element.elementIndex), risky: isRisky(label) } as const
+    const base = { elementToken: element.elementToken, label, identity: info.identity, risky: isRisky(label) } as const
     if (element.inWebContent && /^axmenuitem$/i.test(element.role) && press) {
-      push({ ...base, id: candidateId("ax", cls, label, element.elementIndex), description: `${cls} "${clip(label ?? "", 70)}" in the open menu${menu ? " (also has a submenu)" : ""}; press it to choose this command`, source: "ax", operation: "click", tool: "click", args: { element_token: element.elementToken, action: "press" }, legacyOperation: "CLICK" })
+      push({ ...base, id: candidateId("ax", cls, label, element.elementIndex), description: `${cls} "${clip(label ?? "", 70)}" in the open menu${menu ? " (also has a submenu)" : ""}${siblingNote(info)}; press it to choose this command`, source: "ax", operation: "click", tool: "click", args: { element_token: element.elementToken, action: "press" }, legacyOperation: "CLICK" })
       continue
     }
     if (press) {
-      pushEscalated({ ...base, id: candidateId("ax", cls, label, element.elementIndex), description: `${cls} "${clip(label ?? "(unlabelled)", 70)}"${element.selected ? " (currently selected)" : ""}; press it through its native semantic action`, source: "ax", operation: "click", tool: "click", args: { element_token: element.elementToken, action: "press" }, legacyOperation: cls === "row" ? "DOUBLE_CLICK" : "CLICK" })
+      pushEscalated({ ...base, id: candidateId("ax", cls, label, element.elementIndex), description: `${cls} "${clip(label ?? "(unlabelled)", 70)}"${element.selected ? " (currently selected)" : ""}${siblingNote(info)}; press it through its native semantic action`, source: "ax", operation: "click", tool: "click", args: { element_token: element.elementToken, action: "press" }, legacyOperation: cls === "row" ? "DOUBLE_CLICK" : "CLICK" }, element.frame)
     }
     if (menu && !press) {
-      pushEscalated({ ...base, id: candidateId("ax", cls, label, element.elementIndex), description: `${cls} "${clip(label ?? "(unlabelled)", 70)}"; open its context menu without choosing any item yet`, source: "ax", operation: "right_click", tool: "right_click", args: { element_token: element.elementToken }, legacyOperation: "RIGHT_CLICK" })
+      pushEscalated({ ...base, id: candidateId("ax", cls, label, element.elementIndex), description: `${cls} "${clip(label ?? "(unlabelled)", 70)}"${siblingNote(info)}; open its context menu without choosing any item yet`, source: "ax", operation: "right_click", tool: "right_click", args: { element_token: element.elementToken }, legacyOperation: "RIGHT_CLICK" }, element.frame)
     }
   }
 
@@ -145,19 +161,23 @@ export function buildCandidates(observation: CuaObservation, context: BuildConte
     })
   }
 
-  // Only a partial tree justifies scrolling: a complete list needs no reveal.
-  if (observation.truncated && !observation.complete) {
+  // A partial walk justifies scrolling. So does a capped offer set: the cap
+  // hides candidates the window really has, and scrolling is what reveals them.
+  if (context.forceScroll || (observation.truncated && !observation.complete)) {
+    const capped = context.forceScroll === true && observation.complete
     for (const direction of ["down", "up"] as const) {
       pushEscalated({
         id: `ax.scroll.${direction}`,
-        description: `scroll the window ${direction}; the accessibility walk found more content than it could return`,
+        description: capped
+          ? `scroll the window ${direction}; the offer set was capped, so the list that was shown is not the whole window`
+          : `scroll the window ${direction}; the accessibility walk found more content than it could return`,
         source: "ax",
         operation: "scroll",
         tool: "scroll",
         args: { direction, amount: 3, by: "line", pid: context.pid, window_id: context.windowId },
         identity: `scroll:${direction}`,
         legacyOperation: direction === "down" ? "SCROLL_DOWN" : "SCROLL_UP",
-      })
+      }, undefined)
     }
   }
 
@@ -173,24 +193,62 @@ export function buildCandidates(observation: CuaObservation, context: BuildConte
 }
 
 /**
- * The explicit next rung.
+ * The explicit next rung the driver asked for.
  *
  * Only built when the driver refused the *background* route for this exact
  * target, so the offer set stays small in the normal case. It carries its own id
  * and identity, so quarantining the refused background attempt cannot also hide
  * the rung that might work.
+ *
+ * Two rungs are built, and they are not the same action:
+ *
+ * - `foreground` re-runs the same semantic operation with the window raised.
+ * - `px` is a pointer delivery at the target's observed centre. It is kept as
+ *   its own candidate with its own id and description rather than being folded
+ *   into the foreground twin, because a pointer click is not a semantic press
+ *   and the chooser must be told which one it is choosing. A pointer click is
+ *   also **capture-bound** — the driver addresses it by `x,y` plus the
+ *   `capture_id` those coordinates were read from — so the twin is only built
+ *   when a frame *and* a capture id are known. A candidate that cannot be
+ *   delivered is worse than no candidate: it spends the chooser's turn on a
+ *   certain refusal, so the px twin is dropped instead.
  */
-export function foregroundTwin(candidate: CuaCandidate, rung: EscalationRung | undefined, windowId: number): CuaCandidate | undefined {
-  if (rung !== "foreground") return undefined
-  if (!["click", "right_click", "type_text", "set_value", "scroll"].includes(candidate.operation)) return undefined
-  return {
-    ...candidate,
-    id: `${candidate.id}.fg`,
-    description: `${candidate.description} — FOREGROUND: this one action raises the window and then restores the previous app; choose it only because the background route was refused`,
-    args: { ...candidate.args, delivery_mode: "foreground", window_id: candidate.args.window_id ?? windowId },
-    identity: candidate.identity ? `${candidate.identity}:fg` : undefined,
-    escalated: true,
+export function escalatedTwin(candidate: CuaCandidate, rung: EscalationRung | undefined, geometry: { windowId: number; pid: number; frame?: CuaElementLike["frame"]; captureId?: string }): CuaCandidate | undefined {
+  if (!rung || !ESCALATABLE_OPERATIONS.has(candidate.operation)) return undefined
+  if (rung === "foreground") {
+    return {
+      ...candidate,
+      id: `${candidate.id}.fg`,
+      description: `${candidate.description} — FOREGROUND: this one action raises the window and then restores the previous app; choose it only because the background route was refused`,
+      args: { ...candidate.args, delivery_mode: "foreground", window_id: candidate.args.window_id ?? geometry.windowId },
+      identity: candidate.identity ? `${candidate.identity}:fg` : undefined,
+      escalated: true,
+    }
   }
+  if (rung === "px") {
+    const frame = geometry.frame
+    // A pointer delivery is capture-bound: `x,y` without the `capture_id` they
+    // came from is not something the driver can execute. Dropping the twin when
+    // either is missing is honest: a candidate that is certain to be refused is
+    // worse than no candidate, because it spends the chooser's turn and the
+    // escalation ladder then has nothing left to offer.
+    if (!frame || !geometry.captureId) return undefined
+    const x = Math.round(frame.x + frame.w / 2)
+    const y = Math.round(frame.y + frame.h / 2)
+    const args = { ...candidate.args } as Record<string, unknown>
+    delete args.element_token
+    return {
+      ...candidate,
+      id: `${candidate.id}.px`,
+      description: `${candidate.description} — POINTER: the background route was refused and the driver recommends pointer delivery, so this clicks the observed centre of the target (${x},${y}) with a real pointer; choose it only because the background route was refused`,
+      args: { ...args, x, y, capture_id: geometry.captureId, pid: geometry.pid, window_id: geometry.windowId, delivery_mode: "foreground" },
+      identity: candidate.identity ? `${candidate.identity}:px` : undefined,
+      escalated: true,
+    }
+  }
+  // "page" is a route this engine does not build; the driver would need a page
+  // handle the loop has no way to name, so it is left out rather than guessed.
+  return undefined
 }
 
 /**
@@ -283,8 +341,64 @@ export function candidateId(source: string, cls: string, label: string | undefin
   return `${source}.${safe}.${digest}`
 }
 
-export function identityOf(cls: string, label: string | undefined, _ordinal?: number): string {
-  return `${cls}:${label ?? "#"}`
+/**
+ * The stable identity of a target across snapshots.
+ *
+ * A positional suffix is added only when more than one element shares the role
+ * and label. Without it, a list of thirty rows each labelled "更多" collapses to
+ * one identity: quarantining one wrong click would withhold the *correct*
+ * sibling too, and the repeat brake would count different rows as one. The
+ * suffix is the occurrence among same-role same-label elements in tree order —
+ * not the snapshot's `elementIndex`, which is renumbered by any insertion — so
+ * inserting an unrelated element does not renumber the siblings. A label that
+ * occurs once keeps its bare identity, which is what the quarantine and repeat
+ * brakes already rely on.
+ */
+export function identityOf(cls: string, label: string | undefined, ordinal?: number): string {
+  const base = `${cls}:${label ?? "#"}`
+  return ordinal === undefined ? base : `${base}#${ordinal}`
+}
+
+export type ElementIdentity = {
+  identity: string
+  /** Present only when more than one element shares this role and label. */
+  ordinal?: number
+  count: number
+}
+
+/** One identity per element of an observation, in tree order. */
+export function elementIdentities(elements: readonly CuaElementLike[]): Map<CuaElementLike, ElementIdentity> {
+  const parts = elements.map(element => ({ cls: roleClass(element.role), label: elementLabel(element) }))
+  const counts = new Map<string, number>()
+  for (const part of parts) {
+    const key = `${part.cls}\u0000${part.label ?? ""}`
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  const seen = new Map<string, number>()
+  const out = new Map<CuaElementLike, ElementIdentity>()
+  elements.forEach((element, index) => {
+    const { cls, label } = parts[index]!
+    const key = `${cls}\u0000${label ?? ""}`
+    const occurrence = seen.get(key) ?? 0
+    seen.set(key, occurrence + 1)
+    const count = counts.get(key) ?? 1
+    out.set(element, count > 1
+      ? { identity: identityOf(cls, label, occurrence), ordinal: occurrence, count }
+      : { identity: identityOf(cls, label), count })
+  })
+  return out
+}
+
+/** Index one observation's elements by the identity the candidates carry. */
+export function indexByIdentity(elements: readonly CuaElementLike[]): Map<string, CuaElementLike> {
+  const out = new Map<string, CuaElementLike>()
+  for (const [element, info] of elementIdentities(elements)) if (!out.has(info.identity)) out.set(info.identity, element)
+  return out
+}
+
+/** The positional hint that lets a chooser tell identical siblings apart. */
+function siblingNote(info: ElementIdentity): string {
+  return info.ordinal === undefined ? "" : ` (${info.ordinal + 1} of ${info.count} controls with the same label)`
 }
 
 function fnv1a(text: string): number {

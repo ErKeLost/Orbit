@@ -136,7 +136,13 @@ interface Candidate {
 - **`ax`** — from `get_window_state` elements: enabled, on-screen, labelled,
   actionable. Role is mapped to a closed role class through an explicit table;
   unknown roles are excluded, never guessed. ID is derived from role class +
-  label + actionable-ancestor path so it is stable across snapshots.
+  label, plus an index **only when several controls share the same role and
+  label** — otherwise two rows of a list get one identity, and quarantining the
+  wrong row would take the right one with it. A description of such a control
+  says which of the equal-labelled ones it is, because an id the chooser cannot
+  read is not a choice. The candidate list is bounded (24 executable); when the
+  cap drops anything, the observation header and the history say so and scroll
+  stays available, so a target at the end of the tree cannot simply vanish.
 - **`visual`** — from `parse_visual_regions`. Only when the `ax` source offers
   nothing for a declared step, and never from a partial tree. A visual target
   needs an exact unique text match at OCR confidence ≥ 0.8 unless the task
@@ -161,7 +167,7 @@ local `textSlots`.
   "snapshot_id": "…",
   "regions": [ /* compact visual regions, source of truth for pixels */ ],
   "history": [ /* outcome-only entries */ ],
-  "progress": { /* required steps and how many times this run performed them */ },
+  "progress": { "actions": 0, "decisions": 0, "performedSteps": {} },
   "candidates": [
     { "id": "…", "description": "…", "source": "ax" },
     { "id": "reobserve", "description": "…", "source": null },
@@ -175,29 +181,65 @@ probabilities }`. The runner accepts exactly one known ID and dispatches the
 prebuilt candidate unchanged. Unknown keys are rejected — v1 validators reject
 anything they do not know, which is why `source` required a new version.
 
-`reobserve` and `abstain` are always present. `progress` lets the chooser see
-that a required step was already performed; the runner counts its own
+`reobserve` and `abstain` are always present. `progress` is structured: the
+action and decision counters plus `performedSteps`, a map from a target's stable
+identity to how many times this run performed it — the runner counts its own
 successful actions and never trusts the app for the count.
 
 ## Per-step loop
 
-1. `get_window_state` (tree + screenshot, `tree_format: "elements"`).
+1. `get_window_state` (tree; a screenshot is added only for the visual modes).
 2. Code adds facts: frontmost app, focused field, role classes, source tags,
    rows of repeated labels, and the actions already tried on this screen.
 3. Build the bounded candidate table from the sources.
 4. One `cua.jev_choice_request_v2` request → one `selected_id`.
-5. Dispatch the frozen candidate. Background first; on
+5. **Confirm when the step mutates something risky.** A candidate whose label
+   names a hard-to-undo action is executed only after the user confirms, **every
+   time**. An escalated mutating candidate — the foreground twin of a background
+   route the driver refused — asks once per target and then runs without asking
+   again: background delivery being refused is systematic in some apps (Electron
+   among them), and re-asking for every click makes the tool unusable, while a
+   genuinely destructive action is worth re-confirming. With no UI to ask, the
+   run stops as `needs_review` instead of acting. The risk table is a gate on the
+   offer set, not the only guard.
+6. Dispatch the frozen candidate. Background first; on
    `escalation.recommended` offer the next rung as a **separate** candidate on
-   the next turn rather than retrying silently.
-6. Observe the successor. The successor is the only witness of the action.
-7. Stall rules (below) end the turn.
+   the next turn rather than retrying silently — `px` and `foreground` are
+   different rungs and stay different candidates.
+7. Observe the successor. The successor is the only witness of the action.
+8. Stall rules (below) end the turn.
+
+A candidate that was refused, or whose effect was not verified, is excluded by
+its stable identity; a candidate known to be on screen but unreachable (its
+window has no accessibility surface) never becomes a silent retry loop either.
+
+### Ending a run
+
+`done` is the chooser saying the goal is satisfied, and it is accepted only with
+evidence: every prepared text slot must have been delivered, and **both** signals
+must be good enough — the chooser's confidence must clear its floor, and, when a
+completion prediction was asked for, that prediction must clear its own. A
+missing prediction is a signal that is absent, not one that is bad, so a
+sufficiently confident `done` still ends the run. A `done` that is rejected is
+recorded in the history and **stays on the offer set** — refusing it must not be
+the same as forbidding it, or a finished task whose screen no longer changes can
+only end as `max_actions`.
+
+The two floors differ because the measured confidence differs: attaching a
+screenshot to a request halves it (see Vision below), so the image path gets its
+own, lower floor rather than a number that would reject the correct answer.
 
 ## Stall rules
 
 Copied from the upstream jev loop, and the fix for the recorded failure:
 
-- A screen signature is the app, the window title and the observed text. Two
-  captures are the same screen when at most one line differs.
+- A screen signature is the app, the window title and the observed text, with
+the element *position* left out and the semantic state (`selected`, disabled)
+left in; two captures are the same screen when at most one line differs. The
+index cannot be part of a change test: it is a snapshot-local ordinal, so
+inserting one element renumbers every row after it and fakes progress; and a
+selection that only changes `selected` has to count as a change, or the correct
+target is quarantined for “no effect”.
 - **Three actions in a row that left the screen unchanged** → stop with
   `stalled`.
 - **Two actions in a row already taken on the same screen** → stop with
@@ -263,8 +305,11 @@ Credential fields are never typed.
 Every mutating step is verified against the successor observation, not against
 the action's return value:
 
-- Text: the field's `value` in the successor tree must contain the prepared
-  text (driver `effect: confirmed` counts as read-back).
+- Text: **that** element's `value` in the successor tree must contain the
+  prepared text — the element is found again by its token (or stable identity),
+  not by searching the whole tree, because a substring anywhere is how typing
+  into the wrong field counts as success. An element that is gone from the
+  successor (navigated away) is *unverifiable*, not failed.
 - Toggle/selection: the element's `selected` / `value` must reach the requested
   state.
 - Navigation/overlay: the successor `window`/`surface` must match the step's
@@ -336,12 +381,23 @@ parity is confirmed on real tasks, then the following are deleted:
 ## Status
 
 Implemented and covered by tests: the CLI executor and session handling, the
-typed driver wrappers, observation shaping, role classes, candidate sources
-(ax + visual + menu), the policy gate, the v2 choice contract and its strict
-validation, the chooser, the loop, verification, and both stall rules.
+typed driver wrappers, observation shaping (signature without positions,
+selection/disabled state), role classes, candidate sources (ax + visual + menu),
+the policy gate, the confirmation gate, the v2 choice contract and its strict
+validation, the chooser, the loop, target-bound verification, the ending rules,
+and both stall rules. Driver permissions are asserted once at connect instead of
+being inferred from the first tool error.
 
 Not done: the perception extension is not installed, so the `visual` source has
-never been exercised against real pixels — it degrades silently to `ax` only.
+never been exercised against real pixels — it degrades to `ax` (and the loop
+stops asking for the rest of the run once it has been told so). A `px`
+(pointer-route) twin is only offered when its coordinates are bound to a
+`capture_id`; without one it is not offered at all, because a coordinate that
+leaves its capture cannot be executed and offering it would be an always-failing
+candidate. The CuaDriver window rows carry no focused/main flag (only
+`window_id`, `title`, `pid`, `app_name`, `is_on_screen`, `bounds`, `z_index`), so
+the driven window is still chosen by area; if that flag ever appears, it should
+win.
 
 ## Verification commands
 

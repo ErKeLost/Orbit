@@ -82,9 +82,18 @@ export type CuaObservation = {
   screenshot?: { width: number; height: number }
   /** Compact table handed to the chooser. */
   context: string
-  /** The same content as lines, for screen signatures and stall detection. */
+  /** The readable table rows, one per element, each prefixed with its
+   * snapshot-local `[index]`. Read by the chooser and by diagnostics. */
   lines: string[]
+  /** The same rows with the `[index]` prefix removed, for change detection.
+   * An inserted element renumbers every later `[index]`, which is not a change
+   * to the screen; the fingerprint, stall tracker and verifier all compare this
+   * instead of `lines`. */
+  signature: string[]
   fingerprint: string
+  /** How many candidates the offer-set cap dropped this turn; present only
+   * when the cap bit, so the chooser never believes it saw the whole window. */
+  droppedCandidates?: number
   /** True when a dialog/sheet/menu/popover is open, so Escape is offered. */
   overlay?: string
   /** The driver's own degraded reason, e.g. ax_window_unresolved. */

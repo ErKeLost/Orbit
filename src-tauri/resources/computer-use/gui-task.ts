@@ -5,6 +5,7 @@ import type { GuiTaskEvent, GuiTaskInput, GuiTaskResult } from "./gui-task-contr
 import { runGuiTaskEngine } from "./gui-task-engine.ts"
 import { createFileMemory, memoryEnabled } from "./affordance-memory.ts"
 import { connectDriver } from "./cua/driver.ts"
+import { assertDriverPermissions } from "./cua/binary.ts"
 import { DriverUnavailableError } from "./cua/errors.ts"
 import { runCuaTask, visionMode } from "./loop/engine.ts"
 
@@ -49,11 +50,18 @@ const taskSchema = {
 } as const
 
 export function registerGuiTask(pi: ExtensionAPI): void {
+  // The default engine is the Cua Driver, which has no DRILL/WIDEN progressive
+  // observation and no native xa11y worker. Promising the legacy operations in
+  // the tool description would make the calling model plan steps the engine
+  // cannot deliver, so the text follows `engineName()`.
+  const cua = engineName() === "cua"
   pi.registerTool({
     name: "gui_task",
     label: "GUI task",
-    description: "Attach to one desktop app and complete one natural-language goal through native Rust xa11y observations, bounded Jev choices, verified AX actions, and local text slots.",
-    promptGuidelines: ["Provide one complete desktop goal and the user's natural-language application name. Do not plan UI steps, guess labels, provide selectors, describe coordinates, or invent completion predicates. The local loop observes the live accessibility tree and Jev chooses each operation and target. Put every exact non-sensitive string that may need to be typed in textSlots with a short purpose; Jev sees only the purpose and slot ID, never the value. Use a budget proportionate to the task. The runtime opens or attaches to the target app, uses accessibility without screenshots, and stops on done, blocked, uncertain delivery, cancellation, or budget exhaustion."],
+    description: cua
+      ? "Attach to one desktop app and complete one natural-language goal through live accessibility observations, bounded Jev choices, verified driver actions, and local text slots."
+      : "Attach to one desktop app and complete one natural-language goal through native Rust xa11y observations, bounded Jev choices, verified AX actions, and local text slots.",
+    promptGuidelines: cua ? CUA_GUIDELINES : LEGACY_GUIDELINES,
     parameters: taskSchema,
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
       const input = params as GuiTaskInput
@@ -61,17 +69,24 @@ export function registerGuiTask(pi: ExtensionAPI): void {
       // The Cua Driver engine is the default; the legacy ax_control engine stays
       // selectable until parity is verified on real tasks.
       if (engineName() === "cua") {
+        const vision = visionMode(process.env.ORBIT_CU_VISUAL)
+        const visualFallback = process.env.ORBIT_CU_VISUAL_REGIONS === "1"
         let driver: Awaited<ReturnType<typeof connectDriver>> | undefined
         try {
           driver = await connectDriver({ signal })
+          // Fail before the first turn rather than mid-run: an ungranted driver
+          // is a launch problem, and the first tool call would otherwise report
+          // it as a delivery failure. Screen Recording is only required when
+          // this run will actually capture pixels.
+          await assertDriverPermissions(driver, { needsScreen: vision !== "off" || visualFallback })
           const result = await runCuaTask(input, {
             driver,
             signal,
             emit,
             // Screenshot to the chooser: ORBIT_CU_VISUAL=1 (auto) | always | off.
-            vision: visionMode(process.env.ORBIT_CU_VISUAL),
+            vision,
             // Perception-extension regions (AGPL; never bundled) are separate.
-            visualFallback: process.env.ORBIT_CU_VISUAL_REGIONS === "1",
+            visualFallback,
             confirm: ctx?.hasUI ? (summary: string) => ctx.ui.confirm("确认桌面操作", summary, { signal }) : undefined,
           })
           return { content: [{ type: "text", text: formatResult(input, result) }], details: result }
@@ -113,6 +128,17 @@ export function registerGuiTask(pi: ExtensionAPI): void {
 export function engineName(): "cua" | "legacy" {
   return process.env.ORBIT_CU_ENGINE?.trim().toLowerCase() === "legacy" ? "legacy" : "cua"
 }
+
+/** The Cua Driver engine's guidelines: no DRILL/WIDEN, no native xa11y worker. */
+const CUA_GUIDELINES = [
+  "Provide one complete desktop goal and the user's natural-language application name. Do not plan UI steps, guess labels, provide selectors, describe coordinates, or invent completion predicates. The local loop observes the live accessibility tree and Jev chooses one operation and target per turn. Put every exact non-sensitive string that may need to be typed in textSlots with a short purpose; Jev sees only the purpose and slot ID, never the value. Use a budget proportionate to the task. The runtime opens or attaches to the target app, drives it through accessibility without screenshots by default, and stops on done, blocked, uncertain delivery, a confirmation it cannot show, cancellation, or budget exhaustion.",
+  "A background action can be refused. When that happens the engine offers the driver's next rung (FOREGROUND or POINTER) as a separate candidate; choose it only when the background route was refused, and expect a confirmation for it. There is no drill/widen step: read the window as it is, or scroll when a list is longer than the window.",
+]
+
+/** The legacy ax_control worker's guidelines, kept for `ORBIT_CU_ENGINE=legacy`. */
+const LEGACY_GUIDELINES = [
+  "Provide one complete desktop goal and the user's natural-language application name. Do not plan UI steps, guess labels, provide selectors, describe coordinates, or invent completion predicates. The local loop observes the live accessibility tree and Jev chooses each operation and target. Put every exact non-sensitive string that may need to be typed in textSlots with a short purpose; Jev sees only the purpose and slot ID, never the value. Use a budget proportionate to the task. The runtime opens or attaches to the target app, uses accessibility without screenshots, and stops on done, blocked, uncertain delivery, cancellation, or budget exhaustion.",
+]
 
 function failureResult(error: unknown, signal?: AbortSignal): GuiTaskResult {
   const message = error instanceof Error ? error.message : String(error)

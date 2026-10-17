@@ -53,11 +53,19 @@ export function applyPolicy(candidates: readonly CuaCandidate[], context: Policy
  * Keep the offer set bounded and deterministic. Reserved candidates are always
  * last. Anything past the cap is dropped rather than silently truncated inside
  * the request, so the chooser's probability distribution covers what it saw.
+ *
+ * Scroll candidates are never themselves dropped: they are the only way to
+ * reveal what the cap hid, so keeping them is what makes a bounded offer set
+ * recoverable instead of a dead end. They are placed after the kept controls so
+ * the chooser still sees the concrete targets first.
  */
 export function boundCandidates(candidates: readonly CuaCandidate[]): { offered: CuaCandidate[]; dropped: number } {
   const executable = candidates.filter(candidate => !candidate.tool ? false : true)
   const reserved = candidates.filter(candidate => !candidate.tool)
   if (executable.length <= MAX_EXECUTABLE_CANDIDATES) return { offered: [...executable, ...reserved], dropped: 0 }
-  const kept = executable.slice(0, MAX_EXECUTABLE_CANDIDATES)
+  const scrolls = executable.filter(candidate => candidate.operation === "scroll")
+  const others = executable.filter(candidate => candidate.operation !== "scroll")
+  const room = Math.max(0, MAX_EXECUTABLE_CANDIDATES - scrolls.length)
+  const kept = [...others.slice(0, room), ...scrolls]
   return { offered: [...kept, ...reserved], dropped: executable.length - kept.length }
 }

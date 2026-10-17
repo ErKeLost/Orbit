@@ -38,6 +38,7 @@ export async function observe(driver: CuaDriver, input: ObserveInput): Promise<C
   const elements = stripMenuBar(raw.elements)
   const overlay = detectOverlay(elements)
   const lines = elements.map(describeElement)
+  const signature = elements.map(describeElementSignature)
   const context = buildContext(raw, elements, lines, { degraded, overlay, complete: raw.elementsComplete })
   return {
     pid: input.pid,
@@ -53,7 +54,8 @@ export async function observe(driver: CuaDriver, input: ObserveInput): Promise<C
     screenshot: raw.screenshot ? { width: raw.screenshot.width, height: raw.screenshot.height } : undefined,
     context,
     lines,
-    fingerprint: createHash("sha1").update(`${raw.appName}\u0000${raw.windowTitle}\u0000${lines.join("\n")}`).digest("hex"),
+    signature,
+    fingerprint: createHash("sha1").update(`${raw.appName}\u0000${raw.windowTitle}\u0000${signature.join("\n")}`).digest("hex"),
     overlay,
     ...(degradedReason ? { degradedReason } : {}),
     capturedAt: Date.now(),
@@ -90,15 +92,37 @@ export function detectOverlay(elements: readonly CuaElement[]): string | undefin
 
 /** The short, stable line for one element: role class, label, value, actions. */
 export function describeElement(element: CuaElement): string {
+  return `[${element.elementIndex}] ${signaturePart(element)}`
+}
+
+/**
+ * The same line without the snapshot-local `[index]`.
+ *
+ * This is what change detection compares. The index renumbers every later row
+ * when one element is inserted, so a diff over `describeElement` output reports
+ * the whole tail as changed and the stall brake never fires; the same text
+ * without the index moves only when the screen really moves.
+ */
+export function describeElementSignature(element: CuaElement): string {
+  return signaturePart(element)
+}
+
+function signaturePart(element: CuaElement): string {
   const cls = roleClass(element.role)
   const label = element.label ?? element.valueDescription
   const value = element.value
-  const parts = [`[${element.elementIndex}] ${cls}`]
+  const parts: string[] = [cls]
   if (label) parts.push(`"${clip(label, 80)}"`)
   if (value && value !== label) parts.push(`holds="${clip(value, 80)}"`)
   const actions = element.actions.filter(Boolean)
   if (actions.length) parts.push(actions.map(action => action.replace(/^AX/, "")).join(","))
   if (element.inWebContent) parts.push("web")
+  // `selected` and `enabled` are semantic: a checklist row that becomes checked
+  // and a button that becomes disabled are changes to the screen, and the
+  // previous signature missed both, so it quarantined correct targets and hid
+  // real progress.
+  if (element.enabled === false) parts.push("disabled")
+  if (element.selected === true) parts.push("selected")
   return parts.join(" ")
 }
 
@@ -106,16 +130,40 @@ function buildContext(
   raw: { appName: string; windowTitle: string; totalElementCount: number; elementsComplete: boolean },
   elements: readonly CuaElement[],
   lines: readonly string[],
-  facts: { degraded: boolean; overlay?: string; complete: boolean },
+  facts: { degraded: boolean; overlay?: string; complete: boolean; dropped?: number },
 ): string {
   const header = [
     `app=${raw.appName}`,
     `window=${raw.windowTitle}`,
     `elements=${elements.length}${facts.complete ? "" : ` of ${raw.totalElementCount} (partial)`}`,
+    facts.dropped ? `dropped=${facts.dropped} candidates (the offer-set cap hid targets; scroll to reveal them)` : undefined,
     facts.degraded ? "degraded=ax_window_unresolved (the accessibility surface for this window is not resolvable right now)" : undefined,
     facts.overlay ? `overlay=${facts.overlay} (Escape closes it)` : undefined,
   ].filter(Boolean).join("\n")
   return `${header}\nelements:\n${lines.join("\n")}`
+}
+
+/**
+ * Re-head an observation once the offer-set cap has bitten.
+ *
+ * The offer set is bounded after the observation is built, so the observation
+ * itself cannot know it was cut. The chooser must not read a capped list as the
+ * whole window, so the loop calls this with the count it dropped. Only the
+ * header changes: `lines`, `signature` and the fingerprint are the screen's
+ * identity and keep their meaning.
+ */
+export function noteDroppedCandidates(observation: CuaObservation, dropped: number): CuaObservation {
+  if (dropped <= 0 || observation.droppedCandidates === dropped) return observation
+  return {
+    ...observation,
+    droppedCandidates: dropped,
+    context: buildContext(
+      { appName: observation.app, windowTitle: observation.title, totalElementCount: observation.total, elementsComplete: observation.complete },
+      observation.elements,
+      observation.lines,
+      { degraded: Boolean(observation.degradedReason), overlay: observation.overlay, complete: observation.complete, dropped },
+    ),
+  }
 }
 
 /** The editable controls on this screen, in tree order. */

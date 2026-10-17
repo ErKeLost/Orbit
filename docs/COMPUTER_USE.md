@@ -1,5 +1,13 @@
 # Computer Use
 
+> **This is the legacy path.** Since the CUA cutover, `gui_task` runs
+> [COMPUTER_USE_CUA.md](COMPUTER_USE_CUA.md) by default: the CuaDriver daemon as
+> the executor, candidates built locally, one chooser decision. Everything below
+> describes the earlier `ax_control` worker, which still ships behind
+> `ORBIT_CU_ENGINE=legacy` (and still owns the affordance memory that the CUA
+> engine has no equivalent for yet). Read this document only when working on
+> that engine.
+
 Orbit has one production Computer Use path and one tool: `gui_task`.
 The V2, V3, and V4 documents in `docs/archive/computer-use/` record earlier
 design iterations; they are historical references, not alternate runtimes.

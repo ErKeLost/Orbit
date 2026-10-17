@@ -30,6 +30,16 @@ export type ChoiceRegion = {
   height: number
 }
 
+export type ChoiceProgress = {
+  /** Deliveries that were accepted this run. */
+  actions: number
+  /** Chooser round trips this run, including reobserves. */
+  decisions: number
+  /** How many times each stable target identity has been delivered, so the
+   * chooser can see which steps already ran instead of repeating them. */
+  performedSteps: Record<string, number>
+}
+
 export type ChoiceRequest = {
   schema: typeof CHOICE_REQUEST_SCHEMA
   goal: string
@@ -37,7 +47,7 @@ export type ChoiceRequest = {
   snapshot_id: string | null
   regions: ChoiceRegion[]
   history: string[]
-  progress: Record<string, number>
+  progress: ChoiceProgress
   candidates: Array<{ id: string; description: string; source: string | null }>
 }
 
@@ -52,8 +62,9 @@ export type BuildChoiceInput = {
   observation: CuaObservation
   candidates: readonly CuaCandidate[]
   history: readonly string[]
-  /** Required steps and how many times this run has performed them. */
-  progress?: Record<string, number>
+  /** Optional, so the tests and the first turn need not build the counters;
+   * omitted means a fresh run. */
+  progress?: ChoiceProgress
   regions?: readonly VisualRegion[]
   captureId?: string
 }
@@ -74,7 +85,7 @@ export function buildChoiceRequest(input: BuildChoiceInput): ChoiceRequest {
     snapshot_id: input.observation.snapshotId ?? null,
     regions: (input.regions ?? []).map(toChoiceRegion),
     history: [...input.history],
-    progress: input.progress ?? {},
+    progress: input.progress ?? { actions: 0, decisions: 0, performedSteps: {} },
     candidates: candidates.map(candidate => ({
       id: candidate.id,
       description: candidate.description.slice(0, 1_000),

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { createDriver, normalizeWindowState, type WindowState } from "../src-tauri/resources/computer-use/cua/driver.ts"
+import { assertDriverPermissions } from "../src-tauri/resources/computer-use/cua/binary.ts"
 import { buildCallPayload, NO_SESSION_TOOLS, parseToolResult } from "../src-tauri/resources/computer-use/cua/tool-client.ts"
-import { DriverToolError, escalationOf } from "../src-tauri/resources/computer-use/cua/errors.ts"
+import { DriverToolError, DriverUnavailableError, escalationOf } from "../src-tauri/resources/computer-use/cua/errors.ts"
 import type { CuaToolClient } from "../src-tauri/resources/computer-use/cua/tool-client.ts"
 import type { ToolResult } from "../src-tauri/resources/computer-use/cua/tool-result.ts"
 
@@ -53,6 +54,20 @@ describe("cua driver normalisation", () => {
     expect(field.elementToken).toBe("s00000003:60")
     expect(field.inWebContent).toBe(true)
     expect(field.frame).toEqual({ x: 2106, y: 34, w: 240, h: 30 })
+  })
+})
+
+describe("driver permissions", () => {
+  test("fails fast with a structured code, and only demands Screen Recording when pixels are needed", async () => {
+    // An ungranted driver is a launch problem, so it must fail before the first
+    // turn with a code the caller can act on.
+    const denied = { checkPermissions: async () => ({ accessibility: false, screenRecording: true }) }
+    await expect(assertDriverPermissions(denied)).rejects.toBeInstanceOf(DriverUnavailableError)
+    await expect(assertDriverPermissions(denied)).rejects.toThrow(/辅助功能/)
+    // An accessibility-only run does not need Screen Recording.
+    const noScreen = { checkPermissions: async () => ({ accessibility: true, screenRecording: false }) }
+    await expect(assertDriverPermissions(noScreen)).resolves.toBeUndefined()
+    await expect(assertDriverPermissions(noScreen, { needsScreen: true })).rejects.toThrow(/屏幕录制/)
   })
 })
 

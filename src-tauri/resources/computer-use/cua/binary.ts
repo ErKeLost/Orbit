@@ -53,3 +53,25 @@ export function assertGranted(report: PermissionReport): void {
     report,
   )
 }
+
+/**
+ * Fail fast when the driver is connected but not granted.
+ *
+ * Called once right after connecting. Without this the first tool call fails
+ * mid-run and the loop has to guess a permission problem from an error string,
+ * which is exactly the misclassification a structured code prevents.
+ *
+ * Screen Recording is required only when this run will actually capture pixels
+ * (`needsScreen`): an accessibility-only run does not need it, and demanding it
+ * would reject a configuration that works.
+ */
+export async function assertDriverPermissions(
+  driver: { checkPermissions(): Promise<{ accessibility: boolean; screenRecording: boolean }> },
+  options: { needsScreen?: boolean } = {},
+): Promise<void> {
+  const state = await driver.checkPermissions()
+  assertGranted({
+    accessibility: state.accessibility,
+    screenRecording: options.needsScreen === true ? state.screenRecording : true,
+  })
+}
