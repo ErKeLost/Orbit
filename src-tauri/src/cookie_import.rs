@@ -22,10 +22,18 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use openssl::hash::{hash, MessageDigest};
-use openssl::pkcs5::pbkdf2_hmac;
-use openssl::symm::{decrypt, Cipher};
 use serde_json::{json, Value};
+
+// `openssl` (and the Safe Storage lookups below) are desktop-only in Cargo.toml:
+// the mobile builds ship no server and no OpenSSL. Enumeration still compiles
+// everywhere — the plaintext Firefox path needs neither — so the module only
+// grows a boundary around the parts that decrypt.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use openssl::hash::{hash, MessageDigest};
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use openssl::pkcs5::pbkdf2_hmac;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use openssl::symm::{decrypt, Cipher};
 
 /// The `sqlite3` binary both import paths already depend on.
 ///
@@ -36,16 +44,22 @@ pub(crate) const SQLITE3: &str = "sqlite3";
 
 /// Chromium's fixed key derivation. The salt is not a secret; the iterations
 /// are frozen by every existing database on disk.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const CHROMIUM_SALT: &[u8] = b"saltysalt";
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const CHROMIUM_ITERATIONS: usize = 1003;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const CHROMIUM_KEY_LEN: usize = 16;
 /// The IV is sixteen spaces, and has been since the format was introduced.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const CHROMIUM_IV: [u8; 16] = [0x20; 16];
 /// A modern Chromium database prefixes the plaintext with the SHA-256 of the
 /// cookie's host, so a row moved to another host does not decrypt to a usable
 /// value. It is not part of the value and must be stripped.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const CHROMIUM_HOST_HASH_LEN: usize = 32;
 /// Microseconds between 1601-01-01 (Chromium's epoch) and 1970-01-01.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const CHROMIUM_EPOCH_OFFSET_SECONDS: f64 = 11_644_473_600.0;
 
 /// Where a session can come from, and what reading it costs.
@@ -344,6 +358,7 @@ fn query_json(database: &Path, sql: &str) -> Result<Vec<Value>, String> {
 }
 
 /// Chromium's `sameSite` column as CDP's vocabulary.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn chromium_same_site(value: Option<&Value>) -> Option<&'static str> {
     match value.and_then(Value::as_i64) {
         Some(2) => Some("Strict"),
@@ -372,11 +387,23 @@ fn firefox_same_site(value: Option<&Value>) -> Option<&'static str> {
 pub fn read_cookies(source: &Source) -> Result<Vec<Value>, String> {
     match source.kind {
         Kind::Firefox => firefox_cookies(&source.path.join("cookies.sqlite")),
-        Kind::Chromium { service } => {
-            let password = safe_storage_password(service)?;
-            chromium_cookies(&source.path.join("Cookies"), &password)
-        }
+        Kind::Chromium { service } => chromium_source_cookies(&source.path, service),
     }
+}
+
+/// A Chromium profile needs that browser's own Safe Storage key, which only a
+/// desktop build can ask the OS for.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn chromium_source_cookies(profile: &Path, service: &str) -> Result<Vec<Value>, String> {
+    let password = safe_storage_password(service)?;
+    chromium_cookies(&profile.join("Cookies"), &password)
+}
+
+/// Mobile has neither a keychain lookup nor OpenSSL. Firefox's plaintext store
+/// still works, which is why enumeration stays compiled there.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+fn chromium_source_cookies(_profile: &Path, _service: &str) -> Result<Vec<Value>, String> {
+    Err("从 Chromium 浏览器导入登录只在桌面端可用".to_string())
 }
 
 /// Firefox's cookies, whose values are stored in the clear.
@@ -418,6 +445,7 @@ fn firefox_cookies(database: &Path) -> Result<Vec<Value>, String> {
 
 /// Chromium-family cookies: plaintext rows are taken as-is, encrypted ones are
 /// decrypted with the source browser's own key.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn chromium_cookies(database: &Path, password: &str) -> Result<Vec<Value>, String> {
     // Columns that have been there since the format existed, plus the optional
     // one handled below.
@@ -498,6 +526,7 @@ fn chromium_cookies(database: &Path, password: &str) -> Result<Vec<Value>, Strin
 }
 
 /// Chromium's `expires_utc` (microseconds since 1601) as CDP's seconds.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn chromium_expiry(value: Option<&Value>) -> f64 {
     let micros = value.and_then(Value::as_i64).unwrap_or(0);
     if micros <= 0 {
@@ -506,6 +535,7 @@ fn chromium_expiry(value: Option<&Value>) -> f64 {
     micros as f64 / 1_000_000.0 - CHROMIUM_EPOCH_OFFSET_SECONDS
 }
 
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn decode_hex(text: &str) -> Option<Vec<u8>> {
     if text.len() % 2 != 0 {
         return None;
@@ -521,6 +551,7 @@ fn decode_hex(text: &str) -> Option<Vec<u8>> {
 }
 
 /// The AES key a Chromium browser derives from its Safe Storage password.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn chromium_key(password: &str) -> [u8; CHROMIUM_KEY_LEN] {
     let mut key = [0u8; CHROMIUM_KEY_LEN];
     // SHA-1 and 1003 iterations are the format, not a choice: every database on
@@ -542,6 +573,7 @@ fn chromium_key(password: &str) -> [u8; CHROMIUM_KEY_LEN] {
 /// cookie's host to the plaintext; that prefix is stripped, and a value that
 /// does not carry the right digest for its own host is treated as
 /// undecryptable rather than imported under the wrong name.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn decrypt_value(blob: &[u8], password: &str, host: &str) -> Result<String, String> {
     let (version, ciphertext) = blob.split_at(blob.len().min(3));
     if ciphertext.is_empty() {
@@ -591,7 +623,7 @@ pub fn safe_storage_password(service: &str) -> Result<String, String> {
 }
 
 /// Linux keeps the same secret in the Secret Service or KWallet.
-#[cfg(all(unix, not(target_os = "macos")))]
+#[cfg(all(unix, not(target_os = "macos"), not(any(target_os = "android", target_os = "ios"))))]
 pub fn safe_storage_password(service: &str) -> Result<String, String> {
     let application = service.replace(" Safe Storage", "").to_lowercase();
     let output = Command::new("secret-tool")
@@ -614,7 +646,7 @@ pub fn safe_storage_password(_service: &str) -> Result<String, String> {
     Err("Windows 上的 Chromium 密钥由 DPAPI 和应用绑定加密保护，暂不支持从这些浏览器导入".to_string())
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
 mod tests {
     use super::*;
     use openssl::symm::{encrypt, Cipher};
