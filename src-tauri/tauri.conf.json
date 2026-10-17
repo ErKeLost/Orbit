@@ -87,6 +87,7 @@
       "resources/search-tools.ts",
       "resources/web-search.ts",
       "resources/context-payload.ts",
+      "resources/request-budget.ts",
       "resources/workspace.ts",
       "resources/subagents",
       "resources/browser-use",

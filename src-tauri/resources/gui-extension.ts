@@ -8,6 +8,8 @@ import {registerWorkspace} from './workspace.ts'
 import {COMPUTER_USE_TOOL_NAMES,registerComputerUseMode} from './computer-use/mode.ts'
 import {BROWSER_USE_TOOL_NAMES,registerBrowserUseMode} from './browser-use/mode.ts'
 import {providerToolChars} from './context-payload.ts'
+import {applyRequestBudget,resolveRequestBudgetSettings} from './request-budget.ts'
+import type {BudgetMessage} from './request-budget.ts'
 import {enableFastSearchTools,FAST_SEARCH_GUIDELINE} from './search-tools.ts'
 import {enableWebSearchTool,registerWebSearch,resolveWebSearchSettings} from './web-search.ts'
 // Pi official docs/extensions.md: registerCommand, getAllTools, setActiveTools,
@@ -256,6 +258,8 @@ export const VIRTUAL_MODEL_STATUS='gui-virtual-models'
 export const CACHE_STATUS='gui-cache'
 export const SESSION_NAME_STATUS='gui-session-name'
 export const SUGGEST_STATUS='gui-suggest'
+/** 上一次请求的图片裁剪结果：{limitBytes, dropped, bytesBefore, bytesAfter}。 */
+export const REQUEST_BUDGET_STATUS='gui-request-budget'
 /** 补全超过这个长度就说明模型没听指令，宁可不显示也不画一屏幽灵文字。 */
 export const SUGGEST_MAX_CHARS=160
 export const VIRTUAL_MODEL_API_ID='pi-virtual'
@@ -803,12 +807,19 @@ export function validateCall(settings:ImageSettings,kind:string,modelId:string,i
 const MODELS_CONFIG_PATH=join(homedir(),'.pi/agent/models.json')
 const AUTH_CONFIG_PATH=join(homedir(),'.pi/agent/auth.json')
 const WEB_SEARCH_CONFIG_PATH=join(homedir(),'.pi/agent/web-search.json')
+const REQUEST_BUDGET_CONFIG_PATH=join(homedir(),'.pi/agent/request-budget.json')
 
 function readJsonFile(path:string):unknown{
   try{return JSON.parse(readFileSync(path,'utf8'))}catch{return null}
 }
 
 function readWebSearchSettings(){return resolveWebSearchSettings(readJsonFile(WEB_SEARCH_CONFIG_PATH))}
+
+/**
+ * 请求体预算：文件在就是用户说了算，文件不在就听模型目录自己声明的
+ * `inputLimits.maxRequestBytes`，再不然用内置默认值（见 request-budget.ts）。
+ */
+function readRequestBudgetSettings(modelLimitBytes?:number){return resolveRequestBudgetSettings(readJsonFile(REQUEST_BUDGET_CONFIG_PATH),modelLimitBytes)}
 
 /**
  * 每一个「值得问一次它有没有出图模型」的 provider。
@@ -1041,6 +1052,35 @@ export default async function (pi: ExtensionAPI) {
   registerImages(pi)
   registerWebSearch(pi,{readConfig:readWebSearchSettings,authPath:AUTH_CONFIG_PATH})
   pi.on('before_provider_request',event=>{latestProviderToolChars=providerToolChars(event.payload)})
+  // 请求体预算。图片是**按历史累积**的：用户看到一张截图，模型收到的是这段对话里的每一张。
+  // 单张有上限（Pi 的 inputLimits.images.resize），总量没有 —— 于是一个 51MB 的会话在
+  // 第 19 次带图提问时被网关按 `413 Failed to buffer the request body` 拒了。这里按
+  // 「新的先留、旧的先丢」裁到预算内，并且只改这一次调用（context 是 request-local 的，
+  // 会话历史、界面里的图、磁盘上的 session 文件都不动）。
+  let publishedBudget=''
+  let announcedDrop=false
+  let announcedOver=false
+  pi.on('context',(event,ctx)=>{
+    // AgentMessage 是个联合类型，落在 BashExecutionMessage 上没有 content；预算器只认
+    // content，所以在结构类型上过一道。
+    const settings=readRequestBudgetSettings(ctx.model?.inputLimits?.maxRequestBytes)
+    const result=applyRequestBudget(event.messages as unknown as BudgetMessage[],settings)
+    const summary=JSON.stringify({limitBytes:settings.maxRequestBytes,keepRecentImages:settings.keepRecentImages,dropped:result.dropped,bytesBefore:result.bytesBefore,bytesAfter:result.bytesAfter,overLimit:result.overLimit})
+    if(summary!==publishedBudget){publishedBudget=summary;ctx.ui.setStatus(REQUEST_BUDGET_STATUS,summary)}
+    if(result.dropped&&!announcedDrop){
+      announcedDrop=true
+      ctx.ui.notify(`本次请求超出体积预算，已略去较早的 ${result.dropped} 张截图（历史还在，压缩上下文或开新会话就能让它们回来）`,'info')
+    }
+    if(!result.dropped)announcedDrop=false
+    // 裁完还超，是预算器救不了的那种超（非图片部分自己就超了，或最近几张图加起来就超了）。
+    // 说出来，否则下一个报错是网关的 413，而用户看不到它和图片有关。
+    if(result.overLimit&&!announcedOver){
+      announcedOver=true
+      ctx.ui.notify(`本次请求约 ${Math.round(result.bytesAfter/1024/1024)}MB，仍然超过 ${Math.round(settings.maxRequestBytes/1024/1024)}MB 的预算：图片已经不是超出的部分了，请压缩上下文或开新会话`,'warning')
+    }
+    if(!result.overLimit)announcedOver=false
+    return result.dropped?{messages:result.messages as unknown as typeof event.messages}:undefined
+  })
   // 搜索类工具的提示词引导：`grep` 激活后 pi 自己的「用 bash 搜索」规则会消失，
   // 这里再明确一次，手动关掉内置 grep 时也不至于退回 `grep -r`。
   pi.on('before_agent_start',event=>{const lines=event.systemPromptOptions.promptGuidelines;if(!lines.includes(FAST_SEARCH_GUIDELINE))lines.push(FAST_SEARCH_GUIDELINE)})

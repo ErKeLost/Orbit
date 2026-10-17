@@ -1,6 +1,6 @@
 # Pi 功能覆盖与边界
 
-以 Pi 1.0.0 官方 RPC / SDK / extensions 文档为基准（2026-10-02 复核）。这里区分原生 GUI、控制台和原始终端入口，不把“有个按钮”当作已支持。
+以 Pi 1.3.0 官方 RPC / SDK / extensions 文档为基准（2026-10-17 复核；1.0.0 基线见文末升级备注）。这里区分原生 GUI、控制台和原始终端入口，不把“有个按钮”当作已支持。
 
 ## 覆盖结论
 
@@ -45,17 +45,18 @@
 | 会话附加项目 | 顶栏标题弹出 roots；同一 session 可挂多个侧栏项目，扩展写入会话记录并注入根列表与各项目 AGENTS.md |
 | 动态多 agent | 父 Pi 通过 `spawn_agent` 异步委派：派完立即返回，子 agent 完成后以 `FINAL_ANSWER` 消息回流到父的上下文，父全程不被阻塞。工具面与 Codex V2 对齐（`spawn_agent` / `send_message` / `followup_task` / `wait_agent` / `interrupt_agent` / `list_agents`）。子进程复用 Orbit 内置 Pi，继承语料默认经过滤（丢弃 toolResult/toolCall），支持嵌套、消息、跟进、等待、中止、状态树与持久化子会话。架构见 [MULTI_AGENT.md](MULTI_AGENT.md) |
 | 屏幕通道（Screen） | 可选。手机端「屏幕」页请求后才启动。ScreenCaptureKit 采集（零拷贝 CVPixelBuffer）→ VideoToolbox 硬编 H.264（JPEG 为兜底）→ 单帧总线 → 独立 WebSocket（复用 token/E2EE/relay）→ 手机端 WebCodecs 解码到 canvas；输入经 `xa11y` 注入，与 `gui_task` 同一授权。最慢订阅者门控（保证 H.264 参考链不断）、跳号自动补关键帧、逐字节变化检测、单帧硬上限、带宽调节器（码率优先、只降不升过请求值）。需要 macOS「屏幕录制」授权。架构见 [SCREEN.md](SCREEN.md) |
-| 电脑操作（Computer Use） | 可选。Pi 只提供目标 App、整体 goal、本地文本槽和预算；Spotlight resolver 解析本地化 App 身份；Rust `ax_control` worker 负责 AX skeleton/drill、snapshot refs、事件驱动等待、动作和 post-state；决策模型每轮只在当前能力候选中选择 operation+target。默认不截图，只保留唯一生产后端。默认关闭；输入框旁开关或设置开启。有 API/CLI 时不要用。架构见 [COMPUTER_USE.md](COMPUTER_USE.md) |
+| 电脑操作（Computer Use） | 可选。Pi 只提供目标 App、整体 goal、本地文本槽和预算；默认引擎（`cua`）是 **CuaDriver 作为执行器 + 本地构造的完整候选 + Jev 选一个 id**：观察走驱动的元素树（菜单栏子树被裁掉），候选带稳定 identity 与冻结的 tool 参数，风险标签默认不出现在候选里，**变更类操作执行前要用户确认**（没有可确认的界面就 `needs_review`），每一步都用后继观察做校验（不是用动作的返回值）。窗口解析有阶梯：先激活、再重启，**不重启你正在用的应用**，重启前也要确认。`ORBIT_CU_ENGINE=legacy` 才会回到旧 Rust `ax_control` 路径。默认关闭；输入框旁开关或设置开启。有 API/CLI 时不要用。架构见 [COMPUTER_USE_CUA.md](COMPUTER_USE_CUA.md) |
 | 电脑操作决策模型 | 设置 → 操作电脑。Jev（TypeSafe）与 Cloudflare Clef-flash 两套后端都保留，共用同一 SystemOne 协议，可在配置页切换；同页保存 Jev Key、Cloudflare Account ID / API Token、SystemOne Base URL，并提供真实连接的延迟测试。Jev 版本按版本号固定（默认 `jev-1.14.0`，可选 `jev-1.13.0`），不依赖 `jev-latest` 别名。选择写入 `~/.pi/agent/computer-use.json`，重连项目后生效 |
-| 浏览器（Browser Use） | 可选。`browser_task` 驱动**真实的 Chrome**（独立进程、独立资料目录、headless 或可见窗口），不是 iframe、也不是 Tauri 子 webview：DOM 经 CDP 读取，点击/输入经 DevTools 的 `Input.*` 投递（可信事件）。一次请求给出操作 + 每个操作的目标（推测式并发），模型只能选页面上观察到的元素编号，永远不会产出选择器、坐标或脚本。决策过期则不执行、不计数；已交付的动作永不重试；不可撤销的步骤需要确认。字段值优先取 `textSlots`（决策模型只看用途，看不到值），没有就用运行**自己的模型**写一个（一次 Pi 一次性提问，只接受 `{"text":…}`，绝不编造个人信息，说不出就报 `needs_text`）。架构见 [BROWSER_USE.md](BROWSER_USE.md) |
-| 浏览器第三栏（BrowserDock） | **真实内核渲染**：`Window::add_child` 把一块 WKWebView 放进窗口（macOS），页面由系统直接绘制 —— 不是 iframe、不是帧流，文字与 app 同级清晰，滚动/选中/输入法/右键都是原生的。默认开启、四边可 dock、拖拽调大小、双击复位，切到整页设置界面也留在右侧；栏本身「跟着浏览器走」：agent 启动的 Chrome 会让栏自己出现，关掉栏只停止取帧、不会杀掉正在跑任务的浏览器。画面是 CDP screencast 帧（只在重绘时产生），点击坐标按 letterbox 反算，⌘A/⌘C/⌘V 走 Chrome 自己的编辑命令。页面的 alert/confirm/prompt 在栏底成一条横幅由用户处理。地址栏是 omnibox（不含点的词当搜索词，默认百度）；子视图不在任何 capability 里，网页碰不到 app 的命令，唯一通道是 app→页面的 `browser_view_eval`（读标题/地址/驱动页面）。**注意：agent 的 `browser_task` 仍跑在独立的 headless Chrome 上**（CDP 才能给 DOM 级决策与可信输入），把 agent 接到这一栏上是下一步 |
-| 浏览器内核与会话 | 依次发现 Chrome / Chromium / Brave / Edge / Vivaldi，或用 `ORBIT_BROWSER_BINARY` 指定；`ORBIT_BROWSER_HEADFUL=1` 用真实窗口（栏仍镜像同一个 tab）；`ORBIT_BROWSER_HOME` 整体挪走资料目录与 session.json。启动参数只写在 Rust 一处，扩展通过 `Orbit --browser-ensure` 复用同一套，因此栏和 agent 不会对「浏览器怎么跑」产生分歧。带 `--remote-allow-origins`（webview 必发 `Origin`，Chrome 默认拒登），内核 stderr 落在 `~/.pi/agent/browser/chrome.log`。远端命令边界里 `browser_open`/`browser_status`/`browser_close` 是显式排除项（手机没有这一栏） |
+| 浏览器（Browser Use） | 可选。`browser_task` 默认驱动**第三栏里属于本次运行的那个 tab**（app 生成 tab id 并返回给 run，两个并发 run 不会互踩），app 不可达时才回退到 Orbit 自己启动的 Chrome + CDP；结果里带 `engine=view\|chrome`，回退不再静默。观察是页面里注入的观察器给的**元素编号 + 可见文本**，另外标出 `offscreen`（在视口外）与 `covered`（被遮挡、含遮挡者），Chrome 路径还会附一份有界的无障碍大纲；点击/输入只投递到刚观察到的那个真实节点（投递前重解析 + `elementFromPoint` 命中测试），模型永远不会产出选择器、坐标或脚本。一次请求给出操作 + 每个操作的目标（推测式并发）；决策过期则不执行、不计数；已交付的动作永不重试；`DONE` 有置信度下限且低于它只会记一笔、下一轮仍可再提；不可撤销的步骤需要确认。字段值优先取 `textSlots`（决策模型只看用途，看不到值），没有就用运行**自己的模型**写一个（一次 Pi 一次性提问，只接受 `{"text":…}`，绝不编造个人信息，说不出就报 `needs_text`）。架构见 [BROWSER_USE.md](BROWSER_USE.md) |
+| 导入其他浏览器的登录 | 设置 → 浏览器，或首启横幅。只从 Orbit 真正启动的那个 Chromium 系浏览器导入，而且只搬运**会话材料**：cookies 与 `Device Bound Sessions`（少了后者 Chrome 会直接删掉 `SID` 一类 cookie），密码与自动填充不搬。两段式：先 `sqlite3 .backup` 快照 Cookies（不碰源浏览器正在打开的库）到 staging 目录并校验数量，再让 Chrome 自己用 CDP `Storage.getCookies` 读出明文，逐个写入第三栏的 WebKit cookie store（`WKHTTPCookieStore` 是写入 httpOnly cookie 的唯一途径）—— 只有两段都落地才写 `import.json` 报告，半成不算成功。目标 profile 已有的 `Local State` 绝不覆盖，导入期间与 agent 共用同一把 session 锁 |
+| 浏览器第三栏（BrowserDock） | **真实内核渲染**：`Window::add_child` 把一块 WKWebView 放进窗口（macOS），页面由系统直接绘制 —— 不是 iframe、不是帧流，文字与 app 同级清晰，滚动/选中/输入法/右键都是原生的。默认开启、四边可 dock、拖拽调大小、双击复位，切到整页设置界面也留在右侧。**视图的生死跟标签页走**：切换标签页只是 `hide()`（页面、滚动与登录态都在），真正关掉标签才销毁；刷新后残留的原生视图由启动时的 `browser_view_reconcile` 清理。agent 也用这一栏，但用**它自己的 tab**：点击走系统级鼠标（点前重新校验窗口仍在前台、且该点仍在页面矩形内，否则拒点），输入走脚本（部分站点会忽略合成输入，那时才需要 Chrome 回退）。地址栏是 omnibox（不含点的词当搜索词，默认百度）；子视图不在任何 capability 里，网页碰不到 app 的命令，唯一通道是 app→页面的 `browser_view_eval`（读标题/地址/驱动页面）。 |
+| 浏览器内核与会话 | 依次发现 Chrome / Chromium / Brave / Edge / Vivaldi，或用 `ORBIT_BROWSER_BINARY` 指定；`ORBIT_BROWSER_HEADFUL=1` 用真实窗口；`ORBIT_BROWSER_HOME` 整体挪走资料目录与 session.json。启动参数只写在 Rust 一处，扩展通过 `Orbit --browser-ensure` 复用同一套，因此栏和 agent 不会对「浏览器怎么跑」产生分歧。`session.json` 写入是原子的（临时文件名带 pid + 纳秒，读到损坏按没有会话处理），并且 ensure/attach/close/导入都由一把 `flock` 串起来 —— `--browser-ensure` 是独立进程，没有这把锁就会两个进程同时启动、互相关掉对方的 tab。带 `--remote-allow-origins`（webview 必发 `Origin`，Chrome 默认拒登），内核 stderr 落在 `~/.pi/agent/browser/chrome.log`。远端命令边界里 `browser_open`/`browser_status`/`browser_close`/`browser_import_*` 是显式排除项（手机没有这一栏） |
 | OAuth 登录、安装/更新/移除包、终端主题与快捷键设置 | 设置中的“打开 Pi 终端”；使用原始 Pi 功能 |
 | 自定义 TUI 组件与终端专有扩展 | 原始 Pi 终端入口；RPC 的 custom() 无可移植的图形表示 |
 
 ## 事实上的限制
 
-- Browser Use 的页面观察器支持常见 HTML/ARIA 控件，但不穿透 shadow root 与 iframe，也不支持 canvas 应用、文件上传、下载、嵌套滚动与任意键盘组件；没有输入法，中文请粘贴或走 `textSlots`。`DONE` 只是「模型认为页面满足了目标」，不是独立验证，工具结果会附上页面自己的可见文本供调用方核对。它不会绕过登录墙、付费墙或验证码，遇到就报 `blocked`。Jev 1.14 的图片与 Box 问题（图片内目标定位）尚未接入决策循环。
+- Browser Use 的页面观察器支持常见 HTML/ARIA 控件，但不穿透 shadow root 与 iframe，也不支持 canvas 应用、文件上传、下载、嵌套滚动与任意键盘组件；没有输入法，中文请粘贴或走 `textSlots`。`DONE` 有置信度下限，但它仍然只是「模型认为页面满足了目标」，不是独立验证 —— 工具结果会附上页面自己的可见文本供调用方核对。它不会绕过登录墙、付费墙或验证码，遇到就报 `blocked`。Jev 1.14 的图片与 Box 问题（图片内目标定位）尚未接入决策循环。
 - 这不是官方 Pi 桌面客户端，产品代码为本地自建 GUI。
 - RPC 文档明确指出 custom() 返回 undefined，多种终端 header/footer/editor 接口在 RPC 中为 no-op，主题 API 不可用。不能宣称任意第三方终端扩展都能原样显示在 React 中。
 - Pi 没有内置逐次工具审批；确认弹窗来自需要用户输入的扩展。本 GUI 不伪造内置审批能力。
@@ -69,10 +70,57 @@
 
 ## 新增能力
 
+- 请求体预算：一次请求里的图片总量按预算裁剪，**新的先留、旧的先丢**，被丢掉的在原位换成一行占位文本。起因是一个 51MB 的会话（18 张 2048px 截图，base64 合计 46.8MB）在第十九次提问时被网关拒了 —— `413 Failed to buffer the request body: length limit exceeded`：单张图有上限（Pi 自己的 `inputLimits.images.resize`），**总量没有**。上限是实测的：`api.deepseek.com` 在 50 331 630 字节放行（400 模型名错），51 380 206 字节就是那条 413，所以默认预算取 24MiB，给工具 schema、provider 包装和估算误差留一半余量。最近两张图永远保留 —— 用户当前问的那张不会被自己的历史挤掉；裁剪只作用于这一次调用（`context` 是 request-local 的），会话历史、界面里的图和磁盘上的 session 文件都不动。开始裁剪时提示一次，并把 `{limitBytes, keepRecentImages, dropped, bytesBefore, bytesAfter}` 发布到 `gui-request-budget` 状态。配置在 `~/.pi/agent/request-budget.json`（`enabled` / `maxRequestBytes` / `keepRecentImages`），没有文件时听模型目录声明的 `inputLimits.maxRequestBytes`。裁完**仍然**超预算时不再假装装得下：`bytesAfter` 是量出来的（含占位文本），超限还进 `gui-request-budget` 状态并提示一次（非图片部分自己就超了，或最近几张图加起来就超了）。逻辑见 `src-tauri/resources/request-budget.ts`，单测见 `tests/request-budget.test.ts`，真实 runtime + 真实 DeepSeek 的端到端验过两种场景（全裁 / 保底不裁）
+
 - 可搜索项目菜单，系统目录选择器支持一次添加多个目录。保存列表、切换项目、保留会话与输入草稿；各项目拥有独立 Pi 进程，后台任务继续运行。
 - 常驻 Context 状态栏与可收起的运行详情：上下文用量/配置上限、剩余量、最大输出、预留 tokens、近期保留量、累计及当前回复用量、缓存读写、费用估算、压缩前后统计、摘要、取消/失败/重试、队列、工具、模型和会话信息。
 - 实时压缩没有虚构百分比；测试确认压缩后 contextUsage 返回 null 时显示待更新。
 - LobeHub Markdown、AI Elements Conversation/PromptInput/Shimmer、assistant-ui ToolCall、组件库控件、Motion 交互动画及 Pierre 文件/差异视图已实际接入。连接提示、版本页脚、快捷键说明和原生 window.prompt 已从常用界面移除。
+
+## Pi 1.3.0 升级备注（2026-10-17）
+
+项目已升级到 npm 最新正式版 **1.3.0**（2026-10-15 发布），内置 runtime 重新打包为 `orbit-pi-runtime` 1.3.0。`@earendil-works/pi-coding-agent` 与全部 `@earendil-works/pi-*` 子包（`pi-agent-core` / `pi-ai` / `pi-codemode` / `pi-mcp` / `pi-tui`）统一钉在 1.3.0。
+
+**升级可行性结论：类型层零破坏。** 对 1.0.0 与 1.3.0 的两份 `dist` 做逐文件比对后确认：
+
+- **RPC 命令集完全未变**（仍是 33 个，`docs/rpc-commands.md` 的章节集合逐一相同）；
+- **`ExtensionContext`（`ctx`）成员零变化**；
+- `ExtensionAPI` 只新增 1 个方法：`registerToolRenderer()`；
+- `settings.json` 只新增 1 个键：`sessionShareDestination`；
+- `BeforeAgentStartEventResult` 形状未变（`{ message?, systemPrompt? }`），因此我们返回 `{ systemPrompt }` 的 4 个处理器不需要改写；
+- `bun run check`（含 `check:subagents` / `check:computer-use` / `check:browser-use` / `lint`）在升级后零错误，无需为一处类型签名改动。
+
+| Pi 1.1.0–1.3.0 变化 | 我们的判定与处理 |
+| --- | --- |
+| `agent_settled` 新增 `aborted: boolean`（1.1.0） | **已采纳。** `subagents/runtime.ts` 用它作为中止的权威信号；此前只靠 `message_end.stopReason` 推断，一个「首条 assistant 消息之前就被中止」的 worker 会被误报为 `completed`。GUI 侧 `transcript.aborted` 一并透传，自动化回写现在把取消记成 `cancelled` 而不是 `succeeded` |
+| `tool_execution_end` 新增 `durationMs`（1.1.0） | **已采纳。** `protocol.ts` 的 `Tool` 记录该字段，工具行在 ≥1s 时显示耗时 |
+| `before_agent_start` 现在也对 `pi.sendMessage(..., { triggerTurn: true })` 启动的 custom run 触发，且事件按 `messageType` 变成联合类型（1.2.0 breaking） | **无需改。** 我们 5 个处理器只读写 `event.systemPrompt` / `event.systemPromptOptions`，两者在 user/custom 两个变体里都来自同一个基类。语义上这是**改善**：此前 worker 结果唤醒的那一轮与用户轮次系统提示词不一致，会打破 provider 的 prompt cache（1.2.0 同时修掉了「custom run 首次工具调用后丢掉 `before_agent_start` 追加段」的 bug） |
+| run 启动期间会话即算 busy：`ctx.isIdle()` 为 false、`pi.sendMessage()` 排入正在启动的 run、`pi.sendUserMessage()` 必须给 `deliverAs`（1.2.0 breaking） | **无需改。** 我们只有一处 `triggerTurn` 调用（`subagents/tools.ts` 的 `FINAL_ANSWER` 投递），不使用 `sendUserMessage`，也不依赖 `isIdle()` |
+| `pi mcp list --json` 改为只报 `resources: true`，连接时不再列举 resources（1.2.0 breaking） | **无需改。** 我们不调用 `pi mcp list --json`，前端也不解析 `resources` / `resourceTemplates`；MCP 列表走 `list_mcp_servers` 直读 `mcp.json` |
+| `--tools` 支持 `*` 模式与 `--no-mcp`（1.0.4）、`+name`/`-name` 叠加（1.1.0）、resume 保留 active tools（1.3.0） | **无需改。** 我们不通过 CLI 传 `--tools`，工具选择一律走 `pi.setActiveTools()`；`gui-extension.ts` 的 `session_start → enableFastSearchTools` 本来就补齐 resume 后的 grep |
+| llama.cpp decision models 改为只作为 classifier（1.1.0） | **无需改。** worker 仍保留 `-e builtin:llama.cpp`（该内置名在 1.3.0 的 `docs/settings.md` 里仍然列出）；我们注册过 `/v1/systemone` 分类器路径，但不把 llama.cpp 模型当 chat 模型注册，因此不受影响 |
+| Azure provider id 由 `azure-openai-responses` 改名为 `azure`（1.0.3 breaking） | **无需改。** 我们引用的两处（`bridge.rs:2327`、`ProviderSettings.tsx:38`）都是 **API 类型**（`models.json` 条目的 `api` 字段），而该字符串在 1.3.0 里依然是 `azure-openai-responses`（见 `dist/bundle/chunks/azure-openai-responses-*.js` 的 `api:"azure-openai-responses"`）。我们从不写 provider **id** 为旧名。注意：若用户曾手工把 provider 键写成旧名，需自行在 `auth.json` / `models.json` / `settings.json` 改键，Pi 未提供该迁移 |
+| 移除 `@earendil-works/chord` 依赖与未发布的 experimental server/client/plugin 栈（1.2.0） | **无需改。** 我们从未直接依赖 `chord`，它只是 `pi-coding-agent` 的传递依赖；升级后已从 `bun.lock` 消失。`scripts/bundle-pi.mjs` 也不涉及这条路径 |
+| 包内移除 `npm-shrinkwrap.json`（1.0.1）、内部依赖钉成精确版本（1.3.0） | **无需改，且是收益。** `bundle-pi.mjs` 只拷贝 `package.json` / `quickjs.wasm` / photon，从不读 shrinkwrap；此前 1.0.0 的内部依赖写的是 `^1.0.0`（caret），本次升级顺带消除了混版风险 |
+| codemode 存活 worker 跨 session 准入上限 2（1.3.0） | **无需改。** 该计数器是**单 Pi 进程内**的模块级状态，而每个 worker 都是独立 Pi 子进程，因此「1 父 + 8 worker」是 9 份独立名额，互不竞争；超限是立即报错而非排队，不会引入新的长超时 |
+| 发布配置 schema 到 `pi.dev/schemas/*.schema.json`、theme schema 路径变更（1.2.0 breaking） | **无需改。** 我们写 `models.json` 时不写 `$schema`，主题走 Orbit 自己的 Catppuccin 同步流程，不经 Pi 的 theme schema 校验 |
+| `brace-expansion` 安全修复（1.0.1，GHSA-q2hr-2g5m-vwhr 等） | **已安全。** 升级前后 `bun.lock` 均为 `brace-expansion@5.0.12`，不受影响 |
+
+### 未随本次升级采纳的 1.3.0 新 API
+
+均已在上面核对过可用性，属于「可选、暂不需要」而非阻碍：
+
+- `pi.registerToolRenderer()`：只作用于交互 TUI 与 HTML 导出；Orbit 在 RPC 模式下用 React 自绘工具行，接它没有收益。
+- `ToolDefinition.reachesTools` / `namespace.aliases`：我们自己的工具不通过 codemode/`tool_search` 间接触达其他工具，MCP 扩展会自行使用它们，无需我们声明。
+- `agent_settled.aborted` 的 UI 呈现：目前只用于回写自动化结果，未在界面上单独标注「已取消」。
+- `--no-mcp`、`--tools` 的 `*` 模式、`settings.sessionShareDestination`：分别属于 CLI 与 Pi 自身 `/share` 流程，Orbit 不经过这些路径。
+
+### 验证方式
+
+- `bun run check`：类型与 lint 全过，零错误。
+- `bun test ./tests ./src/features/source-control/model`：744 通过 / 0 失败。
+- `bunx vitest run`：28 通过。
+- `bun run test:pi`：用真实 1.3.0 运行时跑通 RPC、扩展工具清单、多 agent 工具启停、computer-use 模式、bash 执行、MCP 会话注册、虚拟模型、图片与分类器目录。
 
 ## Pi 1.0.0 升级备注（2026-10-02）
 

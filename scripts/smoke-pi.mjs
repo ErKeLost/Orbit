@@ -19,6 +19,7 @@ cpSync(resolve(root,'src-tauri/resources/gui-extension.ts'),resolve(resources,'g
 cpSync(resolve(root,'src-tauri/resources/search-tools.ts'),resolve(resources,'search-tools.ts'))
 cpSync(resolve(root,'src-tauri/resources/web-search.ts'),resolve(resources,'web-search.ts'))
 cpSync(resolve(root,'src-tauri/resources/context-payload.ts'),resolve(resources,'context-payload.ts'))
+cpSync(resolve(root,'src-tauri/resources/request-budget.ts'),resolve(resources,'request-budget.ts'))
 cpSync(resolve(root,'src-tauri/resources/workspace.ts'),resolve(resources,'workspace.ts'))
 const cli=resolve(resources,'pi-runtime/cli.js'),extension=resolve(resources,'gui-extension.ts'),runtimeNode=resolve(resources,'node-runtime',process.platform==='win32'?'node.exe':'node'),runtimeModules=resolve(resources,'node_modules')
 const runtimeEnv={...process.env,NODE_PATH:runtimeModules,ORBIT_PI_CLI_PATH:cli,ORBIT_PI_NODE_PATH:runtimeNode,JITI_FS_CACHE:'false'}
@@ -28,6 +29,10 @@ const child=spawn(runtimeNode,[cli,'--mode','rpc','--offline','--no-session','--
 let buffer='',sequence=0,errors='',toolState,runtimeInfo,capabilities,media,virtualModels,mcpServers
 const pending=new Map(),results=[]
 const collaborationTools=['spawn_agent','send_message','followup_task','wait_agent','interrupt_agent','list_agents']
+// Mode-owned tools (computer-use / browser-use) are deliberately outside the
+// generic tool list: each has its own gating command, and Browser Use is on by
+// default. `/gui-tools-set` therefore leaves whichever are active in place.
+const modeOwnedTools=['gui_task','browser_task']
 // The release runtime must start the codemode sandbox from its own artifacts:
 // the isolated copy has no project node_modules to fall back on.
 const codemode=spawnSync(process.execPath,[resolve(root,'scripts/check-codemode.mjs'),resolve(resources,'pi-runtime')],{cwd,stdio:'pipe'})
@@ -61,21 +66,21 @@ try{
  const models=await req({type:'get_available_models'});assert(models.models.some(m=>m.provider===state.model.provider&&m.id===state.model.id));results.push('current model returned by Pi model catalog')
  const levels=await req({type:'get_available_thinking_levels'});assert(levels.levels.includes(state.thinkingLevel));results.push('current thinking level returned by Pi capability API')
  await req({type:'prompt',message:'/gui-tools'});assert(toolState.tools.length>0);results.push('GUI extension: tool inventory')
- await req({type:'prompt',message:'/gui-tools-set ["read"]'});assert.deepEqual(toolState.active,['read']);results.push('GUI extension: active tools update')
+ await req({type:'prompt',message:'/gui-tools-set ["read"]'});assert(toolState.active.includes('read'));assert(toolState.active.every(name=>name==='read'||modeOwnedTools.includes(name)),'generic tool selection leaves only "read" plus mode-owned tools: '+toolState.active);results.push('GUI extension: active tools update')
  await req({type:'prompt',message:'/gui-agent-mode {"enabled":true}'});assert(collaborationTools.every(name=>toolState.active.includes(name)));results.push('GUI extension: multi-agent tools enabled')
  await req({type:'prompt',message:'/gui-agent-mode {"enabled":false}'});assert(collaborationTools.every(name=>!toolState.active.includes(name)));results.push('GUI extension: multi-agent tools disabled')
  await req({type:'prompt',message:'/gui-computer-use-mode {"enabled":true}'});assert.equal(toolState && typeof toolState, 'object');results.push('GUI extension: computer-use mode command')
  await req({type:'prompt',message:'/gui-computer-use-mode {"enabled":false}'});results.push('GUI extension: computer-use mode disabled')
  const bash=await req({type:'bash',command:'printf "Orbit integration ok"',excludeFromContext:true});assert.equal(bash.exitCode,0);assert.equal(bash.output,'Orbit integration ok');results.push('real Bash execution through RPC')
  const commands=await req({type:'get_commands'});assert(commands.commands.some(c=>c.name==='gui-tree'));assert(commands.commands.some(c=>c.name==='gui-suggest'),'composer suggestion command registered');results.push('commands enumerated')
- // Pi 1.0 capability surface: exposure, MCP, media models, virtual routing models.
+ // Pi capability surface: exposure, MCP, media models, virtual routing models.
  await req({type:'prompt',message:'/gui-capabilities'})
  assert(capabilities&&capabilities.tools.total>0,'capability snapshot reported')
  assert.equal(typeof capabilities.tools.codemode,'boolean');assert.equal(typeof capabilities.tools.toolSearch,'boolean')
  assert(capabilities.tools.exposure&&Object.keys(capabilities.tools.exposure).length>0,'tool exposure classes reported')
  assert(Array.isArray(capabilities.mcp)&&Array.isArray(capabilities.media.image)&&Array.isArray(capabilities.media.classifier))
  assert(Array.isArray(capabilities.virtualModels))
- results.push('Pi 1.0 capability snapshot: tool exposure, MCP, media, virtual models')
+ results.push('Pi capability snapshot: tool exposure, MCP, media, virtual models')
  await req({type:'prompt',message:'/gui-media {"action":"list"}'});assert(media&&Array.isArray(media.image)&&Array.isArray(media.classifier));results.push('image and classifier model catalog')
  await req({type:'prompt',message:'/gui-mcp {"action":"add","name":"orbit_smoke","config":{"url":"https://127.0.0.1:9/mcp","enabled":false}}'})
  assert(mcpServers.servers.some(server=>server.name==='orbit_smoke'&&server.source==='extension'),'session MCP registration reported')
