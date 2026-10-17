@@ -37,7 +37,7 @@ flowchart TD
 
     H1 --> M[("父的 mailbox")]
     H2 --> M
-    M -- "trigger_turn = false，不叫醒父" --> W["主 agent 自己调 wait_agent"]
+    M -- "投递是 steer：进下一次请求，不新起一轮" --> W["主 agent 调 wait_agent"]
     W -- "只返回 Wait completed<br/>不说谁完成了、更不含内容" --> X["两条 FINAL_ANSWER 已在上下文里"]
     X --> Y(["主 agent 写对比结论，回你一段话"])
 ```
@@ -79,7 +79,7 @@ a 仓库主要用的是……（子 agent 的最终回答）
 
 **第 5 步：主 agent 去「敲门」看谁交了活**
 
-主 agent 会调用 `wait_agent(timeout_ms)`。它拿到的只有一句话，比如"`repo_a`、`repo_b` 有更新了"，**不包含它们写了什么**。内容就是第 4 步那个信封。
+主 agent 会调用 `wait_agent(timeout_ms)`。它拿到的只有一句 `Wait completed.`，**连谁完成了都不说，更不包含内容**。内容就是第 4 步那个信封。
 
 这也是为什么「子 agent 的成果永远不会出现在工具返回值里」——工具只负责告诉你信箱里有信，不负责把信念出来。
 
@@ -102,7 +102,13 @@ a 仓库主要用的是……（子 agent 的最终回答）
 
 **故意没有「批量派活」工具**。因为派活本身不阻塞，要并行就在同一轮里连着调几次 `spawn_agent`，它们会同时启动。在非阻塞的派活上再套一个批量原语是多余的。
 
-除了准入之外没有任何调度策略——没有队列、没有批量原语、也没有树深度上限。派不派、派几个、子 agent 要不要再往下派，全都由主模型自己决定。被约束的只有进程压力：**最多 8 个 worker 同时活跃**，跑完的进程会保留，攒到 **12 个**时按「最先结束的先清理」淘汰。这个 8 是**每个 supervisor 进程各自**的额度，所以嵌套树是逐层相乘，而不是共用一份全局预算（`MAX_ACTIVE_CHILDREN`、`MAX_LIVE_CHILDREN`，见 `src-tauri/resources/subagents/runtime.ts`）。
+除了准入之外没有任何调度策略——没有队列、没有批量原语、也没有树深度上限。派不派、派几个、子 agent 要不要再往下派，全都由主模型自己决定。被约束的有三样：
+
+- **整棵树最多 8 个 worker 同时运行**（`MAX_ACTIVE_CHILDREN`）。这是**全树共享**的额度，不是每层各一份：嵌套派活不会把 8 乘成 8×N。
+- **每个进程最多保留 12 个存活 worker**（`MAX_LIVE_CHILDREN`），超出按「最先结束的先清理」淘汰。
+- **结束后空闲超过 10 分钟就回收**，不必等到攒满 12 个。
+
+前两项之外还有一个跨进程的闸门。worker 是独立进程，所以"全树共享"靠文件系统实现：每个正在运行的 worker 在树目录下占一个槽文件（`TreeSlots`），派活前必须取到一个，取不到就报错而不是排队。槽文件名带着占位进程的 pid，进程崩溃留下的槽会在下一次派活时被回收，所以配额不会被死进程永久吃掉。默认额度是 8，可用 `PI_GUI_AGENT_TREE_LIMIT` 调整；目录通过 `PI_GUI_AGENT_TREE_DIR` 传给子 agent。
 
 ### Agent 路径
 
@@ -128,7 +134,7 @@ Task name: <收件人路径>
 Sender: <worker 路径>
 Status: <completed | failed | aborted>
 Payload:
-<worker 的最终回答，超过 50 KB 会被截断>
+<worker 的最终回答，超过 50 KB 会被截断并附一句提示>
 ```
 
 派发任务时用的是同一个信封、反方向：
@@ -143,7 +149,7 @@ Payload:
 
 `triggerTurn: true` 在两种情况下都正确：主 agent 正在跑的时候，Pi 会把这条消息 steer 进它下一次请求，所以 `wait_agent` 一返回，模型立刻就能看到结果；主 agent 空闲的时候，Pi 直接起一轮，所以结果不会被搁在那儿没人看。
 
-这也解释了 `wait_agent` 的语义：它只等一个**信号**，返回「哪些 worker 有更新」的摘要，**从不返回内容**。这是 Codex 的契约，也是 worker 的输出不会出现在工具返回值里的原因。
+这也解释了 `wait_agent` 的语义：它只等一个**信号**，返回的文案与 Codex 逐字一致（`Wait completed.` / `Wait interrupted by new input.` / `Wait timed out.`），**从不返回内容**。谁完成了只在结构化数据（快照和返回的节点列表）里，不给模型看，免得它去工具返回值里找结果。用户中途插话会以 `Wait interrupted by new input.` 结束等待，而不是白等到超时。
 
 ## 子 agent 拿到什么上下文
 
@@ -161,11 +167,11 @@ Pi 的会话是懒持久化的（有第一条对话内容才落盘），所以�
 
 ## 生命周期与通信
 
-`send_message` 和 `followup_task` 对应 Codex 的两种投递模式。`send_message` 只是排进正在跑的 worker，不额外起一轮；`followup_task` 在 worker 空闲时也会起一轮。Pi 对空闲的 RPC agent 没有「只排队不起轮」的语义，所以发给**空闲** worker 的 `send_message` 会先缓存在 Orbit，等这个 worker 下一次有任务时前置拼进去，而不是丢掉。
+`send_message` 和 `followup_task` 对应 Codex 的两种投递模式。`send_message` 只是排进正在跑的 worker，不额外起一轮；`followup_task` 在 worker 空闲时也会起一轮。Pi 对空闲的 RPC agent 没有「只排队不起轮」的语义，所以发给**空闲** worker 的 `send_message` 会先缓存在 Orbit，等这个 worker 下一次有任务时前置拼进去。这时工具返回值会明说「该 agent 当前空闲，消息已排队」，不会谎称已投递。
 
 目标可以用 agent id 或 task name 定位；名字有歧义时直接报错，而不是猜一个。
 
-主 agent 会话关闭时，所有 worker 进程都会被回收；跑完的 worker 攒到 12 个时按最旧优先淘汰。**新的用户轮次不会回收任何东西**：GUI 的模式同步提示词和你的消息是并发发出的，如果在这时候回收，可能正好撞上派活、把活着的 worker 杀掉。进程压力只靠淘汰来兜底，而淘汰只碰已经结束的 worker。取消会先发 Pi 的 `clear_queue` 和 `abort`，再终止进程。子会话会持久化，结束后可以从活动面板打开。
+主 agent 会话关闭时，所有 worker 进程都会被回收；跑完的 worker 空闲 10 分钟后自动回收（`ORBIT_PI_IDLE_WORKER_TTL_MS` 可调），攒到 12 个时也会按最旧优先淘汰。**新的用户轮次不会回收任何东西**：GUI 的模式同步提示词和你的消息是并发发出的，如果在这时候回收，可能正好撞上派活、把活着的 worker 杀掉。进程压力只靠淘汰来兜底，而淘汰只碰已经结束的 worker。取消会先发 Pi 的 `clear_queue` 和 `abort`，再终止进程。子会话会持久化，结束后可以从活动面板打开。
 
 ## 共享工作目录
 

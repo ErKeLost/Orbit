@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core"
 import { filterForkSession } from "./fork.ts"
 import { joinAgentPath, resolveAgentPath, ROOT_PATH, validateAgentName } from "./paths.ts"
+import { TreeSlots } from "./tree-slots.ts"
 import type { AgentNode, AgentResult, AgentSnapshot, AgentStatus } from "./types.ts"
 
 type PublishSnapshot = (snapshot: AgentSnapshot) => void
@@ -94,6 +95,8 @@ interface ChildHandle {
   queued: string[]
   /** Tail of the worker's stderr, kept so a failure can be explained. */
   stderr: string
+  /** Armed while the worker is settled and idle; reclaims the process on expiry. */
+  idleTimer?: ReturnType<typeof setTimeout>
 }
 
 const TERMINAL_STATUSES = new Set<AgentStatus>(["completed", "failed", "aborted"])
@@ -102,6 +105,9 @@ export const MAX_ACTIVE_CHILDREN = 8
 /** Workers kept alive for follow-up work; settled ones are evicted oldest-first. */
 const MAX_LIVE_CHILDREN = 12
 const CHILD_EXTENSION = join(dirname(fileURLToPath(import.meta.url)), "entry.ts")
+/** Shared tree budget: children inherit the directory and the limit through the environment. */
+const TREE_DIR_ENV = "PI_GUI_AGENT_TREE_DIR"
+const TREE_LIMIT_ENV = "PI_GUI_AGENT_TREE_LIMIT"
 
 /**
  * Built-in extensions every worker keeps.
@@ -118,8 +124,37 @@ const CHILD_EXTENSION = join(dirname(fileURLToPath(import.meta.url)), "entry.ts"
  * is kept so a worker can resolve a model the supervisor runs locally.
  */
 const CHILD_BUILTIN_EXTENSIONS = ["builtin:mcp", "builtin:codemode", "builtin:tool-search", "builtin:llama.cpp"]
-const MODEL_OUTPUT_LIMIT_BYTES = 50 * 1024
+/** Bytes of a worker report the supervisor sees. Codex does not truncate; we do,
+ * because one verbose worker can otherwise eat the supervisor's context. */
+function modelOutputLimitBytes(): number {
+  const configured = Number(process.env.ORBIT_PI_AGENT_OUTPUT_LIMIT_BYTES)
+  return Number.isFinite(configured) && configured > 0 ? configured : 50 * 1024
+}
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000
+/**
+ * A settled worker keeps its process so follow-up work starts fast, but it is
+ * not free: each one holds a Node runtime plus the whole Pi tool surface. Codex
+ * reclaims idle residents; we do the same after a grace period instead of
+ * waiting for the `MAX_LIVE_CHILDREN` watermark.
+ *
+ * Read per arm so a test can shorten it with `ORBIT_PI_IDLE_WORKER_TTL_MS`.
+ */
+function idleWorkerTtlMs(): number {
+  const configured = Number(process.env.ORBIT_PI_IDLE_WORKER_TTL_MS)
+  return Number.isFinite(configured) && configured > 0 ? configured : 10 * 60 * 1000
+}
+/**
+ * Codex's `wait_agent` returns these exact strings; keeping them byte-identical
+ * means a model that learned the contract from Codex reads the same signal here.
+ */
+const WAIT_COMPLETED = "Wait completed."
+const WAIT_INTERRUPTED = "Wait interrupted by new input."
+const WAIT_TIMED_OUT = "Wait timed out."
+/**
+ * Bound the completion buffer. A supervisor that never waits (or is asleep for a
+ * long run) would otherwise retain one entry per finished worker forever.
+ */
+const MAX_PENDING_UPDATES = 32
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -146,9 +181,10 @@ function safeSummary(value: string, limit = 220): string {
 }
 
 export function modelVisibleOutput(value: string): string {
+  const limit = modelOutputLimitBytes()
   const bytes = Buffer.from(value, "utf8")
-  if (bytes.byteLength <= MODEL_OUTPUT_LIMIT_BYTES) return value
-  const visible = bytes.subarray(0, MODEL_OUTPUT_LIMIT_BYTES).toString("utf8").replace(/\uFFFD$/, "")
+  if (bytes.byteLength <= limit) return value
+  const visible = bytes.subarray(0, limit).toString("utf8").replace(/\uFFFD$/, "")
   return `${visible}\n\n[子 agent 输出已截断；完整内容保留在子会话中]`
 }
 
@@ -214,6 +250,10 @@ export class SubagentRuntime {
   readonly selfPath: string
   private readonly parentSessionFile?: string
   private readonly sessionBaseDir?: string
+  /** One slot per running worker, shared across the whole agent tree. */
+  private readonly treeSlots?: TreeSlots
+  /** nodeId → slot file, so a reclaimed worker returns its slot exactly once. */
+  private readonly slots = new Map<string, string>()
   private readonly nodes = new Map<string, AgentNode>()
   private readonly children = new Map<string, ChildHandle>()
   private readonly publish: PublishSnapshot
@@ -221,7 +261,12 @@ export class SubagentRuntime {
   private readonly filterFork: boolean
   /** Workers that reached a terminal state since the last `waitForUpdate`. */
   private readonly updates: AgentNode[] = []
-  private waiter?: () => void
+  /**
+   * Every in-flight `wait_agent` call. Codex wakes each waiter on mailbox
+   * activity; a single slot would let a second concurrent wait silently steal
+   * the first one's wake-up and report a false timeout.
+   */
+  private readonly waiters = new Set<() => void>()
   private disposed = false
   private publishTimer?: ReturnType<typeof setTimeout>
   private lastPublishedAt = 0
@@ -238,6 +283,14 @@ export class SubagentRuntime {
     this.deliver = options.deliver
     this.filterFork = options.filterFork ?? true
     this.sessionBaseDir = parentSessionFile ? join(dirname(parentSessionFile), "subagents") : undefined
+    // A worker's own session dir is nested inside the supervisor's, so the tree
+    // budget cannot be derived from it: the spawner passes the root directory and
+    // the limit down through the environment.
+    const inheritedTreeDir = process.env[TREE_DIR_ENV]
+    const treeDir = inheritedTreeDir || (this.sessionBaseDir ? join(this.sessionBaseDir, ".tree") : undefined)
+    const inheritedLimit = Number(process.env[TREE_LIMIT_ENV])
+    const treeLimit = Number.isFinite(inheritedLimit) && inheritedLimit > 0 ? inheritedLimit : MAX_ACTIVE_CHILDREN
+    this.treeSlots = treeDir ? new TreeSlots(treeDir, treeLimit) : undefined
     this.emit()
   }
 
@@ -500,12 +553,53 @@ export class SubagentRuntime {
   private finishRun(nodeId: string): void {
     const node = this.nodes.get(nodeId)
     if (!node || !TERMINAL_STATUSES.has(node.status)) return
-    const output = this.children.get(nodeId)?.output.trim() || node.summary || ""
+    const handle = this.children.get(nodeId)
+    const output = handle?.output.trim() || node.summary || ""
     this.updates.push(node)
-    const waiter = this.waiter
-    this.waiter = undefined
-    waiter?.()
+    if (this.updates.length > MAX_PENDING_UPDATES) this.updates.splice(0, this.updates.length - MAX_PENDING_UPDATES)
+    // Wake every waiter, not just the newest one.
+    for (const wake of [...this.waiters]) wake()
+    this.waiters.clear()
+    // The turn is over: the concurrency slot goes back while the process stays
+    // warm for follow-up work.
+    this.releaseSlot(nodeId)
+    if (handle) this.armIdleTimer(nodeId, handle)
     this.deliver?.(node, output)
+  }
+
+  /**
+   * Reclaim a settled worker once it has been idle long enough. Any new task
+   * cancels the timer, so a worker the supervisor keeps talking to is never
+   * collected underneath it.
+   */
+  private armIdleTimer(nodeId: string, handle: ChildHandle): void {
+    this.clearIdleTimer(handle)
+    handle.idleTimer = setTimeout(() => {
+      handle.idleTimer = undefined
+      if (this.disposed) return
+      if (this.children.get(nodeId) !== handle) return
+      this.children.delete(nodeId)
+      void this.stopProcess(nodeId, handle, false)
+    }, idleWorkerTtlMs())
+    handle.idleTimer.unref?.()
+  }
+
+  private clearIdleTimer(handle: ChildHandle): void {
+    if (!handle.idleTimer) return
+    clearTimeout(handle.idleTimer)
+    handle.idleTimer = undefined
+  }
+
+  /**
+   * Return a tree slot. A worker holds one only while it is running a turn, so
+   * this fires when it settles as well as when its process is reclaimed: the
+   * budget bounds concurrency, not residency.
+   */
+  private releaseSlot(nodeId: string): void {
+    const slot = this.slots.get(nodeId)
+    if (!slot) return
+    this.slots.delete(nodeId)
+    this.treeSlots?.release(slot)
   }
 
   private createChild(node: AgentNode, options: SpawnOptions, signal: AbortSignal | undefined): ChildHandle {
@@ -539,6 +633,7 @@ export class SubagentRuntime {
         PI_GUI_AGENT_ID: node.id,
         PI_GUI_AGENT_PATH: node.path,
         PI_GUI_AGENT_PARENT_ID: node.parentId || "",
+        ...(this.treeSlots ? { [TREE_DIR_ENV]: this.treeSlots.dir, [TREE_LIMIT_ENV]: String(this.treeSlots.budget) } : {}),
       },
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
@@ -666,6 +761,8 @@ export class SubagentRuntime {
   }
 
   private async stopProcess(nodeId: string, handle: ChildHandle, markAborted = true): Promise<void> {
+    this.clearIdleTimer(handle)
+    this.releaseSlot(nodeId)
     const current = this.nodes.get(nodeId)
     if (markAborted && current && !TERMINAL_STATUSES.has(current.status)) this.update(nodeId, { status: "aborted", summary: "已取消", endedAt: Date.now() })
     try { await this.request(handle, { type: "clear_queue" }, 5_000) } catch { /* process may be exiting */ }
@@ -693,7 +790,11 @@ export class SubagentRuntime {
     if (invalid) throw new Error(invalid)
     if (this.snapshot().active.length >= MAX_ACTIVE_CHILDREN) throw new Error(`子 agent 并发数不能超过 ${MAX_ACTIVE_CHILDREN}`)
     this.evictSettledWorkers()
+    // The tree budget is charged before the process exists, so a fan-out cannot
+    // briefly overshoot the limit while children are starting.
+    const slot = this.treeSlots?.acquire()
     const node = this.createNode(options)
+    if (slot) this.slots.set(node.id, slot)
     this.update(node.id, { status: "running", summary: "正在启动" })
     let handle: ChildHandle | undefined
     try {
@@ -759,36 +860,60 @@ export class SubagentRuntime {
   async waitForUpdate(
     timeoutMs = DEFAULT_WAIT_TIMEOUT_MS,
     signal?: AbortSignal,
-  ): Promise<{ message: string; timedOut: boolean; updated: AgentNode[] }> {
-    const describe = (updated: AgentNode[]) =>
-      updated.length > 0 ? `Updates: ${updated.map((node) => `${node.name} [${node.status}]`).join(", ")}` : "Wait completed."
+  ): Promise<{ message: string; timedOut: boolean; interrupted: boolean; updated: AgentNode[] }> {
+    // The model-visible text is deliberately identical to Codex's three
+    // outcomes: the contract is ``a signal``, not a report. Who finished travels
+    // as structured data (the snapshot and the returned node list), never as
+    // prose, because a report in the message would invite the model to read
+    // results out of tool output instead of the delivered envelopes.
     const drain = () => this.updates.splice(0)
     if (this.updates.length > 0) {
-      const updated = drain()
-      return { message: describe(updated), timedOut: false, updated }
+      return { message: WAIT_COMPLETED, timedOut: false, interrupted: false, updated: drain() }
     }
-    if (this.children.size === 0) return { message: "No live agents.", timedOut: false, updated: [] }
+    if (this.children.size === 0) {
+      return { message: "No live agents.", timedOut: false, interrupted: false, updated: [] }
+    }
+
+    let interrupted = false
+    let woken = false
+    let timer: ReturnType<typeof setTimeout> | undefined
     await new Promise<void>((resolve) => {
       let done = false
-      const finish = () => {
+      const finish = (reason: "update" | "timeout" | "interrupt") => {
         if (done) return
         done = true
-        clearTimeout(timer)
-        signal?.removeEventListener("abort", finish)
-        if (this.waiter === finish) this.waiter = undefined
+        if (timer) clearTimeout(timer)
+        signal?.removeEventListener("abort", onAbort)
+        this.waiters.delete(wake)
+        if (reason === "interrupt") interrupted = true
         resolve()
       }
-      const timer = setTimeout(finish, Math.max(0, timeoutMs))
-      this.waiter = finish
+      const onAbort = () => finish("interrupt")
+      const wake = () => {
+        // Woken counts as an update even when a sibling wait drained the buffer
+        // first: the signal is shared, the drained list is not.
+        woken = true
+        finish("update")
+      }
+      timer = setTimeout(() => finish("timeout"), Math.max(0, timeoutMs))
+      timer.unref?.()
+      this.waiters.add(wake)
       if (signal) {
-        if (signal.aborted) { finish(); return }
-        signal.addEventListener("abort", finish, { once: true })
+        if (signal.aborted) {
+          onAbort()
+          return
+        }
+        signal.addEventListener("abort", onAbort, { once: true })
       }
     })
+
     const updated = drain()
-    return updated.length > 0
-      ? { message: describe(updated), timedOut: false, updated }
-      : { message: "Wait timed out.", timedOut: true, updated: [] }
+    if (interrupted) {
+      return { message: WAIT_INTERRUPTED, timedOut: false, interrupted: true, updated }
+    }
+    return woken || updated.length > 0
+      ? { message: WAIT_COMPLETED, timedOut: false, interrupted: false, updated }
+      : { message: WAIT_TIMED_OUT, timedOut: true, interrupted: false, updated: [] }
   }
 
   /**
@@ -803,12 +928,23 @@ export class SubagentRuntime {
     const node = this.nodes.get(agentId)
     const handle = this.children.get(agentId)
     if (!node || !handle) throw new Error(`找不到正在运行的 agent: ${agentId}`)
+    // A message to a settled worker must keep it alive: the idle reclaimer must
+    // never collect the process between the queue write and its next turn.
+    this.clearIdleTimer(handle)
     const wasTerminal = TERMINAL_STATUSES.has(node.status)
     if (wasTerminal && mode === "steer") {
       handle.queued.push(message)
-      return this.update(agentId, { summary: safeSummary(`已排队补充消息：${message}`) })
+      // Codex delivers a queue-only message on the target's next turn. Pi has no
+      // queue-only prompt for an idle RPC agent, so the message waits here and is
+      // prepended to the next `followup_task`. The tool result says so instead of
+      // reporting a delivery that will not happen on its own.
+      return this.update(agentId, { summary: safeSummary(`已排队，等待下一次 followup_task 投递：${message}`) })
     }
     if (wasTerminal) handle.resetSettled()
+    // A settled worker released its tree slot when its turn ended, so resuming
+    // work has to claim one again — a follow-up is as much a running turn as a
+    // fresh spawn.
+    if (wasTerminal && this.treeSlots) this.slots.set(agentId, this.treeSlots.acquire())
     this.update(agentId, { status: "running", summary: "正在处理补充消息", endedAt: undefined, error: undefined })
     try {
       const queued = handle.queued.splice(0)
@@ -822,34 +958,12 @@ export class SubagentRuntime {
       return this.nodes.get(agentId) || node
     } catch (error) {
       const messageText = errorText(error)
+      this.releaseSlot(agentId)
       this.update(agentId, { status: "failed", summary: messageText, error: messageText, endedAt: Date.now() })
       throw error
     }
   }
 
-  async wait(agentId?: string, signal?: AbortSignal): Promise<AgentSnapshot> {
-    let waiting: Promise<unknown>
-    if (agentId) {
-      const handle = this.children.get(agentId)
-      if (!handle && !this.nodes.has(agentId)) throw new Error(`未知的 agent: ${agentId}`)
-      waiting = handle?.settled || Promise.resolve()
-    } else waiting = Promise.all([...this.children.values()].map((handle) => handle.settled))
-    if (!signal) await waiting
-    else if (signal.aborted) throw new Error("等待子 agent 已取消")
-    else await new Promise<void>((resolve, reject) => {
-      const abort = () => { reject(new Error("等待子 agent 已取消")) }
-      signal.addEventListener("abort", abort, { once: true })
-      waiting.then(
-        () => { signal.removeEventListener("abort", abort); resolve() },
-        (error) => { signal.removeEventListener("abort", abort); reject(error) },
-      )
-    })
-    return this.snapshot()
-  }
-
-  hasActiveChildren(): boolean {
-    return [...this.nodes.values()].some((node) => !TERMINAL_STATUSES.has(node.status))
-  }
 
   /**
    * Resolve a model-supplied target to an agent id.
@@ -941,6 +1055,10 @@ export class SubagentRuntime {
     this.disposed = true
     if (this.publishTimer) clearTimeout(this.publishTimer)
     this.publishTimer = undefined
+    for (const handle of this.children.values()) this.clearIdleTimer(handle)
+    this.waiters.clear()
+    this.slots.clear()
+    this.treeSlots?.dispose()
     await Promise.all([...this.children.entries()].map(([id, handle]) => this.stopProcess(id, handle)))
     this.children.clear()
     this.emit(true)

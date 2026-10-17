@@ -44,7 +44,7 @@ All agents share the same directory. In detail:
 - As a result, edits made by one agent are immediately visible to all other agents.
 - Do not revert or rewrite another agent's changes without saying so.
 
-When calling wait_agent, prefer longer waits (minutes) over frequent short polls, because each call blocks until a worker reports.
+When calling wait_agent, prefer longer waits (minutes) over frequent short polls: each call blocks until a worker reports, and returns only a signal, never results.
 
 There are ${MAX_ACTIVE_CHILDREN} concurrency slots, so up to ${MAX_ACTIVE_CHILDREN} workers can be active at once.`
 
@@ -58,7 +58,7 @@ Sender: <the worker's path>
 Payload:
 <result>
 
-So never expect worker output inside the spawn_agent tool result, and do not re-read files the workers already reported on. Each worker's canonical path is <your path>/<task_name>, and you can address it by that path, by a path relative to you, or by its agent id. Delegate when a specialist or independent parallel work will improve the result; do not delegate trivial requests by habit. Request independent work by emitting several spawn_agent calls; they start concurrently. Use wait_agent to block until any worker reports (it returns only a summary, not content), then synthesize from the result messages. Use send_message to redirect a running worker without starting a turn, followup_task to give an existing worker more work and wake it if idle, interrupt_agent to stop one, and list_agents to inspect the tree (optionally filtered by path prefix). Workers inherit this conversation by default, so write the task itself rather than restating background you already covered.
+So never expect worker output inside the spawn_agent tool result, and do not re-read files the workers already reported on. Each worker's canonical path is <your path>/<task_name>, and you can address it by that path, by a path relative to you, or by its agent id. Delegate when a specialist or independent parallel work will improve the result; do not delegate trivial requests by habit. Request independent work by emitting several spawn_agent calls; they start concurrently. Use wait_agent to block until any worker reports; it returns only a signal ("Wait completed."), never content, so read the result messages from the conversation instead of from the tool result. Do not poll it by reflex: wait only when your next step is blocked on a worker. Use send_message to redirect a running worker without starting a turn, followup_task to give an existing worker more work and wake it if idle, interrupt_agent to stop one, and list_agents to inspect the tree (optionally filtered by path prefix). Workers inherit this conversation by default, so write the task itself rather than restating background you already covered.
 ${SHARED_AGENT_NOTES}
 </multi_agent_mode>`
 
@@ -214,7 +214,15 @@ export function registerSubagentTools(pi: ExtensionAPI): void {
       const input = params as { target: string; message: string }
       const runtime = runtimeFor(ctx, state, pi)
       const agent = await runtime.send(resolveTarget(runtime, input.target), input.message, "steer")
-      return toolResult(`${agent.path}: 消息已投递`, runtime.snapshot(), agent)
+      // A settled worker has no turn to steer, so the message waits for the next
+      // followup_task. Say that instead of reporting a delivery that will not
+      // happen on its own.
+      const delivered = agent.status === "running"
+      return toolResult(
+        delivered ? `${agent.path}: 消息已投递` : `${agent.path}: 该 agent 当前空闲，消息已排队，将在下一次 followup_task 时一并投递`,
+        runtime.snapshot(),
+        agent,
+      )
     },
   })
 
@@ -236,7 +244,7 @@ export function registerSubagentTools(pi: ExtensionAPI): void {
     name: "wait_agent",
     label: "Wait agent",
     description:
-      "Wait for a worker update, including completions and results. Returns only a summary of which workers have updates, never their content, because content is delivered as separate messages. Prefer long timeouts over polling.",
+      "Wait for a worker update, including completions and failures. Returns only a signal — never worker content, which is delivered as separate messages — so check the conversation for the result after this returns. Prefer long timeouts over polling.",
     parameters: {
       type: "object",
       properties: {
@@ -253,7 +261,8 @@ export function registerSubagentTools(pi: ExtensionAPI): void {
       const requested = typeof input.timeout_ms === "number" && Number.isFinite(input.timeout_ms) ? input.timeout_ms : DEFAULT_WAIT_TIMEOUT_MS
       const timeout = Math.min(Math.max(requested, 0), MAX_WAIT_TIMEOUT_MS)
       const outcome = await runtime.waitForUpdate(timeout, signal)
-      return toolResult(outcome.message, runtime.snapshot(), outcome.updated[0])
+      // The model-visible text is Codex's signal; who finished stays structured.
+      return toolResult(outcome.message, runtime.snapshot(), outcome.updated.at(-1))
     },
   })
 

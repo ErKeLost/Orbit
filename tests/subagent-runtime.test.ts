@@ -147,7 +147,7 @@ describe("collaboration surface", () => {
     const spawn = tools.find((tool) => tool.name === "spawn_agent")!
     expect(spawn.description).toContain("delivered to you later as a separate message")
     const wait = tools.find((tool) => tool.name === "wait_agent")!
-    expect(wait.description).toContain("never their content")
+    expect(wait.description).toContain("never worker content")
   })
 
   test("warns every agent that the working directory is shared", async () => {
@@ -205,16 +205,20 @@ describe("asynchronous delegation", () => {
     expect(delivered[0].node.path).toBe("/root/unit_tests")
   })
 
-  test("wait_agent returns a signal summary and leaks no worker content", async () => {
+  test("wait_agent returns a signal, exactly like Codex, and leaks no worker content", async () => {
     const paths = await fixture()
     useFakePi()
     const runtime = makeRuntime(paths.parentSession)
     await runtime.spawn({ name: "alpha", task: "a", cwd: paths.cwd })
 
     const outcome = await runtime.waitForUpdate(4_000)
+    // The model-visible text is Codex's contract: a signal, never a report.
+    expect(outcome.message).toBe("Wait completed.")
     expect(outcome.timedOut).toBe(false)
-    expect(outcome.message).toContain("alpha")
+    expect(outcome.message).not.toContain("alpha")
     expect(outcome.message).not.toContain("result-1")
+    // Who finished is structured data, so the UI keeps the detail.
+    expect(outcome.updated.map((node) => node.name)).toEqual(["alpha"])
   })
 
   test("wait_agent times out while workers are still running", async () => {
@@ -235,6 +239,88 @@ describe("asynchronous delegation", () => {
     const outcome = await runtime.waitForUpdate(50)
     expect(outcome.timedOut).toBe(false)
     expect(outcome.message).toBe("No live agents.")
+  })
+
+  test("two concurrent waits are both woken by one completion", async () => {
+    const paths = await fixture()
+    useFakePi()
+    const runtime = makeRuntime(paths.parentSession)
+    await runtime.spawn({ name: "solo", task: "a", cwd: paths.cwd })
+
+    // Models do emit parallel wait_agent calls; a single waiter slot would leave
+    // the first one blocked until its timeout and report a false timeout.
+    const [first, second] = await Promise.all([runtime.waitForUpdate(4_000), runtime.waitForUpdate(4_000)])
+    expect(first.timedOut).toBe(false)
+    expect(second.timedOut).toBe(false)
+    expect(first.message).toBe("Wait completed.")
+    expect(second.message).toBe("Wait completed.")
+  })
+
+  test("an aborted wait reports an interruption instead of a timeout", async () => {
+    const paths = await fixture()
+    useFakePi()
+    process.env.FIXTURE_HANG = "1"
+    const runtime = makeRuntime(paths.parentSession)
+    await runtime.spawn({ name: "stuck", task: "never finishes", cwd: paths.cwd })
+
+    const controller = new AbortController()
+    const waiting = runtime.waitForUpdate(4_000, controller.signal)
+    setTimeout(() => controller.abort(), 30)
+    const outcome = await waiting
+    expect(outcome.interrupted).toBe(true)
+    expect(outcome.timedOut).toBe(false)
+    expect(outcome.message).toBe("Wait interrupted by new input.")
+  })
+
+  test("send_message to a settled worker queues for the next follow-up instead of claiming delivery", async () => {
+    const paths = await fixture()
+    useFakePi()
+    const runtime = makeRuntime(paths.parentSession)
+    const node = await runtime.spawn({ name: "idle", task: "a", cwd: paths.cwd })
+    expect(await until(() => runtime.snapshot().recent.some((entry) => entry.name === "idle"))).toBe(true)
+
+    const queued = await runtime.send(node.agent.id, "one more thing", "steer")
+    expect(queued.status).toBe("completed")
+    expect(queued.summary).toContain("followup_task")
+  })
+
+  test("the tree budget stops a fan-out that the per-process limit would allow", async () => {
+    const paths = await fixture()
+    useFakePi()
+    const previousLimit = process.env.PI_GUI_AGENT_TREE_LIMIT
+    process.env.PI_GUI_AGENT_TREE_LIMIT = "2"
+    process.env.FIXTURE_HANG = "1"
+    try {
+      const runtime = makeRuntime(paths.parentSession)
+      await runtime.spawn({ name: "one", task: "a", cwd: paths.cwd })
+      await runtime.spawn({ name: "two", task: "b", cwd: paths.cwd })
+      // The per-process limit is 8, so only the tree budget can refuse this one.
+      await expect(runtime.spawn({ name: "three", task: "c", cwd: paths.cwd })).rejects.toThrow(
+        /整棵 agent 树的并发已满/,
+      )
+    } finally {
+      if (previousLimit === undefined) delete process.env.PI_GUI_AGENT_TREE_LIMIT
+      else process.env.PI_GUI_AGENT_TREE_LIMIT = previousLimit
+    }
+  })
+
+  test("a settled worker is reclaimed after the idle grace period", async () => {
+    const paths = await fixture()
+    useFakePi()
+    const previousTtl = process.env.ORBIT_PI_IDLE_WORKER_TTL_MS
+    process.env.ORBIT_PI_IDLE_WORKER_TTL_MS = "150"
+    try {
+      const runtime = makeRuntime(paths.parentSession)
+      await runtime.spawn({ name: "shortlived", task: "a", cwd: paths.cwd })
+      expect(await until(() => runtime.snapshot().recent.some((entry) => entry.name === "shortlived"))).toBe(true)
+
+      // The idle reclaimer drops the process without touching the record.
+      expect(await until(() => !runtime.liveAgentNames().some((line) => line.startsWith("shortlived")), 5_000)).toBe(true)
+      expect(runtime.snapshot().recent.some((entry) => entry.name === "shortlived")).toBe(true)
+    } finally {
+      if (previousTtl === undefined) delete process.env.ORBIT_PI_IDLE_WORKER_TTL_MS
+      else process.env.ORBIT_PI_IDLE_WORKER_TTL_MS = previousTtl
+    }
   })
 
   test("a second follow-up turn reports again", async () => {
