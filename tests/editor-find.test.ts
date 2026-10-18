@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { EditorSelection, EditorState } from "@codemirror/state"
 import { SearchQuery } from "@codemirror/search"
-import { countMatches, currentMatch } from "../src/features/shell/editor-find"
+import { countMatches, currentMatch } from "../src/features/shell/editor/editor-find"
 
 /**
  * The find widget's numbers.

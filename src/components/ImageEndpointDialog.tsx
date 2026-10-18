@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./Dialog";
-import { Button, Input } from "./UI";
+import { Button, Input } from "../shared/ui/controls";
 import { Icon } from "./Icon";
 import { report } from "../lib/rpc";
 import { saveImageApiKey, saveImageConfig, type ImageConfig } from "../lib/rpc";

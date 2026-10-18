@@ -1,7 +1,7 @@
 import {describe,test,expect} from 'bun:test'
 import {assignTurnClocks,emptyTranscript,groupDisplayMessages,reuseGroups,reduceEvent,hydrate,sameModel,toolResultImages,toolResultText,withPendingModel} from '../src/lib/protocol'
 import { summarizeToolCalls } from '../src/lib/tool-activity'
-import { projectTurn } from '../src/features/chat/turnModel'
+import { projectTurn, userImages } from '../src/features/chat/turnModel'
 import { turnDurationId } from '../src/lib/turn-duration'
 describe('Pi 0.87.1 JSONL event projection',()=>{
  test('assembling indexed text and thinking deltas, ending with the authoritative snapshot',()=>{
@@ -397,4 +397,55 @@ describe('模型切换的意图',()=>{
   expect(sameModel({provider:'Tare',id:'a'},{provider:'Tare',id:'b'})).toBe(false)
   expect(sameModel({provider:'Tare',id:'a'},{provider:'Other',id:'a'})).toBe(false)
  })
+})
+
+/**
+ * 真实踩到过：一轮干了 11m45s，随后 worker 的 FINAL_ANSWER 迟到，pi 又起了一轮 2s 的
+ * 补充运行。`custom` 消息把两次运行并进同一组，旧 reducer 每次都把「本次运行」的耗时
+ * 写到该段首条 assistant 上，界面取最后一个 → 整轮显示成「Worked for 2s」。
+ */
+test('a late worker delivery does not shorten the turn to its last run',()=>{
+  const startedAt=Date.now()-705_000
+  let state=emptyTranscript()
+  state={...state,messages:[
+    {id:'u',message:{role:'user',content:'干活'}},
+    {id:'a1',message:{role:'assistant',timestamp:1,content:[{type:'text',text:'先答一次'}]},startedAt},
+  ]}
+  state=reduceEvent(state,{type:'agent_settled'})
+  expect(state.messages[1].elapsedMs).toBeGreaterThanOrEqual(705_000)
+
+  // worker 的结果是 custom 消息（并进同一组），pi 随后又起了一轮。
+  state={...state,messages:[...state.messages,{id:'c1',message:{role:'custom',content:[{type:'text',text:'worker 结果'}]}}]}
+  state=reduceEvent(state,{type:'agent_start'})
+  state={...state,messages:[...state.messages,{id:'a2',message:{role:'assistant',timestamp:2,content:[{type:'text',text:'补充回答'}]},startedAt:state.turnStartedAt??Date.now()}]}
+  state=reduceEvent(state,{type:'agent_settled'})
+
+  // 用户消息自成一组；assistant + custom + assistant 是一个可见的轮。
+  const groups=groupDisplayMessages(state.messages)
+  expect(groups).toHaveLength(2)
+  expect(groups[1].items).toHaveLength(3)
+  // 整组的时间仍然从第一次运行算起，且只写在首段：不会被最后 2s 的那一轮覆盖。
+  expect(state.messages[1].elapsedMs).toBeGreaterThanOrEqual(705_000)
+  expect(state.messages[1].elapsedMs).toBeLessThan(720_000)
+  expect(state.messages[3].elapsedMs).toBeUndefined()
+})
+
+/**
+ * 历史图片由 Rust 抽成文件后，part 只剩路径（`media::offload_history`）。
+ * 渲染层和 hydrate 都必须认这种情况，否则大会话里的每一张图都会变成空白。
+ */
+test('file-backed images survive hydration and tool extraction',()=>{
+  expect(toolResultImages([{type:'image',mimeType:'image/png',file:'/tmp/orbit-a.png'}])).toEqual([{file:'/tmp/orbit-a.png',mimeType:'image/png'}])
+  const state=hydrate([
+    {role:'assistant',content:[{type:'toolCall',id:'t1',name:'read'}]},
+    {role:'toolResult',toolCallId:'t1',toolName:'read',content:[{type:'image',mimeType:'image/png',file:'/tmp/orbit-b.png'}]},
+  ])
+  expect(state.tools.t1?.images).toEqual([{file:'/tmp/orbit-b.png',mimeType:'image/png'}])
+  // 内联 base64（实时事件）仍然照旧。
+  expect(toolResultImages([{type:'image',mimeType:'image/png',data:'AAAA'}])).toEqual([{data:'AAAA',mimeType:'image/png'}])
+  // `history::project` 的引用形式：图片字节在会话文件里，按 行偏移+序号 取。
+  expect(toolResultImages([{type:'image',mimeType:'image/png',session:'/s.jsonl',at:42,ordinal:1}]))
+    .toEqual([{session:'/s.jsonl',at:42,ordinal:1,mimeType:'image/png'}])
+  // 用户消息的附件同样保留 part（渲染层才知道该走 base64 还是文件偏移）。
+  expect(userImages({role:'user',content:[{type:'image',mimeType:'image/png',session:'/s.jsonl',at:42,ordinal:0}]})).toHaveLength(1)
 })

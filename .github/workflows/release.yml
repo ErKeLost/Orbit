@@ -40,7 +40,13 @@ jobs:
     name: ${{ matrix.name }}
     needs: prepare
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # Per-platform budget, not one number for all of them. The Intel job was
+    # suspended after two releases where the 43-minute compile finished and the
+    # DMG step then failed; the logs were never kept, so it is not known whether
+    # bundle_dmg.sh actually failed or the 45-minute job timeout arrived first.
+    # 75 minutes removes the second possibility. If it is the first, the next
+    # fallback is `args: --bundles app` plus a separate hdiutil step.
+    timeout-minutes: ${{ matrix.timeout }}
     strategy:
       fail-fast: false
       matrix:
@@ -49,23 +55,30 @@ jobs:
             os: macos-15
             args: --target aarch64-apple-darwin
             rust_targets: aarch64-apple-darwin
-          # Intel 包暂时停发：bundle_dmg.sh 在 intel runner 上连续两版失败
-          # （v0.6.70 / 此前 43m 编译成功后 DMG 布局挂掉）。需要恢复时把下面
-          # 这段注释放回来。注意必须保留 Intel runner（而不是 arm64 交叉编译）：
-          # `sync-node-runtime` 按 `process.arch` 打包 Node，arm64 宿主会把
-          # arm64 的 Node 塞进 Intel 应用里。
-          # - name: macOS Intel
-          #   os: macos-15-intel
-          #   args: --target x86_64-apple-darwin
-          #   rust_targets: x86_64-apple-darwin
+            timeout: 45
+          # Intel Macs that Ventura left behind (2015–2017 models) can reach
+          # Monterey at most, so dropping x86_64 drops those users entirely —
+          # not a slower build of the same app, no build at all.
+          #
+          # It runs on an Intel runner on purpose rather than cross-compiling
+          # from the arm64 one: `sync-node-runtime` bundles the Node for
+          # `process.arch`, so an arm64 host would ship an arm64 Node inside an
+          # Intel app. `sync-worker` already follows `TAURI_ENV_TARGET`.
+          - name: macOS Intel
+            os: macos-15-intel
+            args: --target x86_64-apple-darwin
+            rust_targets: x86_64-apple-darwin
+            timeout: 75
           - name: Linux x86_64
             os: ubuntu-22.04
             args: ""
             rust_targets: ""
+            timeout: 45
           - name: Windows
             os: windows-latest
             args: ""
             rust_targets: ""
+            timeout: 45
 
     steps:
       - uses: actions/checkout@v7
@@ -307,10 +320,9 @@ jobs:
           if update['version'] != version:
               raise SystemExit('Updater version does not match release tag')
           names = {asset['name'] for asset in release['assets']}
-          # macOS Intel 已在 matrix 里停发（见上）：darwin-x86_64 的资产与更新
-          # 通道一并从必填清单里摘掉，恢复 Intel 时两条一起放回来。
           required_assets = {
               f'Orbit_{version}_aarch64.app.tar.gz', f'Orbit_{version}_aarch64.app.tar.gz.sig', f'Orbit_{version}_aarch64.dmg',
+              f'Orbit_{version}_x64.app.tar.gz', f'Orbit_{version}_x64.app.tar.gz.sig', f'Orbit_{version}_x64.dmg',
               f'Orbit_{version}_x64-setup.exe', f'Orbit_{version}_x64-setup.exe.sig',
               f'Orbit_{version}_x64_en-US.msi', f'Orbit_{version}_x64_en-US.msi.sig',
               f'Orbit_{version}_amd64.AppImage', f'Orbit_{version}_amd64.AppImage.sig',
@@ -324,6 +336,7 @@ jobs:
           ids = {str(asset['id']) for asset in release['assets']}
           required_platforms = {
               'darwin-aarch64', 'darwin-aarch64-app',
+              'darwin-x86_64', 'darwin-x86_64-app',
               'windows-x86_64', 'windows-x86_64-nsis', 'windows-x86_64-msi',
               'linux-x86_64', 'linux-x86_64-appimage', 'linux-x86_64-deb', 'linux-x86_64-rpm',
           }

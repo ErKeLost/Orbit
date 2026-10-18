@@ -36,8 +36,4 @@ export function useMediaMeta(path: string, kind: MediaKind | null) {
   return useQuery({ queryKey: ["media", path], queryFn: () => mediaMeta(path), enabled: kind != null, staleTime: 30_000 });
 }
 
-export function formatBytes(size: number) {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / 1024 / 1024).toFixed(1)} MB`;
-}
+export { formatBytes } from "./format";

@@ -1,14 +1,13 @@
 import { invoke } from "../../lib/native";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
-import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useWorkspace } from "../../lib/store";
 import { perfMarkSend } from "../../lib/perf-log";
 import { ensureSessionModes, recallQueue, report, request, sendPrompt, setBrowserUseMode, setComputerUseMode, setMultiAgentMode, steerFollowUp, stop, transcribeAudio } from "../../lib/rpc";
 import { useSessionTarget } from "../shell/use-session-target";
 import { base64ToBlob } from "../../lib/image-bytes";
 import { encodeBlobToBase64, encodeClipboardImage } from "../../lib/image-encode";
-import { prepareImageAttachment, resolveImageMime } from "../../lib/image-attachment";
 import { shouldSubmitComposer } from "../../lib/composer";
 import { useMetrics } from "../../hooks/use-metrics";
 import { Popover } from "../../shared/ui/Popover";
@@ -19,66 +18,59 @@ import { FileTypeIcon } from "../shell/FileTypeIcon";
 import { ADD_NOTE_TO_CHAT_EVENT, appendNoteReference, type NoteComposerCard } from "../notes/notes";
 import { ModelPicker } from "./ModelPicker";
 import { MessageQueueView } from "./MessageQueueView";
-import { ComposerPalette, paletteRequest, type PalettePick, type PaletteRequest } from "./ComposerPalette";
-import { ComposerHighlight } from "./ComposerHighlight";
+import { ComposerPalette, type PalettePick, type PaletteRequest } from "./ComposerPalette";
+import { DraftField, type DraftHandle } from "./ComposerDraftField";
 import { useComposerTokens } from "./composerTokens";
-import { expandMentionLabels, type MentionFile } from "./fileMentions";
+import {
+  appendDraftText,
+  attachmentNameFromPath,
+  buildPromptMessage,
+  canSubmitPrompt,
+  clipboardImageName,
+  contextMeterUsage,
+  forgetDraft,
+  hasCommand,
+  historyArrowMode,
+  imageAttachment,
+  insertPalettePick,
+  isImagePath,
+  pasteIntent,
+  prepareImageFiles,
+  previewUserMessage,
+  recallAttachments,
+  rememberAttachments,
+  rememberDraft,
+  sendBehavior,
+  showsOptimisticPreview,
+  splitAttachments,
+  suggestCommandMessage,
+  type Attachment,
+  type ImageAttachment,
+} from "./composerModel";
+import { expandMentionLabels } from "./fileMentions";
 import { ContextMeter } from "./ContextMeter";
 import { stepInputHistory, inputHistoryEntries } from "./input-history";
-import {
-  PROMPT_SUGGESTION_DEBOUNCE_MS,
-  PROMPT_SUGGESTION_STATUS,
-  acceptSuggestion,
-  claimTurnSuggestion,
-  loadPromptSuggestion,
-  parseSuggestion,
-  savePromptSuggestion,
-  shouldAskNextStep,
-  suggestionFor,
-  transcriptTurn,
-} from "./promptSuggestion";
+import { loadPromptSuggestion, savePromptSuggestion, transcriptTurn } from "./promptSuggestion";
 import { userText } from "./turnModel";
 import { SpeechInput } from "../../components/ai-elements/speech-input";
 import { WorkspaceRoots } from "./WorkspaceRoots";
 import { ProjectPicker } from "./ProjectPicker";
 import { ExtensionDialog } from "../../components/panels/ExtensionDialog";
 
-type ImageAttachment = { kind: "image"; id: string; name: string; mimeType: string; blob: Blob };
-type FileAttachment = { kind: "file"; id: string; name: string; path: string };
-type Attachment = ImageAttachment | FileAttachment;
-
-const draftCache = new Map<string, string>();
-const attachmentCache = new Map<string, Attachment[]>();
-const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
-
-function lruCache<T>(cache: Map<string, T>, key: string, value: T) {
-  cache.delete(key);
-  cache.set(key, value);
-  while (cache.size > 4) cache.delete(cache.keys().next().value!);
-}
-
 /**
- * Picked files → attachments that can actually be sent.
- *
- * Both halves of this are phone problems. A camera JPEG is several megabytes in
- * a single WebSocket frame, and Android's picker returns `content://` sources
- * whose `File.type` is empty often enough that the type has to come from the
- * name. `prepareImageAttachment` decides both; a file it refuses is reported and
- * skipped rather than attached and dropped at the far end.
+ * Picked files → attachments that can actually be sent, plus the ones that were
+ * refused. A camera JPEG is several megabytes in a single WebSocket frame, and
+ * Android's picker returns `content://` sources whose `File.type` is empty often
+ * enough that the type has to come from the name; `prepareImageAttachment`
+ * decides both, and a file it refuses is reported rather than attached and
+ * dropped at the far end.
  */
 async function prepareAttachments(files: Iterable<File>): Promise<Attachment[]> {
-  const prepared = await Promise.all(
-    Array.from(files).map(async (file): Promise<Attachment | null> => {
-      try {
-        const image = await prepareImageAttachment({ name: file.name, type: file.type, size: file.size, blob: file });
-        return { kind: "image", id: crypto.randomUUID(), name: image.name, mimeType: image.mimeType, blob: image.blob };
-      } catch (error) {
-        report(error);
-        return null;
-      }
-    }),
+  const { images, errors } = await prepareImageFiles(
+    Array.from(files, (file) => ({ name: file.name, type: file.type, size: file.size, blob: file })),
   );
-  return prepared.filter((item): item is Attachment => item !== null);
+  errors.forEach(report);
+  return images.map(imageAttachment);
 }
 
 function addPrepared(setAttachments: (update: (current: Attachment[]) => Attachment[]) => void, files: Iterable<File>) {
@@ -93,8 +85,7 @@ async function readClipboardImage(): Promise<ImageAttachment | null> {
     const [{ width, height }, rgba] = await Promise.all([image.size(), image.rgba()]);
     const { blob, mimeType } = await encodeClipboardImage({ width, height, rgba });
     // 超大截图会被编码器回退成 JPEG，附件的类型跟着字节走，而不是假定 PNG。
-    const extension = mimeType === "image/jpeg" ? "jpg" : "png";
-    return { kind: "image", id: crypto.randomUUID(), name: `粘贴的图片.${extension}`, mimeType, blob };
+    return { kind: "image", id: crypto.randomUUID(), name: clipboardImageName(mimeType), mimeType, blob };
   } finally {
     await image.close();
   }
@@ -195,216 +186,6 @@ function ComposerAction({ busy, disabled, hasValue, onSend, onStop }: { busy: bo
   );
 }
 
-type DraftHandle = {
-  clear: () => void;
-  restore: (text: string) => void;
-  focus: () => void;
-  value: () => string;
-  caret: () => number;
-  setText: (text: string, caret: number) => void;
-};
-
-/**
- * The textarea is its own leaf so keystrokes never re-render the toolbar. Its
- * text is transparent: `ComposerHighlight` paints the same draft underneath, so
- * `/` and `@` tokens keep their palette styling once they land in the text.
- *
- * The prompt suggestion (联想) lives here too, for the same reason: the draft,
- * the caret and the ghost text are one piece of state, and the toolbar has no
- * business re-rendering when a suggestion lands.
- */
-const DraftField = memo(
-  forwardRef<DraftHandle, {
-    composerKey: string;
-    placeholder: string;
-    disabled: boolean;
-    paletteOpen: boolean;
-    skillNames: ReadonlySet<string>;
-    mentionLabels: ReadonlyMap<string, MentionFile>;
-    /** Ask Pi for a "what next" guess once a turn settles. */
-    suggestEnabled: boolean;
-    /** Identity of the conversation, so a stale "what next" guess can be dropped. */
-    turnKey: string;
-    /** Increments when a turn settles; 0 means "no turn finished in this view". */
-    nextStepSeq: number;
-    onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
-    onHasValue: (has: boolean) => void;
-    onPalette: (request: PaletteRequest | null) => void;
-    onSuggest: (draft: string, turn: string) => void;
-
-    /**
-     * Shell-style recall of what the reader already sent. Returns true when the
-     * arrow key was consumed as history, in which case it must not also move the
-     * caret. The field decides *when* an arrow means history; the composer owns
-     * the entries and the cursor into them.
-     */
-    onHistory: (direction: "up" | "down", caret: { start: number; end: number; length: number }) => boolean;
-  }>(function DraftField(
-    { composerKey, placeholder, disabled, paletteOpen, skillNames, mentionLabels, suggestEnabled, turnKey, nextStepSeq, onKeyDown, onHasValue, onPalette, onSuggest, onHistory },
-    ref,
-  ) {
-      const [draft, setDraft] = useState(() => useWorkspace.getState().draft || draftCache.get(composerKey) || "");
-      const field = useRef<HTMLTextAreaElement>(null);
-      const highlight = useRef<HTMLDivElement>(null);
-      const caret = useRef(0);
-      // The continuation is only ever appended, so "caret at the very end" is
-      // the whole condition. Tracking the *boundary* rather than the offset
-      // keeps moving the caret from re-rendering this leaf.
-      const [atEnd, setAtEnd] = useState(true);
-      /**
-       * What the reader pressed Escape on. The "what next" guess is dismissed
-       * per turn: it has no draft to be keyed on.
-       */
-      const ghostKey = draft.trim() ? draft : `turn:${turnKey}`;
-      const [dismissed, setDismissed] = useState<string | null>(null);
-      /**
-       * Which finished turn we already paid for. Counted in turns, not in
-       * `turnKey`: that key is derived from the transcript and can shift right
-       * after a settle (Pi drops still-queued previews), which would otherwise
-       * buy the same turn a second call.
-       */
-      const askedTurn = useRef(0);
-      const reply = parseSuggestion(useWorkspace((state) => state.statuses[PROMPT_SUGGESTION_STATUS]));
-      // A reply is used only for the draft (or the turn) it was asked about, so
-      // a slow answer can never land on newer text or a newer conversation.
-      const ghost = suggestEnabled && dismissed !== ghostKey ? suggestionFor(reply, draft, atEnd, turnKey) : null;
-      const resize = (el: HTMLTextAreaElement | null) => {
-        if (!el) return;
-        el.style.height = "auto";
-        el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-      };
-      useImperativeHandle(
-        ref,
-        () => ({
-          clear: () => setDraft(""),
-          restore: (text) => setDraft((current) => (current ? `${text}${current}` : text)),
-          focus: () => field.current?.focus(),
-          value: () => field.current?.value ?? "",
-          caret: () => caret.current,
-          setText: (text, position) => {
-            caret.current = position;
-            setDraft(text);
-            // Recalled text can start with `/` or `@`: keep the palette in step
-            // with the draft instead of waiting for the next keystroke.
-            onPalette(paletteRequest(text, position));
-            requestAnimationFrame(() => {
-              const el = field.current;
-              el?.focus();
-              el?.setSelectionRange(position, position);
-            });
-          },
-        }),
-        [onPalette],
-      );
-      useEffect(() => {
-        lruCache(draftCache, composerKey, draft);
-        onHasValue(Boolean(draft.trim()));
-        resize(field.current);
-      }, [composerKey, draft, onHasValue]);
-      // 回合结束、输入框空着：猜「你下一句想说什么」。**一轮只问一次** ——
-      // 重渲染、切光标、开合面板、把草稿删回空白都不会再花一次调用。
-      // 打字过程本身永远不调模型：联想只在 agent 每次 run 结束时产生一次。
-      useEffect(() => {
-        const wanted = shouldAskNextStep({ enabled: suggestEnabled, paletteOpen, atEnd, draft, settleSeq: nextStepSeq, askedSeq: askedTurn.current });
-        if (!wanted) return;
-        const timer = window.setTimeout(() => {
-          // 认领在真正发请求的那一刻才算数：分屏里另一个 pane 先到就它发。
-          if (!claimTurnSuggestion(composerKey, turnKey)) return;
-          askedTurn.current = nextStepSeq;
-          onSuggest("", turnKey);
-        }, PROMPT_SUGGESTION_DEBOUNCE_MS);
-        return () => window.clearTimeout(timer);
-      }, [atEnd, composerKey, draft, nextStepSeq, onSuggest, paletteOpen, suggestEnabled, turnKey]);
-      // Extensions can push text into the editor (Pi `set_editor_text`).
-      const external = useWorkspace((state) => state.draft);
-      useEffect(() => {
-        if (external) setDraft(external);
-      }, [external]);
-      const syncCaret = (el: HTMLTextAreaElement) => {
-        caret.current = el.selectionStart ?? el.value.length;
-        setAtEnd(caret.current >= el.value.length);
-        onPalette(paletteRequest(el.value, caret.current));
-      };
-      /** Tab / →: take the continuation as real text. */
-      const takeGhost = () => {
-        const accepted = acceptSuggestion(draft, atEnd, ghost);
-        if (!accepted) return false;
-        caret.current = accepted.caret;
-        setDraft(accepted.text);
-        setAtEnd(true);
-        onPalette(paletteRequest(accepted.text, accepted.caret));
-        requestAnimationFrame(() => field.current?.setSelectionRange(accepted.caret, accepted.caret));
-        return true;
-      };
-      return (
-        <div className="relative">
-          <div
-            ref={highlight}
-            aria-hidden
-            className="composer-highlight pointer-events-none absolute inset-0 max-h-40 overflow-hidden whitespace-pre-wrap break-words px-3 py-3 font-sans text-sm leading-5.5 text-content"
-          >
-            <ComposerHighlight text={draft} names={skillNames} mentions={mentionLabels} ghost={ghost} />
-          </div>
-          <textarea
-            ref={field}
-            rows={1}
-            spellCheck={false}
-            value={draft}
-            disabled={disabled}
-            placeholder={ghost ? "" : placeholder}
-            aria-label="消息"
-            onChange={(event) => {
-              setDraft(event.currentTarget.value);
-              syncCaret(event.currentTarget);
-            }}
-            onKeyDown={(event) => {
-              // While the palette is open it owns the arrows, Enter and Escape.
-              if (paletteOpen && ["ArrowUp", "ArrowDown", "Enter", "Tab", "Escape"].includes(event.key)) {
-                event.preventDefault();
-                return;
-              }
-              if ((event.key === "ArrowUp" || event.key === "ArrowDown") && !event.shiftKey && !event.altKey && !event.metaKey) {
-                const el = event.currentTarget;
-                if (onHistory(event.key === "ArrowUp" ? "up" : "down", { start: el.selectionStart ?? 0, end: el.selectionEnd ?? 0, length: el.value.length })) {
-                  event.preventDefault();
-                  return;
-                }
-              }
-              // While an IME is composing, Tab and → belong to the candidate list.
-              if (ghost && !event.nativeEvent.isComposing) {
-                if (event.key === "Tab" || (event.key === "ArrowRight" && !event.shiftKey && !event.altKey && !event.metaKey)) {
-                  // ArrowRight at the very end of the text does nothing otherwise,
-                  // so taking it costs the reader nothing.
-                  if (takeGhost()) {
-                    event.preventDefault();
-                    return;
-                  }
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  setDismissed(ghostKey);
-                  return;
-                }
-              }
-              onKeyDown(event);
-            }}
-            onKeyUp={(event) => syncCaret(event.currentTarget)}
-            onClick={(event) => syncCaret(event.currentTarget)}
-            onSelect={(event) => syncCaret(event.currentTarget)}
-            onScroll={(event) => {
-              const el = event.currentTarget;
-              if (!highlight.current) return;
-              highlight.current.scrollTop = el.scrollTop;
-              highlight.current.scrollLeft = el.scrollLeft;
-            }}
-            className="composer-field scrollbar-none relative max-h-40 w-full resize-none overflow-x-hidden whitespace-pre-wrap break-words bg-transparent px-3 py-3 font-sans text-sm leading-5.5 outline-none placeholder:overflow-hidden placeholder:text-ellipsis placeholder:whitespace-nowrap"
-          />
-        </div>
-      );
-    },
-  ),
-);
-
 export const Composer = memo(function Composer({ onSubmitted, centered = false }: { onSubmitted: () => void; centered?: boolean }) {
   const project = useWorkspace((state) => state.cwd);
   // Sends go to this pane's pi connection, not the shell's projected one.
@@ -424,7 +205,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
   const composerKey = connectionId || project;
   const tokens = useComposerTokens(project);
   const mentionLabels = tokens.index.labels;
-  const [attachments, setAttachments] = useState<Attachment[]>(() => attachmentCache.get(composerKey) ?? []);
+  const [attachments, setAttachments] = useState<Attachment[]>(() => recallAttachments(composerKey));
   const [hasValue, setHasValue] = useState(false);
   const [palette, setPalette] = useState<PaletteRequest | null>(null);
   const [plusOpen, setPlusOpen] = useState(false);
@@ -432,7 +213,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
   const [suggestEnabled, setSuggestEnabled] = useState(loadPromptSuggestion);
   // 只有当前运行的 Pi 真的注册了这条命令才启用：否则 `/gui-suggest …` 会被当成
   // 普通消息发给模型。
-  const suggestAvailable = tokens.commands.some((command) => command.name === "gui-suggest");
+  const suggestAvailable = hasCommand(tokens.commands, "gui-suggest");
   const [fileDrag, setFileDrag] = useState(false);
   // 回合结束的计数：联想猜的是「你下一句想说什么」，得等 agent 说完再看，
   // 所以触发点是 running 真的从 true 落到 false，而不是每次重渲染。
@@ -455,7 +236,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
   const { stats } = useMetrics();
   const desktopMac = runtimeTarget === "desktop" && runtimePlatform === "macos";
 
-  useEffect(() => { lruCache(attachmentCache, composerKey, attachments); }, [attachments, composerKey]);
+  useEffect(() => { rememberAttachments(composerKey, attachments); }, [attachments, composerKey]);
 
   // A different session has a different history; drop any cursor into the old one.
   useEffect(() => {
@@ -465,14 +246,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
 
   const navigateHistory = useCallback(
     (direction: "up" | "down", caret: { start: number; end: number; length: number }) => {
-      // A selection, or a caret sitting mid-text, keeps the arrow for itself: a
-      // multi-line draft must still be editable with the keyboard.
-      if (caret.start !== caret.end) return false;
       const browsing = historyIndex.current !== null;
-      // Entering history wants the caret at the very start (bash's rule); while
-      // browsing, the caret sits at the end of the recalled line, so the same
-      // rule would trap the reader on the newest entry.
-      if (!browsing && !(direction === "up" && caret.start === 0)) return false;
+      if (!historyArrowMode(direction, caret, browsing)) return false;
       const entries = inputHistoryEntries(
         useWorkspace.getState().transcript.messages,
         userText as (message: never) => string,
@@ -505,8 +280,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
     if (!paths.length) return;
     void Promise.all(
       paths.map(async (path): Promise<Attachment> => {
-        const name = path.split(/[\\/]/).pop() || path;
-        if (IMAGE_EXTENSIONS.has(name.includes(".") ? name.split(".").pop()!.toLowerCase() : "")) {
+        const name = attachmentNameFromPath(path);
+        if (isImagePath(path)) {
           try {
             const file = await invoke<{ name: string; data: string; mimeType: string }>("read_file_attachment", { path });
             return { kind: "image", id: crypto.randomUUID(), name: file.name, mimeType: file.mimeType, blob: base64ToBlob(file.data, file.mimeType) };
@@ -522,13 +297,18 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
       const target = event.target instanceof Element ? event.target : null;
       if (!target?.closest("[data-composer-box]")) return;
       const files = Array.from(event.clipboardData?.files ?? []);
-      const images = files.filter((file) => resolveImageMime(file) !== null);
-      if (images.length) {
+      // 只在没有文件时才读文本：有文件就是图片粘贴，文本是什么都不影响。
+      const intent = pasteIntent({
+        files,
+        text: files.length === 0 ? (event.clipboardData?.getData("text/plain") ?? "") : "",
+        desktop: runtimeTarget === "desktop",
+      });
+      if (intent.kind === "images") {
         event.preventDefault();
-        addPrepared(setAttachments, images);
+        addPrepared(setAttachments, intent.images);
         return;
       }
-      if (files.length === 0 && !event.clipboardData?.getData("text/plain") && runtimeTarget === "desktop") {
+      if (intent.kind === "native-clipboard") {
         event.preventDefault();
         const paths = await invoke<string[]>("clipboard_file_paths").catch(() => [] as string[]);
         if (paths.length) {
@@ -558,24 +338,12 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
     return () => unlisten?.();
   }, [addFilePaths, runtimeTarget]);
 
-  /** Write a picked `/command` or `@mention` token into the draft. */
   const insertPick = useCallback(
     (pick: PalettePick) => {
       const field = draftRef.current;
-      const current = field?.value() ?? "";
-      // A mention rewrites the whole `@word` token; a command only the prefix
-      // the user typed. The caret is the boundary in both cases.
-      const start = palette?.start ?? current.length;
-      const end = palette ? (pick.file ? palette.end : field?.caret() ?? current.length) : current.length;
-      const rest = current.slice(end);
-      // `@label` stays glued to whatever follows, exactly like Orbit's
-      // `replaceMentionToken`, so the highlight can still find the token.
-      const spacer = pick.file && !rest.startsWith(" ") ? " " : "";
-      const next = `${current.slice(0, start)}${pick.text}${spacer}${rest}`;
-      let cursor = start + pick.text.length + spacer.length;
-      if (next[cursor] === " ") cursor += 1;
+      const next = insertPalettePick({ text: field?.value() ?? "", caret: field?.caret() ?? 0, request: palette, pick });
       setPalette(null);
-      field?.setText(next, cursor);
+      field?.setText(next.text, next.caret);
     },
     [palette],
   );
@@ -583,19 +351,17 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
   const submit = useCallback(
     async (streamingBehavior: "steer" | "followUp") => {
       const draftText = draftRef.current?.value() ?? "";
-      if (!draftText.trim() && attachments.length === 0) return;
+      if (!canSubmitPrompt(draftText, attachments.length)) return;
       // The composer shows `@name`; the harness gets a path it can resolve.
       const text = expandMentionLabels(draftText, mentionLabels);
       perfMarkSend();
       const attachmentsAtSend = attachments;
-      const images = attachmentsAtSend.filter((item): item is ImageAttachment => item.kind === "image");
+      const { images, files: fileChips } = splitAttachments(attachmentsAtSend);
       // 张数交给等待位：带图的一轮慢在上传，说“正在发送图片”比笼统的“正在思考”
       // 更能区分“在干活”和“卡住了”。
       useWorkspace.getState().event({ type: "prompt_submitted", images: images.length });
       const previewId = `queued-${crypto.randomUUID()}`;
-      const fileChips = attachmentsAtSend.filter((item): item is FileAttachment => item.kind === "file");
-      const prefix = fileChips.map((item) => `[文件] ${item.path}`).join("\n");
-      const message = prefix ? `${prefix}\n\n${text}`.trim() : text;
+      const message = buildPromptMessage(text, fileChips);
       const before = attachmentsAtSend;
       setAttachments([]);
       draftRef.current?.clear();
@@ -606,8 +372,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
       // 被卸载的实例不会再 flush effect，draft/attachment 缓存里仍留着刚发出的内容，
       // 重挂载的 composer 会按同一个 composerKey 把它们原样捞回来（发出去的消息
       // 「回到输入框」）。这里必须同步清掉当前会话的缓存，不能只清本地状态。
-      draftCache.delete(composerKey);
-      lruCache(attachmentCache, composerKey, []);
+      forgetDraft(composerKey);
+      rememberAttachments(composerKey, []);
       const previewUrls: string[] = [];
       const previewContent = [
         ...(message ? [{ type: "text" as const, text: message }] : []),
@@ -619,11 +385,11 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
       ];
       // Steering goes into the running turn; only a fresh prompt or a
       // follow-up appears optimistically as a new bubble.
-      if (previewContent.length && !(running && streamingBehavior === "steer")) {
+      if (showsOptimisticPreview(previewContent.length, running, streamingBehavior)) {
         useWorkspace.getState().event({
           type: "queued_preview",
           id: previewId,
-          message: { role: "user", content: previewContent.length === 1 && previewContent[0]?.type === "text" ? message : previewContent, timestamp: Date.now() },
+          message: { role: "user", content: previewUserMessage(message, previewContent), timestamp: Date.now() },
         });
         onSubmitted();
       }
@@ -644,8 +410,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
         } else {
           // composer 已随视图切换重挂载，ref 已被置空；把草稿写回缓存，
           // 让重挂载（回退首页或底部新实例）的 composer 恢复内容。
-          lruCache(draftCache, composerKey, draftText);
-          lruCache(attachmentCache, composerKey, before);
+          rememberDraft(composerKey, draftText);
+          rememberAttachments(composerKey, before);
         }
         report(error);
       }
@@ -659,7 +425,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
       if (!online || !suggestAvailable) return;
       // The response only acknowledges the prompt; the suggestion itself arrives
       // later as a status and is matched against the draft (or the turn) there.
-      void request({ type: "prompt", message: `/gui-suggest ${JSON.stringify({ draft, turn })}` }, 30000, target).catch(() => undefined);
+      void request({ type: "prompt", message: suggestCommandMessage(draft, turn) }, 30000, target).catch(() => undefined);
     },
     [online, suggestAvailable, target],
   );
@@ -670,7 +436,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
       event.preventDefault();
       if (!online) return;
       // Enter steers a running turn; ⌥Enter queues it as a follow-up.
-      void submit(event.altKey ? "followUp" : "steer");
+      void submit(sendBehavior(event.altKey));
     },
     [online, submit],
   );
@@ -695,14 +461,11 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
   const appendTranscript = useCallback((text: string) => {
     if (!text) return;
     const field = draftRef.current;
-    const current = field?.value() ?? "";
-    const spacer = current && !/\s$/.test(current) ? " " : "";
-    const next = `${current}${spacer}${text}`;
+    const next = appendDraftText(field?.value() ?? "", text);
     field?.setText(next, next.length);
   }, []);
 
-  const usage = stats?.contextUsage;
-  const context = usage && usage.tokens != null && usage.contextWindow ? { used: usage.tokens, window: usage.contextWindow } : undefined;
+  const context = contextMeterUsage(stats?.contextUsage);
   const queueVisible = queue.steering.length + queue.followUp.length > 0;
   const projectFolder = project && project !== homeDir ? project : "";
 

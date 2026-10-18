@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "../../lib/store";
 import { request } from "../../lib/rpc";
 import { commandSourceLabel, getCommandVisual } from "../../lib/command-visual";
-import { Button, Input, Skeleton } from "../UI";
+import { Button, Input, Skeleton } from "../../shared/ui/controls";
 import { Icon } from "../Icon";
 
 type Command = { name: string; description?: string; source: string; sourceInfo?: { path?: string; origin?: string } };
@@ -19,7 +19,7 @@ export function CommandsPanel() {
   return <>
     <div className="panel-heading"><div><h1>技能与命令</h1><p>Pi 当前加载的技能、提示模板和扩展命令。</p></div></div>
     <Input className="search-input" placeholder="查找命令或技能" value={search} onChange={event => setSearch(event.target.value)} />
-    {data.isLoading && <Skeleton active paragraph={{ rows: 5 }} />}
+    {data.isLoading && <Skeleton paragraph={{ rows: 5 }} />}
     {data.error && <p className="error-inline">{String(data.error)}</p>}
     <div className="command-list">{visibleCommands.map(command => {
       const visual = getCommandVisual(command.name, command.source);

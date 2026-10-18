@@ -6,7 +6,7 @@ import { getSessionTurnDurations, persistedSessionFile, report } from "../../lib
 import { useWorkspaceTabs } from "../shell/use-workspace-tabs";
 import type { AgentNode } from "../../lib/agents";
 import { groupDisplayMessages, reuseGroups, type Transcript } from "../../lib/protocol";
-import { readTurnDurations, saveTurnDurations, turnDurationId } from "../../lib/turn-duration";
+import { readTurnDurations, saveTurnDurations, turnDurationId, turnElapsedMs } from "../../lib/turn-duration";
 import { useProjects } from "../../lib/projects";
 import { riseIntoAnchor, useConversationScroll } from "../../hooks/use-conversation-scroll";
 import { TranscriptJumpToBottom, useTranscriptJumpVisibility } from "./TranscriptJumpToBottom";
@@ -50,8 +50,10 @@ const groupTimeCache = new WeakMap<object, GroupBaseTimes>();
 function groupBaseTimes(group: { items: TranscriptGroup["items"] }, durations: Readonly<Record<string, number>>): GroupBaseTimes {
   const cached = groupTimeCache.get(group);
   if (cached && cached.durations === durations) return cached;
+  // 整组从第一次运行开始计时（和 reducer 写在首条 assistant 上的墙钟时长同一个
+  // 口径），实时计时才不会在 worker 结果迟到、又起了一轮之后突然重新从 0 数。
   const startedAt = group.items.find((item) => item.startedAt !== undefined)?.startedAt;
-  const elapsedMs = ([...group.items].reverse().find((item) => item.elapsedMs !== undefined)?.elapsedMs ?? durations[turnDurationId(group.items) ?? ""]) as number | undefined;
+  const elapsedMs = turnElapsedMs(group.items, durations);
   const next = { durations, startedAt, elapsedMs };
   groupTimeCache.set(group, next);
   return next;

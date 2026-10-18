@@ -6,6 +6,7 @@ import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { base64ToBlob } from "../../lib/image-bytes";
+import { readMediaFile } from "../../lib/media";
 import { desktopRuntime, ensureSessionModes, report, sendPrompt } from "../../lib/rpc";
 import { useWorkspace } from "../../lib/store";
 import { Modal } from "../../shared/ui/Modal";
@@ -68,8 +69,10 @@ async function sendEditPrompt(path: string, description: string) {
 }
 
 type ImageActionsMenuProps = {
-  /** The rendered image, as a `data:` URL, or null while it is still generating. */
+  /** The rendered image: a `data:` URL, or an asset-protocol URL for a落盘 image. */
   dataUrl: string | null;
+  /** The version of this image that Rust extracted out of the session history. */
+  file?: string;
   /** Local file the runtime wrote, when the tool result reported one. */
   path?: string;
   /** The prompt that produced the image, reused as the edit draft. */
@@ -81,7 +84,7 @@ type ImageActionsMenuProps = {
  * Right-click actions for a generated image: edit it again with AI (reusing the
  * file as a reference image), save a copy, reveal it, and copy it or its text.
  */
-export function ImageActionsMenu({ dataUrl, path, prompt, children }: ImageActionsMenuProps) {
+export function ImageActionsMenu({ dataUrl, file, path, prompt, children }: ImageActionsMenuProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
@@ -132,17 +135,23 @@ export function ImageActionsMenu({ dataUrl, path, prompt, children }: ImageActio
       <PointMenu x={menu.x} y={menu.y} label="图片操作" width={232} onClose={() => setMenu(null)}>
         <MenuItem disabled={!path || !desktop} icon={<Sparkles strokeWidth={1.75} />} onClick={() => pick(startEditing)}>AI 编辑这张图…</MenuItem>
         <MenuSeparator />
-        <MenuItem disabled={!decoded || busy === "save"} icon={<ArrowDownCircle strokeWidth={1.75} />} onClick={() => pick(() => void run("save", async () => {
+        <MenuItem disabled={(!decoded && !file) || busy === "save"} icon={<ArrowDownCircle strokeWidth={1.75} />} onClick={() => pick(() => void run("save", async () => {
           const destination = await saveDialog({ defaultPath: suggestedName(path, decoded?.mimeType ?? "image/png"), title: "保存图片" });
           if (!destination) return;
-          await invoke<string>("save_media_file", { data: decoded?.base64 ?? "", destination });
+          if (decoded) await invoke<string>("save_media_file", { data: decoded.base64, destination });
+          else if (file) await invoke<string>("copy_media_file", { source: file, destination });
+          else return;
           notify("图片已保存");
         }))}>另存为…</MenuItem>
         <MenuItem disabled={!path || !desktop} icon={<FolderOpen strokeWidth={1.75} />} onClick={() => pick(() => void run("reveal", async () => { if (path) await revealItemInDir(path); }))}>在文件夹中显示</MenuItem>
         <MenuSeparator />
-        <MenuItem disabled={!decoded || !desktop} icon={<Copy strokeWidth={1.75} />} onClick={() => pick(() => void run("copy", async () => {
-          if (!decoded) return;
-          await copyPixels(decoded.base64, decoded.mimeType);
+        <MenuItem disabled={(!decoded && !file) || !desktop} icon={<Copy strokeWidth={1.75} />} onClick={() => pick(() => void run("copy", async () => {
+          // 历史图片的字节已经不在 JS 里了，用落盘文件重新取一次再写剪贴板。
+          const payload = decoded ?? (file ? await readMediaFile(file) : null);
+          if (!payload) return;
+          const base64 = "base64" in payload ? payload.base64 : payload.data;
+          const mimeType = "mimeType" in payload ? payload.mimeType : payload.mime;
+          await copyPixels(base64, mimeType);
           notify("图片已复制到剪贴板");
         }))}>复制图片</MenuItem>
         <MenuItem disabled={!path} onClick={() => pick(() => void run("copy-path", async () => { if (path) await navigator.clipboard.writeText(path); notify("文件路径已复制"); }))}>复制文件路径</MenuItem>

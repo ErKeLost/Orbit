@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { afterAll, afterEach, describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -33,6 +33,24 @@ function resolveTestNode(): string {
 }
 
 const testNode = resolveTestNode()
+
+/**
+ * These tests describe a *supervisor* process whose own path is `/root`, and a
+ * worker only becomes a worker when a test says so. Run the suite from inside an
+ * agent session and the ambient `PI_GUI_AGENT_PATH` / `PI_GUI_SUBAGENT` put a
+ * different path and role in the way, so four assertions fail for a reason that
+ * has nothing to do with the code under test. Clear them for this file, put them
+ * back afterwards; any test that needs a worker sets these itself.
+ */
+const ambientAgentEnv = [
+  "PI_GUI_AGENT_PATH",
+  "PI_GUI_SUBAGENT",
+  "PI_GUI_AGENT_ID",
+  "PI_GUI_AGENT_PARENT_ID",
+  "PI_GUI_AGENT_TREE_DIR",
+  "PI_GUI_AGENT_TREE_LIMIT",
+].map((name) => [name, process.env[name]] as const)
+for (const [name] of ambientAgentEnv) delete process.env[name]
 const roots: string[] = []
 const runtimes: SubagentRuntime[] = []
 const originalNode = process.env.ORBIT_PI_NODE_PATH
@@ -109,6 +127,13 @@ afterEach(async () => {
   else process.env.ORBIT_PI_CLI_PATH = originalPi
   if (originalHang === undefined) delete process.env.FIXTURE_HANG
   else process.env.FIXTURE_HANG = originalHang
+})
+
+afterAll(() => {
+  for (const [name, value] of ambientAgentEnv) {
+    if (value === undefined) delete process.env[name]
+    else process.env[name] = value
+  }
 })
 
 describe("collaboration surface", () => {

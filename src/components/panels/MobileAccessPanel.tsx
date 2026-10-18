@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { useWorkspace } from "../../lib/store";
 import { Icon } from "../Icon";
-import { DesktopHostSettings, MobileAccessSettings } from "./GeneralSettingsPanel";
+import { DesktopHostSettings, MobileAccessSettings } from "../../features/settings/pages/GeneralSettingsPage";
 
 /** Standalone entry point for the desktop-to-phone connection controls. */
 export function MobileAccessPanel() {

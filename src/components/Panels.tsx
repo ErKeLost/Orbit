@@ -5,8 +5,8 @@ import { useLockOverscroll } from "../shared/hooks/useLockOverscroll";
 const CommandsPanel = lazy(() => import("./panels/CommandsPanel").then((module) => ({ default: module.CommandsPanel })));
 const MobileAccessPanel = lazy(() => import("./panels/MobileAccessPanel").then((module) => ({ default: module.MobileAccessPanel })));
 const NotesPanel = lazy(() => import("./panels/NotesPanel").then((module) => ({ default: module.NotesPanel })));
-const PiToolsPanel = lazy(() => import("./panels/PiToolsPanel").then((module) => ({ default: module.PiToolsPanel })));
-const SessionsPanel = lazy(() => import("./panels/SessionsPanel").then((module) => ({ default: module.SessionsPanel })));
+const PiToolsPage = lazy(() => import("../features/settings/pages/PiToolsPage").then((module) => ({ default: module.PiToolsPage })));
+const SessionsPage = lazy(() => import("../features/settings/pages/SessionsPage").then((module) => ({ default: module.SessionsPage })));
 const TreePanel = lazy(() => import("./panels/TreePanel").then((module) => ({ default: module.TreePanel })));
 const ChangesPanel = lazy(() => import("./panels/ChangesPanel").then((module) => ({ default: module.ChangesPanel })));
 
@@ -14,8 +14,8 @@ function panelComponent(panel: PanelName) {
   if (panel === "commands") return <CommandsPanel />;
   if (panel === "mobile-access") return <MobileAccessPanel />;
   if (panel === "notes") return <NotesPanel />;
-  if (panel === "pi-tools") return <PiToolsPanel />;
-  if (panel === "sessions") return <SessionsPanel />;
+  if (panel === "pi-tools") return <PiToolsPage />;
+  if (panel === "sessions") return <SessionsPage />;
   if (panel === "tree") return <TreePanel />;
   if (panel === "changes") return <ChangesPanel />;
   return <CommandsPanel />;

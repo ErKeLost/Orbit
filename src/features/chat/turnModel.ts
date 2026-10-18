@@ -68,12 +68,9 @@ export function userText(message: PiMessage) {
     .trim();
 }
 
+/** 用户消息里的附件：保留 part 本身，由渲染层决定走 base64 还是落盘路径。 */
 export function userImages(message: PiMessage) {
-  return contentParts(message).flatMap((part) => {
-    if (part.type !== "image") return [];
-    const src = part.data ? `data:${part.mimeType};base64,${part.data}` : part.url;
-    return src ? [src] : [];
-  });
+  return contentParts(message).filter((part) => part.type === "image" && (part.data || part.file || part.url || (part.session && typeof part.at === "number")));
 }
 
 export function toolName(part: Part, tools: Record<string, Tool>) {

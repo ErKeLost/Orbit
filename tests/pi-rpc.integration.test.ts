@@ -244,6 +244,10 @@ describe("Pi RPC 0.87.1 process contract", () => {
     expect(ids).toContain("e2")
   })
 
+  // Two real Pi processes, and `bun test` runs 81 files in parallel: a single
+  // cold `get_state` has been measured at 4.3s on a loaded machine, so the sum
+  // crosses Bun's 5s default while every assertion still holds. The default was
+  // the load, not the contract — 30s fails only on a genuine hang.
   test("a worker keeps the capability built-ins while extension discovery stays off", async () => {
     const paths = await fixture("builtins")
     await mkdir(paths.cwd, { recursive: true })
@@ -277,7 +281,7 @@ describe("Pi RPC 0.87.1 process contract", () => {
     expect(names).not.toContain("gui-agent-mode")
     expect(names).not.toContain("gui-observe")
     expect(names).not.toContain("gui-tree")
-  })
+  }, 30_000)
 
   test("a filtered fork loads as a clean conversation with no tool traffic", async () => {
     const paths = await fixture("filtered-fork")

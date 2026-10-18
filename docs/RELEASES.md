@@ -20,6 +20,20 @@ Node for `process.arch`, so an arm64 host would put an arm64 Node inside an Inte
 app. `scripts/sync-worker.mjs` is already target-aware
 (`TAURI_ENV_TARGET`), so `ax_control` follows the triple either way.
 
+The Intel bundle was suspended for two releases after `bundle_dmg.sh` failed on
+the Intel runner. The logs were not kept, so it was never established whether
+the DMG step failed or the job's 45-minute timeout arrived first — the compile
+alone ran 43 minutes there. The matrix now gives that job 75 minutes and nothing
+else changed. If the DMG still fails, the next step is to build only
+`--bundles app` on Intel and produce the DMG with `hdiutil` in a separate step,
+skipping the Finder layout AppleScript.
+
+The same target is checked on every push by the `Intel target` job in `ci.yml`,
+which runs `bun run check:intel` (`scripts/check-intel.mjs`) natively on
+`macos-15-intel`. Without it, `bun run check` and a host `cargo check` compile
+for whatever the runner is, and an Intel-only error would first appear inside
+the 43-minute Release job.
+
 The packaged-app check (worker signature, worker startup, deep bundle signature)
 is gated on `startsWith(matrix.name, 'macOS')` and builds its path from
 `matrix.rust_targets` — it must run for **every** macOS job, because the

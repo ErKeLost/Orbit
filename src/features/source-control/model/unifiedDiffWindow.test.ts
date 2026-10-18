@@ -1,7 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { foldUnifiedLines, type UnifiedLine } from "./unifiedDiff";
 import {
+  diffRowKey,
   flattenVisibleRows,
+  initiallyOpenIds,
   layoutRows,
   rowsHeight,
   UNIFIED_FOLD_PX,
@@ -155,6 +157,40 @@ describe("windowRows", () => {
       padTop: UNIFIED_LINE_PX,
       padBottom: UNIFIED_LINE_PX,
     });
+  });
+});
+
+describe("diffRowKey", () => {
+  it("keys folds by id and lines by position plus both numbers", () => {
+    const row = {
+      type: "line" as const,
+      stage: false,
+      height: UNIFIED_LINE_PX,
+      line: {
+        kind: "add" as const,
+        text: "x",
+        oldNumber: null,
+        newNumber: 12,
+      },
+    };
+    expect(diffRowKey(row, 3)).toBe("3-add-x-12");
+    expect(
+      diffRowKey(
+        { type: "fold", id: "fold-1", hidden: 4, height: UNIFIED_FOLD_PX },
+        0,
+      ),
+    ).toBe("fold-fold-1");
+  });
+});
+
+describe("initiallyOpenIds", () => {
+  const files = [{ id: "a" }, { id: "b" }];
+
+  it("opens everything, only the first file, or nothing", () => {
+    expect([...initiallyOpenIds(files, "all")]).toEqual(["a", "b"]);
+    expect([...initiallyOpenIds(files, "first")]).toEqual(["a"]);
+    expect([...initiallyOpenIds(files, "none")]).toEqual([]);
+    expect([...initiallyOpenIds([], "all")]).toEqual([]);
   });
 });
 

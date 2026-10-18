@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from "react";
 import { LazyMotion, MotionConfig, domAnimation } from "motion/react";
-import { PromptProvider } from "./UI";
+import { PromptProvider } from "../shared/ui/PromptProvider";
 import { ToastHost } from "./ToastHost";
 import { UpdateChecker } from "./UpdateChecker";
 import { installAppearance } from "../lib/appearance";

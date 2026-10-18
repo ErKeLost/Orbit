@@ -1,7 +1,7 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
+import { Button } from "@/shared/ui/Button";
+import { Spinner } from "@/shared/ui/Spinner";
 import { currentShortcut, shortcutLabel } from "@/lib/keybindings";
 import { cn } from "@/lib/utils";
 import { MicIcon, SquareIcon } from "lucide-react";

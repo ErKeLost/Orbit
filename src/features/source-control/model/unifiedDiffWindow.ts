@@ -165,3 +165,21 @@ function pushLines(
     });
   }
 }
+
+/** Stable React key for one rendered diff row. */
+export function diffRowKey(row: DiffViewRow, index: number) {
+  if (row.type === "fold") return `fold-${row.id}`;
+  return `${index}-${row.line.kind}-${row.line.oldNumber ?? "x"}-${row.line.newNumber ?? "x"}`;
+}
+
+export type InitialExpansion = "all" | "first" | "none";
+
+/** File ids expanded when a new set of files loads. */
+export function initiallyOpenIds(
+  files: readonly { id: string }[],
+  mode: InitialExpansion,
+): Set<string> {
+  if (mode === "none" || files.length === 0) return new Set();
+  if (mode === "first") return new Set([files[0].id]);
+  return new Set(files.map((file) => file.id));
+}

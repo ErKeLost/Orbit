@@ -15,12 +15,12 @@ import { BrowserPage } from "./BrowserPage";
 import { KeybindingsPage } from "./KeybindingsPage";
 import { InboxSettings } from "../inbox/InboxView";
 
-const GeneralSettingsPanel = lazy(() => import("../../components/panels/GeneralSettingsPanel").then((m) => ({ default: m.GeneralSettingsPanel })));
-const ScreenSettingsPanel = lazy(() => import("../../components/panels/ScreenSettingsPanel").then((m) => ({ default: m.ScreenSettingsPanel })));
-const PiToolsPanel = lazy(() => import("../../components/panels/PiToolsPanel").then((m) => ({ default: m.PiToolsPanel })));
+const GeneralSettingsPage = lazy(() => import("./pages/GeneralSettingsPage").then((m) => ({ default: m.GeneralSettingsPage })));
+const ScreenSettingsPage = lazy(() => import("./pages/ScreenSettingsPage").then((m) => ({ default: m.ScreenSettingsPage })));
+const PiToolsPage = lazy(() => import("./pages/PiToolsPage").then((m) => ({ default: m.PiToolsPage })));
 const ProviderSettings = lazy(() => import("../../components/ProviderSettings").then((m) => ({ default: m.ProviderSettings })));
-const IntegrationsPanel = lazy(() => import("../../components/panels/IntegrationsPanel"));
-const ComputerUsePanel = lazy(() => import("../../components/panels/ComputerUsePanel").then((m) => ({ default: m.ComputerUsePanel })));
+const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage").then((m) => ({ default: m.IntegrationsPage })));
+const ComputerUsePage = lazy(() => import("./pages/ComputerUsePage").then((m) => ({ default: m.ComputerUsePage })));
 
 function DesktopOnly({ what }: { what: string }) {
   return (
@@ -94,19 +94,19 @@ export function SettingsView() {
   }, []);
 
   let content: ReactNode;
-  if (page === "general") content = <GeneralSettingsPanel />;
+  if (page === "general") content = <GeneralSettingsPage />;
   else if (page === "appearance") content = <AppearancePage />;
   else if (page === "chat") content = <ChatPage />;
   else if (page === "keybindings") content = <KeybindingsPage />;
   else if (page === "skills") content = <SkillsPage />;
   else if (page === "inbox") content = <InboxSettings />;
   else if (page === "providers") content = desktop ? <ProviderSettings /> : <DesktopOnly what=" Provider" />;
-  else if (page === "integrations") content = desktop ? <IntegrationsPanel /> : <DesktopOnly what="第三方接入" />;
-  else if (page === "computer-use") content = desktop ? <ComputerUsePanel /> : <DesktopOnly what="电脑操作" />;
+  else if (page === "integrations") content = desktop ? <IntegrationsPage /> : <DesktopOnly what="第三方接入" />;
+  else if (page === "computer-use") content = desktop ? <ComputerUsePage /> : <DesktopOnly what="电脑操作" />;
   else if (page === "browser") content = desktop ? <BrowserPage /> : <DesktopOnly what="浏览器" />;
-  else if (page === "screen") content = <ScreenSettingsPanel />;
-  else if (page === "pi-tools") content = <PiToolsPanel />;
-  else content = <GeneralSettingsPanel />;
+  else if (page === "screen") content = <ScreenSettingsPage />;
+  else if (page === "pi-tools") content = <PiToolsPage />;
+  else content = <GeneralSettingsPage />;
 
   return (
     <div role="region" aria-label="设置" data-app-settings className="flex min-h-0 min-w-0 flex-1 flex-col text-content">

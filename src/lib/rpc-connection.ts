@@ -30,6 +30,7 @@ import {
   computerUseModeCommand,
   patch,
   persistSession,
+  primeProjection,
   queryClient,
   persistedSessionFile,
   projectActive,
@@ -117,15 +118,23 @@ async function startConnection(cwd:string,id:string,options?:{restoreLast?:boole
   if(event.kind==='protocol_error')patch(id,{error:event.message})
  }
  try{
+  // 打开的会话已知路径：先读文件把它画出来（~110ms），不必等 pi 加载完再 serializer
+  // 一遍。缓存会记下文件戳与条数，随后 loadMessages 对账后直接采用。
+  const beforeEarly=current(id).transcript
+  if(options?.sessionPath&&(beforeEarly.loading||beforeEarly.messages.length===0)){
+   void primeProjection(options.sessionPath).then(primed=>{if(primed)patch(id,{transcript:primed.transcript})}).catch(()=>undefined)
+  }
   await invoke('pi_connect',{cwd,onEvent,connectionId:id})
   const state=await request<RpcSessionState>({type:'get_state'},45000,id)
   if(connections.get(id)?.token!==token)return
   patch(id,{state})
   // 模式同步不挡连接：发送前 `ensureSessionModes` 会再确认一次键，这里错了也会被纠正。
   void syncSessionModes(id).catch(()=>{})
-  if(options?.sessionPath){try{await request({type:'switch_session',sessionPath:options.sessionPath},45000,id)}catch{patch(id,{notices:['会话无法读取，已打开新会话']})}}
-  else if(options?.restoreLast){const previousFile=persistedSessionFile(cwd)||undefined;if(previousFile&&previousFile!==state.sessionFile){try{await request({type:'switch_session',sessionPath:previousFile},45000,id)}catch{patch(id,{notices:['上次会话无法读取，已打开新会话']})}}}
-  await loadMessages(id)
+  // switch_session 成功才有资格把路径当作投影预告：否则先画的会是别人的历史。
+  let switchedTo:string|undefined
+  if(options?.sessionPath){try{await request({type:'switch_session',sessionPath:options.sessionPath},45000,id);switchedTo=options.sessionPath}catch{patch(id,{notices:['会话无法读取，已打开新会话']})}}
+  else if(options?.restoreLast){const previousFile=persistedSessionFile(cwd)||undefined;if(previousFile&&previousFile!==state.sessionFile){try{await request({type:'switch_session',sessionPath:previousFile},45000,id);switchedTo=previousFile}catch{patch(id,{notices:['上次会话无法读取，已打开新会话']})}}}
+  await loadMessages(id,switchedTo)
   if(connections.get(id)?.token!==token)return
   patch(id,{connection:'online'})
  }catch(error){

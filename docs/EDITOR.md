@@ -1,6 +1,6 @@
 # The file editor
 
-The file pane is one component in both shells (`features/shell/CodeEditor.tsx`):
+The file pane is one component in both shells (`features/shell/editor/CodeEditor.tsx`):
 a CodeMirror 6 editor whose highlighting is shiki's — the same tokens and themes
 the read-only preview has always used, painted as decorations — so a file does
 not change colour when it becomes editable.
@@ -17,7 +17,7 @@ else — a file that was just opened answers ⌘F without a click first.
 The *engine* is `@codemirror/search` — the query, the match highlighter, and the
 keymap (`F3`, `⌘G`, `⌘⌥F`) are the library's, which is why the whole family of
 search keys behaves the way it does everywhere else. The *panel* is Orbit's
-(`features/shell/editor-find.ts`), because the library's panel is one row of
+(`features/shell/editor/editor-find.ts`), because the library's panel is one row of
 English button labels with the replace field always open and no match count —
 and "3/12" or "无结果" is the answer to "is it worth pressing Enter".
 

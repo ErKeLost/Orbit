@@ -39,7 +39,7 @@ const sessionMetadataPending=new Set<string>()
 const reconnectingProjects=new Map<string,Promise<void>>()
 /** 正在拉历史消息的连接。切回这种连接时不能把骨架屏收掉，否则会先闪一下空首页。 */
 const loadingConnections=new Set<string>()
-/** 已要求、待 Pi 确认的模型切换（见 `protocol.ts` 的 `withPendingModel`）。 */
+/** 已要求、待 Pi 确认的模型切换（见 `protocol/transcript.ts` 的 `withPendingModel`）。 */
 const pendingModels=new Map<string,PendingModel>()
 /**
  * 意图挂在「项目」上，不挂在 connection 上。
@@ -123,7 +123,10 @@ function syncLiveSessions(){
   if(!path||seen.has(path))continue
   const running=snap.transcript.running||snap.transcript.compacting,needsInput=snap.dialogs.length>0
   if(!running&&!needsInput&&!snap.transcript.messages.some(item=>item.message.role==='user'))continue
-  seen.add(path);items.push({path,cwd,connectionId:id,title:firstUserTitle(snap.transcript)||'新会话',running,needsInput})
+  // 改过名的会话用 Pi 记下的名字：只用第一条用户消息的话，重命名在项目栏的「会话」
+  // 区块和标签页里都不会生效（两边读的都不是同一处）。
+  const renamed=typeof snap.state?.sessionName==='string'?snap.state.sessionName.trim():''
+  seen.add(path);items.push({path,cwd,connectionId:id,title:renamed||firstUserTitle(snap.transcript)||'新会话',running,needsInput})
  }
  if(!sameLiveSessions(useWorkspace.getState().liveSessions,items))useWorkspace.getState().set({liveSessions:items})
 }
@@ -152,7 +155,21 @@ function patch(id:string,value:Partial<Snapshot>){
  const previous=current(id),next={...previous,...resolved}
  if(previous.state?.sessionFile&&previous.state.sessionFile!==next.state?.sessionFile&&sessionOwners.get(previous.state.sessionFile)===id)sessionOwners.delete(previous.state.sessionFile)
  snapshots.set(id,next);if(next.state?.sessionFile)sessionOwners.set(next.state.sessionFile,id);if(useWorkspace.getState().connectionId===id)useWorkspace.getState().set(resolved);notifySnapshot(id)
- const activityChanged=previous.transcript.running!==next.transcript.running||previous.transcript.compacting!==next.transcript.compacting||previous.state?.sessionFile!==next.state?.sessionFile||previous.dialogs.length!==next.dialogs.length||firstUserTitle(previous.transcript)!==firstUserTitle(next.transcript)
+ // 缓存跟着实时 transcript 走；一旦有新事件，文件戳就不再代表它，标脏。
+ const cachedPath=next.state?.sessionFile,cachedEntry=cachedPath?transcriptCache.get(cachedPath):undefined
+ if(cachedEntry&&resolved.transcript&&resolved.transcript!==cachedEntry.transcript&&resolved.transcript!==previous.transcript){cachedEntry.transcript=resolved.transcript;cachedEntry.dirty=true}
+ // 一轮结束（pi 已把消息写进 JSONL）时重新取一次文件戳，缓存重新变成可复用：
+ // 否则“跑完一轮再切回来”就永远命中不了，白等一次整段历史。
+ if(cachedEntry&&cachedPath&&previous.transcript.running&&!next.transcript.running){
+  const pending=sessionStamp(cachedPath)
+  if(pending)void pending.then(stamp=>{if(stamp){
+   cachedEntry.stamp=fileStamp(stamp)
+   // 每个原始消息要么在 messages 里，要么在 tools 里（toolResult 被移进 tools）。
+   cachedEntry.count=next.transcript.messages.length+Object.keys(next.transcript.tools).length
+   cachedEntry.dirty=false
+  }}).catch(()=>undefined)
+ }
+ const activityChanged=previous.transcript.running!==next.transcript.running||previous.transcript.compacting!==next.transcript.compacting||previous.state?.sessionFile!==next.state?.sessionFile||previous.state?.sessionName!==next.state?.sessionName||previous.dialogs.length!==next.dialogs.length||firstUserTitle(previous.transcript)!==firstUserTitle(next.transcript)
  if(activityChanged)syncLiveSessions()
  // 会话级生命周期事件：每条连接各自发，后台会话和前台会话一视同仁（通知、自动化回写、检查点都挂在这上面）。
  const sessionFile=next.state?.sessionFile,cwd=connections.get(id)?.cwd
@@ -294,34 +311,127 @@ export async function refresh(target=activeTarget()){
  // 就是它，而不是切换之前的旧快照。
  queryClient.setQueryData(['pi','live-state',id],withPendingModel(state,pendingModels.get(key)))
  const cwd=connections.get(id)?.cwd??useWorkspace.getState().cwd;if(state.sessionFile&&projectActive.get(cwd)===id)persistSession(cwd,state.sessionFile);await queryClient.invalidateQueries({queryKey:['pi','live-stats',id]});return state}
-const transcriptCache = new Map<string, Transcript>()
-const TRANSCRIPT_CACHE_LIMIT = 3
-function rememberTranscript(sessionPath: string | undefined, transcript: Transcript) {
+type CachedTranscript = { transcript: Transcript; /** `${size}:${mtimeMs}` when the snapshot was taken. */ stamp?: string; /** pi 在快照那一刻的 messageCount；对不上就不能直接用（叶路径/运行时消息）。 */ count?: number; /** 快照之后又收到过事件：文件戳不再代表缓存。 */ dirty: boolean }
+const transcriptCache = new Map<string, CachedTranscript>()
+// 画像已经不带宽带了（图片是引用），多留几条才对得上“多会话并行”。
+const TRANSCRIPT_CACHE_LIMIT = 6
+/** 会话文件戳：切换会话时用它判断内存里的 transcript 还能不能直接用。 */
+const fileStamp = (stamp: { size: number; mtimeMs: number }) => `${stamp.size}:${stamp.mtimeMs}`
+// 这两条都只在本机有意义：手机没有这台机器的磁盘，也没有 transcript 缓存。
+export async function sessionStamp(sessionPath: string) {
+ return mobileRuntime() ? undefined : invoke<{ size: number; mtimeMs: number }>('session_stamp', { sessionPath })
+}
+/**
+ * 直接读会话 JSONL 生成显示消息（`history::project`）。
+ *
+ * `get_messages` 会让 pi 把整段历史（含 base64 图片）重新序列化：169 MB 的会话要
+ * 1.09s / 168.8 MB。这里读同一份文件，图片换成 `{session, at, ordinal}` 引用。
+ * 只有 `exact` 且条数与 `get_state.messageCount` 一致才会被采用。
+ */
+export async function sessionProject(sessionPath: string, leaf?: string) {
+ return mobileRuntime() ? undefined : invoke<{ messages: PiMessage[]; count: number; exact: boolean; leaf?: string | null }>('session_project', { sessionPath, leaf })
+}
+
+/**
+ * 读一次会话 JSONL 并把结果放进 transcript 缓存。
+ *
+ * 多会话同时跑是这个应用的常态：正在跑（`dirty`）的条目绝不被预取覆盖；缓存里
+ * 已有的干净条目只要文件戳没变就原样返回，悬停与打开都不会重复读盘。
+ */
+export type PrimedProjection = { transcript: Transcript; count: number }
+export async function primeProjection(sessionPath: string): Promise<PrimedProjection | undefined> {
+ if (!sessionPath || mobileRuntime()) return undefined
+ const existing = transcriptCache.get(sessionPath)
+ if (existing?.dirty) return undefined
+ if (existing) {
+  const stamp = await sessionStamp(sessionPath).catch(() => undefined)
+  if (stamp && existing.stamp === fileStamp(stamp)) return { transcript: existing.transcript, count: existing.count ?? 0 }
+ }
+ const [projection, stamp] = await Promise.all([
+  sessionProject(sessionPath).catch(() => undefined),
+  sessionStamp(sessionPath).catch(() => undefined),
+ ])
+ if (!projection?.exact || projection.messages.length === 0) return undefined
+ const transcript = hydrate(projection.messages)
+ if (transcriptCache.get(sessionPath)?.dirty) return undefined
+ rememberTranscript(sessionPath, transcript, stamp ? fileStamp(stamp) : undefined, projection.count)
+ return { transcript, count: projection.count }
+}
+
+/** 鼠标悬停时预取一条会话（同一个 `history::project`）。 */
+export function prefetchSession(sessionPath: string) {
+ void primeProjection(sessionPath).catch(() => undefined)
+}
+function rememberTranscript(sessionPath: string | undefined, transcript: Transcript, stamp?: string, count?: number) {
  if (!sessionPath) return
  transcriptCache.delete(sessionPath)
- transcriptCache.set(sessionPath, transcript)
+ transcriptCache.set(sessionPath, { transcript, stamp, count, dirty: false })
  if (transcriptCache.size > TRANSCRIPT_CACHE_LIMIT) {
   const oldest = transcriptCache.keys().next().value
   if (oldest !== undefined) transcriptCache.delete(oldest)
  }
 }
-export function cachedTranscript(sessionPath: string): Transcript | undefined { return transcriptCache.get(sessionPath) }
+export function cachedTranscript(sessionPath: string): Transcript | undefined { return transcriptCache.get(sessionPath)?.transcript }
 export function forgetCachedTranscript(sessionPath: string) { transcriptCache.delete(sessionPath) }
 
-export async function loadMessages(target=activeTarget()){
- // 几百条消息的会话，get_messages 的响应就是几 MB，会被电脑端切成多帧发过来；
- // 30s 的上限让“会话大”和“链路卡住了”变成同一个结果，所以给它更长的预算。
+/**
+ * 用 Rust 的 JSONL 投影替换 pi 的 `get_messages`，条数与 pi 核对一致才采用。
+ *
+ * `messageCount` 是 pi 在内存里的真实条数：叶路径（会话树导航）、未落盘的运行时
+ * 消息、压缩投影任一不同，这里就会对不上，于是调用方退回 `get_messages`。
+ */
+async function adoptProjection(id: string, sessionFile: string, messageCount: number): Promise<boolean> {
+ const projection = await sessionProject(sessionFile).catch(() => undefined)
+ if (!projection || !projection.exact || projection.count !== messageCount) return false
+ const transcript = hydrate(projection.messages)
+ patch(id, { transcript })
+ const current = await sessionStamp(sessionFile).catch(() => undefined)
+ rememberTranscript(sessionFile, transcript, current ? fileStamp(current) : undefined, projection.count)
+ return true
+}
+
+/**
+ * 把一条连接的历史装进 transcript。
+ *
+ * 三条路，从快到慢：
+ *
+ * 1. 内存缓存（文件戳 + 条数都对得上）——一次 stat；
+ * 2. Rust 读会话 JSONL（`history::project`）——百毫秒级，图片只剩引用；
+ * 3. pi 的 `get_messages`——慢（大会话 1.1s、169 MB），只在投影不适用时兜底。
+ *
+ * `hintSessionPath` 是调用方已经 `switch_session` 成功的会话文件：有它就能在
+ * `get_state`（pi 自己加载会话，169 MB 要 0.9s）之前先把历史画出来，等 pi 的
+ * messageCount 回来再确认。
+ */
+export async function loadMessages(target=activeTarget(),hintSessionPath?:string){
  const id=route(target)
  loadingConnections.add(id)
  try{
-  // get_messages 与 get_state 没有先后依赖，并行发：省掉一整轮往返。
-  const [data,state]=await Promise.all([
-   request<{messages:PiMessage[]}>({type:'get_messages'},60000,id),
-   refresh(id),
-  ])
-  const transcript=hydrate(data.messages)
-  patch(id,{transcript})
-  rememberTranscript(state.sessionFile,transcript)
+  if(hintSessionPath){
+   // 调用方已经 switch_session 成功：先把文件读出来画上，pi 的 get_state 慢多少都无所谓。
+   const primed=await primeProjection(hintSessionPath).catch(()=>undefined)
+   if(primed)patch(id,{transcript:primed.transcript})
+  }
+  // pi 的内存状态是唯一能对账的东西：sessionFile、messageCount、是否在跑。
+  const state=await refresh(id)
+  const sessionFile=state.sessionFile
+  const readAuthoritative=async()=>{
+   const data=await request<{messages:PiMessage[]}>({type:'get_messages'},60000,id)
+   const transcript=hydrate(data.messages)
+   patch(id,{transcript})
+   if(!sessionFile)return
+   const refreshed=await sessionStamp(sessionFile).catch(()=>undefined)
+   rememberTranscript(sessionFile,transcript,refreshed?fileStamp(refreshed):undefined,data.messages.length)
+  }
+  const cached=sessionFile?transcriptCache.get(sessionFile):undefined
+  const stamp=cached&&!cached.dirty&&cached.stamp&&sessionFile?await sessionStamp(sessionFile).catch(()=>undefined):undefined
+  const countMatches=!cached||cached.count===undefined||cached.count===state.messageCount
+  if(cached&&stamp&&cached.stamp&&fileStamp(stamp)===cached.stamp&&countMatches){
+   // 文件没动过、条数也对得上：这份 transcript 就是 pi 会返回的东西。
+   patch(id,{transcript:cached.transcript})
+  }else if(!(sessionFile&&await adoptProjection(id,sessionFile,state.messageCount))){
+   await readAuthoritative()
+  }
   const currentTranscript=current(id).transcript
   if(state.isStreaming||state.isCompacting){
    const running={...currentTranscript,running:state.isStreaming,compacting:state.isCompacting,phase:state.isCompacting?'正在压缩上下文':'正在运行',active:[...currentTranscript.messages].map((item,index)=>item.message.role==='assistant'?index:-1).findLast(index=>index>=0)??-1}

@@ -932,21 +932,21 @@ mod desktop {
     ) -> Result<Value, String> {
         match operation {
             super::RemoteHostOperation::SessionList { cwd } => {
-                crate::bridge::list_sessions(app.clone(), cwd).await
+                crate::sessions_cmd::list_sessions(app.clone(), cwd).await
             }
             super::RemoteHostOperation::ProjectFiles { cwd } => {
-                crate::bridge::list_project_files(cwd).await
+                crate::sessions_cmd::list_project_files(cwd).await
             }
             super::RemoteHostOperation::SessionTurnDurations { session_path } => {
-                crate::bridge::session_turn_durations(app.clone(), session_path).await
+                crate::sessions_cmd::session_turn_durations(app.clone(), session_path).await
             }
             super::RemoteHostOperation::SessionDelete { session_path } => {
-                crate::bridge::delete_session(session_path)
+                crate::sessions_cmd::delete_session(session_path)
                     .await
                     .map(|()| Value::Null)
             }
             super::RemoteHostOperation::SessionRename { session_path, title } => {
-                crate::bridge::rename_session(session_path, title)
+                crate::sessions_cmd::rename_session(session_path, title)
                     .await
                     .map(|()| Value::Null)
             }

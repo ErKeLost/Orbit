@@ -22,6 +22,7 @@ import {
   isHomeWorkspace,
   newHomeWorkspace,
   newWorkspaceId,
+  projectWorkspaceTabs,
   newWorkspaceTab,
   nextEditorPaneId,
   nextSessionPaneId,
@@ -292,12 +293,16 @@ export const useShell = create<ShellState>((set, get) => {
       if (id === HOME_WORKSPACE_ID) return;
       const index = state.workspaces.findIndex((workspace) => workspace.id === id);
       if (index < 0) return;
-      const tabs = state.workspaces.filter((workspace) => workspace.id !== HOME_WORKSPACE_ID);
-      const removedAt = tabs.findIndex((workspace) => workspace.id === id);
+      const closing = state.workspaces[index];
+      // header 上的标签是挂项目的。相邻页只在**同一个项目**里找：关掉这个项目的最
+      // 后一页时要落回这个项目的新会话面，而不是被顺手丢进另一个项目还开着的标签页。
+      const projectTabs = projectWorkspaceTabs(state.workspaces, closing.cwd);
+      const removedAt = projectTabs.findIndex((workspace) => workspace.id === id);
+      const neighbours = projectTabs.filter((workspace) => workspace.id !== id);
+      const neighbour = neighbours[removedAt - 1] ?? neighbours[0];
       const workspaces = state.workspaces.filter((workspace) => workspace.id !== id);
-      // 相邻的那个标签页（先往前找，没有就往后），都没有就回首页。
       const nextId = state.activeWorkspaceId === id
-        ? (tabs[removedAt - 1] ?? tabs[removedAt + 1])?.id ?? HOME_WORKSPACE_ID
+        ? neighbour?.id ?? HOME_WORKSPACE_ID
         : state.activeWorkspaceId;
       // 被关掉的会话不再能被切项目带回来。
       const activeByProject = Object.fromEntries(

@@ -80,8 +80,5 @@ export function formatBitrate(bitsPerSecond: number): string {
   return `${Math.round(bitsPerSecond / 1000)} kbps`
 }
 
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "0 KB"
-  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(1)} MB`
-  return `${Math.round(bytes / 1024)} KB`
-}
+/** Byte sizes: one definition lives in `lib/format`, re-exported here for the callers that already import this module. */
+export { formatBytes } from "./format"

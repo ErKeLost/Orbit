@@ -2,8 +2,9 @@ import type { ReactNode } from "react";
 import { ChevronLeft, ChevronRight, PanelLeft } from "../../shared/ui/icons";
 import { useShell } from "./shellStore";
 
-export const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
-export const MOD = IS_MAC ? "⌘" : "Ctrl+";
+import { IS_MAC, MOD } from "../../lib/platform";
+
+export { IS_MAC, MOD };
 
 /**
  * macOS 红绿灯占位：展开项目栏自己的头部会让位；收起/隐藏时由页面头部

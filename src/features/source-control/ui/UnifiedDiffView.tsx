@@ -19,9 +19,9 @@ import {
 } from "react";
 import { FileTypeIcon } from "../../files/ui/FileTypeIcon";
 import { useLockOverscroll } from "../../../shared/hooks/useLockOverscroll";
-import { useColorScheme } from "../../../shared/hooks/useColorScheme";
+import { useColorScheme } from "../../../lib/appearance";
 import { formatInteger } from "../../../shared/lib/numbers";
-import type { ColorScheme } from "../../settings/model/appearance";
+import type { ResolvedTheme } from "../../../lib/theme";
 import { basename } from "../../../platform/tauri/fs";
 import { highlightDiffFile, type SyntaxToken } from "../../files/editor/syntaxTokens";
 import { DiffCommentComposer } from "./DiffCommentComposer";
@@ -32,7 +32,9 @@ import {
   type UnifiedLine,
 } from "../model/unifiedDiff";
 import {
+  diffRowKey,
   flattenVisibleRows,
+  initiallyOpenIds,
   layoutRows,
   UNIFIED_FOLD_PX,
   UNIFIED_HUNK_PX,
@@ -40,6 +42,7 @@ import {
   UNIFIED_OVERSCAN_PX,
   windowRows,
   type DiffViewRow,
+  type InitialExpansion,
   type RowWindow,
 } from "../model/unifiedDiffWindow";
 
@@ -59,7 +62,6 @@ export type UnifiedDiffFileModel = {
 };
 
 type FileLayout = "stacked" | "cards";
-type InitialExpansion = "all" | "first" | "none";
 
 type Props = {
   files: UnifiedDiffFileModel[];
@@ -100,7 +102,7 @@ export function UnifiedDiffView({
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const colorScheme = useColorScheme();
   const [open, setOpen] = useState<Set<string>>(() =>
-    initiallyOpenFiles(files, initialExpansion),
+    initiallyOpenIds(files, initialExpansion),
   );
   const [reveals, setReveals] = useState<
     Record<string, Record<string, FoldReveal>>
@@ -120,7 +122,7 @@ export function UnifiedDiffView({
   );
 
   useEffect(() => {
-    setOpen(initiallyOpenFiles(files, initialExpansion));
+    setOpen(initiallyOpenIds(files, initialExpansion));
     setReveals({});
   }, [fileKey, initialExpansion]);
 
@@ -287,7 +289,7 @@ type FileSectionProps = {
   busy: boolean;
   reveals: Record<string, FoldReveal>;
   fileLayout: FileLayout;
-  colorScheme: ColorScheme;
+  colorScheme: ResolvedTheme;
   scrollerRef: React.RefObject<HTMLDivElement | null>;
   onToggle: (id: string) => void;
   onReveal: (
@@ -824,11 +826,6 @@ type DiffCommentDraft = {
   anchor: DOMRect;
 };
 
-function diffRowKey(row: DiffViewRow, index: number) {
-  if (row.type === "fold") return `fold-${row.id}`;
-  return `${index}-${row.line.kind}-${row.line.oldNumber ?? "x"}-${row.line.newNumber ?? "x"}`;
-}
-
 function DiffLane({
   row,
   lane,
@@ -1135,13 +1132,4 @@ function isNearViewport(
     ? root.getBoundingClientRect()
     : new DOMRect(0, 0, window.innerWidth, window.innerHeight);
   return bounds.bottom + margin > view.top && bounds.top - margin < view.bottom;
-}
-
-function initiallyOpenFiles(
-  files: readonly UnifiedDiffFileModel[],
-  mode: InitialExpansion,
-): Set<string> {
-  if (mode === "none" || files.length === 0) return new Set();
-  if (mode === "first") return new Set([files[0].id]);
-  return new Set(files.map((file) => file.id));
 }

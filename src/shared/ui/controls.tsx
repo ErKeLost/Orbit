@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { Popover } from "./Popover";
-import { Check, ChevronDown } from "./icons";
+import { Check, ChevronDown, ChevronRight } from "./icons";
 
 /**
  * Orbit's control vocabulary, lifted verbatim from its Settings and
@@ -84,6 +84,48 @@ export function PrimaryButton({ type = "button", className = "", danger = false,
   );
 }
 
+type ActionButtonVariant = "default" | "outline" | "secondary" | "ghost" | "destructive" | "link";
+
+const ACTION_BUTTON: Record<ActionButtonVariant, string> = {
+  default: "bg-content text-background-base hover:bg-content/80",
+  secondary: "border border-content/10 text-content/70 hover:bg-content/10 hover:text-content",
+  outline: "border border-content/10 text-content/70 hover:bg-content/10 hover:text-content",
+  ghost: "text-content/60 hover:bg-content/10 hover:text-content",
+  destructive: "border border-content/10 text-red-400 hover:border-red-400/40 hover:bg-red-400/10",
+  link: "text-sky-400/90 hover:text-sky-300 hover:underline",
+};
+
+type ActionButtonProps = Omit<ComponentPropsWithRef<"button">, "className"> & {
+  className?: string;
+  variant?: ActionButtonVariant;
+  /** `icon` and `icon-*` collapse the button to a square, like `IconButton`. */
+  size?: string;
+};
+
+/**
+ * Orbit's general action button. `SecondaryButton` / `PrimaryButton` keep their
+ * settings-row shape; this one takes the tone as a prop because panels switch
+ * between the six between rows.
+ */
+export function Button({ type = "button", title, className = "", variant, size, children, ...props }: ActionButtonProps) {
+  const inferred = variant ?? (className.includes("secondary") ? "secondary" : className.includes("primary") ? "default" : "ghost");
+  const iconOnly = size?.startsWith("icon") || className.includes("icon-button");
+  return (
+    <button
+      {...props}
+      type={type}
+      title={title}
+      aria-label={props["aria-label"] ?? title}
+      data-slot="button"
+      className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md text-[12px] font-medium whitespace-nowrap transition-colors disabled:cursor-default disabled:opacity-40 [&_svg]:size-3.5 ${
+        iconOnly ? "size-7 p-0" : "h-7 px-2.5"
+      } ${ACTION_BUTTON[inferred]} ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
 /** Square ghost icon button (TitleBar `IconButton`). */
 export function IconButton({
   label,
@@ -140,6 +182,18 @@ export function TextField({
         className="min-w-0 flex-1 bg-transparent text-[12px] text-content outline-none placeholder:text-content/35 disabled:opacity-50"
       />
     </label>
+  );
+}
+
+/** Bare single-line field. `TextField` is the same field wrapped in a label box. */
+export function Input({ className = "", ...props }: Omit<ComponentPropsWithRef<"input">, "className"> & { className?: string }) {
+  return (
+    <input
+      spellCheck={false}
+      {...props}
+      data-slot="input"
+      className={`h-7 w-full min-w-0 rounded-md border border-content/10 bg-transparent px-2 text-[12px] text-content outline-none placeholder:text-content/35 focus:border-content/20 disabled:opacity-50 ${className}`}
+    />
   );
 }
 
@@ -229,7 +283,7 @@ export function Slider({
   );
 }
 
-export type SelectOption = { value: string; label: ReactNode; icon?: ReactNode };
+export type SelectOption = { value: string; label: ReactNode; icon?: ReactNode; disabled?: boolean };
 
 /** Orbit Settings `Select`: a trigger plus a Popover listbox. */
 export function Select({
@@ -266,6 +320,7 @@ export function Select({
   }, [active, open]);
 
   const pick = (next: string) => {
+    if (options.find((option) => option.value === next)?.disabled) return;
     onChange(next);
     setOpen(false);
     trigger.current?.focus();
@@ -325,10 +380,11 @@ export function Select({
                 role="option"
                 tabIndex={-1}
                 aria-selected={isSelected}
+                disabled={option.disabled}
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setActive(index)}
                 onClick={() => pick(option.value)}
-                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] ${
+                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] disabled:opacity-40 ${
                   highlighted || isSelected ? "bg-selection text-content" : "text-content hover:bg-content/5"
                 }`}
               >
@@ -420,6 +476,15 @@ export function PageHeader({ title, description }: { title: string; description?
   );
 }
 
+/** The plain card surface; `Group` is the same surface with a title above it. */
+export function Card({ className = "", children, ...props }: Omit<ComponentPropsWithRef<"div">, "className"> & { className?: string }) {
+  return (
+    <div {...props} className={`overflow-hidden rounded-xl border border-content/10 bg-content/3 ${className}`}>
+      {children}
+    </div>
+  );
+}
+
 /** A titled card of settings rows (Orbit `Group`). */
 export function Group({
   title,
@@ -476,4 +541,57 @@ export function Row({
 /** Quiet empty/notice line used inside cards. */
 export function Notice({ children }: { children: ReactNode }) {
   return <p className="px-4 py-3.5 text-[12px] leading-relaxed text-content/50">{children}</p>;
+}
+
+/** Pulsing placeholder; `paragraph` stacks rows for a block of text. */
+export function Skeleton({
+  paragraph,
+  className = "",
+  ...props
+}: Omit<ComponentPropsWithRef<"div">, "className"> & { className?: string; paragraph?: { rows?: number } }) {
+  if (paragraph) {
+    return (
+      <div className={`flex flex-col gap-2 ${className}`} {...props}>
+        {Array.from({ length: paragraph.rows ?? 3 }, (_, index) => (
+          <div key={index} className="h-6 w-full animate-pulse rounded-md bg-content/6" />
+        ))}
+      </div>
+    );
+  }
+  return <div className={`animate-pulse rounded-md bg-content/6 ${className}`} {...props} />;
+}
+
+/** Collapsible section used for raw metadata and per-model details. */
+export function Disclosure({
+  title,
+  children,
+  className = "",
+  defaultOpen = false,
+}: {
+  title: ReactNode;
+  children: ReactNode;
+  className?: string;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const id = useId();
+  return (
+    <div className={className}>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((value) => !value)}
+        className="group flex min-w-0 items-center gap-1.5 py-1 text-left text-[12px] text-content/55 hover:text-content"
+      >
+        <ChevronRight className={`size-3.5 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} strokeWidth={1.75} />
+        <span className="min-w-0 truncate">{title}</span>
+      </button>
+      {open ? (
+        <div id={id} className="pt-1">
+          {children}
+        </div>
+      ) : null}
+    </div>
+  );
 }

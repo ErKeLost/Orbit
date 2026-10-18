@@ -1,12 +1,12 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { DisplayMessage, Part, PiMessage, Tool } from "../../lib/protocol";
-import { formatTranscriptError, toolImageDataUrl, toolResultText } from "../../lib/protocol";
+import { formatTranscriptError, toolResultText, type Part as MessagePart, type ToolImage } from "../../lib/protocol";
 import { getToolCodePresentation } from "../../lib/changes";
 import { branchFromMessage, report } from "../../lib/rpc";
 import { useWorkspace } from "../../lib/store";
 import { Markdown } from "../../components/Markdown";
 import { CodeChange } from "../../components/LazyCodeChange";
-import { GridReveal } from "../../components/ui/grid-reveal";
+import { GridReveal } from "../../shared/ui/GridReveal";
 import { ImageActionsMenu } from "../../components/chat/ImageActions";
 import { Shimmer } from "../../shared/ui/Shimmer";
 import {
@@ -27,6 +27,7 @@ import {
 } from "../../shared/ui/icons";
 import { FileTypeIcon } from "../shell/FileTypeIcon";
 import { SiteLogo } from "./site-logo";
+import { useImageSrc } from "../../lib/media-src";
 import { resultSites, urlHost, urlOrigin } from "./web-search-site";
 import {
   buildPhases,
@@ -58,9 +59,46 @@ function withoutImageNotes(text: string) {
   return kept.join("\n").trim();
 }
 /** A tool that returned no pixels shares this, so the row allocates nothing. */
-const EMPTY_PREVIEWS: string[] = [];
+const EMPTY_IMAGES: ToolImage[] = [];
+
+/**
+ * One image from a tool result. The bytes may still be in the session file
+ * (`{session, at, ordinal}`, see `history::project`), so the source is resolved
+ * here rather than in a `.map()` — the hook fetches only what is rendered.
+ */
+function PreviewImage({ image, path, label }: { image: ToolImage; path?: string; label: string }) {
+  const src = useImageSrc(image);
+  if (!src) {
+    return <div aria-hidden className="h-24 w-32 animate-pulse rounded-xl border border-content/10 bg-content/5" />;
+  }
+  return (
+    <ImageActionsMenu dataUrl={src} file={image.file} path={path}>
+      <img
+        src={src}
+        alt={label}
+        loading="lazy"
+        decoding="async"
+        draggable={false}
+        className="max-h-52 max-w-full rounded-xl border border-content/10 object-contain"
+      />
+    </ImageActionsMenu>
+  );
+}
 /** A read's path is only worth handing to the file manager when it is absolute. */
 const isAbsolutePath = (path: string | undefined): path is string => Boolean(path && /^([/\\]|[A-Za-z]:)/.test(path));
+
+/** One attachment on a user message; the bytes may live in the session file. */
+function UserPhoto({ part }: { part: MessagePart }) {
+  const src = useImageSrc(part);
+  if (!src) return <div aria-hidden className="h-24 w-24 animate-pulse rounded-xl bg-content/5" />;
+  return <img src={src} alt="附件" decoding="async" className="max-h-48 max-w-[14rem] rounded-xl object-cover" />;
+}
+
+/** An image that arrived inside the answer's prose (not a tool result). */
+function InlineImage({ part }: { part: MessagePart }) {
+  const src = useImageSrc(part);
+  return src ? <img className="message-image my-1" src={src} alt="会话附件" decoding="async" /> : null;
+}
 
 function messageTime(message?: PiMessage) {
   const raw = message?.timestamp;
@@ -244,7 +282,9 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
   // shown here rather than described. Only the image tool renders its own card.
   // (Not memoized: the compiler gives up on the whole row when a memo's deps are
   // narrower than the value it reads, and the data URLs are cached by object.)
-  const previews = failed || !tool?.images?.length ? EMPTY_PREVIEWS : tool.images.map(toolImageDataUrl);
+  const previews = failed ? EMPTY_IMAGES : tool?.images ?? EMPTY_IMAGES;
+  // 状态行的小缩略图也用同一套解析：历史图片的字节在会话文件里。
+  const firstPreview = useImageSrc(previews[0]);
   const result = previews.length ? withoutImageNotes(rawResult) : rawResult;
   const previewPath = typeof part.arguments?.path === "string" && isAbsolutePath(part.arguments.path) ? part.arguments.path : undefined;
   const searched = useMemo(() => (web && !href && !failed ? resultSites(result) : []), [web, href, failed, result]);
@@ -295,8 +335,8 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
               </span>
             ) : file ? (
               <span className={`-my-0.5 flex min-w-0 max-w-full items-center gap-1 rounded bg-content/6 px-1 py-0.5 group-hover:bg-content/10 ${targetTone}`} title={target}>
-                {previews.length ? (
-                  <img src={previews[0]} alt="" className="size-4 shrink-0 rounded-[4px] object-cover" draggable={false} />
+                {firstPreview ? (
+                  <img src={firstPreview} alt="" className="size-4 shrink-0 rounded-[4px] object-cover" draggable={false} />
                 ) : (
                   <FileTypeIcon name={fileName} isDir={false} />
                 )}
@@ -329,17 +369,8 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
       </button>
       {previews.length ? (
         <div className="flex flex-wrap gap-1.5 py-1 pl-5">
-          {previews.map((src, index) => (
-            <ImageActionsMenu key={`${part.id ?? "preview"}-${index}`} dataUrl={src} path={previewPath}>
-              <img
-                src={src}
-                alt={`${fileName} 预览`}
-                loading="lazy"
-                decoding="async"
-                draggable={false}
-                className="max-h-52 max-w-full rounded-xl border border-content/10 object-contain"
-              />
-            </ImageActionsMenu>
+          {previews.map((image, index) => (
+            <PreviewImage key={`${part.id ?? "preview"}-${index}`} image={image} path={previewPath} label={`${fileName} 预览`} />
           ))}
         </div>
       ) : null}
@@ -370,16 +401,44 @@ function GeneratedImageStep({ part, tools }: { part: Part; tools: Record<string,
   const prompt = typeof part.arguments?.prompt === "string" ? part.arguments.prompt : undefined;
   const aspectArg = typeof part.arguments?.aspect === "string" ? /^(\d+):(\d+)$/.exec(part.arguments.aspect) : null;
   const knownAspect = aspectArg ? Number(aspectArg[1]) / Number(aspectArg[2]) : undefined;
-  const sources = tool?.images?.length ? tool.images.map(toolImageDataUrl) : [null];
+  const images = tool?.images ?? EMPTY_IMAGES;
   if (tool?.isError) return <ToolRow part={part} tools={tools} />;
   return (
     <div className="tool-image-generation">
-      {sources.map((src, index) => (
-        <ImageActionsMenu key={`${part.id ?? "image"}-${index}`} dataUrl={src} path={tool?.image?.paths?.[index]} prompt={index === 0 ? prompt : undefined}>
-          <GeneratedImage src={src} knownAspect={knownAspect} prompt={index === 0 ? prompt : undefined} />
-        </ImageActionsMenu>
-      ))}
+      {images.length === 0 ? (
+        <GeneratedImage src={null} knownAspect={knownAspect} prompt={prompt} />
+      ) : (
+        images.map((image, index) => (
+          <GeneratedImageItem
+            key={`${part.id ?? "image"}-${index}`}
+            image={image}
+            path={tool?.image?.paths?.[index]}
+            knownAspect={knownAspect}
+            prompt={index === 0 ? prompt : undefined}
+          />
+        ))
+      )}
     </div>
+  );
+}
+
+/** Resolves one generated image (possibly still in the session file) and wraps it. */
+function GeneratedImageItem({
+  image,
+  path,
+  knownAspect,
+  prompt,
+}: {
+  image: ToolImage;
+  path?: string;
+  knownAspect?: number;
+  prompt?: string;
+}) {
+  const src = useImageSrc(image);
+  return (
+    <ImageActionsMenu dataUrl={src ?? null} file={image.file} path={path} prompt={prompt}>
+      <GeneratedImage src={src ?? null} knownAspect={knownAspect} prompt={prompt} />
+    </ImageActionsMenu>
   );
 }
 
@@ -418,10 +477,7 @@ function StepRow({ step, tools }: { step: TurnStep; tools: Record<string, Tool> 
   if (step.kind === "think") return <ThinkingRow step={step} />;
   if (step.kind === "note") return <NoteRow step={step} />;
   if (step.kind === "image" && step.part?.type === "toolCall") return <GeneratedImageStep part={step.part} tools={tools} />;
-  if (step.kind === "image" && step.part) {
-    const src = step.part.data ? `data:${step.part.mimeType};base64,${step.part.data}` : step.part.url;
-    return src ? <img className="message-image my-1" src={src} alt="会话附件" decoding="async" /> : null;
-  }
+  if (step.kind === "image" && step.part) return <InlineImage part={step.part} />;
   if (step.part) return <ToolRow part={step.part} tools={tools} />;
   return null;
 }
@@ -624,8 +680,8 @@ const UserMessage = memo(function UserMessage({ item }: { item: DisplayMessage }
       <div className="user-message-hover-zone flex w-fit min-w-0 max-w-full flex-col items-end overflow-visible">
         {photos.length ? (
           <div className="mb-1 flex max-w-full flex-wrap justify-end gap-1.5">
-            {photos.map((src) => (
-              <img key={src.slice(0, 64)} src={src} alt="附件" decoding="async" className="max-h-48 max-w-[14rem] rounded-xl object-cover" />
+            {photos.map((photo, index) => (
+              <UserPhoto key={`${photo.id ?? "photo"}-${index}`} part={photo} />
             ))}
           </div>
         ) : null}

@@ -1,4 +1,14 @@
 import { formatBytes, type MediaKind } from "./media";
+import { base64ToBytes } from "./image-bytes";
+
+/**
+ * base64 → bytes, for the socket path, from `lib/image-bytes` (one definition).
+ *
+ * Media is bytes, not text, so nothing here may treat it as a string: a JPEG has
+ * no characters. Throws on malformed input, which the caller reports exactly the
+ * way it reports any other failed fetch.
+ */
+export { base64ToBytes };
 
 /**
  * How a media file gets from the machine that owns it to the screen showing it.
@@ -50,22 +60,4 @@ export function planMediaPreview({ remote, kind, size }: {
 export function tooLargeMessage(kind: MediaKind, size: number): string {
   const limit = formatBytes(MAX_REMOTE_PREVIEW_BYTES);
   return `${MEDIA_LABEL[kind]} ${formatBytes(size)}，超过手机预览上限 ${limit}；请在电脑上查看`;
-}
-
-/**
- * base64 → bytes, for the socket path.
- *
- * Media is bytes, not text, so nothing here may treat it as a string: a JPEG has
- * no characters. Throws on malformed input, which the caller reports exactly the
- * way it reports any other failed fetch.
- *
- * The return type names its buffer on purpose. A byte array over a
- * `SharedArrayBuffer` is not a `BlobPart`, and spelling out `ArrayBuffer` is
- * what lets these bytes go straight into a `Blob` with no cast.
- */
-export function base64ToBytes(data: string): Uint8Array<ArrayBuffer> {
-  const binary = atob(data);
-  const bytes = new Uint8Array(new ArrayBuffer(binary.length));
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes;
 }

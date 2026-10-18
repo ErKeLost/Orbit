@@ -22,15 +22,14 @@ import {
   workspaceConnectionIds,
 } from "../../lib/rpc";
 import { CHAT_PANE_ID, HOME_WORKSPACE_ID, isHomeWorkspace, projectWorkspaceTabs, useShell, type WorkspaceTab } from "./shellStore";
-
-/** 正在启动的连接，避免同一个槽位被并发 `show` 拉起两次。 */
-const starting = new Map<string, Promise<void>>();
+import { createTabTransitions } from "./tab-transitions";
 
 /**
- * 正在显示的面，按 `工作区:范围` 去重。首页的 effect 与控制器可能在同一帧里都要
- * 显示首页；不去重的话两边各算一个随机连接 id，会白起一条 pi 进程并闪一下。
+ * 切换期间的登记表：正在显示的面（`工作区:范围` 去重）、正在启动的连接（target
+ * 去重）、正在被放弃的连接。为什么需要这三件事、以及它们各自的生命周期，写在
+ * `tab-transitions.ts` 里；这里只用一个进程级单例。
  */
-const showing = new Map<string, Promise<void>>();
+const transitions = createTabTransitions();
 
 /**
  * 这条连接上是否已经有一个真实会话：有正文，或者正在跑/压缩。
@@ -57,22 +56,22 @@ function connectionInUseElsewhere(id: string, exceptWorkspaceId: string): boolea
 }
 
 /**
- * 正在被放弃的连接（用户关了标签页、面板，或范围切换把它换掉了）。
+ * 关掉一条已经没有任何面在用的连接；对账立刻知道它已经被放弃，不会再收养。
  *
- * `closeConnection` 只有在会话空闲时才同步从 `connections` 里消失；会话还在跑/
- * 压缩时它先 `clear_queue` + `abort`（最长 60s），这期间连接仍然是「活着的孤儿」。
- * 对账（`reconcileOrphans`）救的是真正的孤儿，但它分不清「没人要了」和「正在关」——
- * 于是每次关标签页都会再把同一条连接收养回一个新标签页，表现就是标签页关不完。
+ * 为什么必须「先标记、后关」：`closeConnection` 只有会话空闲时才同步从
+ * `connections` 里消失；会话还在跑/压缩时它先 `clear_queue` + `abort`（最长 60s），
+ * 这期间连接仍然是「活着的孤儿」。对账（`reconcileOrphans`）救的是真正的孤儿，
+ * 但它分不清「没人要了」和「正在关」—— 不标记的话每次关标签页都会再把同一条
+ * 连接收养回一个新标签页，表现就是标签页关不完。
  */
-const closing = new Set<string>();
-
-/** 关掉一条已经没有任何面在用的连接；对账立刻知道它已经被放弃，不会再收养。 */
 function retireConnection(id: string, message: string): Promise<void> {
   if (!id) return Promise.resolve();
-  closing.add(id);
+  transitions.markClosing(id);
+  // 解除标记必须跟着关闭本身走：关闭失败、abort 超时都要解开，否则这条连接
+  // 既关不掉、也不会再被收养。
   return closeWorkspaceConnection(id, message)
     .catch(() => undefined)
-    .finally(() => closing.delete(id));
+    .finally(() => transitions.unmarkClosing(id));
 }
 
 /**
@@ -90,14 +89,8 @@ async function show(id: string) {
   // 范围还没确定（bootstrap 之前）时不启动进程，否则会拿空 cwd 去连。
   if (!workspace || !workspace.cwd) return;
   const key = `${id}:${workspace.cwd}`;
-  const inflight = showing.get(key);
-  if (inflight) return inflight;
-  let task: Promise<void>;
-  task = runShow(id, workspace.cwd).finally(() => {
-    if (showing.get(key) === task) showing.delete(key);
-  });
-  showing.set(key, task);
-  return task;
+  // 同一帧里重复显示同一个面 → 同一份 in-flight promise，不会白起两条 pi 进程。
+  return transitions.show(key, () => runShow(id, workspace.cwd));
 }
 
 async function runShow(id: string, cwd: string) {
@@ -144,7 +137,8 @@ async function runShow(id: string, cwd: string) {
   // 固定 `<cwd>#home`，避免首页被升格成标签页后，新首页和它抢同一个连接。
   const target = bound || `${workspace.cwd}#${crypto.randomUUID()}`;
 
-  const pending = starting.get(target);
+  // 同一个 target 已经在被别人拉起：只聚焦，等它连上，不再起第二条进程。
+  const pending = transitions.pendingStart(target);
   if (pending) {
     focusWorkspaceConnection(target, workspace.cwd);
     await pending;
@@ -164,13 +158,10 @@ async function runShow(id: string, cwd: string) {
       ? { sessionPath: revivePath, ...(cached ? { keepTranscript: true } : {}) }
       : empty ? { keepTranscript: true } : undefined,
   );
-  starting.set(target, task);
+  const tracked = transitions.start(target, task);
   focusWorkspaceConnection(target, workspace.cwd);
-  try {
-    await task;
-  } finally {
-    starting.delete(target);
-  }
+  // settle（不论成败）后 `transitions` 自动注销这条 target。
+  await tracked;
   // 连接起来时范围可能已经变了（用户又点了别的项目）：这次结果作废。
   if (useShell.getState().workspaces.find((item) => item.id === id)?.cwd !== workspace.cwd) return;// bootstrap 不再预先建项目连接，附加 roots 跟着面上层后台同步，不挡首次渲染。
     if (useWorkspace.getState().workspaceMode === "project") {
@@ -289,10 +280,16 @@ async function close(id: string) {
   // 先标记再切面：`show` 会改全局投影并触发一次对账，那一次对账必须已经知道这条
   // 连接被放弃了，否则它会被当成孤儿再收养回一个新标签页。
   const connection = workspace.connectionId;
-  if (connection) closing.add(connection);
+  // 这个项目的最后一个标签关掉时，首页要落在**这个项目**上，不能被带到别的项目。
+  const closedCwd = workspace.cwd;
+  const closedMode: WorkspaceMode = closedCwd && closedCwd === useWorkspace.getState().homeDir ? "home" : "project";
+  if (connection) transitions.markClosing(connection);
   shell.closeWorkspace(id);
   try {
-    if (wasActive) await show(useShell.getState().activeWorkspaceId);
+    const next = useShell.getState().activeWorkspaceId;
+    if (!wasActive) return;
+    if (next === HOME_WORKSPACE_ID && closedCwd) await showHomeScope(closedCwd, closedMode);
+    else await show(next);
   } finally {
     // 切面失败也不能把连接留在「正在关」里：那样它既关不掉、也不会再被收养。
     await retireConnection(connection, "工作区已关闭");
@@ -360,13 +357,10 @@ async function openSession(session: Pick<Session, "path"> & { cwd?: string }) {
     return;
   }
   const task = openWorkspaceConnection(cwd, target, { sessionPath: session.path, ...(cached ? { keepTranscript: true } : {}) });
-  starting.set(target, task);
+  const tracked = transitions.start(target, task);
   focusWorkspaceConnection(target, cwd);
-  try {
-    await task;
-  } finally {
-    starting.delete(target);
-  }
+  // settle（不论成败）后 `transitions` 自动注销这条 target。
+  await tracked;
   if (mode === "project") void syncConfiguredProjectRoots(cwd, target).catch(() => undefined);
   focusWorkspaceConnection(target, cwd);
   const openedSession = connectionSnapshot(target)?.state?.sessionFile;
@@ -426,7 +420,7 @@ function reconcileOrphans() {
   if (active) held.add(active);
   for (const id of workspaceConnectionIds()) {
     // 正在关的连接不是孤儿：它有主，只是主人刚走。
-    if (held.has(id) || closing.has(id)) continue;
+    if (held.has(id) || transitions.isClosing(id)) continue;
     const cwd = connectionCwd(id);
     if (!cwd) continue;
     adoptConnection(id, cwd);
@@ -451,7 +445,7 @@ function lastActiveAt(id: string): number {
 function enforceConnectionBudget() {
   const shell = useShell.getState();
   // 正在关的连接不占预算，也不能被休眠逻辑再算一遍。
-  const live = workspaceConnectionIds().filter((id) => !closing.has(id));
+  const live = workspaceConnectionIds().filter((id) => !transitions.isClosing(id));
   if (live.length <= MAX_LIVE_CONNECTIONS) return;
   const active = useWorkspace.getState().connectionId;
   const scored = live

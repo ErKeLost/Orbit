@@ -73,11 +73,18 @@ const EXCLUDED: Record<string, string> = {
   publish_projects: "the desktop window publishing its registry; not a phone question",
   relay_settings_status: "pairing transport configuration",
   save_relay_settings: "pairing transport configuration",
+  // 切换会话的两条快路径都建立在「这台机器的磁盘」上：`session_stamp` 读文件戳，
+  // `session_tail` 直接读会话 JSONL 的尾部。手机不跑这套缓存（它通过 remote host
+  // 的 session.list/get_messages 拿历史），而且尾页里抽出来的图片路径是本机的。
+  session_stamp: "checks this machine's session file for the desktop's transcript cache",
+  session_project: "projects this machine's session JSONL; the phone uses the Host's session.list/get_messages",
+  session_image: "reads one image out of this machine's session JSONL",
   set_keep_awake: "the wake assertion belongs to the machine it protects",
   pi_connect: "hands out a webview-local event channel; phones attach instead",
   clipboard_file_paths: "reads the clipboard of the device in front of the user",
   read_file_attachment: "takes a path from a picker on this device",
   save_media_file: "writes to a path chosen on this device",
+  copy_media_file: "copies to a path chosen on this device",
   screen_status: "the screen channel is captured and subscribed, not called",
   screen_displays: "the screen channel is captured and subscribed, not called",
   screen_request_permission: "screen-recording consent is given at the desktop",

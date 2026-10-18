@@ -8,7 +8,7 @@ import { setGrabbing, suppressTextSelection } from "../../shared/lib/drag";
 import { toast } from "../../shared/ui/toast";
 import { GripVertical, X } from "../../shared/ui/icons";
 import { TerminalSpinner } from "./TerminalSpinner";
-import { SessionTitleField } from "./SessionTitleField";
+import { SessionTitleField } from "./sessions/SessionTitleField";
 import type { LayoutRect, LayoutSash, PaneEdge } from "./paneLayout";
 
 /**

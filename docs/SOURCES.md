@@ -37,7 +37,7 @@ Thinking 与 Loading State 的当前样式来自 [Beautiful UI](https://www.beau
 | RS1 | https://rust-lang.github.io/rustup/ | 独立工具链、版本固定、安装配置 | Rust 1.98.1，`rust-toolchain.toml` |
 | RS2 | https://static.rust-lang.org/dist/channel-rust-stable.toml | 2026-09-03 stable 为 1.98.1 | 工具链版本依据 |
 
-Pi 的远端 main 分支会继续变化，因此实现同时核对了 **1.3.0 安装包**里的 docs/rpc.md、docs/rpc-commands.md、docs/sdk.md、docs/extensions.md、docs/mcp.md、docs/codemode.md、docs/virtual-models.md、dist/modes/rpc/rpc-types.d.ts 和 dist/core/messages.d.ts；`src/lib/protocol.ts` 的回归测试覆盖这些实际结构。
+Pi 的远端 main 分支会继续变化，因此实现同时核对了 **1.3.0 安装包**里的 docs/rpc.md、docs/rpc-commands.md、docs/sdk.md、docs/extensions.md、docs/mcp.md、docs/codemode.md、docs/virtual-models.md、dist/modes/rpc/rpc-types.d.ts 和 dist/core/messages.d.ts；`src/lib/protocol/` 的回归测试覆盖这些实际结构。
 
 2026-10-17 核对 npm registry 与 1.3.0 安装包：最新正式版为 **1.3.0**（2026-10-15）。逐文件比对 1.0.0 与 1.3.0 的 `dist` 后确认 RPC 命令集仍是 33 个且 `ExtensionContext` 成员零变化，`ExtensionAPI` 仅新增 `registerToolRenderer()`，因此本次升级的代码改动集中在两处**事件字段采纳**（`agent_settled.aborted`、`tool_execution_end.durationMs`），其余为文档与打包版本更新。细则见 `CAPABILITIES.md` 的「Pi 1.3.0 升级备注」。
 

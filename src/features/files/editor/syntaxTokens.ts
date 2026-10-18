@@ -1,4 +1,4 @@
-import type { ColorScheme } from "../../settings/model/appearance";
+import type { ResolvedTheme } from "../../../lib/theme";
 import type { UnifiedBlock, UnifiedLine } from "../../source-control/model/unifiedDiff";
 import { languageForFileName } from "../../../components/FileHighlighter";
 
@@ -25,7 +25,7 @@ function loadShiki(): Promise<ShikiModule> {
 const MAX_DIFF_HIGHLIGHT_CHARS = 250_000;
 
 /** Result cache keyed by the diff model itself (blocks identity), per scheme. */
-const cache = new WeakMap<object, Map<ColorScheme, Map<UnifiedLine, SyntaxToken[]>>>();
+const cache = new WeakMap<object, Map<ResolvedTheme, Map<UnifiedLine, SyntaxToken[]>>>();
 
 /** Reconstructs the "current side" (context + added lines) in order. */
 function currentSideLines(file: DiffFile): UnifiedLine[] {
@@ -45,7 +45,7 @@ function currentSideLines(file: DiffFile): UnifiedLine[] {
  */
 export async function highlightDiffFile(
   file: DiffFile,
-  scheme: ColorScheme,
+  scheme: ResolvedTheme,
 ): Promise<Map<UnifiedLine, SyntaxToken[]>> {
   const empty = new Map<UnifiedLine, SyntaxToken[]>();
   if (file.binary || file.tooLarge || file.blocks.length === 0) return empty;
@@ -87,7 +87,7 @@ export async function highlightDiffFile(
 }
 
 /** Plain-text passthrough kept for callers outside the diff view. */
-export function highlightSource(text: string, _language: unknown, _scheme: ColorScheme): SyntaxToken[][] {
+export function highlightSource(text: string, _language: unknown, _scheme: ResolvedTheme): SyntaxToken[][] {
   if (!text) return [[]];
   return text.split("\n").map((line) => (line ? [{ text: line }] : []));
 }

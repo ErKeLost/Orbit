@@ -514,6 +514,11 @@ fn scan_session_file(path: &Path, fallback_mtime_ms: i64) -> Option<SessionSumma
     })
 }
 
+/// 供 `history` 复用同一套行裁剪规则。
+pub(crate) fn trim_line_pub(raw: &[u8]) -> &[u8] {
+    trim_line(raw)
+}
+
 fn trim_line(raw: &[u8]) -> &[u8] {
     let mut line = raw;
     while let [rest @ .., last] = line {
@@ -709,9 +714,41 @@ struct TurnScan {
     id: Option<String>,
 }
 
+/// 一轮耗时只取决于文件内容，而扫描一个大会话要重读整份 JSONL（含图片字节，
+/// 169 MB 的会话在 release 下也要上百毫秒）。按 (size, mtime) 缓存，切回同一个
+/// 会话、或者面板重挂时都不会再扫第二遍。
+static DURATION_CACHE: Mutex<Option<HashMap<PathBuf, (FileStamp, Value)>>> = Mutex::new(None);
+
 /// 复刻原 Node 脚本：user 消息开一轮，assistant 消息补 id（message.timestamp
 /// 优先，否则第一个 toolCall id）并推进 end；输出 `轮id -> 毫秒`。
 pub(crate) fn turn_durations(path: &Path) -> Result<Value, String> {
+    let stamp = file_stamp(path).ok_or_else(|| "会话文件不存在".to_string())?;
+    {
+        let guard = DURATION_CACHE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(cached) = guard
+            .as_ref()
+            .and_then(|map| map.get(path))
+            .and_then(|(cached_stamp, value)| stamp_matches(&stamp, cached_stamp).then(|| value.clone()))
+        {
+            return Ok(cached);
+        }
+    }
+    let value = scan_turn_durations(path)?;
+    let mut guard = DURATION_CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    // 会话数没有上限，缓存也不该长成泄漏：满了就整表丢掉，下一次扫描重新填。
+    if map.len() >= 64 {
+        map.clear();
+    }
+    map.insert(path.to_path_buf(), (stamp, value.clone()));
+    Ok(value)
+}
+
+fn scan_turn_durations(path: &Path) -> Result<Value, String> {
     let file = File::open(path).map_err(|e| format!("会话文件不可读：{e}"))?;
     let mut reader = BufReader::with_capacity(1 << 20, file);
     let mut raw: Vec<u8> = Vec::with_capacity(8192);
@@ -1024,6 +1061,49 @@ mod tests {
         assert_eq!(value["messageCount"], 3);
         assert!(value.get("name").is_none());
         assert_eq!(value["created"], Value::Null);
+    }
+
+    #[test]
+    fn turn_durations_are_cached_until_the_file_changes() {
+        let dir = temp_dir("durations-cache");
+        let path = dir.join("t.jsonl");
+        write_session(
+            &path,
+            &[
+                header_json("s1", "/tmp", "2025-03-01T10:00:00.000Z"),
+                message_json("user", "q1", "2025-03-01T10:00:01.000Z", 1),
+                message_json("assistant", "a1", "2025-03-01T10:00:05.000Z", 2),
+            ],
+        );
+        assert_eq!(turn_durations(&path).unwrap()["timestamp:2"], 4000);
+        // 追加一轮（文件戳变化）后必须重扫，而不是把旧结果当成还新的。
+        write_session(
+            &path,
+            &[
+                header_json("s1", "/tmp", "2025-03-01T10:00:00.000Z"),
+                message_json("user", "q1", "2025-03-01T10:00:01.000Z", 1),
+                message_json("assistant", "a1", "2025-03-01T10:00:05.000Z", 2),
+                message_json("user", "q2", "2025-03-01T10:01:00.000Z", 3),
+                message_json("assistant", "a2", "2025-03-01T10:01:06.000Z", 4),
+            ],
+        );
+        let refreshed = turn_durations(&path).unwrap();
+        assert_eq!(refreshed["timestamp:2"], 4000);
+        assert_eq!(refreshed["timestamp:4"], 6000);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[ignore = "needs ORBIT_SESSION_BENCH=<a real session.jsonl>; prints the turn-duration scan cost"]
+    fn durations_bench_reads_a_real_session() {
+        let Ok(path) = std::env::var("ORBIT_SESSION_BENCH") else { return };
+        let started = std::time::Instant::now();
+        let durations = turn_durations(Path::new(&path)).expect("session readable");
+        println!(
+            "turn-duration scan of {} turns in {:?}",
+            durations.as_object().map(|map| map.len()).unwrap_or(0),
+            started.elapsed()
+        );
     }
 
     #[test]

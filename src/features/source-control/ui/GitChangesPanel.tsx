@@ -21,7 +21,6 @@ import {
   X,
 } from "../../../shared/ui/icons";
 import {
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -43,14 +42,11 @@ import {
   saveGraphPanelHeight,
 } from "./GitHistoryGraph";
 import {
-  basename,
   gitCommit,
-  gitDiffIndex,
   gitDiscardAll,
   gitDiscardFile,
   gitHeadMessage,
   gitPrCreate,
-  gitPrStatus,
   gitPull,
   gitPush,
   gitRangeContext,
@@ -60,7 +56,6 @@ import {
   gitUnstageAll,
   gitUnstageFile,
   notifyGitChanged,
-  subscribeGitChanged,
   type GitChangedFile,
   type GitDiffIndex,
   type GitFileDiffKind,
@@ -80,11 +75,33 @@ import {
 } from "../../../integrations/harness";
 import { invalidateWatchedFiles } from "../../files/model/fileWatch";
 import { MOD } from "../../../platform/tauri/platform";
-import { applyProjectDiffStats } from "../hooks/useProjectDiffStats";
 import { useLockOverscroll } from "../../../shared/hooks/useLockOverscroll";
 import { isRemoteProjectPath } from "../../projects/model/recents";
-
-const GIT_POLL_MS = 2000;
+import { useDiffIndex } from "../hooks/useGitDiffIndex";
+import { usePrStatus } from "../hooks/useGitPrStatus";
+import {
+  buildChangeTree,
+  changeBasename,
+  changeDirname,
+  filesUnderFolder,
+  isActiveChangeFile,
+  splitByStage,
+  statusColor,
+  statusLetter,
+  syncStatusLabel,
+  type ChangeDir,
+} from "../model/gitChanges";
+import {
+  canPullBranch,
+  commitGate,
+  createPrTitle,
+  discardAllConfirm,
+  discardFileConfirm,
+  prContentFromRange,
+  prNumberFromUrl,
+  syncActionTitle,
+  viewPrTitle,
+} from "../model/gitCommitActions";
 
 function confirmNative(message: string, okLabel?: string): Promise<boolean> {
   return ask(message, {
@@ -100,8 +117,6 @@ let graphOpen = true;
 let changesView: ChangesView = loadChangesView();
 /** Folders the user collapsed in tree view, keyed `<kind>:<dir>`. */
 const collapsedDirs = new Set<string>();
-const indexByCwd = new Map<string, GitDiffIndex>();
-const prByCwd = new Map<string, GitPr | null>();
 
 type AmendTarget = { branch: string | null; head: string | null };
 
@@ -157,7 +172,7 @@ export function GitChangesPanel({
     return () => window.removeEventListener("pointerdown", onPointer);
   }, [branchMenuOpen]);
 
-  const canPull = Boolean(index?.remote) && Boolean(index?.upstream);
+  const canPull = canPullBranch(index);
 
   const pull = async () => {
     if (!canPull) return;
@@ -373,41 +388,31 @@ function ChangedFiles({
   const [changesExpanded, setChangesExpanded] = useState(changesOpen);
   const [view, setView] = useState<ChangesView>(changesView);
   const { pr, reload: reloadPr } = usePrStatus(cwd, index?.branch);
-  const staged = useMemo(() => files.filter((file) => file.staged), [files]);
-  const unstaged = useMemo(
-    () => files.filter((file) => file.unstaged),
-    [files],
-  );
-  const hasRemote = Boolean(index?.remote);
-  const hasOpenPr = pr?.state === "open";
-  const diverged = (index?.ahead ?? 0) > 0 && (index?.behind ?? 0) > 0;
-  const onDefault =
-    !!index?.branch &&
-    !!index.defaultBranch &&
-    index.branch === index.defaultBranch;
-  const canGenerate = files.length > 0 && !busy && !isRemoteProjectPath(cwd);
-  const canCommit =
-    (staged.length > 0 || amend) && message.trim().length > 0 && !busy;
-  const canCreatePr =
-    hasRemote &&
-    !!index?.branch &&
-    !!index.defaultBranch &&
-    !hasOpenPr &&
-    !onDefault &&
-    !diverged &&
-    files.length === 0 &&
-    (index?.aheadOfDefault ?? 0) > 0 &&
-    (index?.behind ?? 0) === 0;
-  const canViewPr = hasOpenPr && !!pr?.url;
-  const canPublish = hasRemote && !index?.upstream;
-  const canSync =
-    hasRemote &&
-    Boolean(index?.upstream) &&
-    ((index?.ahead ?? 0) > 0 || (index?.behind ?? 0) > 0);
-  const canCommitPush =
-    canCommit && hasRemote && !diverged && (!amend || !index?.headPushed);
-  const canCommitPushPr = canCommitPush && !hasOpenPr && !onDefault;
-  const canEditMessage = (staged.length > 0 || amend) && !busy;
+  const { staged, unstaged } = useMemo(() => splitByStage(files), [files]);
+  const {
+    hasRemote,
+    hasOpenPr,
+    onDefault,
+    canGenerate,
+    canCommit,
+    canCreatePr,
+    canViewPr,
+    canPublish,
+    canSync,
+    canCommitPush,
+    canCommitPushPr,
+    canEditMessage,
+    canOpenMenu,
+  } = commitGate({
+    index,
+    pr,
+    stagedCount: staged.length,
+    fileCount: files.length,
+    amend,
+    message,
+    busy,
+    remoteProject: isRemoteProjectPath(cwd),
+  });
 
   useEffect(() => {
     if (!amendTarget) return;
@@ -420,7 +425,6 @@ function ChangedFiles({
     setAmendTarget(null);
     setMessage("");
   }, [amendTarget, index?.branch, index?.head]);
-  const canOpenMenu = !!index?.branch && !busy;
 
   useEffect(() => {
     if (!enabled) return;
@@ -486,14 +490,8 @@ function ChangedFiles({
   ) => {
     if (busy) return;
     if (action === "discard") {
-      const name = basename(file.relative);
-      const untracked = file.status === "untracked";
-      const ok = await confirmNative(
-        untracked
-          ? `Delete untracked file ${name}?`
-          : `Discard changes in ${name}? This cannot be undone.`,
-        untracked ? "Delete" : "Discard",
-      );
+      const confirm = discardFileConfirm(file);
+      const ok = await confirmNative(confirm.message, confirm.okLabel);
       if (!ok) return;
     }
     setBusy(file.relative);
@@ -512,18 +510,9 @@ function ChangedFiles({
   const runAll = async (action: "stage" | "unstage" | "discard") => {
     if (busy) return;
     if (action === "discard") {
-      const n = unstaged.length;
-      if (n === 0) return;
-      const only = unstaged[0];
-      const untrackedOnly = n === 1 && only?.status === "untracked";
-      const ok = await confirmNative(
-        untrackedOnly
-          ? `Delete untracked file ${basename(only.relative)}?`
-          : n === 1 && only
-            ? `Discard changes in ${basename(only.relative)}? This cannot be undone.`
-            : `Discard all unstaged changes in ${n} files? This cannot be undone.`,
-        untrackedOnly ? "Delete" : "Discard",
-      );
+      const confirm = discardAllConfirm(unstaged);
+      if (!confirm) return;
+      const ok = await confirmNative(confirm.message, confirm.okLabel);
       if (!ok) return;
     }
     setBusy(action);
@@ -548,9 +537,7 @@ function ChangedFiles({
       if (action === "stage") await gitStageFile(cwd, relative);
       else await gitUnstageFile(cwd, relative);
       onMutated(
-        files
-          .filter((file) => file.relative.startsWith(`${relative}/`))
-          .map((file) => file.path),
+        filesUnderFolder(files, relative).map((file) => file.path),
       );
     } catch (error) {
       fail(error);
@@ -664,7 +651,7 @@ function ChangedFiles({
 
   const openCreatedPr = async () => {
     const content = isRemoteProjectPath(cwd)
-      ? await remotePrContent(cwd)
+      ? prContentFromRange(await gitRangeContext(cwd))
       : await generatePrContent(cwd, textHarness);
     if (!content) throw new Error("无法准备 PR 内容");
     const url = await gitPrCreate(
@@ -674,8 +661,8 @@ function ChangedFiles({
       content.base,
       content.head,
     );
-    const number = Number(/\/pull\/(\d+)(?:[/?#]|$)/.exec(url)?.[1]);
-    if (Number.isInteger(number) && number > 0) recordPrActivity(number);
+    const number = prNumberFromUrl(url);
+    if (number) recordPrActivity(number);
     await openUrl(url.trim());
   };
 
@@ -951,68 +938,6 @@ function ChangedFiles({
   );
 }
 
-function usePrStatus(
-  cwd: string,
-  branch: string | null | undefined,
-): { pr: GitPr | null; reload: () => void } {
-  const [pr, setPr] = useState<GitPr | null>(() => cachedPr(cwd, branch));
-  const [nonce, setNonce] = useState(0);
-  const reload = useCallback(() => setNonce((value) => value + 1), []);
-
-  useEffect(() => {
-    if (!cwd || cwd === "~" || !branch) {
-      setPr(null);
-      return;
-    }
-    let cancelled = false;
-    const load = () => {
-      void gitPrStatus(cwd)
-        .then((next) => {
-          if (cancelled) return;
-          prByCwd.set(cwd, next);
-          setPr(next);
-        })
-        .catch(() => {
-          if (cancelled) return;
-          prByCwd.set(cwd, null);
-          setPr(null);
-        });
-    };
-    load();
-    const onResume = () => load();
-    window.addEventListener("focus", onResume);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("focus", onResume);
-    };
-  }, [branch, cwd, nonce]);
-
-  return { pr, reload };
-}
-
-function cachedPr(
-  cwd: string,
-  branch: string | null | undefined,
-): GitPr | null {
-  if (!cwd || cwd === "~" || !branch) return null;
-  return prByCwd.get(cwd) ?? null;
-}
-
-function syncStatusLabel(index: GitDiffIndex): string {
-  if (index.ahead > 0 && index.behind > 0) {
-    return `Diverged from ${index.upstream ?? "upstream"}`;
-  }
-  if (index.ahead > 0) {
-    const n = index.ahead;
-    return `${n} unpushed commit${n === 1 ? "" : "s"}`;
-  }
-  if (index.behind > 0) {
-    const n = index.behind;
-    return `${n} incoming commit${n === 1 ? "" : "s"}`;
-  }
-  return "没有文件";
-}
-
 function GitSyncActions({
   index,
   pr,
@@ -1045,26 +970,10 @@ function GitSyncActions({
   if (!hasRemote) return null;
   const ahead = index.ahead;
   const behind = index.behind;
-  const dest =
-    index.upstream ?? `${index.remote ?? "origin"}/${index.branch ?? "HEAD"}`;
   const syncing = busy === "sync";
-  const syncTitle = syncing
-    ? "Synchronizing Changes..."
-    : canPublish
-      ? index.branch
-        ? `Publish Branch "${index.branch}"`
-        : "Publish Branch"
-      : behind > 0 && ahead > 0
-        ? `Pull ${behind} and push ${ahead} commits between ${dest}`
-        : behind > 0
-          ? `Pull ${behind} commit${behind === 1 ? "" : "s"} from ${dest}`
-          : `Push ${ahead} commit${ahead === 1 ? "" : "s"} to ${dest}`;
-  const createTitle = index.defaultBranch
-    ? `Create a pull request into ${index.defaultBranch}`
-    : "创建 PR";
-  const viewTitle = pr?.title
-    ? `View PR #${pr.number}: ${pr.title}`
-    : "查看 PR";
+  const syncTitle = syncActionTitle({ index, canPublish, syncing });
+  const createTitle = createPrTitle(index);
+  const viewTitle = viewPrTitle(pr);
   const btn =
     "flex h-7 w-full min-w-0 items-center justify-center gap-1.5 rounded-md px-2 text-[12px] font-medium disabled:opacity-40";
   const secondary = `${btn} bg-content/10 text-content hover:bg-content/15`;
@@ -1224,33 +1133,6 @@ export function FileSection({
   );
 }
 
-type ChangeDir = {
-  name: string;
-  /** Path relative to the repo root; "" for the implicit root. */
-  path: string;
-  dirs: ChangeDir[];
-  files: GitChangedFile[];
-  /** Status shared by every descendant, or null when they differ. */
-  status: string | null;
-};
-
-async function remotePrContent(cwd: string) {
-  const range = await gitRangeContext(cwd);
-  const commits = range.commitSummary.trim();
-  const firstCommit = commits
-    .split(/\r?\n/, 1)[0]
-    ?.replace(/^[0-9a-f]+\s+/i, "")
-    .trim();
-  const title = firstCommit || `Changes on ${range.head}`;
-  const body = [
-    commits && `## Commits\n\n${commits}`,
-    range.diffSummary.trim() && `## Changes\n\n${range.diffSummary.trim()}`,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
-  return { title, body: body || title, base: range.base, head: range.head };
-}
-
 type ChangeRowProps = {
   files: GitChangedFile[];
   view: ChangesView;
@@ -1277,7 +1159,12 @@ export function ChangeList({ files, view, ...rest }: ChangeRowProps) {
         <ChangeRow
           key={`${rest.kind}:${file.relative}`}
           file={file}
-          active={isActive(file, rest.selected, rest.selectedKind, rest.kind)}
+          active={isActiveChangeFile(
+            file,
+            rest.selected,
+            rest.selectedKind,
+            rest.kind,
+          )}
           busy={rest.busy !== null}
           kind={rest.kind}
           onOpenFile={rest.onOpenFile}
@@ -1322,7 +1209,7 @@ function ChangeDirChildren({
         <ChangeRow
           key={`${kind}:${file.relative}`}
           file={file}
-          active={isActive(file, selected, selectedKind, kind)}
+          active={isActiveChangeFile(file, selected, selectedKind, kind)}
           busy={busy !== null}
           kind={kind}
           depth={depth}
@@ -1416,61 +1303,6 @@ function ChangeDirRow({
   );
 }
 
-function isActive(
-  file: GitChangedFile,
-  selected: string | undefined,
-  selectedKind: GitFileDiffKind | undefined,
-  kind: GitFileDiffKind,
-): boolean {
-  return selected === file.relative && (!selectedKind || selectedKind === kind);
-}
-
-/** Nests changed files under their directories, VS Code's tree view. */
-function buildChangeTree(files: GitChangedFile[]): ChangeDir {
-  const root: ChangeDir = {
-    name: "",
-    path: "",
-    dirs: [],
-    files: [],
-    status: null,
-  };
-  for (const file of files) {
-    const segments = file.relative.split("/");
-    let node = root;
-    for (const segment of segments.slice(0, -1)) {
-      const path = node.path ? `${node.path}/${segment}` : segment;
-      let next = node.dirs.find((dir) => dir.path === path);
-      if (!next) {
-        next = { name: segment, path, dirs: [], files: [], status: null };
-        node.dirs.push(next);
-      }
-      node = next;
-    }
-    node.files.push(file);
-  }
-  sortChangeDir(root);
-  return root;
-}
-
-/** Sorts each level (folders first) and rolls descendant status upward. */
-function sortChangeDir(dir: ChangeDir): string | null {
-  dir.dirs.sort((a, b) => a.name.localeCompare(b.name));
-  dir.files.sort((a, b) =>
-    basename(a.relative).localeCompare(basename(b.relative)),
-  );
-  let status: string | null = null;
-  let mixed = false;
-  const merge = (next: string | null) => {
-    if (next === null) mixed = true;
-    else if (status === null) status = next;
-    else if (status !== next) mixed = true;
-  };
-  for (const child of dir.dirs) merge(sortChangeDir(child));
-  for (const file of dir.files) merge(file.status);
-  dir.status = mixed ? null : status;
-  return dir.status;
-}
-
 function ChangeRow({
   file,
   active,
@@ -1492,9 +1324,9 @@ function ChangeRow({
     action: "stage" | "unstage" | "discard",
   ) => void;
 }) {
-  const name = basename(file.relative);
+  const name = changeBasename(file.relative);
   const tree = depth !== undefined;
-  const dir = tree ? "" : dirname(file.relative);
+  const dir = tree ? "" : changeDirname(file.relative);
   return (
     <li>
       <div
@@ -1592,176 +1424,6 @@ function IconAction({
       {children}
     </button>
   );
-}
-
-function dirname(relative: string): string {
-  const i = relative.lastIndexOf("/");
-  return i > 0 ? relative.slice(0, i) : "";
-}
-
-function statusLetter(status: string): string {
-  if (status === "untracked") return "U";
-  if (status === "added") return "A";
-  if (status === "deleted") return "D";
-  return "M";
-}
-
-function statusColor(status: string): string {
-  if (status === "untracked") return "text-sky-400";
-  if (status === "added") return "text-diff-add-fg";
-  if (status === "deleted") return "text-diff-del-fg";
-  return "text-amber-400";
-}
-
-function useDiffIndex(
-  cwd: string,
-  enabled: boolean,
-): {
-  index: GitDiffIndex | null;
-  reload: () => void;
-} {
-  const [index, setIndex] = useState<GitDiffIndex | null>(() =>
-    cachedIndex(cwd),
-  );
-  const [nonce, setNonce] = useState(0);
-  const reload = useCallback(() => setNonce((value) => value + 1), []);
-  const indexRef = useRef(index);
-  indexRef.current = index;
-
-  useEffect(() => {
-    if (!enabled || !cwd || cwd === "~") {
-      return;
-    }
-    const cached = cachedIndex(cwd);
-    if (cached && !sameIndex(indexRef.current, cached)) {
-      indexRef.current = cached;
-      setIndex(cached);
-    }
-    let cancelled = false;
-    let inFlight = false;
-    let pending = false;
-
-    const load = async () => {
-      if (inFlight) {
-        pending = true;
-        return;
-      }
-      if (document.hidden && nonce === 0) return;
-      inFlight = true;
-      try {
-        const next = await gitDiffIndex(cwd);
-        if (cancelled) return;
-        const prev = indexRef.current;
-        if (sameIndex(prev, next)) return;
-        indexByCwd.set(cwd, next);
-        indexRef.current = next;
-        setIndex(next);
-        applyProjectDiffStats(cwd, {
-          files: next.files.length,
-          additions: next.additions,
-          deletions: next.deletions,
-        });
-        if (prev) {
-          const paths = changedFilePaths(prev, next);
-          invalidateWatchedFiles(paths);
-          notifyGitChanged();
-        }
-      } catch {
-        if (!cancelled) {
-          indexByCwd.delete(cwd);
-          setIndex(null);
-        }
-      } finally {
-        inFlight = false;
-        if (pending && !cancelled) {
-          pending = false;
-          void load();
-        }
-      }
-    };
-
-    void load();
-    const onResume = () => {
-      if (!document.hidden) void load();
-    };
-    const timer = window.setInterval(onResume, GIT_POLL_MS);
-    window.addEventListener("focus", onResume);
-    document.addEventListener("visibilitychange", onResume);
-    const unsubGit = subscribeGitChanged(onResume);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-      window.removeEventListener("focus", onResume);
-      document.removeEventListener("visibilitychange", onResume);
-      unsubGit();
-    };
-  }, [cwd, enabled, nonce]);
-
-  return { index, reload };
-}
-
-function cachedIndex(cwd: string | undefined): GitDiffIndex | null {
-  if (!cwd || cwd === "~") return null;
-  return indexByCwd.get(cwd) ?? null;
-}
-
-function changedFilePaths(prev: GitDiffIndex, next: GitDiffIndex): string[] {
-  const paths: string[] = [];
-  const seen = new Set<string>();
-  const previous = new Map(prev.files.map((file) => [file.relative, file]));
-  const current = new Set(next.files.map((file) => file.relative));
-  for (const file of next.files) {
-    const before = previous.get(file.relative);
-    if (
-      !before ||
-      before.status !== file.status ||
-      before.additions !== file.additions ||
-      before.deletions !== file.deletions ||
-      before.staged !== file.staged ||
-      before.unstaged !== file.unstaged
-    ) {
-      paths.push(file.path);
-      seen.add(file.path);
-    }
-  }
-  for (const file of prev.files) {
-    if (!current.has(file.relative) && !seen.has(file.path)) {
-      paths.push(file.path);
-    }
-  }
-  return paths;
-}
-
-function sameIndex(prev: GitDiffIndex | null, next: GitDiffIndex): boolean {
-  if (!prev) return false;
-  if (
-    prev.branch !== next.branch ||
-    prev.head !== next.head ||
-    prev.additions !== next.additions ||
-    prev.deletions !== next.deletions ||
-    prev.files.length !== next.files.length ||
-    prev.remote !== next.remote ||
-    prev.upstream !== next.upstream ||
-    prev.defaultBranch !== next.defaultBranch ||
-    prev.ahead !== next.ahead ||
-    prev.behind !== next.behind ||
-    prev.aheadOfDefault !== next.aheadOfDefault ||
-    prev.headPushed !== next.headPushed
-  ) {
-    return false;
-  }
-  return prev.files.every((file, i) => {
-    const other = next.files[i];
-    return (
-      other &&
-      file.relative === other.relative &&
-      file.status === other.status &&
-      file.additions === other.additions &&
-      file.deletions === other.deletions &&
-      file.staged === other.staged &&
-      file.unstaged === other.unstaged
-    );
-  });
 }
 
 /**

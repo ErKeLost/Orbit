@@ -75,7 +75,6 @@ export async function clearSessionHistory():Promise<number> {
 export async function renameSession(sessionPath:string,name:string,connectionId?:string):Promise<void>{
  const clean=name.replace(/[\r\n]+/g,' ').replace(/\s+/g,' ').trim().slice(0,80)
  if(!clean)throw new Error('标题不能为空')
- const cwd=useWorkspace.getState().cwd
  if(mobileRuntime()){await runRemoteHostOperation<null>({name:'session.rename',sessionPath,title:clean})}
  else{
   const owner=(connectionId&&connections.has(connectionId)?connectionId:undefined)??sessionOwners.get(sessionPath)
@@ -86,7 +85,9 @@ export async function renameSession(sessionPath:string,name:string,connectionId?
   }
   else{ if(!native)throw new Error('重命名会话需要桌面应用'); await invoke('rename_session',{sessionPath,name:clean}) }
  }
- await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
+ // 按前缀作废**所有**项目的会话列表：改的可能不是当前项目的那条（项目栏的「会话」
+ // 区块是跨项目列出的），只刷当前 cwd 的话，被改的那一行会一直显示旧标题。
+ await queryClient.invalidateQueries({queryKey:['pi','sessions']})
 }
 export async function retireSession(sessionPath:string){
  const cwd=useWorkspace.getState().cwd,owner=sessionOwners.get(sessionPath),wasActive=owner?useWorkspace.getState().connectionId===owner:useWorkspace.getState().state?.sessionFile===sessionPath
@@ -199,7 +200,7 @@ async function changeSessionOnce(command:RpcCommand){
    if(result?.cancelled)throw new Error('扩展取消了会话切换')
    patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null})
    if(useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'})
-   await loadMessages(active)
+   await loadMessages(active,command.type==='switch_session'?command.sessionPath:undefined)
    if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,active)
    await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
    return
@@ -212,7 +213,7 @@ async function changeSessionOnce(command:RpcCommand){
    if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,id)
    await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]});return
   }
-  const result=await request<{cancelled?:boolean;text?:string}>(command,60000,active);if(result?.cancelled)throw new Error('扩展取消了会话切换');patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null});if(useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'});await loadMessages(active);if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,active);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
+  const result=await request<{cancelled?:boolean;text?:string}>(command,60000,active);if(result?.cancelled)throw new Error('扩展取消了会话切换');patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null});if(useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'});await loadMessages(active,command.type==='switch_session'?command.sessionPath:undefined);if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,active);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
  }
  catch(error){
   // 取消/失败时手动收起骨架屏：这条路径不会走到 loadMessages 的 hydrate。

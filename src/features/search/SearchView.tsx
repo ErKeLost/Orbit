@@ -7,7 +7,7 @@ import { MIN_QUERY, useFileSearch, useSessionSearch, type SearchFileHit, type Se
 import { useShell } from "../shell/shellStore";
 import { TrafficLightSpacer } from "../shell/chrome";
 import { FileTypeIcon } from "../shell/FileTypeIcon";
-import { ProjectInitial } from "../shell/ProjectInitial";
+import { ProjectInitial } from "../shell/project/ProjectInitial";
 import { Loader, MessageSquare, Search as SearchIcon } from "../../shared/ui/icons";
 
 type Tab = "all" | "sessions" | "files" | "projects";

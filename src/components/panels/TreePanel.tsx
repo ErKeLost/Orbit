@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { SessionTreeNode } from "@earendil-works/pi-coding-agent";
 import { useWorkspace } from "../../lib/store";
 import { changeSession, refresh, reloadMessages, report, request } from "../../lib/rpc";
-import { Button } from "../UI";
+import { Button } from "../../shared/ui/controls";
 import { usePrompt } from "../../lib/prompt";
 import { Icon } from "../Icon";
 import { toast as gooeyToast } from "../../shared/ui/toast";

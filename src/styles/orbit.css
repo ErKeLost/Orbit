@@ -439,7 +439,7 @@ html[data-page-visible="false"] * {
 }
 
 /* ---- Orbit panels rendered inside Orbit's settings frame -------------- */
-/* SettingsGroup/SettingRow (GeneralSettingsPanel) → Orbit Group/Row. */
+/* SettingsGroup/SettingRow (features/settings/pages/GeneralSettingsPage) → Orbit Group/Row. */
 
 .settings-page .settings-group,
 .panel-surface .settings-group {

@@ -40,7 +40,10 @@ use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
-use crate::{automations, bridge, git, github_inbox, gitlab, image_config, media, notes, pty_term, search, web_search};
+use crate::{
+    automations, bridge, computer_use, git, github_inbox, gitlab, gui_settings, image_config, mcp,
+    media, notes, pi_session, providers, pty_term, search, sessions_cmd, web_search,
+};
 #[cfg(target_os = "macos")]
 use crate::ax;
 
@@ -218,7 +221,7 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
         "create_dir" => json(git::create_dir(text(&args, "path")?).await?),
         "rename_path" => json(git::rename_path(text(&args, "from")?, text(&args, "to")?).await?),
         "delete_path" => json(git::delete_path(text(&args, "path")?).await?),
-        "list_project_files" => bridge::list_project_files(text(&args, "cwd")?).await,
+        "list_project_files" => sessions_cmd::list_project_files(text(&args, "cwd")?).await,
         "search_files" => json(
             search::search_files(
                 text(&args, "cwd")?,
@@ -462,17 +465,17 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
             .await?,
         ),
         // --- pi sessions ---------------------------------------------------
-        "discover" => json(bridge::discover(app.clone()).await?),
+        "discover" => json(providers::discover(app.clone()).await?),
         "pi_send" => {
             let state = app.state::<bridge::Bridge>();
-            json(bridge::pi_send(
+            json(pi_session::pi_send(
                 text(&args, "project")?,
                 args_of(&args, "command")?,
                 state,
             )?)
         }
         "pi_oneshot" => json(
-            bridge::pi_oneshot(
+            pi_session::pi_oneshot(
                 app.clone(),
                 text(&args, "cwd")?,
                 text(&args, "prompt")?,
@@ -481,23 +484,23 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
         ),
         "pi_disconnect" => {
             let state = app.state::<bridge::Bridge>();
-            bridge::pi_disconnect(app.clone(), text(&args, "project")?, state);
+            pi_session::pi_disconnect(app.clone(), text(&args, "project")?, state);
             Ok(Value::Null)
         }
-        "list_sessions" => json(bridge::list_sessions(app.clone(), text(&args, "cwd")?).await?),
-        "delete_session" => json(bridge::delete_session(text(&args, "sessionPath")?).await?),
+        "list_sessions" => json(sessions_cmd::list_sessions(app.clone(), text(&args, "cwd")?).await?),
+        "delete_session" => json(sessions_cmd::delete_session(text(&args, "sessionPath")?).await?),
         "rename_session" => json(
-            bridge::rename_session(text(&args, "sessionPath")?, text(&args, "name")?).await?,
+            sessions_cmd::rename_session(text(&args, "sessionPath")?, text(&args, "name")?).await?,
         ),
         "clear_sessions" => {
             let state = app.state::<bridge::Bridge>();
-            bridge::clear_sessions(state).await
+            sessions_cmd::clear_sessions(state).await
         }
         "session_turn_durations" => json(
-            bridge::session_turn_durations(app.clone(), text(&args, "sessionPath")?).await?,
+            sessions_cmd::session_turn_durations(app.clone(), text(&args, "sessionPath")?).await?,
         ),
         "open_pi_terminal" => json(
-            bridge::open_pi_terminal(
+            pi_session::open_pi_terminal(
                 app.clone(),
                 text(&args, "cwd")?,
                 opt::<String>(&args, "session")?,
@@ -617,20 +620,20 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
             .await?,
         ),
         // --- pi configuration ----------------------------------------------
-        "get_gui_settings" => bridge::get_gui_settings(),
+        "get_gui_settings" => gui_settings::get_gui_settings(),
         "set_gui_setting" => {
-            bridge::set_gui_setting(text(&args, "key")?, required(&args, "value")?)
+            gui_settings::set_gui_setting(text(&args, "key")?, required(&args, "value")?)
         }
-        "get_request_budget" => bridge::get_request_budget(),
+        "get_request_budget" => gui_settings::get_request_budget(),
         "save_request_budget" => {
-            bridge::save_request_budget(required(&args, "settings")?)
+            gui_settings::save_request_budget(required(&args, "settings")?)
         }
         "list_provider_models" => {
-            json(bridge::list_provider_models(text(&args, "provider")?).await?)
+            json(providers::list_provider_models(text(&args, "provider")?).await?)
         }
-        "list_provider_profiles" => json(bridge::list_provider_profiles().await?),
+        "list_provider_profiles" => json(providers::list_provider_profiles().await?),
         "probe_provider_models" => json(
-            bridge::probe_provider_models(
+            providers::probe_provider_models(
                 text(&args, "provider")?,
                 text(&args, "baseUrl")?,
                 text(&args, "api")?,
@@ -641,7 +644,7 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
             .await?,
         ),
         "save_provider" => json(
-            bridge::save_provider(
+            providers::save_provider(
                 text(&args, "provider")?,
                 opt::<String>(&args, "name")?,
                 text(&args, "baseUrl")?,
@@ -652,31 +655,31 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
             )
             .await?,
         ),
-        "delete_provider" => json(bridge::delete_provider(text(&args, "provider")?)?),
+        "delete_provider" => json(providers::delete_provider(text(&args, "provider")?)?),
         "sync_provider_models" => {
-            json(bridge::sync_provider_models(text(&args, "provider")?).await?)
+            json(providers::sync_provider_models(text(&args, "provider")?).await?)
         }
         "set_default_model" => json(
-            bridge::set_default_model(text(&args, "provider")?, text(&args, "modelId")?)?,
+            providers::set_default_model(text(&args, "provider")?, text(&args, "modelId")?)?,
         ),
-        "get_project_trust_mode" => json(bridge::get_project_trust_mode()?),
-        "set_project_trust_mode" => json(bridge::set_project_trust_mode(text(&args, "mode")?)?),
-        "list_mcp_servers" => bridge::list_mcp_servers(),
+        "get_project_trust_mode" => json(gui_settings::get_project_trust_mode()?),
+        "set_project_trust_mode" => json(gui_settings::set_project_trust_mode(text(&args, "mode")?)?),
+        "list_mcp_servers" => mcp::list_mcp_servers(),
         "save_mcp_server" => {
-            bridge::save_mcp_server(text(&args, "name")?, required(&args, "config")?)
+            mcp::save_mcp_server(text(&args, "name")?, required(&args, "config")?)
         }
-        "delete_mcp_server" => bridge::delete_mcp_server(text(&args, "name")?),
-        "mcp_config_location" => bridge::mcp_config_location(),
-        "computer_use_key_status" => bridge::computer_use_key_status(),
-        "save_computer_use_key" => bridge::save_computer_use_key(opt::<String>(&args, "apiKey")?),
-        "computer_use_config" => bridge::computer_use_config(),
+        "delete_mcp_server" => mcp::delete_mcp_server(text(&args, "name")?),
+        "mcp_config_location" => mcp::mcp_config_location(),
+        "computer_use_key_status" => computer_use::computer_use_key_status(),
+        "save_computer_use_key" => computer_use::save_computer_use_key(opt::<String>(&args, "apiKey")?),
+        "computer_use_config" => computer_use::computer_use_config(),
         "save_computer_use_config" => {
-            bridge::save_computer_use_config(required(&args, "config")?)
+            computer_use::save_computer_use_config(required(&args, "config")?)
         }
         "save_computer_use_cloudflare_token" => {
-            bridge::save_computer_use_cloudflare_token(opt::<String>(&args, "token")?)
+            computer_use::save_computer_use_cloudflare_token(opt::<String>(&args, "token")?)
         }
-        "test_computer_use_decision" => json(bridge::test_computer_use_decision().await?),
+        "test_computer_use_decision" => json(computer_use::test_computer_use_decision().await?),
         "image_config" => image_config::image_config().await,
         "save_image_config" => image_config::save_image_config(required(&args, "config")?).await,
         "save_image_api_key" => {

@@ -20,7 +20,7 @@ import {
   type ProviderProfile,
 } from "../lib/rpc";
 import { report } from "../lib/rpc";
-import { Button, Input, Select as CompactSelect, Switch, Disclosure } from "./UI";
+import { Button, Disclosure, Input, Select, Toggle } from "../shared/ui/controls";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./Dialog";
 import { useWorkspace } from "../lib/store";
 import { ModelLogo, ModelModalities } from "./ModelMeta";
@@ -504,12 +504,12 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
               <label><ProviderFieldLabel icon="article">显示名称</ProviderFieldLabel><Input value={name} onChange={event => update({ name: event.target.value })} placeholder="例如 Team Gateway" /></label>
               <label><ProviderFieldLabel icon="link">Base URL</ProviderFieldLabel><Input value={baseUrl} onChange={event => update({ baseUrl: event.target.value })} placeholder="https://example.com/v1" /></label>
               <label><ProviderFieldLabel icon="list-magnifying-glass">模型列表接口</ProviderFieldLabel><Input value={modelsUrl} onChange={event => update({ modelsUrl: event.target.value })} placeholder="留空则使用 Base URL/models" /></label>
-              <label><ProviderFieldLabel icon="globe">API 类型</ProviderFieldLabel><CompactSelect aria-label="API 类型" value={api} onChange={event => update({ api: event.target.value as (typeof apiTypes)[number] })}>{apiTypes.map(item => <option key={item} value={item}>{item}</option>)}</CompactSelect></label>
-              <label><ProviderFieldLabel icon="cpu">默认模型</ProviderFieldLabel><CompactSelect aria-label="默认模型目录" value={defaultModelId} onChange={event => selectDefaultModel(event.target.value)}><option value="">保存后使用首个模型</option>{models.map(model => <option key={model.id} value={model.id}>{modelDisplayName(model)}</option>)}</CompactSelect></label>
+              <label><ProviderFieldLabel icon="globe">API 类型</ProviderFieldLabel><Select label="API 类型" value={api} options={apiTypes.map(item => ({ value: item, label: item }))} onChange={value => update({ api: value as (typeof apiTypes)[number] })} /></label>
+              <label><ProviderFieldLabel icon="cpu">默认模型</ProviderFieldLabel><Select label="默认模型目录" value={defaultModelId} options={[{ value: "", label: "保存后使用首个模型" }, ...models.map(model => ({ value: model.id, label: modelDisplayName(model) }))]} onChange={selectDefaultModel} /></label>
               <label><ProviderFieldLabel icon="identification-card">模型 ID</ProviderFieldLabel><Input value={defaultModelId} onChange={event => update({ defaultModelId: event.target.value })} placeholder="也可手动输入模型 ID" spellCheck={false} /></label>
               <label><ProviderFieldLabel icon="key">API Key</ProviderFieldLabel><Input type="password" value={apiKey} onChange={event => update({ apiKey: event.target.value })} placeholder={selected?.hasApiKey ? "已保存，留空保持不变" : "输入服务商 API Key"} autoComplete="off" /></label>
             </div>
-            <div className="provider-dialog-auth"><div><strong>发送认证请求头</strong><p>关闭后，模型服务请求不会附带 API Key。</p></div><Switch aria-label="发送 API 认证请求头" checked={authHeader} onChange={value => update({ authHeader: value })} /></div>
+            <div className="provider-dialog-auth"><div><strong>发送认证请求头</strong><p>关闭后，模型服务请求不会附带 API Key。</p></div><Toggle label="发送 API 认证请求头" on={authHeader} onChange={value => update({ authHeader: value })} /></div>
           </div>
           <DialogFooter><Button variant="outline" onClick={closeEditor}>取消</Button><Button variant="outline" disabled={!!busy || !provider.trim() || !baseUrl.trim() || Boolean(providerConflict)} onClick={() => void probe()}>{busy === "probe" ? "正在查询…" : "测试连接"}</Button><Button variant="default" disabled={!!busy || !provider.trim() || !baseUrl.trim() || Boolean(providerConflict)} onClick={() => void save()}>{busy === "save" ? "正在保存并同步…" : "保存并同步"}</Button></DialogFooter>
         </DialogContent>

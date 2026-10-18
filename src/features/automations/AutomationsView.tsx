@@ -27,7 +27,7 @@ import { AUTOMATION_TEMPLATE_CATEGORIES, AUTOMATION_TEMPLATES, type AutomationTe
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { Group, Row, SecondaryButton, Select, Slider, TextArea, TextField, Toggle } from "../../shared/ui/controls";
 import { ConfirmDialog } from "../shell/ConfirmDialog";
-import { ProjectInitial } from "../shell/ProjectInitial";
+import { ProjectInitial } from "../shell/project/ProjectInitial";
 import { toast } from "../../shared/ui/toast";
 import { TrafficLightSpacer } from "../shell/chrome";
 import {

@@ -53,8 +53,16 @@ jobs:
       # Includes the drift guards in `tests/` that compare the Rust protocol
       # against the TypeScript one, and the bundled icon set against every icon
       # name used in the app.
-      - name: Tests
-        run: bun run test
+      - name: Unit tests
+        run: bun run test:unit
+
+      # A separate gate, not a second half of the step above: `bun test` and
+      # `vitest` cover different code, and chaining them with `&&` meant a unit
+      # failure silently skipped this suite. `always()` keeps it running even
+      # when the unit gate is red.
+      - name: UI tests
+        if: always()
+        run: bun run test:ui
 
       - name: Build the frontend
         run: bun run build
@@ -104,6 +112,47 @@ jobs:
       - name: Clippy
         run: cargo clippy --lib -- -D warnings
         working-directory: src-tauri
+
+  intel:
+    name: Intel target
+    # The release ships an x86_64-apple-darwin bundle, and until this job
+    # existed nothing in CI compiled that target: `bun run check` and a host
+    # `cargo check` both build for whatever the runner is. An Intel-only compile
+    # error would then first appear 43 minutes into a Release job. Native on an
+    # Intel runner on purpose — that is the architecture that ships, and a
+    # cross-check from arm64 would miss `cfg(target_arch)` and native deps.
+    runs-on: macos-15-intel
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.16.0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Prepare desktop runtime resources
+        run: |
+          bun install --frozen-lockfile
+          bun run bundle:pi
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: intel
+
+      # Checks both executables: `orbit`, and `ax_control` behind the
+      # `ax-control` feature — the worker the Accessibility grant is attached to
+      # and the one a cross-target mistake breaks silently.
+      - name: Type check for x86_64-apple-darwin
+        run: bun run check:intel
 
   android:
     name: Android target

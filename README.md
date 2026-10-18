@@ -22,7 +22,7 @@ bun run tauri:dev     # development
 bun run tauri:build   # package
 ```
 
-See [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) for the full feature set and its boundaries.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the layer boundaries, state ownership, and RPC routing, and [`docs/CAPABILITIES.md`](docs/CAPABILITIES.md) for the full feature set and its boundaries.
 
 ## Credits
 

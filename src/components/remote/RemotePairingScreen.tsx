@@ -1,6 +1,6 @@
 import { ChevronRight as ArrowRight, Copy, ImagePlus as Image, LoaderCircle, Share as ScanQrCode, X } from "../../shared/ui/icons";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Button, Input } from "../UI";
+import { Button, Input } from "../../shared/ui/controls";
 import { Icon } from "../Icon";
 import { decodeImageUrl, isScanCanceled, scanQrNative } from "../../lib/qr-scan";
 import { parsePairingUri } from "../../lib/remote-protocol";

@@ -338,7 +338,7 @@ Android's rather than ours.
 What is ours is what the reconnect does to the screen. It used to replace the
 conversation with the loading skeleton — on every single return, which is the
 most common thing a phone does. `reconnectKeepsTranscript`
-(`src/lib/protocol.ts`) is the rule that stops it, and both of its halves are
+(`src/lib/protocol/`) is the rule that stops it, and both of its halves are
 load-bearing: `sameConnection` is what separates a recovery from a switch, so
 landing on another project cannot leave the previous project's messages under
 the new one's title, and `hasMessages` is what separates a recovery from a first

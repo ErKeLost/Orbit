@@ -6,7 +6,9 @@
  * so a handler never hard-codes a key again. Modelled on MonoCode's
  * `settings/model/settings.ts`, trimmed to what Orbit actually binds.
  */
-export const IS_MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+import { IS_MAC } from "./platform";
+
+export { IS_MAC };
 
 /** The platform's primary modifier in canonical form. */
 const MOD = IS_MAC ? "Command" : "Control";

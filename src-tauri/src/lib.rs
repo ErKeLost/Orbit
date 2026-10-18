@@ -21,8 +21,18 @@ mod screen;
 pub mod browser;
 pub mod browser_view;
 mod cookie_import;
+// Pi bridge split by domain: `bridge` keeps the shared worker registry and
+// runtime discovery; each command lives with the data it reads and writes.
+mod attachments;
 mod bridge;
+mod computer_use;
+mod gui_settings;
+mod mcp;
+mod pi_session;
+mod providers;
 mod sessions;
+mod sessions_cmd;
+mod history;
 mod git;
 mod github_inbox;
 mod gitlab;
@@ -218,6 +228,11 @@ pub fn run() {
             // This is the socket between them (`browser_view::serve`).
             browser_view::serve(app.handle().clone());
             splash::mark(app.handle(), &app.state::<splash::SplashState>(), "backend");
+            // 历史图片抽出来的文件是个缓存；超预算时在后台按修改时间清掉最旧的，
+            // 不挡启动（缺的图下次装载时会重新抽）。
+            if let Some(dir) = media::session_media_dir(app.handle()) {
+                std::thread::spawn(move || media::prune_session_media(&dir));
+            }
             Ok(())
         })
         .manage(splash::SplashState::default())
@@ -234,26 +249,26 @@ pub fn run() {
             runtime::runtime_environment,
             power::set_keep_awake,
             splash::splash_ready,
-            bridge::discover,
-            bridge::list_provider_models,
-            bridge::list_provider_profiles,
-            bridge::probe_provider_models,
-            bridge::save_provider,
-            bridge::delete_provider,
-            bridge::sync_provider_models,
-            bridge::set_default_model,
-            bridge::get_project_trust_mode,
-            bridge::set_project_trust_mode,
-            bridge::list_mcp_servers,
-            bridge::save_mcp_server,
-            bridge::delete_mcp_server,
-            bridge::set_mcp_auto_codemode,
-            bridge::mcp_config_location,
-            bridge::get_gui_settings,
-            bridge::set_gui_setting,
-            bridge::get_request_budget,
-            bridge::save_request_budget,
-            bridge::computer_use_key_status,
+            providers::discover,
+            providers::list_provider_models,
+            providers::list_provider_profiles,
+            providers::probe_provider_models,
+            providers::save_provider,
+            providers::delete_provider,
+            providers::sync_provider_models,
+            providers::set_default_model,
+            gui_settings::get_project_trust_mode,
+            gui_settings::set_project_trust_mode,
+            mcp::list_mcp_servers,
+            mcp::save_mcp_server,
+            mcp::delete_mcp_server,
+            mcp::set_mcp_auto_codemode,
+            mcp::mcp_config_location,
+            gui_settings::get_gui_settings,
+            gui_settings::set_gui_setting,
+            gui_settings::get_request_budget,
+            gui_settings::save_request_budget,
+            computer_use::computer_use_key_status,
             // Browser Use (`docs/BROWSER_USE.md`): the third column's Chrome.
             // Screencast frames and input forwarding are CDP work and live in
             // the webview; these commands own the process and the session file.
@@ -277,25 +292,29 @@ pub fn run() {
             browser_view::browser_view_page,
             browser_view::browser_view_close,
             browser_view::browser_view_reconcile,
-            bridge::save_computer_use_key,
-            bridge::computer_use_config,
-            bridge::save_computer_use_config,
-            bridge::save_computer_use_cloudflare_token,
-            bridge::test_computer_use_decision,
-            bridge::clipboard_file_paths,
-            bridge::read_file_attachment,
-            bridge::save_media_file,
-            bridge::pi_oneshot,
-            bridge::pi_connect,
-            bridge::pi_send,
-            bridge::pi_disconnect,
-            bridge::list_sessions,
-            bridge::list_project_files,
-            bridge::delete_session,
-            bridge::rename_session,
-            bridge::clear_sessions,
-            bridge::session_turn_durations,
-            bridge::open_pi_terminal,
+            computer_use::save_computer_use_key,
+            computer_use::computer_use_config,
+            computer_use::save_computer_use_config,
+            computer_use::save_computer_use_cloudflare_token,
+            computer_use::test_computer_use_decision,
+            attachments::clipboard_file_paths,
+            attachments::read_file_attachment,
+            attachments::save_media_file,
+            media::copy_media_file,
+            pi_session::pi_oneshot,
+            pi_session::pi_connect,
+            pi_session::pi_send,
+            pi_session::pi_disconnect,
+            sessions_cmd::list_sessions,
+            sessions_cmd::list_project_files,
+            sessions_cmd::delete_session,
+            sessions_cmd::rename_session,
+            sessions_cmd::clear_sessions,
+            sessions_cmd::session_turn_durations,
+            sessions_cmd::session_stamp,
+            sessions_cmd::session_project,
+            sessions_cmd::session_image,
+            pi_session::open_pi_terminal,
             git::git_diff_stats,
             git::git_changed_files,
             git::git_diff_index,
