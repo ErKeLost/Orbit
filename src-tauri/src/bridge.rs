@@ -398,7 +398,6 @@ impl RuntimePaths {
                 &resources_dir.join("request-budget.ts"),
                 "Request budget helper",
             ),
-            (&resources_dir.join("workspace.ts"), "Workspace extension"),
             (
                 &resources_dir.join("subagents/index.ts"),
                 "Subagent extension",
