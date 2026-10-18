@@ -21,17 +21,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [features]
 default = []
 ax-control = []
-ax-dump = []
 
 [[bin]]
 name = "ax_control"
 path = "src/bin/ax_control.rs"
 required-features = ["ax-control"]
-
-[[bin]]
-name = "ax_dump"
-path = "src/bin/ax_dump.rs"
-required-features = ["ax-dump"]
 
 [build-dependencies]
 tauri-build = { version = "=2.6.3", features = [] }
@@ -48,7 +42,6 @@ rustls = { version = "=0.23.43", default-features = false, features = ["ring", "
 # child web view (an engine drawing into this window), and that API is the only
 # way to place one. See `browser_view.rs` for why that matters.
 tauri = { version = "=2.11.5", features = ["protocol-asset", "macos-private-api", "unstable"] }
-tauri-plugin-log = "=2.9.1"
 tauri-plugin-dialog = "=2.7.3"
 tauri-plugin-opener = "2"
 # Durable key/value state. The WebView's localStorage lives in the renderer's

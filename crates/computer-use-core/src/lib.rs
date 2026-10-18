@@ -1,7 +1,6 @@
 //! Transport-independent observation ledger. A ref is evidence of observation,
 //! not authority to mutate by itself. The platform adapter must validate live
 //! process/window/element identity before a one-shot action is dispatched.
-pub mod transaction;
 
 use rustc_hash::FxHashMap;
 use serde_json::Value;

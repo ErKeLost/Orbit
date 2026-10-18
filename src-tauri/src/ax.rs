@@ -4,7 +4,7 @@
 //! never receives native handles. The current encoded target is NOT a
 //! snapshot-scoped action lease. Action delivery must remain disabled.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::hash::{Hash, Hasher};
 use std::process::Command;
@@ -16,7 +16,7 @@ use xa11y::{App, AppExt, Element};
 const MAX_NODES: usize = 2_000;
 const MAX_DEPTH: usize = 32;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AxTarget {
     pub snapshot_id: String,
     pub path: Vec<usize>,
@@ -491,211 +491,6 @@ pub fn dispatch_focused(app_name: &str, operation: &str, key: &str) -> Result<Va
     input.keyboard().press(key).map_err(|e| e.to_string())?;
     Ok(json!({"operation":operation,"keyboard":label}))
 }
-
-fn target_from_ref(value: &str) -> Result<AxTarget, String> {
-    serde_json::from_str(value).map_err(|_| "invalid AX target ref".to_string())
-}
-
-fn resolve(root: &App, target: &AxTarget) -> Result<Element, String> {
-    let (first, rest) = target.path.split_first().ok_or("empty AX target path")?;
-    let mut current = root
-        .windows()
-        .map_err(|e| e.to_string())?
-        .get(*first)
-        .cloned()
-        .ok_or("stale AX window path")?;
-    for index in rest {
-        current = current
-            .children()
-            .map_err(|e| e.to_string())?
-            .get(*index)
-            .cloned()
-            .ok_or("stale AX element path")?;
-    }
-    let d = current.data();
-    if d.role.to_snake_case() != target.role
-        || d.name != target.name
-        || d.stable_id != target.stable_id
-    {
-        return Err("action target changed since observation".into());
-    }
-    Ok(current)
-}
-
-#[allow(dead_code)] // Prototype only: the worker does not expose action delivery.
-fn execute_action(
-    app_name: &str,
-    snapshot_id: &str,
-    operation: &str,
-    reference: &str,
-    value: Option<&str>,
-) -> Result<Value, String> {
-    let target = if operation == "press" && reference == "return" {
-        None
-    } else {
-        Some(target_from_ref(reference)?)
-    };
-    if let Some(target) = &target {
-        if target.snapshot_id != snapshot_id {
-            return Err("stale AX snapshot lease".into());
-        }
-    }
-    let root = app(app_name)?;
-    if !root.is_foreground() {
-        return Err("target application is not foreground".into());
-    }
-    let element = if operation == "press" && reference == "return" {
-        fn find_focused(element: &Element) -> Result<Option<Element>, String> {
-            if element.data().states.focused {
-                return Ok(Some(element.clone()));
-            }
-            for child in element.children().map_err(|e| e.to_string())? {
-                if let Some(found) = find_focused(&child)? {
-                    return Ok(Some(found));
-                }
-            }
-            Ok(None)
-        }
-        let mut focused = None;
-        for window in root.windows().map_err(|e| e.to_string())? {
-            if let Some(found) = find_focused(&window)? {
-                focused = Some(found);
-                break;
-            }
-        }
-        focused.ok_or("no focused AX element")?
-    } else {
-        resolve(&root, target.as_ref().ok_or("missing action target")?)?
-    };
-    let data = element.data();
-    let advertised = |name: &str| data.actions.iter().any(|action| action == name);
-    match operation {
-        "focus" => {
-            if !advertised("focus") {
-                return Err("target does not advertise focus".into());
-            }
-            element.focus().map_err(|e| e.to_string())?;
-        }
-        "press" => {
-            if !advertised("press") && !advertised("activate") {
-                return Err("target does not advertise press".into());
-            }
-            element.press().map_err(|e| e.to_string())?;
-        }
-        "set-value" => {
-            if !advertised("set_value") {
-                return Err("target does not advertise set_value".into());
-            }
-            element
-                .set_value(value.ok_or("missing value")?)
-                .map_err(|e| e.to_string())?;
-        }
-        "type" => {
-            if !advertised("type_text") {
-                return Err("target does not advertise type_text".into());
-            }
-            element
-                .type_text(value.ok_or("missing value")?)
-                .map_err(|e| e.to_string())?;
-        }
-        _ => return Err(format!("unsupported AX action: {operation}")),
-    }
-    let post = element.data();
-    let verified = operation == "set-value" && value.is_some() && post.value.as_deref() == value;
-    Ok(
-        json!({ "disposition": { "delivery": if verified { "delivered_verified" } else { "delivered_unverified" }, "retry": "never" }, "post_state": { "role": post.role.to_snake_case(), "name": post.name, "value": post.value, "states": post.states }, "verification_scope": if verified { "element_value" } else { "unavailable" } }),
-    )
-}
-
-/* legacy action implementation retained below as design reference; action delivery is disabled.
-fn legacy_action(operation: &str) -> Result<&str, String> {
-    match operation {
-        "focus" | "set-value" | "type" | "press" => Ok(operation),
-        _ => Err(format!("unsupported AX operation: {operation}")),
-    }
-}
-
-fn focused_element(root: &App) -> Result<Element, String> {
-    fn walk(element: &Element) -> Result<Option<Element>, String> {
-        if element.data().states.focused {
-            return Ok(Some(element.clone()));
-        }
-        for child in element.children().map_err(|e| e.to_string())? {
-            if let Some(found) = walk(&child)? {
-                return Ok(Some(found));
-            }
-        }
-        Ok(None)
-    }
-    for child in root.children().map_err(|e| e.to_string())? {
-        if let Some(found) = walk(&child)? {
-            return Ok(found);
-        }
-    }
-    Err("no focused AX element".into())
-}
-
-pub(crate) fn execute_ref(
-    app_name: &str,
-    operation: &str,
-    reference: &str,
-    value: Option<String>,
-) -> Result<Value, String> {
-    let operation = legacy_action(operation)?;
-    let root = app(app_name)?;
-    if !root.is_foreground() {
-        return Err("target application is not foreground; refusing desktop mutation".into());
-    }
-    let element = if operation == "press" && reference == "return" {
-        focused_element(&root)?
-    } else {
-        let target = target_from_ref(reference)?;
-        resolve(&root, &target)?
-    };
-    if !element.data().actions.iter().any(|item| {
-        item == operation
-            || (operation == "set-value" && item == "set_value")
-            || (operation == "type" && item == "type_text")
-            || (operation == "press" && item == "press")
-    }) {
-        return Err("target does not advertise the requested AX action".into());
-    }
-    match operation {
-        "focus" => element.focus().map_err(|e| e.to_string())?,
-        "set-value" => element
-            .set_value(value.as_deref().ok_or("missing value")?)
-            .map_err(|e| e.to_string())?,
-        "type" => element
-            .type_text(value.as_deref().ok_or("missing value")?)
-            .map_err(|e| e.to_string())?,
-        "press" => element.press().map_err(|e| e.to_string())?,
-        _ => unreachable!(),
-    }
-    Ok(json!({ "disposition": { "delivery": "delivered_unverified", "retry": "never" } }))
-}
-
-fn resolve(root: &App, target: &AxTarget) -> Result<Element, String> {
-    let (first, rest) = target.path.split_first().ok_or("empty AX target path")?;
-    let mut current = root
-        .children()
-        .map_err(|e| e.to_string())?
-        .get(*first)
-        .cloned()
-        .ok_or("stale AX window path")?;
-    for index in rest {
-        let children = current.children().map_err(|e| e.to_string())?;
-        current = children.get(*index).cloned().ok_or("stale action path")?;
-    }
-    let d = current.data();
-    if d.role.to_snake_case() != target.role
-        || d.name != target.name
-        || d.stable_id != target.stable_id
-    {
-        return Err("action target changed since observation".into());
-    }
-    Ok(current)
-}
-*/
 
 #[tauri::command]
 pub async fn ax_observe(app_name: String, max_nodes: usize) -> Result<Value, String> {
