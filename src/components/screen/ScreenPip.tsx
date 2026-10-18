@@ -142,7 +142,7 @@ export function ScreenPip({ snapshot, placement, onPlacement }: {
         title="重置大小与位置"
         aria-label="重置大小与位置"
         onClick={() => onPlacement({ x: -1, y: -1, width: defaultWidth(viewport), height: -1 })}
-      ><Icon name="arrows-clockwise" /></button>
+      ><Icon name="refresh-cw" /></button>
       <button
         type="button"
         className="screen-pip-action"

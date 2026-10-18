@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { elapsedMs, formatAgentElapsed, hasRunningAgents, type AgentNode, type AgentSnapshot } from "../../lib/agents";
 import { Icon } from "../Icon";
-import { agentIcon, agentKind, KIND_LABELS, STATUS_LABELS } from "./agent-kind";
+import { agentIcon, STATUS_LABELS } from "./agent-icon";
 import "./agent-activity.css";
 
 type AgentActivityFeedProps = {
@@ -10,10 +10,9 @@ type AgentActivityFeedProps = {
 };
 
 function AgentAvatar({ agent }: { agent: AgentNode }) {
-  const kind = agentKind(agent);
-  const title = [agent.name, KIND_LABELS[kind], STATUS_LABELS[agent.status], agent.model].filter(Boolean).join(" · ");
+  const title = [agent.name, STATUS_LABELS[agent.status], agent.model].filter(Boolean).join(" · ");
   return (
-    <span className={`agent-feed-avatar is-${agent.status}`} data-kind={kind} title={title} aria-hidden="true">
+    <span className={`agent-feed-avatar is-${agent.status}`} data-logo={agent.logo ?? undefined} title={title} aria-hidden="true">
       <Icon name={agentIcon(agent)} />
       <i className="agent-feed-badge" />
     </span>

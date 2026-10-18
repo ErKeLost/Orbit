@@ -110,10 +110,10 @@ export function RemotePairingScreen({ pairingUri, connecting, error, onPairingUr
         <label htmlFor="remote-pairing-uri">配对链接</label>
         <div className="remote-pairing-input-shell"><Input id="remote-pairing-uri" value={pairingUri} disabled={connecting} aria-invalid={Boolean(error)} aria-describedby={error ? "remote-pairing-error" : "remote-pairing-help"} autoCapitalize="none" autoComplete="off" autoCorrect="off" enterKeyHint="go" spellCheck={false} placeholder="orbit://pair?host=…" onChange={event => onPairingUriChange(event.target.value)} /><Button type="button" variant="ghost" size="icon" title="复制配对链接" aria-label="复制配对链接" disabled={!value} onClick={() => void navigator.clipboard.writeText(value)}><Copy aria-hidden="true" /></Button></div>
         <p id="remote-pairing-help" className="remote-pairing-help">手机必须能够通过配对链接中的地址访问电脑。</p>
-        {(error || scannerError) && <p id="remote-pairing-error" className="remote-pairing-error" role="alert"><Icon name="warning-circle" />{error || scannerError}</p>}
+        {(error || scannerError) && <p id="remote-pairing-error" className="remote-pairing-error" role="alert"><Icon name="circle-alert" />{error || scannerError}</p>}
         <Button type="submit" size="lg" variant="outline" className="remote-pairing-connect" disabled={!value || connecting}>{connecting ? <LoaderCircle className="animate-spin" /> : null}{connecting ? "正在连接" : "连接电脑"}</Button>
       </form>
-      <p className="remote-pairing-security"><Icon name="shield-check" />配对链接包含访问凭据，请勿分享给其他人。</p>
+      <p className="remote-pairing-security"><Icon name="shield" />配对链接包含访问凭据，请勿分享给其他人。</p>
     </section>
     {scannerOpen && <div className="qr-scanner" role="dialog" aria-modal="true" aria-labelledby="qr-scanner-title">
       <div className="qr-scanner-shade" aria-hidden="true" />

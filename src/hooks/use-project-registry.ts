@@ -15,15 +15,14 @@ function published(projects: Project[]) {
   return projects.map((project) => ({
     path: project.path,
     name: project.name,
-    ...(project.roots?.length ? { roots: project.roots } : {}),
   }))
 }
 
 /**
  * Keep the two sides looking at one project registry.
  *
- * The desktop's window owns the list — it holds the names, the extra roots and
- * the order — so on the desktop this publishes it to the Host (which serves it
+ * The desktop's window owns the list — it holds the names and the order — so on
+ * the desktop this publishes it to the Host (which serves it
  * in every snapshot and pushes it to connected phones), and on the phone it
  * mirrors what the Host published into the local store, so every surface that
  * resolves a project name sees the desktop's list rather than a private one.

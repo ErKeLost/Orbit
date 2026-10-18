@@ -9,7 +9,7 @@ describe('agent-generated session metadata', () => {
   })
 
   test('uses the default icon for an unsupported model choice', () => {
-    expect(parseSessionMetadata('{"title":"分析会话","icon":"made-up"}')).toEqual({title:'分析会话',icon:'chat-teardrop-text'})
+    expect(parseSessionMetadata('{"title":"分析会话","icon":"made-up"}')).toEqual({title:'分析会话',icon:'message-square'})
   })
 })
 

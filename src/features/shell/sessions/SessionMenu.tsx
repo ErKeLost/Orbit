@@ -4,7 +4,7 @@ import { report, retireSession } from "../../../lib/rpc";
 import { sessionTitle } from "../../../lib/session-visual";
 import { MenuItem, MenuSeparator, PointMenu } from "../../../shared/ui/controls";
 import { toast } from "../../../shared/ui/toast";
-import { Copy, MessageSquare, PenLine, Trash2 as Trash } from "../../../shared/ui/icons";
+import { Copy, MessageSquare, PenLine, Trash } from "../../../shared/ui/icons";
 import { ConfirmDialog } from "../ConfirmDialog";
 
 type SessionMenuState = { session: Session; x: number; y: number };

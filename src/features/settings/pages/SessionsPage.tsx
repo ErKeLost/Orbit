@@ -36,19 +36,19 @@ export function SessionsPage() {
   const tabs = useWorkspaceTabs();
 
   return <>
-    <div className="panel-heading"><div><h1><Icon name="chats" />所有会话</h1><p>保存在本机的项目对话。</p></div><div className="panel-heading-actions"><span className="badge"><Icon name="chats" />{visibleSessions.length} 个会话</span><Button className="primary" disabled={!online} onClick={() => void tabs.create().catch(report)}><Icon name="plus" />新会话</Button></div></div>
-    <label className="settings-page-search"><Icon name="magnifying-glass" /><Input className="search-input" aria-label="搜索会话" placeholder="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /></label>
+    <div className="panel-heading"><div><h1><Icon name="message-multiple" />所有会话</h1><p>保存在本机的项目对话。</p></div><div className="panel-heading-actions"><span className="badge"><Icon name="message-multiple" />{visibleSessions.length} 个会话</span><Button className="primary" disabled={!online} onClick={() => void tabs.create().catch(report)}><Icon name="plus" />新会话</Button></div></div>
+    <label className="settings-page-search"><Icon name="search" /><Input className="search-input" aria-label="搜索会话" placeholder="搜索会话" value={search} onChange={event => setSearch(event.target.value)} /></label>
     {sessions.error && <p className="error-inline">{String(sessions.error)}</p>}
     <div className="session-rows">{visibleSessions.map(session => {
       const working = liveSessions.some(live => live.running && live.path === session.path);
       const label = session.name || session.firstMessage || "未命名会话";
       const openSession = () => void tabs.openSession({ path: session.path }).catch(report);
       return <div key={session.id} className={`session-row${working ? " working" : ""}`} onContextMenu={event => { event.preventDefault(); setMenu({ session, x: event.clientX, y: event.clientY }); }}>
-          <Button disabled={!online} aria-busy={working} onClick={openSession}><Icon name="chats" /><span><strong>{label}</strong><small>{session.messageCount} 条消息 · {session.modified ? new Date(session.modified).toLocaleString("zh-CN") : "刚刚"}</small></span>{working ? <span className="session-working-indicator" title="正在工作" aria-hidden /> : <Icon name="arrow-up-right" />}</Button>
+          <Button disabled={!online} aria-busy={working} onClick={openSession}><Icon name="message-multiple" /><span><strong>{label}</strong><small>{session.messageCount} 条消息 · {session.modified ? new Date(session.modified).toLocaleString("zh-CN") : "刚刚"}</small></span>{working ? <span className="session-working-indicator" title="正在工作" aria-hidden /> : <Icon name="external-link" />}</Button>
           {merged.listedPaths.has(session.path) && <Button title="删除会话" disabled={!online} onClick={() => setDeleting(session)}><Icon name="trash" /></Button>}
         </div>;
     })}</div>
-    {!merged.sessions.length && <div className="empty-panel"><Icon name="chats" /><h3>还没有保存的会话</h3><p>发送第一条消息后，Pi 会自动保存。</p></div>}
+    {!merged.sessions.length && <div className="empty-panel"><Icon name="message-multiple" /><h3>还没有保存的会话</h3><p>发送第一条消息后，Pi 会自动保存。</p></div>}
     {menu && <PointMenu x={menu.x} y={menu.y} label="会话操作" onClose={() => setMenu(null)}>
       <MenuItem disabled={!online} onClick={() => { void tabs.openSession({ path: menu.session.path }).catch(report); setMenu(null); }}>打开会话</MenuItem>
       <MenuItem onClick={() => { void navigator.clipboard.writeText(menu.session.name || menu.session.firstMessage || ""); setMenu(null); }}>复制标题</MenuItem>

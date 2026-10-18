@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { create } from "zustand";
 import { LAYER } from "../lib/layers";
-import { AlertCircle, CheckCircle, CircleHelp, Loader, X } from "./icons";
+import { CircleAlert, CheckCircle, CircleHelp, Loader, X } from "./icons";
 
 /**
  * Orbit-styled toasts: the same bordered glass card its approval and
@@ -82,8 +82,8 @@ export const toast = {
 
 const TONE_ICON: Record<ToastTone, { Icon: typeof CheckCircle; className: string }> = {
   success: { Icon: CheckCircle, className: "text-emerald-400" },
-  error: { Icon: AlertCircle, className: "text-red-400" },
-  warning: { Icon: AlertCircle, className: "text-amber-400" },
+  error: { Icon: CircleAlert, className: "text-red-400" },
+  warning: { Icon: CircleAlert, className: "text-amber-400" },
   info: { Icon: CircleHelp, className: "text-content/55" },
   loading: { Icon: Loader, className: "animate-spin text-content/55" },
 };

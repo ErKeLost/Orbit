@@ -31,7 +31,7 @@ import { ProjectInitial } from "../shell/project/ProjectInitial";
 import { toast } from "../../shared/ui/toast";
 import { TrafficLightSpacer } from "../shell/chrome";
 import {
-  AlertCircle,
+  CircleAlert,
   Check,
   Clock,
   FilePlus,
@@ -42,13 +42,13 @@ import {
   RefreshCw,
   Search,
   Terminal,
-  Trash2 as Trash,
+  Trash,
   Zap,
   type IconComponent,
 } from "../../shared/ui/icons";
 const TEMPLATE_ICONS: Record<string, IconComponent> = {
   search: Search,
-  alert: AlertCircle,
+  alert: CircleAlert,
   file: FilePlus,
   check: Check,
   lock: Lock,
@@ -183,8 +183,6 @@ export function AutomationsView() {
         model: "",
         modelSettings: {},
         cwd: next.cwd,
-        workspaceMode: "current",
-        worktreeCwd: "",
         sessionFolderId: "",
         reuseSession: false,
         runtimeMode: next.runtimeMode,

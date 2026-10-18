@@ -57,7 +57,7 @@ export function ScreenExpanded({ snapshot }: { snapshot: ScreenChannelSnapshot }
     <div className="screen-sheet">
       <header className="screen-sheet-bar">
         <button type="button" className="screen-pip-action" title="收回小窗" aria-label="收回小窗" onClick={close}>
-          <Icon name="caret-down" />
+          <Icon name="chevron-down" />
         </button>
         <div className="screen-sheet-titles">
           <span className="screen-sheet-title">{snapshot.display?.name ?? "电脑屏幕"}</span>
@@ -77,7 +77,7 @@ export function ScreenExpanded({ snapshot }: { snapshot: ScreenChannelSnapshot }
           title="屏幕设置"
           aria-label="屏幕设置"
           onClick={() => useWorkspace.getState().set({ panel: "settings", settingsPage: "screen", screenExpanded: false })}
-        ><Icon name="gear-six" /></button>
+        ><Icon name="settings" /></button>
       </header>
 
       <div className="screen-sheet-view">

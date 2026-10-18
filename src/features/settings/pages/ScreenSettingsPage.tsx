@@ -65,10 +65,10 @@ export function ScreenSettingsPage() {
 
   return <div className="screen-page">
     <div className="panel-heading">
-      <div><h1><Icon name="desktop" />屏幕</h1></div>
+      <div><h1><Icon name="dashboard-square" />屏幕</h1></div>
     </div>
 
-    <SettingsGroup title="画面来源" icon="desktop" description="跟随当前应用时，小窗显示的是正在被操作的那个窗口；它有 computer use，操作哪个应用就会把哪个应用带到前台。">
+    <SettingsGroup title="画面来源" icon="dashboard-square" description="跟随当前应用时，小窗显示的是正在被操作的那个窗口；它有 computer use，操作哪个应用就会把哪个应用带到前台。">
       <SettingRow title="来源" description={preferences.source === "app" ? "跟随当前应用窗口（推荐）" : "整个显示器画面"}>
         <Select
           label="画面来源"
@@ -103,7 +103,7 @@ export function ScreenSettingsPage() {
       <CodecDiagnostic />
     </SettingsGroup>
 
-    <SettingsGroup title="电脑端" icon="shield-check" description="屏幕录制与辅助功能是两个独立授权；授权后必须完全退出 Orbit 再打开。Orbit 是 ad-hoc 签名，每次更新后系统都会把它当作新应用，需要重新授权一次。">
+    <SettingsGroup title="电脑端" icon="shield" description="屏幕录制与辅助功能是两个独立授权；授权后必须完全退出 Orbit 再打开。Orbit 是 ad-hoc 签名，每次更新后系统都会把它当作新应用，需要重新授权一次。">
       {mobile
         ? <SettingRow title="电脑连接" description="预览由电脑采集，手机只负责显示与操作。">
             <span className="remote-host-status" aria-live="polite">

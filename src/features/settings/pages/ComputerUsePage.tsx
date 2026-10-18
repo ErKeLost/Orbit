@@ -126,14 +126,14 @@ export function ComputerUsePage() {
   const keyReady = config ? (jevSelected ? config.keys.jev : config.keys.cloudflare) : false;
 
   return <>
-    <div className="panel-heading"><div><h1><Icon name="desktop" />操作电脑</h1><p>Computer Use 使用的决策模型与凭据。Jev 与 Cloudflare Clef-flash 两套都保留，随时切换。</p></div></div>
-    <SettingsGroup title="开关" icon="desktop" description="让当前 Pi 模型通过界面观察和点击桌面应用。有可靠 API 或 CLI 时不要用。">
+    <div className="panel-heading"><div><h1><Icon name="dashboard-square" />操作电脑</h1><p>Computer Use 使用的决策模型与凭据。Jev 与 Cloudflare Clef-flash 两套都保留，随时切换。</p></div></div>
+    <SettingsGroup title="开关" icon="dashboard-square" description="让当前 Pi 模型通过界面观察和点击桌面应用。有可靠 API 或 CLI 时不要用。">
       <SettingRow title="电脑操作" description={!desktop ? "电脑操作只能在运行 Pi 的电脑上使用。" : !macos ? "Computer Use 目前只支持 macOS；此平台功能已关闭。" : "由你手动打开。macOS 请在 系统设置 → 隐私与安全性 → 辅助功能 中允许「Orbit Agent」（列表里显示为「Orbit」，位于 ~/Library/Application Support/ai.pi.gui/runtime）。只需授权一次，之后更新 Orbit 不会失效；「Orbit Agent Dev」只属于 tauri dev。授权后完全退出 Orbit 再打开。"}>
         {desktop && macos ? <Toggle label="电脑操作" on={enabled} disabled={!online || running} onChange={checked => void setComputerUseMode(checked).catch(report)} /> : <span className="remote-settings-note">{desktop ? "macOS 专用" : "电脑端设置"}</span>}
       </SettingRow>
     </SettingsGroup>
 
-    <SettingsGroup title="决策模型" icon="robot" description="每轮从当前界面的候选集中选择操作与目标。两套模型共用同一个 SystemOne 协议，其余逻辑完全一致。">
+    <SettingsGroup title="决策模型" icon="bot" description="每轮从当前界面的候选集中选择操作与目标。两套模型共用同一个 SystemOne 协议，其余逻辑完全一致。">
       <SettingRow title="使用模型" description={jevSelected ? "TypeSafe Jev，默认后端，与现有钥匙和评测一致。" : "Cloudflare 开源决策模型 Clef-flash，经 Workers AI 托管；协议与 Jev 兼容。"}>
         <Select label="决策模型" value={model} disabled={busy !== null} options={DECISION_MODEL_OPTIONS} onChange={value => void patch({ decisionModel: value as ComputerUseModel }, "决策模型")} />
       </SettingRow>

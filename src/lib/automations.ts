@@ -6,7 +6,6 @@ export type AutomationScheduleKind = "hourly" | "daily" | "weekdays" | "weekly";
 export type AutomationTriggerKind = "time" | "github" | "gitlab";
 export type AutomationRunStatus = "pending" | "running" | "succeeded" | "failed" | "skipped" | "cancelled";
 export type AutomationRuntimeMode = "supervised" | "auto-accept-edits" | "auto" | "full-access";
-export type AutomationWorkspaceMode = "current" | "worktree" | "existing";
 
 export type AutomationTrigger = {
   id: string;
@@ -30,8 +29,6 @@ export type Automation = {
   model: string;
   modelSettings: Record<string, string>;
   cwd: string;
-  workspaceMode: AutomationWorkspaceMode;
-  worktreeCwd: string;
   sessionFolderId: string;
   reuseSession: boolean;
   runtimeMode: AutomationRuntimeMode;

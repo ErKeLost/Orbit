@@ -5,7 +5,7 @@ import {
   ChevronUp,
   FoldVertical,
   MessageSquarePlus,
-  Undo2,
+  Undo,
   UnfoldVertical,
 } from "../../../shared/ui/icons";
 import {
@@ -427,7 +427,7 @@ const FileSection = memo(function FileSection({
             disabled={busy}
             onClick={() => onDiscardFile(file.id)}
           >
-            <Undo2 className="size-3.5" strokeWidth={1.75} />
+            <Undo className="size-3.5" strokeWidth={1.75} />
           </IconButton>
         ) : null}
         {file.canStage && onStageFile ? (

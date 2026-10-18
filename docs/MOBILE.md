@@ -207,7 +207,7 @@ boundary, because it is one.
 
 ### One project registry
 
-The desktop window owns the project list (names, extra roots, order). It
+The desktop window owns the project list (names, order). It
 publishes that list to the Host, which serves it in every snapshot and pushes
 changes as `host.projects`; the phone renders it instead of keeping a private
 copy. Adding a project from the phone is a `project.add` request the Host hands
@@ -294,7 +294,7 @@ Both remaining entries are not commands, so they cannot be mirrored by name.
   a phone. PDFs land in the same place for a different reason: an Android WebView
   has no inline viewer, so the `<object>` fallback in `MediaView` is what is
   actually shown there.
-* **Editing a project's own metadata** (rename, extra roots) and importing a
+* **Editing a project's own metadata** (rename) and importing a
   session file: the first needs a `project.update` request, the second opens a
   picker on the device that is holding the phone.
 

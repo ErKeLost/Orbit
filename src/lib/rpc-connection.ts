@@ -43,7 +43,6 @@ import {
   snapshot,
   snapshotListeners,
   snapshots,
-  syncConfiguredProjectRoots,
   syncLiveSessions,
   syncSessionModes,
   syncedModes,
@@ -208,7 +207,6 @@ export async function connect(cwd:string,workspaceMode:WorkspaceMode=useWorkspac
   }
   if(!connection)throw new Error(`电脑端没有这个项目的活动连接：${cwd}（电脑端当前连接：${describeConnections(snapshot.connections)}）`)
   await connectRemoteConnection(connection,workspaceMode)
-  if(workspaceMode==='project')await syncConfiguredProjectRoots(cwd)
   return
  }
  cwd=normalizeProjectPath(cwd)
@@ -218,11 +216,10 @@ export async function connect(cwd:string,workspaceMode:WorkspaceMode=useWorkspac
  localStorage.setItem('pi-gui.cwd',cwd)
  localStorage.setItem('pi-gui.workspaceMode',workspaceMode)
  if(connections.has(id)&&saved.connection==='online'){
-  try{await Promise.all([refresh(id),syncSessionModes(id)]);if(workspaceMode==='project')await syncConfiguredProjectRoots(cwd,id);return}
+  try{await Promise.all([refresh(id),syncSessionModes(id)]);return}
   catch{await closeConnection(id,'项目连接已失效')}
  }
  await startConnection(cwd,id,{restoreLast})
- if(workspaceMode==='project')await syncConfiguredProjectRoots(cwd,id)
 }
 /** 桌面 bootstrap：只确定当前范围，不启动 pi 进程。连接由 shell 的面上层按需拉起。 */
 export function setDesktopScope(cwd:string,workspaceMode:WorkspaceMode){

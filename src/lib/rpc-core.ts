@@ -2,7 +2,6 @@ import { QueryClient } from "@tanstack/react-query";
 import { invoke } from "./native";
 import type { RpcCommand, RpcResponse } from "@earendil-works/pi-coding-agent";
 import { useWorkspace, type LiveSession, type Workspace } from "./store";
-import { projectExtraRoots, useProjects } from "./projects";
 import { parseAgentSnapshot } from "./agents";
 import { emptyTelemetry, observe } from "./telemetry";
 import {
@@ -320,8 +319,6 @@ export async function ensureSessionModes(target=activeTarget()){
  if(syncedModes.get(id)===modesKey(id))return
  await syncSessionModes(target)
 }
-export const setSessionRoots=(roots:string[],target=activeTarget())=>request({type:'prompt',message:`/gui-workspace-set ${JSON.stringify({roots})}`},30000,target)
-export async function syncConfiguredProjectRoots(cwd:string,target=cwd){const project=useProjects.getState().projects.find(item=>item.path===cwd);if(project)await setSessionRoots(projectExtraRoots(project),target)}
 export async function refresh(target=activeTarget()){
  const id=route(target),state=await request<RpcSessionState>({type:'get_state'},30000,id)
  // Pi 回的就是刚要求的那个模型 → 意图完成，之后全听 `get_state` 的。

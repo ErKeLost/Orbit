@@ -33,7 +33,7 @@ enum RemoteHostOperation {
     /// Add a project to the desktop's own registry.
     ///
     /// The registry lives in the desktop window (it owns the names, the icon
-    /// and the extra roots), so the Host validates the path and asks that window
+    /// and the icon), so the Host validates the path and asks that window
     /// to do the write. One writer, and the phone renders its published list.
     #[serde(rename = "project.add")]
     ProjectAdd { path: String },
@@ -231,7 +231,7 @@ mod desktop {
         theme: Mutex<RemoteTheme>,
         /// The desktop window's project registry, as last published by it.
         ///
-        /// The window is the writer — it owns the names and the extra roots —
+        /// The window is the writer — it owns the names and the icon —
         /// so this is a publication, not a second copy to keep in step: a phone
         /// reads it from every snapshot, and the window refreshes it whenever
         /// the list changes.

@@ -53,7 +53,6 @@ import { stepInputHistory, inputHistoryEntries } from "./input-history";
 import { loadPromptSuggestion, savePromptSuggestion, transcriptTurn } from "./promptSuggestion";
 import { userText } from "./turnModel";
 import { SpeechInput } from "../../components/ai-elements/speech-input";
-import { WorkspaceRoots } from "./WorkspaceRoots";
 import { ProjectPicker } from "./ProjectPicker";
 import { ExtensionDialog } from "../../components/panels/ExtensionDialog";
 
@@ -200,7 +199,6 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
   const multiAgent = useWorkspace((state) => state.multiAgentEnabled);
   const computerUse = useWorkspace((state) => state.computerUseEnabled);
   const browserUse = useWorkspace((state) => state.browserUseEnabled);
-  const homeDir = useWorkspace((state) => state.homeDir);
   const dialog = useWorkspace((state) => state.dialogs[0]);
   const composerKey = connectionId || project;
   const tokens = useComposerTokens(project);
@@ -467,7 +465,6 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
 
   const context = contextMeterUsage(stats?.contextUsage);
   const queueVisible = queue.steering.length + queue.followUp.length > 0;
-  const projectFolder = project && project !== homeDir ? project : "";
 
   return (
     <div className={`relative mx-auto w-full max-w-4xl ${centered ? "" : "p-1.5 pt-0"}`} data-session-composer>
@@ -496,11 +493,9 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
             <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-lg bg-accent/8 text-[12px] text-content/70">拖放文件以附加</div>
           ) : null}
           <div className="flex min-w-0 items-center gap-2.5 overflow-hidden px-3 pt-2.5">
-            {/* 新会话（首页）：头部带范围选择器，发送前就能切项目 / 不在文件夹里工作
-                （Codex 的「项目 | 环境 | 分支」形式）。会话开始后（centered=false）
-                撤下选择器——中途切范围等于打断会话。 */}
+            {/* 新会话（首页）：头部带项目选择器，发送前就能切项目 / 不在文件夹里工作。
+                会话开始后（centered=false）撤下选择器——中途切范围等于打断会话。 */}
             {centered ? <ProjectPicker disabled={running} /> : null}
-            {projectFolder ? <WorkspaceRoots projectFolder={projectFolder} disabled={running} /> : null}
             <div className="ml-auto flex shrink-0 items-center">
               <ContextMeter usage={context} compacting={compacting} />
             </div>

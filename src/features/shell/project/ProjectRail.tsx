@@ -9,13 +9,11 @@ import {
   archivedProjects,
   mergeProjects,
   projectColor,
-  projectExtraRoots,
-  projectRoots,
   sortPinnedFirst,
   useProjects,
   type Project,
 } from "../../../lib/projects";
-import { connect, desktopRuntime, forgetProject, prefetchSession, queryClient, renameSession, report, setSessionRoots } from "../../../lib/rpc";
+import { connect, desktopRuntime, forgetProject, prefetchSession, queryClient, renameSession, report } from "../../../lib/rpc";
 import { useWorkspaceTabs } from "../use-workspace-tabs";
 import { useSessionContextMenu } from "../sessions/SessionMenu";
 import { SessionTitleField } from "../sessions/SessionTitleField";
@@ -42,7 +40,6 @@ import {
   Folder,
   FolderOpen,
   FolderPlus,
-  FolderTree,
   Loader,
   MessageSquare,
   MoreHorizontal,
@@ -175,7 +172,6 @@ function ProjectCard({
   const additions = stats?.additions ?? 0;
   const deletions = stats?.deletions ?? 0;
   const color = projectColor(project);
-  const roots = projectRoots(project);
   const labelClassName = "min-w-0 flex-1 truncate text-sm font-medium leading-tight";
   return (
     <div
@@ -223,15 +219,6 @@ function ProjectCard({
         ) : (
           <span className={labelClassName}>{project.name}</span>
         )}
-        {roots.length > 1 ? (
-          <span
-            title={roots.map((root, index) => (index === 0 ? `${root}（主目录）` : root)).join("\n")}
-            className="project-card-stats flex shrink-0 items-center gap-1 rounded bg-content/8 px-1.5 py-0.5 text-[10.5px] leading-4 tabular-nums text-content/50 group-hover:hidden"
-          >
-            <FolderTree className="size-3 shrink-0" strokeWidth={1.75} />
-            {roots.length}
-          </span>
-        ) : null}
         {additions > 0 || deletions > 0 ? (
           <span className="project-card-stats shrink-0 group-hover:hidden">
             <DiffStat additions={additions} deletions={deletions} />
@@ -735,8 +722,7 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
           onClose={() => setEditing(null)}
           onSave={async (project) => {
             update(project);
-            if (workspaceMode === "project" && cwd === project.path) await setSessionRoots(projectExtraRoots(project));
-            toast.success("项目已更新", { description: `${projectExtraRoots(project).length + 1} 个 app root` });
+            toast.success("项目已更新");
           }}
         />
       ) : null}

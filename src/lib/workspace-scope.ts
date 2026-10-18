@@ -1,5 +1,4 @@
-import { projectExtraRoots, useProjects } from "./projects";
-import { changeSession, connect, setSessionRoots } from "./rpc";
+import { changeSession, connect } from "./rpc";
 import { useWorkspace, type WorkspaceMode } from "./store";
 
 /**
@@ -9,8 +8,6 @@ import { useWorkspace, type WorkspaceMode } from "./store";
  * 进入一个范围总是落在首页（EmptySession）：不自动把上次的会话翻出来。连接
  * 本来就在线（同一范围再点一次，或那个项目的进程还活着）时，才需要显式开一个
  * 新会话；否则 `connect` 用 `restoreLast: false` 起的新进程本身就是空的。
- *
- * 项目模式会顺带同步项目的附加 roots，让会话状态立刻拿到最新的目录列表。
  */
 export async function openWorkspaceScope(path: string, mode: WorkspaceMode) {
   const workspace = useWorkspace.getState();
@@ -21,7 +18,4 @@ export async function openWorkspaceScope(path: string, mode: WorkspaceMode) {
   if (transcript.messages.length > 0 && !transcript.running) {
     await changeSession({ type: "new_session" });
   }
-  if (mode !== "project") return;
-  const project = useProjects.getState().projects.find((item) => item.path === path);
-  if (project) await setSessionRoots(projectExtraRoots(project));
 }

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { TranscriptGroupView } from "../src/features/chat/Transcript";
+import { ActivityPhases, TranscriptGroupView } from "../src/features/chat/Transcript";
+import { projectTurn } from "../src/features/chat/turnModel";
 import type { DisplayMessage, Tool } from "../src/lib/protocol";
 
 const item = (id: string, message: Record<string, unknown>): DisplayMessage =>
@@ -10,17 +11,41 @@ const item = (id: string, message: Record<string, unknown>): DisplayMessage =>
 const visibleCount = (html: string, needle: string) =>
   html.replace(/aria-label="[^"]*"/g, "").split(needle).length - 1;
 
+/** The phase rows themselves — the part that now lives behind the fold. */
+const renderWork = (items: DisplayMessage[], tools: Record<string, Tool>, streaming: boolean) =>
+  renderToStaticMarkup(<ActivityPhases steps={projectTurn(items, tools, streaming).work} tools={tools} done={!streaming} />);
+
 /**
- * The work fold renders each reasoning block as a collapsed summary line that
- * expands to the full text. When the block was short, the summary *was* the
- * text, so opening it printed the same words twice — which is how a stray
- * "Summarize." from the model's reasoning showed up as a duplicated line.
+ * Work folds behind the "working…" line by default, in every state: the reader
+ * opens it, it does not open itself mid-run. The live summary stays on the fold
+ * line, so folding never hides *what* the agent is doing.
  *
- * `streaming` with no answer keeps the fold open, which is the state the reader
- * actually sees the steps in.
+ * The phase rows below are tested directly, because that is where the content
+ * rules live (a short block prints once, an image read renders pixels).
  */
 describe("work fold rendering", () => {
-  const foldOpen = { stream: true, streaming: true } as const;
+  test("the live fold stays closed and carries the doing line", () => {
+    const items = [
+      item("m1", {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "先看一下目录。", thinkingComplete: true },
+          { type: "toolCall", id: "c1", name: "bash", arguments: { command: "ls" } },
+        ],
+      }),
+    ];
+    const html = renderToStaticMarkup(
+      <TranscriptGroupView group={{ id: "g", items }} tools={{} as Record<string, Tool>} streaming />,
+    );
+    // Closed: no step rows, and the caret says what a click would do.
+    expect(html).toContain('aria-label="展开过程"');
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain("zen-fold-rail");
+    expect(visibleCount(html, "先看一下目录。")).toBe(0);
+    // Still legible while running: the shimmer plus the current activity.
+    expect(html).toContain("shimmer-text");
+    expect(html).toContain("正在运行命令");
+  });
 
   test("a short reasoning block prints once", () => {
     const items = [
@@ -33,13 +58,7 @@ describe("work fold rendering", () => {
         ],
       }),
     ];
-    const html = renderToStaticMarkup(
-      <TranscriptGroupView
-        group={{ id: "g", items }}
-        tools={{} as Record<string, Tool>}
-        streaming={foldOpen.streaming}
-      />,
-    );
+    const html = renderWork(items, {} as Record<string, Tool>, true);
     expect(visibleCount(html, "Summarize.")).toBe(1);
   });
 
@@ -56,13 +75,7 @@ describe("work fold rendering", () => {
         ],
       }),
     ];
-    const html = renderToStaticMarkup(
-      <TranscriptGroupView
-        group={{ id: "g", items }}
-        tools={{} as Record<string, Tool>}
-        streaming={foldOpen.streaming}
-      />,
-    );
+    const html = renderWork(items, {} as Record<string, Tool>, true);
     // The summary line is a first-paragraph digest, so the block can expand.
     expect(html).toContain("展开思考");
     expect(visibleCount(html, first)).toBe(1);
@@ -89,13 +102,7 @@ describe("work fold rendering", () => {
         ],
       }),
     ];
-    const html = renderToStaticMarkup(
-      <TranscriptGroupView
-        group={{ id: "g", items }}
-        tools={{} as Record<string, Tool>}
-        streaming={foldOpen.streaming}
-      />,
-    );
+    const html = renderWork(items, {} as Record<string, Tool>, true);
     expect(visibleCount(html, "Summarize.")).toBe(1);
   });
 
@@ -118,9 +125,7 @@ describe("work fold rendering", () => {
         images: [{ data: "AAAA", mimeType: "image/png" }],
       },
     } as unknown as Record<string, Tool>;
-    const html = renderToStaticMarkup(
-      <TranscriptGroupView group={{ id: "g", items }} tools={tools} streaming={foldOpen.streaming} />,
-    );
+    const html = renderWork(items, tools, true);
     // The pixels are what the reader wants: render them, and drop the text that
     // only existed to stand in for them.
     expect(html).toContain("data:image/png;base64,AAAA");

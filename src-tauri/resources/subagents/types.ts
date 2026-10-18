@@ -24,6 +24,8 @@ export interface AgentNode {
   turn?: number
   endedAt?: number
   model?: string
+  /** 头像图标（Iconify 名字），模型在 spawn 时给的；不存在就回落中性图标。 */
+  logo?: string
   pid?: number
   sessionId?: string
   sessionPath?: string

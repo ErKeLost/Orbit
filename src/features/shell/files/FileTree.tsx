@@ -24,7 +24,7 @@ import {
   FolderPlus,
   Pencil,
   RefreshCw,
-  Trash2,
+  Trash,
 } from "../../../shared/ui/icons";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { FileTypeIcon } from "../FileTypeIcon";
@@ -512,7 +512,7 @@ export function FileTree({ cwd, rootLabel }: { cwd: string; rootLabel?: string }
             <MenuItem icon={<Pencil strokeWidth={1.75} />} onClick={() => beginRename(menu.target!)}>重命名</MenuItem>
           ) : null}
           {menu.target ? (
-            <MenuItem icon={<Trash2 strokeWidth={1.75} />} danger onClick={() => { setPendingDelete(menu.target); setMenu(null); }}>删除</MenuItem>
+            <MenuItem icon={<Trash strokeWidth={1.75} />} danger onClick={() => { setPendingDelete(menu.target); setMenu(null); }}>删除</MenuItem>
           ) : null}
           <MenuItem icon={<FolderOpen strokeWidth={1.75} />} onClick={() => { void revealItemInDir(menu.target?.path ?? cwd).catch(() => undefined); setMenu(null); }}>
             在 Finder 中显示

@@ -24,8 +24,8 @@ export function CommandsPanel() {
     <div className="command-list">{visibleCommands.map(command => {
       const visual = getCommandVisual(command.name, command.source);
       const location = command.sourceInfo?.path || command.sourceInfo?.origin;
-      return <Button className="command-row" key={command.name} onClick={() => useWorkspace.getState().set({ draft: `/${command.name} `, panel: "chat" })}><span className={`command-icon command-icon-${visual.tone}`}><Icon name={visual.icon} /></span><span className="command-copy"><span className="command-title"><strong>/{command.name}</strong><span className={`command-source command-source-${command.source}`}>{commandSourceLabel(command.source)}</span></span><span className="command-description">{command.description || "没有提供说明"}</span>{location && <span className="command-location" title={location}>{location}</span>}</span><Icon className="command-arrow" name="arrow-right" /></Button>;
+      return <Button className="command-row" key={command.name} onClick={() => useWorkspace.getState().set({ draft: `/${command.name} `, panel: "chat" })}><span className={`command-icon command-icon-${visual.tone}`}><Icon name={visual.icon} /></span><span className="command-copy"><span className="command-title"><strong>/{command.name}</strong><span className={`command-source command-source-${command.source}`}>{commandSourceLabel(command.source)}</span></span><span className="command-description">{command.description || "没有提供说明"}</span>{location && <span className="command-location" title={location}>{location}</span>}</span><Icon className="command-arrow" name="chevron-right" /></Button>;
     })}</div>
-    {data.data && !hasCommands && <div className="empty-panel"><Icon name="puzzle-piece" /><h3>还没有加载扩展或技能</h3><p>在 Pi 中安装后重新连接，就能从这里使用。</p></div>}
+    {data.data && !hasCommands && <div className="empty-panel"><Icon name="sparkles" /><h3>还没有加载扩展或技能</h3><p>在 Pi 中安装后重新连接，就能从这里使用。</p></div>}
   </>;
 }

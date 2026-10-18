@@ -1,7 +1,7 @@
 import {test,expect} from 'bun:test'
 import {observe,emptyTelemetry} from '../src/lib/telemetry'
 import {getChange,getToolCodePresentation,MAX_CODE_PREVIEW_CHARS} from '../src/lib/changes'
-import {mergeProjects,normalizeProjectPath,projectExtraRoots,projectRoots,removeProject,replaceProject} from '../src/lib/projects'
+import {mergeProjects,normalizeProjectPath,removeProject,replaceProject} from '../src/lib/projects'
 import {mergeProjectSessions} from '../src/hooks/use-project-sessions'
 test('compaction keeps actual status and estimates, never invents progress percentages',()=>{
  let state=observe(emptyTelemetry(),{type:'compaction_start',reason:'threshold'},1000)
@@ -43,11 +43,9 @@ test('removing a project only removes the exact workspace path',()=>{
  const projects=mergeProjects([] ,['/a/app','/b/app'])
  expect(removeProject(projects,'/a/app')).toEqual([{path:'/b/app',name:'app'}])
 })
-test('a project keeps one primary directory and deduplicated app roots',()=>{
- const project={path:'/work/app/',name:'Workspace',roots:['/work/app','/work/api/','/work/api','/work/web']}
- expect(projectRoots(project)).toEqual(['/work/app','/work/api','/work/web'])
- expect(projectExtraRoots(project)).toEqual(['/work/api','/work/web'])
- expect(replaceProject([],project)).toEqual([{path:'/work/app',name:'Workspace',roots:['/work/app','/work/api','/work/web']}])
+test('a project normalizes to a single directory',()=>{
+ const project={path:'/work/app/',name:'Workspace'}
+ expect(replaceProject([],project)).toEqual([{path:'/work/app',name:'Workspace'}])
 })
 test('live sessions only appear under their owning project directory',()=>{
  const live=[

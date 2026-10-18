@@ -20,7 +20,6 @@ cpSync(resolve(root,'src-tauri/resources/search-tools.ts'),resolve(resources,'se
 cpSync(resolve(root,'src-tauri/resources/web-search.ts'),resolve(resources,'web-search.ts'))
 cpSync(resolve(root,'src-tauri/resources/context-payload.ts'),resolve(resources,'context-payload.ts'))
 cpSync(resolve(root,'src-tauri/resources/request-budget.ts'),resolve(resources,'request-budget.ts'))
-cpSync(resolve(root,'src-tauri/resources/workspace.ts'),resolve(resources,'workspace.ts'))
 const cli=resolve(resources,'pi-runtime/cli.js'),extension=resolve(resources,'gui-extension.ts'),runtimeNode=resolve(resources,'node-runtime',process.platform==='win32'?'node.exe':'node'),runtimeModules=resolve(resources,'node_modules')
 const runtimeEnv={...process.env,NODE_PATH:runtimeModules,ORBIT_PI_CLI_PATH:cli,ORBIT_PI_NODE_PATH:runtimeNode,JITI_FS_CACHE:'false'}
 const clipboard=spawnSync(runtimeNode,['-e','require("@mariozechner/clipboard")'],{cwd,env:runtimeEnv,stdio:'pipe'})

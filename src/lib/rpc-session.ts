@@ -25,7 +25,6 @@ import {
   sessionOwners,
   snapshot,
   snapshots,
-  syncConfiguredProjectRoots,
   syncLiveSessions,
   activeTarget,
   applyLocalEvent,
@@ -223,7 +222,7 @@ async function changeSessionOnce(command:RpcCommand){
   if(useWorkspace.getState().state?.sessionFile===command.sessionPath){useWorkspace.getState().set({panel:'chat'});return}
   const owner=sessionOwners.get(command.sessionPath)
   // 这个会话的遥接已经活着（快照里有消息），切过去是瞬时的，不上骨架屏。
-  if(owner&&connections.has(owner)){activateConnection(owner,cwd);await syncConfiguredProjectRoots(cwd,owner);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]});return}
+  if(owner&&connections.has(owner)){activateConnection(owner,cwd);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]});return}
  }
  const switching=SESSION_SWITCH_COMMANDS.has(String(command.type))
  // 正在跑的那一轮会切到一条新连接上（旧连接留在快照里继续跑），加载发生在
@@ -245,7 +244,6 @@ async function changeSessionOnce(command:RpcCommand){
    patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null})
    if(useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'})
    await loadMessages(active,command.type==='switch_session'?command.sessionPath:undefined)
-   if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,active)
    await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
    return
   }
@@ -254,10 +252,9 @@ async function changeSessionOnce(command:RpcCommand){
    snapshots.set(active,snapshot())
    useWorkspace.getState().set({...fresh(),cwd,connectionId:id,panel:'chat'})
    await startConnection(cwd,id,command.type==='switch_session'?{sessionPath:command.sessionPath}:undefined)
-   if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,id)
    await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]});return
   }
-  const result=await request<{cancelled?:boolean;text?:string}>(command,60000,active);if(result?.cancelled)throw new Error('扩展取消了会话切换');patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null});if(useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'});await loadMessages(active,command.type==='switch_session'?command.sessionPath:undefined);if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,active);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
+  const result=await request<{cancelled?:boolean;text?:string}>(command,60000,active);if(result?.cancelled)throw new Error('扩展取消了会话切换');patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null});if(useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'});await loadMessages(active,command.type==='switch_session'?command.sessionPath:undefined);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
  }
  catch(error){
   // 取消/失败时手动收起骨架屏：这条路径不会走到 loadMessages 的 hydrate。

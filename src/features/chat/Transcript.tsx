@@ -79,7 +79,7 @@ function PreviewImage({ image, path, label }: { image: ToolImage; path?: string;
         loading="lazy"
         decoding="async"
         draggable={false}
-        className="max-h-52 max-w-full rounded-xl border border-content/10 object-contain"
+        className="max-h-52 max-w-full rounded-xl object-contain"
       />
     </ImageActionsMenu>
   );
@@ -157,12 +157,15 @@ function WorkFoldLine({
   expandable,
   open,
   onToggle,
+  hint,
 }: {
   title: ReactNode;
   live: boolean;
   expandable: boolean;
   open: boolean;
   onToggle: () => void;
+  /** Collapsed-while-live one-liner, so folding does not hide what it is doing. */
+  hint?: string;
 }) {
   const label = live ? (
     title
@@ -186,6 +189,7 @@ function WorkFoldLine({
         strokeWidth={1.75}
       />
       {label}
+      {hint ? <span className="min-w-0 shrink-0 truncate text-[12px] text-content/35">{hint}</span> : null}
     </button>
   );
 }
@@ -567,7 +571,7 @@ function PhaseGroup({ phase, tools, live }: { phase: Phase; tools: Record<string
   );
 }
 
-const ActivityPhases = memo(function ActivityPhases({ steps, tools, done }: { steps: TurnStep[]; tools: Record<string, Tool>; done: boolean }) {
+export const ActivityPhases = memo(function ActivityPhases({ steps, tools, done }: { steps: TurnStep[]; tools: Record<string, Tool>; done: boolean }) {
   const phases = useMemo(() => buildPhases(steps, tools), [steps, tools]);
   return (
     <div className="flex min-w-0 flex-col gap-1 px-4">
@@ -778,9 +782,11 @@ const AssistantTurn = memo(
     const liveElapsed = useElapsed(startedAt, streaming);
     const hasWork = turn.work.length > 0 || Boolean(activity);
     const answered = turn.answer.length > 0;
-    // Work stays open while the agent is still working; once it has answered,
-    // it folds behind the "worked for" line (Orbit `foldableWork`).
-    const workOpen = workOverride ?? (streaming && !answered);
+    // Work folds behind the "worked for" line by default — including while the
+    // turn is still running. The fold line already carries the live summary
+    // ("运行了 12 条命令 · 正在搜索项目"), so expanding is something the reader
+    // asks for, not something that happens to them mid-run.
+    const workOpen = workOverride ?? false;
     // Only matter when the answer is actually sitting under it. The fold's own
     // rows and the answer share the same left edge, so with the fold expanded
     // and only a few pixels between them the answer reads as one more step.
@@ -794,6 +800,8 @@ const AssistantTurn = memo(
     ) : (
       formatWorkingDuration(duration, undefined, true)
     );
+    // Folding the live work would otherwise leave nothing but a timer on screen.
+    const liveHint = hasWork && streaming && !workOpen ? workSummaryLine(turn.work, tools, true) : undefined;
     const answerText = turn.answer.flatMap((step) => (step.kind === "note" && step.text ? [step.text] : [])).join("\n\n");
     const lastTime = messageTime(turn.last?.message) ?? (startedAt != null && duration != null ? startedAt + duration : undefined);
 
@@ -814,7 +822,7 @@ const AssistantTurn = memo(
         )}
         {hasWork || streaming ? (
           <TurnRow folded={false}>
-            <WorkFoldLine title={foldTitle} live={streaming} expandable={hasWork} open={workOpen && hasWork} onToggle={() => setWorkOverride(!workOpen)} />
+            <WorkFoldLine title={foldTitle} live={streaming} expandable={hasWork} open={workOpen && hasWork} hint={liveHint} onToggle={() => setWorkOverride(!workOpen)} />
           </TurnRow>
         ) : null}
         {hasWork ? (

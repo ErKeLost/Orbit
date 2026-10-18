@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { GitBranch, Loader, Undo2, X } from "../../shared/ui/icons";
+import { GitBranch, Loader, Undo, X } from "../../shared/ui/icons";
 import { buildUnifiedFile } from "../source-control/model/unifiedDiff";
 import { gitCheckpointDiff, type CheckpointFileDiff } from "../../lib/git";
 import { UnifiedDiffView, type UnifiedDiffFileModel } from "../source-control/ui/UnifiedDiffView";
@@ -39,7 +39,7 @@ export function CheckpointBanner({ sessionFile }: { sessionFile: string | null }
           onClick={() => void undoCheckpoint(latest)}
           className="flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[12px] text-content/70 hover:bg-content/10 hover:text-content"
         >
-          <Undo2 className="size-3.5" strokeWidth={1.75} />
+          <Undo className="size-3.5" strokeWidth={1.75} />
           撤销
         </button>
         <button
@@ -86,7 +86,7 @@ function CheckpointDiffDialog({ checkpoint, onClose }: { checkpoint: TurnCheckpo
             }}
             className="flex shrink-0 items-center gap-1 rounded-md bg-content/10 px-2.5 py-1 text-[12px] text-content hover:bg-content/15 disabled:opacity-50"
           >
-            <Undo2 className="size-3.5" strokeWidth={1.75} />
+            <Undo className="size-3.5" strokeWidth={1.75} />
             撤销本轮
           </button>
           <button

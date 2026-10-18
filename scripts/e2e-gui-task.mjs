@@ -21,7 +21,7 @@ const res = resolve(iso, "resources");
 mkdirSync(res, { recursive: true });
 for (const n of ["pi-runtime", "subagents", "computer-use", "browser-use", "node_modules", "node-runtime"])
   cpSync(resolve(root, "src-tauri/resources", n), resolve(res, n), { recursive: true });
-for (const n of ["gui-extension.ts", "search-tools.ts", "web-search.ts", "context-payload.ts", "request-budget.ts", "workspace.ts"])
+for (const n of ["gui-extension.ts", "search-tools.ts", "web-search.ts", "context-payload.ts", "request-budget.ts"])
   cpSync(resolve(root, "src-tauri/resources", n), resolve(res, n));
 cpSync(resolve(root, "src-tauri/target/debug/ax_control"), resolve(iso, "ax_control"));
 

@@ -3,7 +3,6 @@ import { create } from "zustand"
 export type Project = {
   path: string
   name: string
-  roots?: string[]
   /** 项目外观（monocode 的每项目外观）：色板索引 / 自定义色 / 置顶 / Logo 图片。 */
   colorIndex?: number
   customColor?: string
@@ -65,27 +64,11 @@ export function normalizeProjectPath(value: string): string {
   return value.replace(/\/+$/, "") || "/"
 }
 
-export function projectRoots(project: Project): string[] {
-  const seen = new Set<string>()
-  return [project.path, ...(project.roots ?? [])].flatMap(value => {
-    const path = normalizeProjectPath(value)
-    if (seen.has(path)) return []
-    seen.add(path)
-    return [path]
-  })
-}
-
-export function projectExtraRoots(project: Project): string[] {
-  return projectRoots(project).slice(1)
-}
-
 function normalizeProject(project: Project): Project {
   const path = normalizeProjectPath(project.path)
-  const roots = projectRoots({ ...project, path })
   return {
     path,
     name: project.name.trim() || path.split("/").filter(Boolean).at(-1) || "/",
-    ...(roots.length > 1 ? { roots } : {}),
     // 外观字段（颜色 / Logo / 置顶）原样保留，未设置就不写入。
     ...(project.colorIndex != null ? { colorIndex: project.colorIndex } : {}),
     ...(project.customColor ? { customColor: project.customColor } : {}),

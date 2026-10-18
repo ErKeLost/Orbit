@@ -17,7 +17,6 @@ import {
   restoreProjectRoute,
   setDesktopScope,
   sendPrompt,
-  syncConfiguredProjectRoots,
   firstUserTitle,
   workspaceConnectionIds,
 } from "../../lib/rpc";
@@ -163,10 +162,7 @@ async function runShow(id: string, cwd: string) {
   // settle（不论成败）后 `transitions` 自动注销这条 target。
   await tracked;
   // 连接起来时范围可能已经变了（用户又点了别的项目）：这次结果作废。
-  if (useShell.getState().workspaces.find((item) => item.id === id)?.cwd !== workspace.cwd) return;// bootstrap 不再预先建项目连接，附加 roots 跟着面上层后台同步，不挡首次渲染。
-    if (useWorkspace.getState().workspaceMode === "project") {
-      void syncConfiguredProjectRoots(workspace.cwd, target).catch(() => undefined);
-    }
+  if (useShell.getState().workspaces.find((item) => item.id === id)?.cwd !== workspace.cwd) return;// bootstrap 不再预先建项目连接，连接由面上层后台拉起，不挡首次渲染。
   // 旧连接只有在没被别的标签页引用、也没有会话内容时才收掉；否则它就是一条要
   // 留在后台继续跑的会话。
   if (stale && stale !== target && !connectionHasWork(stale) && !connectionInUseElsewhere(stale, id)) {
@@ -361,7 +357,6 @@ async function openSession(session: Pick<Session, "path"> & { cwd?: string }) {
   focusWorkspaceConnection(target, cwd);
   // settle（不论成败）后 `transitions` 自动注销这条 target。
   await tracked;
-  if (mode === "project") void syncConfiguredProjectRoots(cwd, target).catch(() => undefined);
   focusWorkspaceConnection(target, cwd);
   const openedSession = connectionSnapshot(target)?.state?.sessionFile;
   if (openedSession) useShell.getState().updateWorkspace(useShell.getState().activeWorkspaceId, { sessionPath: openedSession });

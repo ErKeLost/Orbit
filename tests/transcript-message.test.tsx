@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { TranscriptGroupView } from "../src/features/chat/Transcript";
+import { ActivityPhases, TranscriptGroupView } from "../src/features/chat/Transcript";
 import { buildPhases, formatWorkingDuration, projectTurn, proseSummary, workSummaryLine } from "../src/features/chat/turnModel";
 import type { DisplayMessage, Tool } from "../src/lib/protocol";
 
@@ -167,7 +167,7 @@ describe("assistant turns", () => {
     expect(html).toContain('aria-label="分支到新聊天"');
   });
 
-  test("shows the live work open and shimmering while streaming", () => {
+  test("folds the live work while streaming, keeping the doing line on the fold", () => {
     const live: DisplayMessage[] = [{ id: "live", message: { role: "assistant", content: [
       { type: "thinking", thinking: "正在检查" },
       { type: "toolCall", id: "run", name: "bash", arguments: { command: "bun test" } },
@@ -175,8 +175,10 @@ describe("assistant turns", () => {
     const html = render(live, { run: { name: "bash", running: true } }, true);
     expect(html).toContain("shimmer-text");
     expect(text(html)).toContain("Working");
-    expect(html).toContain('data-fold-state="open"');
-    expect(html).toContain('data-open="true"');
+    // 运行中也不自动展开：读者要自己点开，折行上留一句正在做什么。
+    expect(html).toContain('aria-expanded="false"');
+    expect(html).not.toContain("zen-fold-rail");
+    expect(text(html)).toContain("正在运行命令");
     expect(html).not.toContain('aria-label="复制回复"');
   });
 
@@ -204,7 +206,9 @@ describe("assistant turns", () => {
     const items: DisplayMessage[] = [{ id: "failed", message: { role: "assistant", stopReason: "toolUse", content: [
       { type: "toolCall", id: "run-failed", name: "bash", arguments: { command: "bun test" } },
     ] } }];
-    const html = render(items, { "run-failed": { name: "bash", running: false, result: "failed", isError: true } }, true);
+    const tools = { "run-failed": { name: "bash", running: false, result: "failed", isError: true } } as unknown as Record<string, Tool>;
+    // 步骤行现在默认折起来，所以直接渲染过程内容本身。
+    const html = renderToStaticMarkup(<ActivityPhases steps={projectTurn(items, tools, true).work} tools={tools} done={false} />);
     expect(html).toContain("失败的工具调用");
     expect(html).toContain("text-red-400");
   });

@@ -112,7 +112,7 @@ function baseUrlHost(value?: string) {
 function ProviderSearch({ value, onChange, placeholder, className = "", ariaLabel }: { value: string; onChange: (value: string) => void; placeholder: string; className?: string; ariaLabel: string }) {
   return (
     <label className={`provider-search ${className}`.trim()}>
-      <Icon name="magnifying-glass" />
+      <Icon name="search" />
       <Input aria-label={ariaLabel} value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} />
       {value ? <button type="button" aria-label="清除搜索" onClick={() => onChange("")}><Icon name="x" /></button> : null}
     </label>
@@ -143,7 +143,7 @@ function ModelDetails({ model, onUse, disabled, imageDefault }: { model: Provide
         <div><dt>用途</dt><dd>图片生成（generate_image）</dd></div>
       </dl>
       <Button variant="outline" className="provider-use-model" disabled={disabled || imageDefault.currentId === model.id} onClick={() => imageDefault.onUse(model)}>
-        <Icon name={imageDefault.currentId === model.id ? "check" : "image-square"} />
+        <Icon name={imageDefault.currentId === model.id ? "check" : "image-plus"} />
         {imageDefault.currentId === model.id ? "当前图片默认模型" : "设为图片默认模型"}
       </Button>
     </div>
@@ -165,7 +165,7 @@ function ModelDetails({ model, onUse, disabled, imageDefault }: { model: Provide
         <div><dt>价格（美元 / 百万 tokens）</dt><dd>{formatPricing(model.pricing)}</dd></div>
       </dl>
       <Button variant="outline" className="provider-use-model" disabled={disabled} onClick={onUse}><Icon name="check" />使用此模型</Button>
-      <Disclosure title={<span className="provider-disclosure-title"><Icon name="code" />接口原始元数据</span>}>
+      <Disclosure title={<span className="provider-disclosure-title"><Icon name="file-script" />接口原始元数据</span>}>
         <pre className="provider-raw-metadata">{JSON.stringify(model.raw, null, 2)}</pre>
       </Disclosure>
     </div>
@@ -452,7 +452,7 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
 
       <div className="provider-detail">
         {selected ? <>
-          <header className="provider-detail-header"><span className="provider-detail-mark"><ProviderMark id={selected.id} name={selected.name} /></span><div className="provider-detail-title"><h2>{selected.name || selected.id}{activeProvider === selected.id ? <span className="provider-status">当前使用</span> : <span className="provider-status" data-tone="muted">已添加</span>}</h2><p>{models.length} 个{imageProvider ? "图片模型" : "模型"}{baseUrlHost(selected.baseUrl) ? <> · <code title={selected.baseUrl}>{baseUrlHost(selected.baseUrl)}</code></> : null}{switchingProviderId === selected.id ? " · 处理中…" : ""}</p></div><div className="provider-detail-actions"><Button variant="outline" disabled={Boolean(switchingProviderId)} onClick={() => setEditorOpen(true)}><Icon name="pencil-simple" />编辑配置</Button>{!imageProvider && <Button variant="default" disabled={Boolean(switchingProviderId) || running} onClick={() => void applySelectedProvider()}><Icon name="check" />{switchingProviderId === selected.id ? "应用中…" : "应用配置"}</Button>}<Button variant="ghost" className="provider-delete-button" size="icon" title="删除配置" disabled={Boolean(switchingProviderId)} onClick={() => confirmDelete(selected)}><Icon name="trash" /></Button></div></header>
+          <header className="provider-detail-header"><span className="provider-detail-mark"><ProviderMark id={selected.id} name={selected.name} /></span><div className="provider-detail-title"><h2>{selected.name || selected.id}{activeProvider === selected.id ? <span className="provider-status">当前使用</span> : <span className="provider-status" data-tone="muted">已添加</span>}</h2><p>{models.length} 个{imageProvider ? "图片模型" : "模型"}{baseUrlHost(selected.baseUrl) ? <> · <code title={selected.baseUrl}>{baseUrlHost(selected.baseUrl)}</code></> : null}{switchingProviderId === selected.id ? " · 处理中…" : ""}</p></div><div className="provider-detail-actions"><Button variant="outline" disabled={Boolean(switchingProviderId)} onClick={() => setEditorOpen(true)}><Icon name="pencil" />编辑配置</Button>{!imageProvider && <Button variant="default" disabled={Boolean(switchingProviderId) || running} onClick={() => void applySelectedProvider()}><Icon name="check" />{switchingProviderId === selected.id ? "应用中…" : "应用配置"}</Button>}<Button variant="ghost" className="provider-delete-button" size="icon" title="删除配置" disabled={Boolean(switchingProviderId)} onClick={() => confirmDelete(selected)}><Icon name="trash" /></Button></div></header>
           <div className="provider-detail-content">
             <section className="provider-card">
               <header className="provider-card-head">
@@ -465,7 +465,7 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
                 <div className="provider-row">
                   <span className="provider-row-label">基础 URL</span>
                   <code className="provider-row-value" title={selected.baseUrl}>{selected.baseUrl || "未配置"}</code>
-                  <span className="provider-connection-note"><Icon name="shield-check" />{selected.hasApiKey ? "凭据已保存在本地" : "未保存 API Key"}</span>
+                  <span className="provider-connection-note"><Icon name="shield" />{selected.hasApiKey ? "凭据已保存在本地" : "未保存 API Key"}</span>
                 </div>
                 <div className="provider-row">
                   <span className="provider-row-label">API Key</span>
@@ -480,18 +480,18 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
                   <h3>{imageProvider ? "图片模型" : "模型目录"}<span className="provider-card-count">{models.length}</span></h3>
                   <p>{imageProvider ? "供 generate_image 使用的模型。" : "已从该提供商获取的可用模型。"}</p>
                 </div>
-                {!imageProvider ? <Button variant="outline" disabled={!!busy} onClick={() => void probe()}><Icon name="arrows-clockwise" />{busy === "probe" ? "刷新中…" : "刷新模型"}</Button> : null}
+                {!imageProvider ? <Button variant="outline" disabled={!!busy} onClick={() => void probe()}><Icon name="refresh-cw" />{busy === "probe" ? "刷新中…" : "刷新模型"}</Button> : null}
               </header>
             {imageProvider && <p className="provider-models-note">这些模型供 generate_image 使用。图片工具的端点、模型与密钥在「设置 → Pi 能力 → 图片模型 → 端点」里配置，不读取这里的 Base URL。</p>}
             <ProviderSearch className="provider-model-search" ariaLabel="搜索模型名称或 ID" placeholder="搜索模型名称或 ID" value={search} onChange={value => update({ search: value })} />
             <div className="provider-model-list">
               {visibleModels.map(model => { const inputs = modelModalities(model, "input"); const outputs = modelModalities(model, "output"); return <Disclosure key={model.id} title={<span className="provider-model-title"><span className="provider-model-name"><ModelLogo modelId={model.id} size={19} /><strong>{modelDisplayName(model)}</strong>{selected?.defaultModel === model.id && <span className="provider-model-default">默认</span>}{model.type === "image" && <span className="provider-model-badge">图片</span>}</span>{typeof model.context_window === "number" ? (<span className="provider-model-context">{formatContextLength(model.context_window)}<small> tokens</small></span>) : null}<ModelModalities values={inputs} />{inputs?.length && outputs?.length ? <span className="provider-model-arrow" aria-hidden>→</span> : null}<ModelModalities values={outputs} /></span>}><ModelDetails model={model} disabled={imageProvider ? !!busy : (!!busy || running || !cwd)} onUse={() => void applyModel(model)} imageDefault={imageProvider ? { currentId: currentImageModel, onUse: model => void setDefaultImageModel(model) } : undefined} /></Disclosure>; })}
-              {!models.length && <div className="provider-models-empty"><Icon name="cpu" /><strong>还没有模型目录</strong><p>刷新模型后会在这里显示可用模型。</p></div>}
+              {!models.length && <div className="provider-models-empty"><Icon name="cursor-magic-selection" /><strong>还没有模型目录</strong><p>刷新模型后会在这里显示可用模型。</p></div>}
               {models.length > 0 && !visibleModels.length && <div className="provider-models-empty"><p>没有匹配的模型。</p></div>}
             </div>
             </section>
           </div>
-        </> : <div className="provider-detail-empty"><Icon name="database" /><h2>添加 Provider</h2><p>新增后，供应商和模型会显示在这里。</p><Button variant="default" onClick={newProvider}><Icon name="plus" />新增 Provider</Button></div>}
+        </> : <div className="provider-detail-empty"><Icon name="bot" /><h2>添加 Provider</h2><p>新增后，供应商和模型会显示在这里。</p><Button variant="default" onClick={newProvider}><Icon name="plus" />新增 Provider</Button></div>}
       </div>
 
       <Dialog open={editorOpen} onOpenChange={(open: boolean) => { if (open) setEditorOpen(true); else closeEditor(); }}>
@@ -500,13 +500,13 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
           <div className="provider-dialog-body">
             {!editingProfileId && <div className="provider-presets"><span>快速填入</span>{presets.map(preset => <Button key={preset.id} variant="outline" onClick={() => applyPreset(preset)}><ProviderMark id={preset.id} />{preset.name}</Button>)}</div>}
             <div className="provider-dialog-grid">
-              <label><ProviderFieldLabel icon="identification-card">Provider ID</ProviderFieldLabel><Input value={provider} onChange={event => update({ provider: event.target.value })} placeholder="例如 my-gateway" aria-invalid={Boolean(providerConflict)} />{providerConflict && <small className="provider-field-error">该 ID 已存在，请选择已添加的 Provider。</small>}</label>
-              <label><ProviderFieldLabel icon="article">显示名称</ProviderFieldLabel><Input value={name} onChange={event => update({ name: event.target.value })} placeholder="例如 Team Gateway" /></label>
+              <label><ProviderFieldLabel icon="id-card">Provider ID</ProviderFieldLabel><Input value={provider} onChange={event => update({ provider: event.target.value })} placeholder="例如 my-gateway" aria-invalid={Boolean(providerConflict)} />{providerConflict && <small className="provider-field-error">该 ID 已存在，请选择已添加的 Provider。</small>}</label>
+              <label><ProviderFieldLabel icon="file">显示名称</ProviderFieldLabel><Input value={name} onChange={event => update({ name: event.target.value })} placeholder="例如 Team Gateway" /></label>
               <label><ProviderFieldLabel icon="link">Base URL</ProviderFieldLabel><Input value={baseUrl} onChange={event => update({ baseUrl: event.target.value })} placeholder="https://example.com/v1" /></label>
-              <label><ProviderFieldLabel icon="list-magnifying-glass">模型列表接口</ProviderFieldLabel><Input value={modelsUrl} onChange={event => update({ modelsUrl: event.target.value })} placeholder="留空则使用 Base URL/models" /></label>
+              <label><ProviderFieldLabel icon="search">模型列表接口</ProviderFieldLabel><Input value={modelsUrl} onChange={event => update({ modelsUrl: event.target.value })} placeholder="留空则使用 Base URL/models" /></label>
               <label><ProviderFieldLabel icon="globe">API 类型</ProviderFieldLabel><Select label="API 类型" value={api} options={apiTypes.map(item => ({ value: item, label: item }))} onChange={value => update({ api: value as (typeof apiTypes)[number] })} /></label>
-              <label><ProviderFieldLabel icon="cpu">默认模型</ProviderFieldLabel><Select label="默认模型目录" value={defaultModelId} options={[{ value: "", label: "保存后使用首个模型" }, ...models.map(model => ({ value: model.id, label: modelDisplayName(model) }))]} onChange={selectDefaultModel} /></label>
-              <label><ProviderFieldLabel icon="identification-card">模型 ID</ProviderFieldLabel><Input value={defaultModelId} onChange={event => update({ defaultModelId: event.target.value })} placeholder="也可手动输入模型 ID" spellCheck={false} /></label>
+              <label><ProviderFieldLabel icon="cursor-magic-selection">默认模型</ProviderFieldLabel><Select label="默认模型目录" value={defaultModelId} options={[{ value: "", label: "保存后使用首个模型" }, ...models.map(model => ({ value: model.id, label: modelDisplayName(model) }))]} onChange={selectDefaultModel} /></label>
+              <label><ProviderFieldLabel icon="id-card">模型 ID</ProviderFieldLabel><Input value={defaultModelId} onChange={event => update({ defaultModelId: event.target.value })} placeholder="也可手动输入模型 ID" spellCheck={false} /></label>
               <label><ProviderFieldLabel icon="key">API Key</ProviderFieldLabel><Input type="password" value={apiKey} onChange={event => update({ apiKey: event.target.value })} placeholder={selected?.hasApiKey ? "已保存，留空保持不变" : "输入服务商 API Key"} autoComplete="off" /></label>
             </div>
             <div className="provider-dialog-auth"><div><strong>发送认证请求头</strong><p>关闭后，模型服务请求不会附带 API Key。</p></div><Toggle label="发送 API 认证请求头" on={authHeader} onChange={value => update({ authHeader: value })} /></div>

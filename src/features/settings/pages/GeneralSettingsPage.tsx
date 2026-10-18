@@ -297,7 +297,7 @@ function ToolsSettings({ tools, running }: { tools: GuiTools; running: boolean }
 }
 
 function TerminalSettings({ cwd, desktop }: { cwd: string; desktop: boolean }) {
-  return <SettingRow title="原生终端环境" description={desktop ? "在独立终端中使用账户登录、包安装和完整的 Pi 交互能力。" : "原生终端需要在电脑端打开。"}><Button variant="outline" disabled={!desktop || !cwd} onClick={() => { if (desktopRuntime()) void invoke("open_pi_terminal", { cwd, session: null, piArgs: [] }).catch(report); }}><Icon name="terminal-window" />打开终端</Button></SettingRow>;
+  return <SettingRow title="原生终端环境" description={desktop ? "在独立终端中使用账户登录、包安装和完整的 Pi 交互能力。" : "原生终端需要在电脑端打开。"}><Button variant="outline" disabled={!desktop || !cwd} onClick={() => { if (desktopRuntime()) void invoke("open_pi_terminal", { cwd, session: null, piArgs: [] }).catch(report); }}><Icon name="terminal" />打开终端</Button></SettingRow>;
 }
 
 function DesktopUpdateSettings({ desktop }: { desktop: boolean }) {
@@ -569,7 +569,7 @@ export function DesktopHostSettings({ pageMode = false }: { pageMode?: boolean }
   if (pageMode) {
     const relayReady = Boolean(relay?.hasHostKey);
     return <div className="mobile-access-page">
-      <SettingsGroup title="电脑 Host" icon="desktop" description="开启后，手机 Orbit 可以连接这台电脑查看会话、继续对话。">
+      <SettingsGroup title="电脑 Host" icon="dashboard-square" description="开启后，手机 Orbit 可以连接这台电脑查看会话、继续对话。">
         <SettingRow title={host ? "Host 运行中" : "Host 未开启"} description={host ? connectedLabel || statusLabel : "开启后用手机 Orbit 扫描下方二维码即可配对。"}>
           <Toggle label="电脑 Host" on={Boolean(host)} disabled={loading || Boolean(busy)} onChange={checked => void (checked ? start() : stop())} />
         </SettingRow>
@@ -583,13 +583,13 @@ export function DesktopHostSettings({ pageMode = false }: { pageMode?: boolean }
         </details>
       </SettingsGroup>
 
-      <SettingsGroup title="扫码连接" icon="device-mobile" description="手机与电脑连接同一 Wi-Fi 后扫码配对。">
+      <SettingsGroup title="扫码连接" icon="smart-phone" description="手机与电脑连接同一 Wi-Fi 后扫码配对。">
         {host ? <div className="mobile-access-qr-block">
           <div className="mobile-access-qr"><QRCode type="svg" errorLevel="M" value={host.pairingUri} size={176} bordered={false} color="#111111" bgColor="#ffffff" /></div>
           <p className="mobile-access-qr-copy">{host.mode === "relay" ? "任何网络均可连接" : "同一 Wi-Fi 下直连电脑，连接速度更快"}</p>
           <Button variant="ghost" title="复制配对链接" aria-label="复制配对链接" onClick={() => void copyPairingUri()}>复制配对链接</Button>
           {connectionFeedback && <p className="remote-host-feedback" role="status">{connectionFeedback}</p>}
-          <p className="remote-host-security"><Icon name="shield-check" />已配对的手机与这台电脑等同权限：能浏览、读取和修改这里的文件，也能执行 Git 与终端命令。配对链接只发到自己的设备。</p>
+          <p className="remote-host-security"><Icon name="shield" />已配对的手机与这台电脑等同权限：能浏览、读取和修改这里的文件，也能执行 Git 与终端命令。配对链接只发到自己的设备。</p>
         </div> : <div className="mobile-access-qr-block"><div className="mobile-access-qr-empty"><ScanLine /><strong>开启电脑 Host 后显示二维码</strong><span>使用手机 Orbit 扫描即可连接</span></div></div>}
       </SettingsGroup>
     </div>;
@@ -624,11 +624,11 @@ export function DesktopHostSettings({ pageMode = false }: { pageMode?: boolean }
         </div>
         {showQr && <div className="remote-host-qr"><QRCode type="svg" errorLevel="M" value={host.pairingUri} size={240} bordered={false} color="#111111" bgColor="#ffffff" /><span>用手机 Orbit 扫描此二维码，连接这台电脑</span></div>}
         {connectionFeedback && <p className="remote-host-feedback" role="status">{connectionFeedback}</p>}
-        <p className="remote-host-security"><Icon name="shield-check" />配对链接包含访问凭据，请只发送到自己的设备。</p>
+        <p className="remote-host-security"><Icon name="shield" />配对链接包含访问凭据，请只发送到自己的设备。</p>
         <div className="remote-host-devices">
           <strong>已连接的设备</strong>
           {host.connectedClients > 0
-            ? Array.from({ length: host.connectedClients }, (_, index) => <div className="remote-host-device" key={index}><Icon name="device-mobile" /><span>移动端设备 {index + 1}</span><small><i />在线</small></div>)
+            ? Array.from({ length: host.connectedClients }, (_, index) => <div className="remote-host-device" key={index}><Icon name="smart-phone" /><span>移动端设备 {index + 1}</span><small><i />在线</small></div>)
             : <p>暂无设备连接</p>}
         </div>
       </> : <>
@@ -686,14 +686,14 @@ export function GeneralSettingsPage() {
   }
 
   return <>
-    <div className="panel-heading"><div><h1><Icon name="gear-six" />常规</h1></div></div>
-    <SettingsGroup title="桌面集成" icon="desktop" description="启动页面、屏幕保持唤醒、系统通知、全局快捷键与开机自启。"><DesktopIntegrationSettings desktop={desktop} /></SettingsGroup>
-    <SettingsGroup title="工作区" icon="folder-simple"><TrustSettings mode={trustMode} busy={trustBusy} desktop={desktop} onChange={changeTrustMode} /></SettingsGroup>
-    {runtimeTarget === "mobile" && <SettingsGroup title="后台与更新" icon="arrows-clockwise" description="保持配对连接，以及从 GitHub Release 检查 Android 安装包。"><BackgroundConnectionSettings /><MobileAppUpdateSettings /></SettingsGroup>}
+    <div className="panel-heading"><div><h1><Icon name="settings" />常规</h1></div></div>
+    <SettingsGroup title="桌面集成" icon="dashboard-square" description="启动页面、屏幕保持唤醒、系统通知、全局快捷键与开机自启。"><DesktopIntegrationSettings desktop={desktop} /></SettingsGroup>
+    <SettingsGroup title="工作区" icon="folder"><TrustSettings mode={trustMode} busy={trustBusy} desktop={desktop} onChange={changeTrustMode} /></SettingsGroup>
+    {runtimeTarget === "mobile" && <SettingsGroup title="后台与更新" icon="refresh-cw" description="保持配对连接，以及从 GitHub Release 检查 Android 安装包。"><BackgroundConnectionSettings /><MobileAppUpdateSettings /></SettingsGroup>}
     <SettingsGroup title="上下文" icon="brain" description="管理当前会话的容量与压缩方式。"><ContextSettings cwd={cwd} status={status} running={running} state={state} onCompact={manualCompact} /></SettingsGroup>
-    <SettingsGroup title="消息队列" icon="chats"><QueueSettings status={status} state={state} /></SettingsGroup>
-    <SettingsGroup title="运行环境" icon="terminal-window" description="Pi、Node、配置和资源目录的实际解析结果。"><RuntimeSettings desktop={desktop} cwd={cwd} /></SettingsGroup>
-    <SettingsGroup title="更新" icon="arrows-clockwise"><DesktopUpdateSettings desktop={desktop} /></SettingsGroup>
+    <SettingsGroup title="消息队列" icon="message-multiple"><QueueSettings status={status} state={state} /></SettingsGroup>
+    <SettingsGroup title="运行环境" icon="terminal" description="Pi、Node、配置和资源目录的实际解析结果。"><RuntimeSettings desktop={desktop} cwd={cwd} /></SettingsGroup>
+    <SettingsGroup title="更新" icon="refresh-cw"><DesktopUpdateSettings desktop={desktop} /></SettingsGroup>
     <SettingsGroup title="工具与终端" icon="wrench"><ToolsSettings tools={tools} running={running} /><TerminalSettings cwd={cwd} desktop={desktop} /></SettingsGroup>
     <SettingsGroup title="Pi 能力" icon="plugs-connected" description="MCP、Codemode、Tool Search、图片与分类器模型、虚拟路由模型。"><PiCapabilitiesSettings desktop={desktop} online={status === "online"} running={running} tools={tools} /></SettingsGroup>
     <SettingsGroup title="数据管理" icon="trash" description="管理保存在电脑上的会话历史。"><HistorySettings cwd={cwd} desktop={desktop} busy={historyBusy} setBusy={setHistoryBusy} /></SettingsGroup>

@@ -159,7 +159,7 @@ export function IntegrationsPage() {
       <div className="provider-detail">
         <header className="provider-detail-header">
           <span className="provider-detail-mark">
-            <Icon name="plugs-connected" />
+            <Icon name="plug" />
           </span>
           <div className="provider-detail-title">
             <h2>
@@ -179,11 +179,11 @@ export function IntegrationsPage() {
           </div>
           <div className="provider-detail-actions">
             <Button variant="outline" onClick={() => void refreshCapabilities()}>
-              <Icon name="arrows-clockwise" />
+              <Icon name="refresh-cw" />
               刷新模型
             </Button>
             <Button variant="outline" onClick={() => setEndpointOpen(true)}>
-              <Icon name="pencil-simple" />
+              <Icon name="pencil" />
               编辑端点
             </Button>
           </div>
@@ -226,7 +226,7 @@ export function IntegrationsPage() {
                 <span className="provider-row-label">Provider ID</span>
                 <code className="provider-row-value">{config.data?.provider?.id ?? config.data?.defaultProviderId ?? "volcengine"}</code>
                 <span className="provider-connection-note">
-                  <Icon name="shield-check" />
+                  <Icon name="shield" />
                   {config.data?.hasApiKey ? "凭据已保存在本地" : "未保存 API Key"}
                 </span>
               </div>

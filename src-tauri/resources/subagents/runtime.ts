@@ -56,6 +56,11 @@ export interface TaskInput {
   model?: WorkerModel
   thinking?: string
   context?: AgentContextMode
+  /**
+   * 头像图标，Iconify 名字，由派活的模型自己写（见 `tools.ts` 的 schema）。
+   * runtime 不校验也不映射：它只是把名字带到 GUI，由渲染层决定能不能画。
+   */
+  logo?: string
 }
 
 export interface SpawnOptions extends TaskInput {
@@ -376,6 +381,7 @@ export class SubagentRuntime {
       turn: this.turn,
       childrenIds: [],
       ...(options.model ? { model: modelReference(options.model) } : {}),
+      ...(options.logo ? { logo: options.logo } : {}),
     }
     this.nodes.set(id, node)
     this.attachChild(parentId, id)

@@ -241,7 +241,7 @@ function MediaView({ file, kind, remote }: { file: { path: string; name: string 
             img?.classList.toggle("max-h-full");
             img?.classList.toggle("max-h-[85vh]");
           }}
-          className="cursor-zoom-in rounded-xl border border-content/10 bg-content/4 p-2"
+          className="cursor-zoom-in rounded-xl bg-content/4 p-2"
         >
           <img src={src} alt={file.name} draggable={false} className="max-h-[60vh] max-w-full rounded-lg object-contain" />
         </button>

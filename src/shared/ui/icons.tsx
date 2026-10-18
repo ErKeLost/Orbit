@@ -108,6 +108,18 @@ import ViewIcon from "@hugeicons/core-free-icons/ViewIcon";
 import WholeWordIcon from "@hugeicons/core-free-icons/WholeWordIcon";
 import Wrench01Icon from "@hugeicons/core-free-icons/Wrench01Icon";
 import { forwardRef, type Ref } from "react";
+import IdCardIcon from "@hugeicons/core-free-icons/IdCardIcon";
+import Link01Icon from "@hugeicons/core-free-icons/Link01Icon";
+import Key01Icon from "@hugeicons/core-free-icons/Key01Icon";
+import Plug01Icon from "@hugeicons/core-free-icons/Plug01Icon";
+import Bug01Icon from "@hugeicons/core-free-icons/Bug01Icon";
+import Rocket01Icon from "@hugeicons/core-free-icons/Rocket01Icon";
+import MusicNote01Icon from "@hugeicons/core-free-icons/MusicNote01Icon";
+import ListChecksIcon from "@hugeicons/core-free-icons/ListChecksIcon";
+import Calendar03Icon from "@hugeicons/core-free-icons/Calendar03Icon";
+import BulbIcon from "@hugeicons/core-free-icons/BulbIcon";
+import Database01Icon from "@hugeicons/core-free-icons/Database01Icon";
+import Film01Icon from "@hugeicons/core-free-icons/Film01Icon";
 
 /** Props shared by every chrome icon. `icon` is filled in by the named wrappers. */
 export type IconProps = Omit<HugeiconsIconProps, "icon">;
@@ -159,7 +171,6 @@ const UnfoldVerticalIcon: IconSvgElement = [
   ["path", { d: "M7 17L12 22L17 17", ...stroke, key: "5" }],
 ];
 
-export const AlertCircle = wrap(AlertCircleIcon, "AlertCircle");
 export const AppWindow = wrap(AppWindowIcon, "AppWindow");
 export const Archive = wrap(Archive02Icon, "Archive");
 export const ArrowDownCircle = wrap(CircleArrowDown01Icon, "ArrowDownCircle");
@@ -277,8 +288,8 @@ export const SquarePlus = wrap(AddSquareIcon, "SquarePlus");
 export const Star = wrap(StarIcon, "Star");
 export const StickyNote = wrap(Note01Icon, "StickyNote");
 export const Terminal = wrap(ComputerTerminal01Icon, "Terminal");
-export const Trash2 = wrap(Delete02Icon, "Trash2");
-export const Undo2 = wrap(UndoIcon, "Undo2");
+export const Trash = wrap(Delete02Icon, "Trash");
+export const Undo = wrap(UndoIcon, "Undo");
 export const UnfoldVertical = wrap(UnfoldVerticalIcon, "UnfoldVertical");
 export const Ungroup = wrap(UngroupItemsIcon, "Ungroup");
 export const WandSparkles = wrap(MagicWand01Icon, "WandSparkles");
@@ -286,3 +297,15 @@ export const WholeWord = wrap(WholeWordIcon, "WholeWord");
 export const Wrench = wrap(Wrench01Icon, "Wrench");
 export const X = wrap(Cancel01Icon, "X");
 export const Zap = wrap(FlashIcon, "Zap");
+export const Bug = wrap(Bug01Icon, "Bug");
+export const Rocket = wrap(Rocket01Icon, "Rocket");
+export const MusicNote = wrap(MusicNote01Icon, "MusicNote");
+export const ListChecks = wrap(ListChecksIcon, "ListChecks");
+export const Calendar = wrap(Calendar03Icon, "Calendar");
+export const Bulb = wrap(BulbIcon, "Bulb");
+export const Database = wrap(Database01Icon, "Database");
+export const FilmStrip = wrap(Film01Icon, "FilmStrip");
+export const IdCard = wrap(IdCardIcon, "IdCard");
+export const Link = wrap(Link01Icon, "Link");
+export const Key = wrap(Key01Icon, "Key");
+export const Plug = wrap(Plug01Icon, "Plug");

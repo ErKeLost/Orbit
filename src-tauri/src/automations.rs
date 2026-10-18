@@ -30,9 +30,6 @@ pub struct Automation {
     #[serde(default)]
     model_settings: HashMap<String, String>,
     cwd: String,
-    workspace_mode: String,
-    #[serde(default)]
-    worktree_cwd: String,
     #[serde(default)]
     session_folder_id: String,
     reuse_session: bool,
@@ -73,9 +70,6 @@ pub struct AutomationUpsert {
     #[serde(default)]
     model_settings: HashMap<String, String>,
     cwd: String,
-    workspace_mode: String,
-    #[serde(default)]
-    worktree_cwd: String,
     #[serde(default)]
     session_folder_id: String,
     #[serde(default)]
@@ -265,9 +259,6 @@ fn validate_upsert(input: &AutomationUpsert) -> Result<(), String> {
     if input.cwd.trim().is_empty() {
         return Err("Choose a project for this automation.".into());
     }
-    if !matches!(input.workspace_mode.as_str(), "current" | "worktree" | "existing") {
-        return Err("Invalid automation workspace mode.".into());
-    }
     if !matches!(
         input.runtime_mode.as_str(),
         "supervised" | "auto-accept-edits" | "auto" | "full-access"
@@ -368,8 +359,6 @@ pub async fn automations_upsert(app: AppHandle, input: AutomationUpsert, now: i6
         model: input.model,
         model_settings: input.model_settings,
         cwd: input.cwd,
-        workspace_mode: input.workspace_mode,
-        worktree_cwd: input.worktree_cwd,
         session_folder_id: input.session_folder_id,
         reuse_session: input.reuse_session,
         runtime_mode: input.runtime_mode,
@@ -566,8 +555,6 @@ mod tests {
             model: "".into(),
             model_settings: HashMap::new(),
             cwd: "/tmp/project".into(),
-            workspace_mode: "current".into(),
-            worktree_cwd: String::new(),
             session_folder_id: String::new(),
             reuse_session: false,
             runtime_mode: "supervised".into(),

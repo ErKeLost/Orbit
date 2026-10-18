@@ -43,7 +43,7 @@ import {
   toClientPoint,
   type NoteEdits,
 } from "../model/notesView";
-import { File, Trash2, X } from "../../../shared/ui/icons";
+import { File, Trash, X } from "../../../shared/ui/icons";
 
 function NoteDetailTab({
   label,
@@ -427,7 +427,7 @@ function NoteEditor({
               }}
               className="inline-flex items-center gap-1.5 rounded-md px-3 h-7 text-[12px] text-content/70 hover:bg-content/10 hover:text-red-400"
             >
-              <Trash2 className="size-3.5" strokeWidth={1.75} />
+              <Trash className="size-3.5" strokeWidth={1.75} />
               Delete
             </button>
           </div>

@@ -11,6 +11,8 @@ export type AgentNode = {
   summary?: string;
   error?: string;
   model?: string;
+  /** 头像图标（Iconify 名字），spawn 时由模型给；不存在时渲染层回落。 */
+  logo?: string;
   pid?: number;
   childrenIds: string[];
   children: AgentNode[];
@@ -57,6 +59,7 @@ function parseNode(value: unknown, inheritedParentId: string | null = null): Age
   const summary = optionalString(source.summary);
   const error = optionalString(source.error);
   const model = optionalString(source.model);
+  const logo = optionalString(source.logo);
   const sessionId = optionalString(source.sessionId);
   const sessionPath = optionalString(source.sessionPath);
   return {
@@ -70,6 +73,7 @@ function parseNode(value: unknown, inheritedParentId: string | null = null): Age
     ...(summary ? { summary } : {}),
     ...(error ? { error } : {}),
     ...(model ? { model } : {}),
+    ...(logo ? { logo } : {}),
     ...(pid === undefined ? {} : { pid }),
     childrenIds: [...new Set([...referencedChildren, ...children.map(child => child.id)])],
     children,

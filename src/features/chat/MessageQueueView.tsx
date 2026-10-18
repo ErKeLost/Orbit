@@ -1,4 +1,4 @@
-import { CornerDownRight, ListEnd, Trash2 } from "../../shared/ui/icons";
+import { CornerDownRight, ListEnd, Trash } from "../../shared/ui/icons";
 
 /**
  * Orbit's queued-message card, fed by Pi's own queue (`queue_update`):
@@ -58,7 +58,7 @@ export function MessageQueueView({
                 onClick={onClear}
                 className="grid size-6 shrink-0 place-items-center rounded-md hover:bg-content/10 hover:text-content"
               >
-                <Trash2 className="size-3.5" />
+                <Trash className="size-3.5" />
               </button>
             ) : null}
           </div>

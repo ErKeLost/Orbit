@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertCircle, Loader } from "../../../shared/ui/icons";
+import { CircleAlert, Loader } from "../../../shared/ui/icons";
 import {
   gitCommitFileDiff,
   gitCommitFiles,
@@ -101,7 +101,7 @@ export function CommitDiffView({ cwd, sha }: Props) {
   if (error) {
     return (
       <div className="grid h-full place-items-center p-6 text-center">
-        <AlertCircle className="mx-auto mb-3 size-5 text-red-400" />
+        <CircleAlert className="mx-auto mb-3 size-5 text-red-400" />
         <p className="text-[13px] text-content">无法加载提交</p>
         <p className="mt-1 text-[12px] text-content/50">{error}</p>
       </div>

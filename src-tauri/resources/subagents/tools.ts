@@ -88,6 +88,12 @@ const TaskSchema = {
     model: { type: "string", description: "可选模型，格式 provider/model" },
     thinking: ThinkingSchema,
     context: ContextSchema,
+    logo: {
+      type: "string",
+      maxLength: 64,
+      description:
+        'Optional avatar icon for this worker, written as an Iconify name. The GUI bundles Microsoft\'s Fluent UI System Color set, so a bare name works: "shield-checkmark-24", "code-block-24", "image-24", "bug-24" (20px grid; the -16/-20/-24/-32 suffix picks the size). Another collection works with its prefix, e.g. "flat-color-icons:search". Describe what the worker is, not how it is going. An unknown name falls back to a neutral glyph, so a wrong guess costs nothing but a duller row.',
+    },
   },
   required: ["task_name", "message"],
   additionalProperties: false,
@@ -135,6 +141,7 @@ function taskOptions(input: SpawnInput, ctx: RuntimeContext): TaskInput {
     model: workerModel(input, ctx),
     thinking: input.thinking || ctx.thinkingLevel,
     context: input.context ?? "inherit",
+    logo: input.logo,
   }
 }
 
@@ -204,6 +211,7 @@ export function registerSubagentTools(pi: ExtensionAPI): void {
     promptGuidelines: [
       "Use spawn_agent for one specialized task. It returns immediately; emit several calls when independent work should run in parallel.",
       "The worker already sees this conversation unless you pass context: \"isolated\", so describe the task itself instead of re-summarizing prior work.",
+      "Give each worker a `logo` that says what it is doing, and vary it: a column of identical glyphs cannot be read at a glance. The GUI bundles the `fluent-color` set, so a bare name like \"shield-checkmark-24\" is enough.",
       "Never assume a worker's answer is in the spawn_agent result; it arrives as a later FINAL_ANSWER message.",
     ],
     executionMode: "sequential",

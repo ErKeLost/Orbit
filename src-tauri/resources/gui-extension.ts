@@ -4,7 +4,6 @@ import {homedir} from 'node:os'
 import {pathToFileURL} from 'node:url'
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, McpServerConfig, ModelRouteRequest, ToolInfo } from '@earendil-works/pi-coding-agent'
 import {registerSubagentTools,SUBAGENT_TOOL_NAMES} from './subagents/index.ts'
-import {registerWorkspace} from './workspace.ts'
 import {COMPUTER_USE_TOOL_NAMES,registerComputerUseMode} from './computer-use/mode.ts'
 import {BROWSER_USE_TOOL_NAMES,registerBrowserUseMode} from './browser-use/mode.ts'
 import {providerToolChars} from './context-payload.ts'
@@ -15,7 +14,7 @@ import {enableWebSearchTool,registerWebSearch,resolveWebSearchSettings} from './
 // Pi official docs/extensions.md: registerCommand, getAllTools, setActiveTools,
 // ExtensionCommandContext.navigateTree and setLabel. Loaded only by this GUI.
 export const SESSION_META_TYPE='pi-gui-session-meta'
-export const SESSION_ICONS=['code','bug','palette','magnifying-glass','book-open','terminal-window','globe','image-square','film-strip','music-notes','database','translate','list-checks','calendar-blank','rocket-launch','lightbulb','chats','chat-teardrop-text'] as const
+export const SESSION_ICONS=['file-script','bug','palette','search','file','terminal','globe','image-plus','film-strip','music-note','database','internet','list-checks','calendar','rocket','bulb','message-multiple','message-square'] as const
 // Both modes own their own gating command, so neither belongs in the generic tool list.
 const COMPUTER_USE_TOOLS=new Set<string>([...COMPUTER_USE_TOOL_NAMES,...BROWSER_USE_TOOL_NAMES])
 type SessionIcon=(typeof SESSION_ICONS)[number]
@@ -26,7 +25,7 @@ export function parseSessionMetadata(raw:string):{title:string;icon:SessionIcon}
     const value=JSON.parse(match[0]) as {title?:unknown;icon?:unknown}
     const title=typeof value.title==='string'?Array.from(value.title.replace(/\s+/g,' ').trim()).slice(0,24).join(''):''
     if(!title)return null
-    const icon=typeof value.icon==='string'&&SESSION_ICONS.includes(value.icon as SessionIcon)?value.icon as SessionIcon:'chat-teardrop-text'
+    const icon=typeof value.icon==='string'&&SESSION_ICONS.includes(value.icon as SessionIcon)?value.icon as SessionIcon:'message-square'
     return {title,icon}
   }catch{return null}
 }
@@ -1058,7 +1057,6 @@ function dropReason(settings:RequestBudgetSettings,result:{droppedByCount:number
 export default async function (pi: ExtensionAPI) {
   let latestProviderToolChars: number | undefined
   registerSubagentTools(pi)
-  registerWorkspace(pi)
   registerImages(pi)
   registerWebSearch(pi,{readConfig:readWebSearchSettings,authPath:AUTH_CONFIG_PATH})
   pi.on('before_provider_request',event=>{latestProviderToolChars=providerToolChars(event.payload)})

@@ -97,7 +97,6 @@ mock.module("../src/lib/rpc", () => ({
     currentCwd = cwd
     useWorkspace.getState().set({ cwd, workspaceMode: mode })
   },
-  async syncConfiguredProjectRoots() {},
   async closeConnection() {},
   async listSessions() { return [] },
   async sendPrompt(command: { type: string; message: string }, target: string) {

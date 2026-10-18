@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { activeProjects, derivedProjectColor, normalizeProjectPath, projectRoots, sortPinnedFirst, useProjects } from "../../lib/projects";
+import { activeProjects, derivedProjectColor, normalizeProjectPath, sortPinnedFirst, useProjects } from "../../lib/projects";
 import { desktopRuntime, report } from "../../lib/rpc";
 import { useWorkspaceTabs } from "../shell/use-workspace-tabs";
 import { useWorkspace } from "../../lib/store";
@@ -51,23 +51,19 @@ export function ProjectPicker({ disabled }: { disabled: boolean }) {
       report("请在电脑端选择文件夹");
       return;
     }
-    // Pi 支持一个项目多个 app root：多选时第一个当项目根，其余作为附加目录。
-    const selected = await open({ directory: true, multiple: true, title: "打开文件夹（可多选）", defaultPath: cwd || undefined });
+    // 选中的文件夹就是项目根；已有同名项目就复用它的名字和外观。
+    const selected = await open({ directory: true, title: "打开文件夹", defaultPath: cwd || undefined });
     if (!selected) return;
-    const paths = (Array.isArray(selected) ? selected : [selected])
-      .map((path) => normalizeProjectPath(path as string))
-      .filter(Boolean);
-    if (!paths.length) return;
-    const [primary, ...extra] = paths;
+    const path = normalizeProjectPath(Array.isArray(selected) ? (selected[0] ?? "") : (selected as string));
+    if (!path) return;
     const store = useProjects.getState();
-    const existing = store.projects.find((project) => project.path === primary);
-    const roots = projectRoots({ path: primary, name: existing?.name ?? "", roots: [...(existing?.roots ?? []), ...extra] });
+    const existing = store.projects.find((project) => project.path === path);
     store.update({
-      path: primary,
-      name: existing?.name ?? primary.split("/").filter(Boolean).at(-1) ?? "/",
-      roots,
+      ...existing,
+      path,
+      name: existing?.name ?? path.split("/").filter(Boolean).at(-1) ?? "/",
     });
-    await pick(primary, "project");
+    await pick(path, "project");
   }
 
   return (

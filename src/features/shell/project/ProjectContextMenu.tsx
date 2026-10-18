@@ -13,7 +13,7 @@ import {
   Pencil,
   Pin,
   PinOff,
-  Trash2 as Trash,
+  Trash,
   X,
 } from "../../../shared/ui/icons";
 
