@@ -202,7 +202,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
   const computerUse = useWorkspace((state) => state.computerUseEnabled);
   const browserUse = useWorkspace((state) => state.browserUseEnabled);
   const dialog = useWorkspace((state) => state.dialogs[0]);
-  // 分支名放在输入框下方：随时能看到当前 checkout，点开就能切分支 / 新建分支。
+  // 分支名放在输入框上方左侧（和项目选择器同一行）：随时能看到当前 checkout，
+  // 点开就能切分支 / 新建分支。
   const branches = useGitBranches(project).data;
   const composerKey = connectionId || project;
   const tokens = useComposerTokens(project);
@@ -359,9 +360,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
       perfMarkSend();
       const attachmentsAtSend = attachments;
       const { images, files: fileChips } = splitAttachments(attachmentsAtSend);
-      // 张数交给等待位：带图的一轮慢在上传，说“正在发送图片”比笼统的“正在思考”
-      // 更能区分“在干活”和“卡住了”。
-      useWorkspace.getState().event({ type: "prompt_submitted", images: images.length });
+      useWorkspace.getState().event({ type: "prompt_submitted" });
       const previewId = `queued-${crypto.randomUUID()}`;
       const message = buildPromptMessage(text, fileChips);
       const before = attachmentsAtSend;
@@ -500,6 +499,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
             {/* 新会话（首页）：头部带项目选择器，发送前就能切项目 / 不在文件夹里工作。
                 会话开始后（centered=false）撤下选择器——中途切范围等于打断会话。 */}
             {centered ? <ProjectPicker disabled={running} /> : null}
+            <BranchPicker cwd={project} current={branches?.current ?? null} disabled={running} />
             <div className="ml-auto flex shrink-0 items-center">
               <ContextMeter usage={context} compacting={compacting} />
             </div>
@@ -642,8 +642,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
                 event.target.value = "";
               }}
             />
-            <div className="composer-toolbar flex min-w-0 flex-1 items-center gap-1">
-              <BranchPicker cwd={project} current={branches?.current ?? null} disabled={running} />
+            <div className="composer-toolbar flex min-w-0 flex-1 items-center">
               <div className="flex shrink-0 items-center gap-1">
                 <ModelPicker />
               </div>

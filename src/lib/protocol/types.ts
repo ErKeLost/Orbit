@@ -16,7 +16,7 @@ export type Event = { type: string; message?: PiMessage; toolCallId?: string; to
  * 这段时间 ``running`` 还是 false，屏幕上此前没有任何指示。它只在空闲提交时置位，
  * ``agent_start`` / ``agent_settled`` / ``prompt_settled`` 时撤下。
  */
-export type Transcript = { messages: DisplayMessage[]; active: number; running: boolean; submitted: boolean; compacting: boolean; loading: boolean; phase: string; tools: Record<string, Tool>; error: string | null; aborted: boolean; queue: { steering: string[]; followUp: string[] }; bash: { id?: string; command?: string; output: string; running: boolean } | null; turnStartedAt: number | null; /** 本轮提交带了图片、且还没拿到第一个 token：等待位说“正在发送图片”。 */ pendingImages?: number }
+export type Transcript = { messages: DisplayMessage[]; active: number; running: boolean; submitted: boolean; compacting: boolean; loading: boolean; phase: string; tools: Record<string, Tool>; error: string | null; aborted: boolean; queue: { steering: string[]; followUp: string[] }; bash: { id?: string; command?: string; output: string; running: boolean } | null; turnStartedAt: number | null }
 /**
  * `loading` 是骨架屏的开关：切换会话/项目时置位，`hydrate` 换上一份真正的 transcript
  * 就自然把它清掉（见 `lib/rpc.ts` 的 `loadMessages`）。
