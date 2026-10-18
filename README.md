@@ -5,7 +5,7 @@
 <h1 align="center">Orbit</h1>
 
 <p align="center">
-  <strong>A personal agent that runs on your own machine.</strong>
+  <strong>A work agent that runs on your own machine.</strong>
 </p>
 
 <p align="center">
