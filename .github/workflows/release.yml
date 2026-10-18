@@ -303,6 +303,68 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # tauri-action writes `latest.json` from each job, so the last macOS job to
+      # finish overwrites the other architecture's entry. Rebuild the manifest
+      # from the `.sig` assets before verifying, so publish never races the
+      # aarch64 / x86_64 jobs against each other.
+      - name: Normalize updater manifest across platforms
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          dir="$RUNNER_TEMP/orbit-release-check"
+          mkdir -p "$dir/sig"
+          release_id="$(gh release view "$GITHUB_REF_NAME" --json databaseId --jq .databaseId)"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > "$dir/release.json"
+          gh release download "$GITHUB_REF_NAME" --pattern '*.sig' --dir "$dir/sig"
+          # The first run has no manifest yet; the rebuild below creates it.
+          gh release download "$GITHUB_REF_NAME" --pattern latest.json --dir "$dir" || true
+          python3 - "$dir/release.json" "$dir/latest.json" "$dir/sig" "$GITHUB_REPOSITORY" <<'PY'
+          import json, os, sys
+
+          release_path, manifest_path, sig_dir, repo = sys.argv[1:5]
+          release = json.load(open(release_path))
+          version = release['tag_name'].removeprefix('v')
+          by_name = {asset['name']: asset for asset in release['assets']}
+
+          # Both the legacy alias and the suffixed key point at the same bundle.
+          targets = {
+              'darwin-aarch64': f'Orbit_{version}_aarch64.app.tar.gz',
+              'darwin-aarch64-app': f'Orbit_{version}_aarch64.app.tar.gz',
+              'darwin-x86_64': f'Orbit_{version}_x64.app.tar.gz',
+              'darwin-x86_64-app': f'Orbit_{version}_x64.app.tar.gz',
+              'windows-x86_64': f'Orbit_{version}_x64-setup.exe',
+              'windows-x86_64-nsis': f'Orbit_{version}_x64-setup.exe',
+              'windows-x86_64-msi': f'Orbit_{version}_x64_en-US.msi',
+              'linux-x86_64': f'Orbit_{version}_amd64.AppImage',
+              'linux-x86_64-appimage': f'Orbit_{version}_amd64.AppImage',
+              'linux-x86_64-deb': f'Orbit_{version}_amd64.deb',
+              'linux-x86_64-rpm': f'Orbit-{version}-1.x86_64.rpm',
+          }
+
+          if os.path.exists(manifest_path):
+              manifest = json.load(open(manifest_path))
+          else:
+              manifest = {'version': version, 'notes': release.get('body') or '',
+                          'pub_date': release['created_at']}
+          manifest['version'] = version
+
+          platforms = {}
+          for platform, binary_name in targets.items():
+              binary = by_name.get(binary_name)
+              signature_file = os.path.join(sig_dir, binary_name + '.sig')
+              if binary is None or not os.path.exists(signature_file):
+                  raise SystemExit(f'{platform}: missing {binary_name} or its signature')
+              platforms[platform] = {
+                  'signature': open(signature_file).read(),
+                  'url': f'https://api.github.com/repos/{repo}/releases/assets/{binary["id"]}',
+              }
+          manifest['platforms'] = {key: platforms[key] for key in sorted(platforms)}
+          json.dump(manifest, open(manifest_path, 'w'), ensure_ascii=False, indent=2)
+          print('Rebuilt manifest:', ', '.join(sorted(platforms)))
+          PY
+          gh release upload "$GITHUB_REF_NAME" "$dir/latest.json" --clobber
+
       - name: Verify all platform assets and updater entries
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
