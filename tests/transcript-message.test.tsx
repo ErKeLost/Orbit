@@ -167,7 +167,7 @@ describe("assistant turns", () => {
     expect(html).toContain('aria-label="分支到新聊天"');
   });
 
-  test("folds the live work while streaming, keeping the doing line on the fold", () => {
+  test("opens a live turn to its phase row, with the step detail still shut", () => {
     const live: DisplayMessage[] = [{ id: "live", message: { role: "assistant", content: [
       { type: "thinking", thinking: "正在检查" },
       { type: "toolCall", id: "run", name: "bash", arguments: { command: "bun test" } },
@@ -175,10 +175,13 @@ describe("assistant turns", () => {
     const html = render(live, { run: { name: "bash", running: true } }, true);
     expect(html).toContain("shimmer-text");
     expect(text(html)).toContain("Working");
-    // 运行中也不自动展开：读者要自己点开，折行上留一句正在做什么。
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).not.toContain("zen-fold-rail");
+    // 层级：计时行是展开的，第二层（正在做什么）一眼可见，第三层（每一步）
+    // 默认收着；折行上也不再拼一句尾啜摘要。
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain("zen-fold-rail");
     expect(text(html)).toContain("正在运行命令");
+    expect(html).toContain('aria-label="展开 正在运行命令 的步骤"');
+    expect(text(html)).not.toContain("bun test");
     expect(html).not.toContain('aria-label="复制回复"');
   });
 

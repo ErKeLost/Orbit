@@ -13,18 +13,18 @@ const visibleCount = (html: string, needle: string) =>
 
 /** The phase rows themselves — the part that now lives behind the fold. */
 const renderWork = (items: DisplayMessage[], tools: Record<string, Tool>, streaming: boolean) =>
-  renderToStaticMarkup(<ActivityPhases steps={projectTurn(items, tools, streaming).work} tools={tools} done={!streaming} />);
+  renderToStaticMarkup(<ActivityPhases steps={projectTurn(items, tools, streaming).work} tools={tools} done={!streaming} openSteps />);
 
 /**
- * Work folds behind the "working…" line by default, in every state: the reader
- * opens it, it does not open itself mid-run. The live summary stays on the fold
- * line, so folding never hides *what* the agent is doing.
+ * Orbit opens the run itself to its phase rows while it is live, and closes
+ * everything again once it settles: level 1 is the timer, level 2 is "正在运行
+ * 7 条命令", level 3 (the individual steps) stays shut until the reader asks.
  *
  * The phase rows below are tested directly, because that is where the content
  * rules live (a short block prints once, an image read renders pixels).
  */
 describe("work fold rendering", () => {
-  test("the live fold stays closed and carries the doing line", () => {
+  test("the live fold opens to the phase row, with its steps still shut", () => {
     const items = [
       item("m1", {
         role: "assistant",
@@ -37,14 +37,16 @@ describe("work fold rendering", () => {
     const html = renderToStaticMarkup(
       <TranscriptGroupView group={{ id: "g", items }} tools={{} as Record<string, Tool>} streaming />,
     );
-    // Closed: no step rows, and the caret says what a click would do.
-    expect(html).toContain('aria-label="展开过程"');
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).not.toContain("zen-fold-rail");
-    expect(visibleCount(html, "先看一下目录。")).toBe(0);
-    // Still legible while running: the shimmer plus the current activity.
+    // 第二层可见：计时行展开，阶段行就在里面。
+    expect(html).toContain('aria-label="收起过程"');
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain("zen-fold-rail");
     expect(html).toContain("shimmer-text");
     expect(html).toContain("正在运行命令");
+    // 第三层（思考原文、具体命令）默认不开。
+    expect(visibleCount(html, "先看一下目录。")).toBe(0);
+    expect(visibleCount(html, "Run ")).toBe(0);
+    expect(html).toContain('aria-label="展开 正在运行命令 的步骤"');
   });
 
   test("a short reasoning block prints once", () => {

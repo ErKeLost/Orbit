@@ -10,6 +10,7 @@ import { base64ToBlob } from "../../lib/image-bytes";
 import { encodeBlobToBase64, encodeClipboardImage } from "../../lib/image-encode";
 import { shouldSubmitComposer } from "../../lib/composer";
 import { useMetrics } from "../../hooks/use-metrics";
+import { useGitBranches } from "../../lib/git";
 import { Popover } from "../../shared/ui/Popover";
 import { ImageLightbox } from "../../shared/ui/ImageLightbox";
 import { toast } from "../../shared/ui/toast";
@@ -17,6 +18,7 @@ import { ArrowUp, CursorMagicSelection, Globe, ImagePlus, Square, Sparkles, Ungr
 import { FileTypeIcon } from "../shell/FileTypeIcon";
 import { ADD_NOTE_TO_CHAT_EVENT, appendNoteReference, type NoteComposerCard } from "../notes/notes";
 import { ModelPicker } from "./ModelPicker";
+import { BranchPicker } from "./BranchPicker";
 import { MessageQueueView } from "./MessageQueueView";
 import { ComposerPalette, type PalettePick, type PaletteRequest } from "./ComposerPalette";
 import { DraftField, type DraftHandle } from "./ComposerDraftField";
@@ -200,6 +202,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
   const computerUse = useWorkspace((state) => state.computerUseEnabled);
   const browserUse = useWorkspace((state) => state.browserUseEnabled);
   const dialog = useWorkspace((state) => state.dialogs[0]);
+  // 分支名放在输入框下方：随时能看到当前 checkout，点开就能切分支 / 新建分支。
+  const branches = useGitBranches(project).data;
   const composerKey = connectionId || project;
   const tokens = useComposerTokens(project);
   const mentionLabels = tokens.index.labels;
@@ -638,10 +642,11 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
                 event.target.value = "";
               }}
             />
-            <div className="composer-toolbar flex min-w-0 flex-1 items-center">
+            <div className="composer-toolbar flex min-w-0 flex-1 items-center gap-1">
+              <BranchPicker cwd={project} current={branches?.current ?? null} disabled={running} />
               <div className="flex shrink-0 items-center gap-1">
                 <ModelPicker />
-            </div>
+              </div>
             </div>
             <div className="flex shrink-0 items-center gap-1">
               <ToolButton

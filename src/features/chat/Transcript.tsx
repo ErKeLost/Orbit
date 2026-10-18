@@ -157,15 +157,12 @@ function WorkFoldLine({
   expandable,
   open,
   onToggle,
-  hint,
 }: {
   title: ReactNode;
   live: boolean;
   expandable: boolean;
   open: boolean;
   onToggle: () => void;
-  /** Collapsed-while-live one-liner, so folding does not hide what it is doing. */
-  hint?: string;
 }) {
   const label = live ? (
     title
@@ -189,7 +186,6 @@ function WorkFoldLine({
         strokeWidth={1.75}
       />
       {label}
-      {hint ? <span className="min-w-0 shrink-0 truncate text-[12px] text-content/35">{hint}</span> : null}
     </button>
   );
 }
@@ -487,16 +483,18 @@ function StepRow({ step, tools }: { step: TurnStep; tools: Record<string, Tool> 
 }
 
 /**
- * Orbit `ActivityPhaseGroup`. Finished phases stay folded — the headline line
- * (the agent's own narration) is the summary. The live phase, however, is
- * opened by default: its body is the only place the streaming prose and the
- * running tool rows exist (until `message_end` promotes the final answer out
- * of the fold), so keeping it closed hid the output until the whole reply
- * landed at once. The reader's own toggle still wins.
+ * Orbit `ActivityPhaseGroup`. A phase row is the second level: the headline is
+ * the agent's own narration, or a tally of what this phase is doing. Its steps
+ * (Run rows, thinking text) are the third level and stay folded until the
+ * reader opens them — during a run too: the streaming prose lives in the answer
+ * area, so nothing is hidden by keeping detail shut. The reader's own toggle
+ * still wins.
  */
-function PhaseGroup({ phase, tools, live }: { phase: Phase; tools: Record<string, Tool>; live: boolean }) {
+function PhaseGroup({ phase, tools, live, defaultOpen = false }: { phase: Phase; tools: Record<string, Tool>; live: boolean; defaultOpen?: boolean }) {
   const [override, setOverride] = useState<boolean | null>(null);
-  const open = override ?? live;
+  // 默认只开第二层：阶段行（"正在运行 7 条命令"）一眼可见，具体每一步
+  // （Run 命令、思考原文）收在它下面，要点一下才展开。
+  const open = override ?? defaultOpen;
   const title = phaseTitle(phase, tools, live);
 
   if (!phase.headline && phase.steps.length === 1) {
@@ -571,12 +569,23 @@ function PhaseGroup({ phase, tools, live }: { phase: Phase; tools: Record<string
   );
 }
 
-export const ActivityPhases = memo(function ActivityPhases({ steps, tools, done }: { steps: TurnStep[]; tools: Record<string, Tool>; done: boolean }) {
+export const ActivityPhases = memo(function ActivityPhases({
+  steps,
+  tools,
+  done,
+  openSteps = false,
+}: {
+  steps: TurnStep[];
+  tools: Record<string, Tool>;
+  done: boolean;
+  /** 直接展开每条阶段里的步骤（内容规则的测试用；界面永远从第二层开始）。 */
+  openSteps?: boolean;
+}) {
   const phases = useMemo(() => buildPhases(steps, tools), [steps, tools]);
   return (
     <div className="flex min-w-0 flex-col gap-1 px-4">
       {phases.map((phase, index) => (
-        <PhaseGroup key={phase.key || index} phase={phase} tools={tools} live={!done && index === phases.length - 1} />
+        <PhaseGroup key={phase.key || index} phase={phase} tools={tools} live={!done && index === phases.length - 1} defaultOpen={openSteps} />
       ))}
     </div>
   );
@@ -782,11 +791,12 @@ const AssistantTurn = memo(
     const liveElapsed = useElapsed(startedAt, streaming);
     const hasWork = turn.work.length > 0 || Boolean(activity);
     const answered = turn.answer.length > 0;
-    // Work folds behind the "worked for" line by default — including while the
-    // turn is still running. The fold line already carries the live summary
-    // ("运行了 12 条命令 · 正在搜索项目"), so expanding is something the reader
-    // asks for, not something that happens to them mid-run.
-    const workOpen = workOverride ?? false;
+    // Work folds behind the "worked for" line. While a turn is running the fold
+    // opens on its own to the phase rows ("正在运行 7 条命令") — that is the
+    // heading the reader is watching — but each phase keeps its own steps shut
+    // until someone asks for them. Once the turn settles the whole fold closes
+    // again, leaving just the timer. The reader's own toggle always wins.
+    const workOpen = workOverride ?? streaming;
     // Only matter when the answer is actually sitting under it. The fold's own
     // rows and the answer share the same left edge, so with the fold expanded
     // and only a few pixels between them the answer reads as one more step.
@@ -800,8 +810,6 @@ const AssistantTurn = memo(
     ) : (
       formatWorkingDuration(duration, undefined, true)
     );
-    // Folding the live work would otherwise leave nothing but a timer on screen.
-    const liveHint = hasWork && streaming && !workOpen ? workSummaryLine(turn.work, tools, true) : undefined;
     const answerText = turn.answer.flatMap((step) => (step.kind === "note" && step.text ? [step.text] : [])).join("\n\n");
     const lastTime = messageTime(turn.last?.message) ?? (startedAt != null && duration != null ? startedAt + duration : undefined);
 
@@ -822,7 +830,7 @@ const AssistantTurn = memo(
         )}
         {hasWork || streaming ? (
           <TurnRow folded={false}>
-            <WorkFoldLine title={foldTitle} live={streaming} expandable={hasWork} open={workOpen && hasWork} hint={liveHint} onToggle={() => setWorkOverride(!workOpen)} />
+            <WorkFoldLine title={foldTitle} live={streaming} expandable={hasWork} open={workOpen && hasWork} onToggle={() => setWorkOverride(!workOpen)} />
           </TurnRow>
         ) : null}
         {hasWork ? (
