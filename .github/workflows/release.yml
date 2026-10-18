@@ -373,8 +373,14 @@ jobs:
           mkdir -p "$RUNNER_TEMP/orbit-release-check"
           release_id="$(gh release view "$GITHUB_REF_NAME" --json databaseId --jq .databaseId)"
           gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > "$RUNNER_TEMP/orbit-release-check/release.json"
-          gh release download "$GITHUB_REF_NAME" --pattern latest.json --dir "$RUNNER_TEMP/orbit-release-check"
-          python3 - "$RUNNER_TEMP/orbit-release-check/release.json" "$RUNNER_TEMP/orbit-release-check/latest.json" <<'PY'
+          # The normalization step above already wrote latest.json into
+          # orbit-release-check; downloading it again into the same directory
+          # makes `gh release download` exit 1 (file exists) and killed the
+          # publish job for v1.0.1. Verify from its own directory, clobbering.
+          mkdir -p "$RUNNER_TEMP/orbit-release-check/verify"
+          gh release download "$GITHUB_REF_NAME" --pattern latest.json \
+            --dir "$RUNNER_TEMP/orbit-release-check/verify" --clobber
+          python3 - "$RUNNER_TEMP/orbit-release-check/release.json" "$RUNNER_TEMP/orbit-release-check/verify/latest.json" <<'PY'
           import json, sys
           release = json.load(open(sys.argv[1]))
           update = json.load(open(sys.argv[2]))
