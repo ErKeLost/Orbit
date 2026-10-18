@@ -121,6 +121,34 @@ coming. On the phone a failed transcript fetch no longer marks the connection
 itself as failed either: the worker is attached and still takes prompts, and
 re-entering the session retries the history.
 
+### One Pi process, replaced sessions in place
+
+The desktop starts a *new* Pi process when it switches sessions while a turn is
+running, so the old process takes its extensions, its queues and its half-finished
+work with it. The phone has no such luxury: it talks to the Host's single
+long-lived worker, so `new_session` / `switch_session` / `clone` / `fork` happen
+**inside** that process. Two consequences are visible at the UI layer, and both
+are handled in `src/lib` rather than left to look like user-facing failures:
+
+* **Extension work from the replaced session returns late.** `/gui-session-meta`,
+  `/gui-observe` and `/gui-suggest` may be waiting on a model call when the
+  session is swapped; when they write their status afterwards Pi throws
+  `This extension ctx is stale after session replacement or reload`. That text is
+  a guard aimed at extension authors, not a failure the user can act on, so it is
+  filtered (`src/lib/extension-errors.ts`) out of the transcript, out of the
+  session-level error row and out of the toast, and the automatic callers
+  (`ensureSessionMetadata`, the `/gui-observe` poll) stand down while a
+  replacement is in flight (`beginSessionReplacement`).
+* **A queued message needs a running turn to be consumed.** Pi drains
+  steering/follow-up queues at the start of a turn and after each tool call, so a
+  message queued when no turn is actually running waits for the *next* turn and
+  then arrives out of order — on screen it is the row above the composer that says
+  「正在引导…」 forever, or 「附件」 for an image with no text. The UI's `running`
+  lags one event behind Pi (more on a flaky connection), so `sendPrompt` asks Pi
+  (`get_state.isStreaming`) before queueing and degrades to a plain prompt when it
+  is not streaming; the row itself now says 「下一轮送出」 instead of pretending to
+  be guiding.
+
 ## Connection scope
 
 The desktop Host keeps a stable local identity in a permissions-restricted file,

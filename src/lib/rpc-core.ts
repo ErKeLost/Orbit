@@ -22,6 +22,7 @@ import {
 import { sendRemotePiCommand } from "./remote-runtime";
 import type { RemoteJson } from "./remote-protocol";
 import { mobileRuntime } from "./runtime";
+import { isStaleExtensionContextError } from "./extension-errors";
 
 export const queryClient=new QueryClient({defaultOptions:{queries:{retry:false,refetchOnWindowFocus:false,staleTime:15000,gcTime:120000}}})
 
@@ -39,6 +40,18 @@ const sessionMetadataPending=new Set<string>()
 const reconnectingProjects=new Map<string,Promise<void>>()
 /** 正在拉历史消息的连接。切回这种连接时不能把骨架屏收掉，否则会先闪一下空首页。 */
 const loadingConnections=new Set<string>()
+/**
+ * 正在做会话替换（new/switch/clone/fork）的连接。
+ *
+ * 替换期间那条会话的扩展上下文马上就要作废：这几十毫秒里再发 `/gui-*` 命令，
+ * 它们要么落在旧会话上被作废（pi 抛 stale ctx），要么在新会话还没就绪时白跑一次。
+ * 周期性/自动发起的扩展调用（会话元数据、运行指标轮询）先让开，替换完成后自然会
+ * 再发一遍。
+ */
+const replacingSessions=new Set<string>()
+export function beginSessionReplacement(id:string){replacingSessions.add(id)}
+export function endSessionReplacement(id:string){replacingSessions.delete(id)}
+export function isSessionReplacing(id:string){return replacingSessions.has(id)}
 /** 已要求、待 Pi 确认的模型切换（见 `protocol/transcript.ts` 的 `withPendingModel`）。 */
 const pendingModels=new Map<string,PendingModel>()
 /**
@@ -136,6 +149,8 @@ function invalidateSessionList(id:string){
 }
 async function ensureSessionMetadata(id:string){
  if(sessionMetadataPending.has(id))return
+ // 会话正在换：标题属于旧会话，替换完成后新会话那边会再跑一次。
+ if(isSessionReplacing(id))return
  sessionMetadataPending.add(id)
  try{
   const commands=await request<{commands:{name:string}[]}>({type:'get_commands'},30000,id)
@@ -151,8 +166,14 @@ function patch(id:string,value:Partial<Snapshot>){
  // 用户刚点了切换、Pi 还没确认的模型优先：重连期间回来的 `get_state` 是重启后的
  // 旧模型，直接写进 store 会把刚选好的那个顶回旧值（“等了十秒自己变”）。
  const pending=pendingModels.get(projectKey(id))
- const resolved=pending&&value.state?{...value,state:withPendingModel(value.state,pending)}:value
- const previous=current(id),next={...previous,...resolved}
+ const requested=pending&&value.state?{...value,state:withPendingModel(value.state,pending)}:value
+ // 兜底：`/gui-*` 命令在会话替换后回来时，pi 抛的是一句给扩展作者看的英文。
+ // 走到这里的错误已经不再是用户的故障，别让它变成会话级红条（transcript 里的
+ // `extension_error` 事件另外在 reduceEvent 里挡掉）。
+ const previous=current(id)
+ const staleError=requested.error!==null&&requested.error!==undefined&&isStaleExtensionContextError(requested.error)
+ const resolved=staleError?{...requested,error:previous.error}:requested
+ const next={...previous,...resolved}
  if(previous.state?.sessionFile&&previous.state.sessionFile!==next.state?.sessionFile&&sessionOwners.get(previous.state.sessionFile)===id)sessionOwners.delete(previous.state.sessionFile)
  snapshots.set(id,next);if(next.state?.sessionFile)sessionOwners.set(next.state.sessionFile,id);if(useWorkspace.getState().connectionId===id)useWorkspace.getState().set(resolved);notifySnapshot(id)
  // 缓存跟着实时 transcript 走；一旦有新事件，文件戳就不再代表它，标脏。

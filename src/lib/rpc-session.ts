@@ -29,10 +29,39 @@ import {
   syncLiveSessions,
   activeTarget,
   applyLocalEvent,
+  beginSessionReplacement,
+  endSessionReplacement,
 } from "./rpc-core";
 import { activateConnection, closeConnection, connect, startConnection } from "./rpc-connection";
 import { mobileRuntime, native, report, workspaceBackend } from "./runtime";
+import { deliveryBehavior, type QueueBehavior } from "./session-delivery";
 
+/**
+ * pi 自己说这一轮是不是真的在跑。
+ *
+ * UI 的 `running` 是投影：它比 pi 慢一个事件，手机上还会因为重连/丢包更慢。排队类
+ * 投递只有在一轮真的在跑时才会被消费，所以这个问题必须在投递前问 pi 本身，而不是
+ * 相信屏幕上的那个布尔值。问不到（超时/连接抖动）返回 `undefined`，由
+ * `deliveryBehavior` 按「在跑」处理。
+ */
+async function piIsStreaming(id:string):Promise<boolean|undefined>{
+ try{return (await request<{isStreaming?:boolean}>({type:'get_state'},15000,id))?.isStreaming===true}
+ catch{return undefined}
+}
+/**
+ * 真正发出去的那条命令：排队类投递只在 pi 确认这一轮在跑时才带 `streamingBehavior`。
+ *
+ * 规则本身在 `session-delivery.ts`；这里只负责去问 pi 和改写命令。
+ */
+export async function deliveryFor(command:RpcCommand,target=activeTarget()):Promise<{command:RpcCommand;degraded:boolean}>{
+ if(command.type!=='prompt'||!command.streamingBehavior)return {command,degraded:false}
+ const id=route(target)
+ const decision=deliveryBehavior(command.streamingBehavior as QueueBehavior,await piIsStreaming(id))
+ if(!decision.degraded)return {command,degraded:false}
+ const fresh={...command} as RpcCommand&{streamingBehavior?:unknown}
+ delete fresh.streamingBehavior
+ return {command:fresh,degraded:true}
+}
 /** Session-level commands: open / switch / retire a session, send prompts,
  *  steer a running turn, and the queue. */
 export async function sendPrompt(command:RpcCommand,target=activeTarget(),wasRunning?:boolean){
@@ -45,7 +74,9 @@ export async function sendPrompt(command:RpcCommand,target=activeTarget(),wasRun
    const sessionFile=current(id).state?.sessionFile
    if(sessionFile)window.dispatchEvent(new CustomEvent('orbit-turn-started',{detail:{cwd,sessionFile,connectionId:id}}))
   }
-  const result=await request<{disposition?:string}>(command,45000,id)
+  const delivery=await deliveryFor(command,id)
+  const result=await request<{disposition?:string}>(delivery.command,45000,id)
+  // 退化成普通 prompt 的那一条已经开了一轮，不再需要用 `prompt_settled` 收等待位。
   if(!running&&result?.disposition!=='started')applyLocalEvent(id,{type:'prompt_settled'})
   return result
  }catch(error){
@@ -106,10 +137,20 @@ export async function recallQueue(target=activeTarget()){const id=route(target),
 /** Promote one queued follow-up into the running turn as a steer (Orbit's "Steer"). */
 export async function steerFollowUp(text:string,target=activeTarget()){
  const id=route(target),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id)
+ // 没有在跑的一轮时，`steer` 只是把消息放回队列（没有回合会来取，见 `deliveryFor`）。
+ // 那就让第一条直接把这一轮开起来，其余的照旧 steer——回合开始时 pi 会一起取走。
+ const streaming=await piIsStreaming(id)
+ // 问不到 pi 时同样按「在跑」处理（`deliveryBehavior` 的规则）：宁可退回排队。
+ let opened=streaming!==false
+ const deliver=async(message:string)=>{
+  if(opened)return request({type:'steer',message},30000,id)
+  opened=true
+  return request({type:'prompt',message},45000,id)
+ }
  let promoted=false
- for(const message of cleared.steering)await request({type:'steer',message},30000,id)
+ for(const message of cleared.steering)await deliver(message)
  for(const message of cleared.followUp){
-  if(!promoted&&message===text){promoted=true;await request({type:'steer',message},30000,id)}
+  if(!promoted&&message===text){promoted=true;await deliver(message)}
   else await request({type:'follow_up',message},30000,id)
  }
 }
@@ -194,6 +235,9 @@ async function changeSessionOnce(command:RpcCommand){
   if(cached)patch(active,{transcript:cached,error:null})
   else markSessionLoading(active)
  }
+ // 从这个请求发出到新会话就绪，这条连接的扩展上下文正在（或即将）作废。
+ // 期间自动发起的 `/gui-*` 命令先让开（会话元数据、指标轮询），替换完再发。
+ if(switching)beginSessionReplacement(active)
  try{
   if(mobileRuntime()){
    const result=await request<{cancelled?:boolean;text?:string}>(command,60000,active)
@@ -219,6 +263,8 @@ async function changeSessionOnce(command:RpcCommand){
   // 取消/失败时手动收起骨架屏：这条路径不会走到 loadMessages 的 hydrate。
   for(const id of new Set([active,useWorkspace.getState().connectionId]))patch(id,{transcript:transcriptLoading(current(id).transcript,false)})
   throw error
+ } finally {
+  if(switching)endSessionReplacement(active)
  }
 }
 const branchingConnections = new Set<string>()
@@ -233,11 +279,15 @@ export async function branchFromMessage(message: PiMessage) {
   const entries=await request<{entries:BranchEntry[];leafId:string|null}>({type:'get_entries'},30000,id)
   const entryId=findBranchEntry(entries.entries,entries.leafId,message)
   if(current(id).state?.sessionFile!==sourceFile||current(id).transcript.running)throw new Error('当前会话已变化，请重试')
+  // 克隆是一次会话替换：从这里到 `/gui-tree` 回来，旧 ctx 作废，自动发起的
+  // `/gui-*` 命令先让开（同 `changeSessionOnce`）。
+  beginSessionReplacement(id)
   const result=await request<{cancelled?:boolean}>({type:'clone'},60000,id)
   if(result.cancelled)throw new Error('扩展取消了创建分支')
   cloned=true
   // Navigate only in the clone so the original conversation keeps its current leaf.
   await request({type:'prompt',message:`/gui-tree ${JSON.stringify({id:entryId,summarize:false})}`},60000,id)
+  endSessionReplacement(id)
   const branch=await request<{leafId:string|null}>({type:'get_entries'},30000,id)
   if(branch.leafId!==entryId)throw new Error('未能定位到所选回复，已创建的副本可在会话列表中查看')
   patch(id,{error:null,telemetry:emptyTelemetry(),draft:'',dialogs:[],statuses:{},widgets:{},agents:null})
@@ -250,6 +300,7 @@ export async function branchFromMessage(message: PiMessage) {
   throw error
  } finally {
   try {
+   endSessionReplacement(id)
    if(cloned)await loadMessages(id)
    await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
    await queryClient.invalidateQueries({queryKey:['pi','tree',cwd]})

@@ -2,6 +2,7 @@ import { emptyTranscript } from './types'
 import type { DisplayMessage, Event, PendingModel, PiMessage, Tool, ToolUsage, Transcript } from './types'
 import { toolImageInfo, toolResultImages, toolResultText } from './images'
 import { isQueuedPreview, visibleTurnStart } from './grouping'
+import { isStaleExtensionContextError } from '../extension-errors'
 
 /** 会话切换期间先上骨架屏，别让上一个会话的消息停在原地再突然换掉。 */
 export const transcriptLoading = (transcript: Transcript, loading: boolean): Transcript => transcript.loading === loading ? transcript : { ...transcript, loading }
@@ -73,7 +74,9 @@ export function formatTranscriptError(raw: string): string {
 const isAbortedAssistant = (message: PiMessage) =>
   message.role === 'assistant' && (message.stopReason === 'aborted' || message.errorMessage?.trim().toLowerCase() === 'this operation was aborted')
 export function normalizeMessage(message: PiMessage): PiMessage {
-  if (message.errorMessage && isAbortedAssistant(message)) return { ...message, errorMessage: undefined }
+  // 会话替换后旧扩展 ctx 作废的报错不是这一轮的回答出错（见 extension-errors.ts）：
+  // 它挂在某条 assistant 消息上时同样剥掉，历史重载和实时都走这里。
+  if (message.errorMessage && (isAbortedAssistant(message) || isStaleExtensionContextError(message.errorMessage))) return { ...message, errorMessage: undefined }
   if(message.content !== undefined)return message
   if(message.role==='bashExecution')return {...message,content:`Bash: ${message.command ?? ''}\n\n${message.output ?? ''}`}
   return {...message,content:message.summary ?? ''}
@@ -161,7 +164,13 @@ export function reduceEvent(previous: Transcript, event: Event): Transcript {
     case 'compaction_start': return { ...state, compacting: true, phase: '正在压缩上下文' }
     case 'compaction_end': return { ...state, compacting: false, phase: state.running ? '正在运行' : '就绪' }
     case 'auto_retry_start': return { ...state, running: true, phase: '正在重试' }
-    case 'extension_error': return { ...state, error: String(event.error ?? event.errorMessage ?? '扩展执行失败') }
+    case 'extension_error':
+      // 同一个守卫从扩展 runner 出来时走这条路（pi 的 `extension_error` 事件）。
+      // 手机端换会话是原地做的，一条迟到的 status/会话名写入就会撞上它；把这种噪声
+      // 画成会话级错误，用户看到的就是一条他无从处理的英文报错。
+      return isStaleExtensionContextError(event.error ?? event.errorMessage)
+        ? state
+        : { ...state, error: String(event.error ?? event.errorMessage ?? '扩展执行失败') }
     case 'queue_update': return { ...state, queue: { steering: event.steering ?? [], followUp: event.followUp ?? [] } }
     case 'queued_preview': {
       if (!event.message || event.message.role !== 'user') return state

@@ -476,6 +476,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
         <MessageQueueView
           steering={queue.steering}
           followUp={queue.followUp}
+          running={running}
           onSteer={(text) => void steerFollowUp(text, target).catch(report)}
           onClear={() => void recallQueue(target).catch(report)}
         />

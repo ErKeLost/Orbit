@@ -1191,7 +1191,10 @@ export default async function (pi: ExtensionAPI) {
   pi.registerCommand('gui-suggest',{description:'GUI: complete the composer draft as ghost text',handler:async(args:string,ctx:ExtensionCommandContext)=>{
     let draft='',turn:unknown=null
     try{const value=JSON.parse(args||'{}') as {draft?:unknown;turn?:unknown};draft=typeof value.draft==='string'?value.draft:'';turn=value.turn??null}catch{draft='';turn=null}
-    const publish=(text:string)=>ctx.ui.setStatus(SUGGEST_STATUS,JSON.stringify({draft,turn,text}))
+    // 这条命令的结果要等一次模型补全才回来；期间会话可能已经被替换（手机上尤其常见，
+    // 主机只有一条常驻 pi 进程），那时写 status 会抛「stale ctx」，而这个 publish 就
+    // 正好在 catch 里被再调一次。迟到的联想没有价值，静默丢弃即可。
+    const publish=(text:string)=>{try{ctx.ui.setStatus(SUGGEST_STATUS,JSON.stringify({draft,turn,text}))}catch{/* 会话已换掉，这条联想作废 */}}
     const conversation=suggestionConversation(ctx)
     // 空草稿又没有任何对话（新会话）时没什么可猜的，省掉一次调用。
     if(!ctx.model||(!draft.trim()&&!conversation)){publish('');return}

@@ -1,7 +1,7 @@
 import {useEffect} from 'react'
 import {useQuery} from '@tanstack/react-query'
 import type {RpcSessionState} from '@earendil-works/pi-coding-agent'
-import {pendingModel,requestWithRecovery} from './rpc'
+import {isSessionReplacing,pendingModel,requestWithRecovery,route} from './rpc'
 import {withPendingModel} from './protocol'
 import {useWorkspace} from './store'
 import {usePageVisible} from './page-visibility'
@@ -18,7 +18,9 @@ export function MetricsSync(){
  // 回到会话（或重连）时一律重新读一次：provider 刚换过的话，缓存里那份是旧的。
  const state=useQuery({queryKey:['pi','live-state',target],queryFn:()=>requestWithRecovery<RpcSessionState>({type:'get_state'},30000,target),enabled:online&&visible&&Boolean(target),refetchInterval:2000,staleTime:0,refetchOnMount:'always'})
  const capabilities=useQuery({queryKey:['pi','capabilities',target],queryFn:()=>requestWithRecovery<{commands:{name:string}[]}>({type:'get_commands'},30000,target),enabled:online&&Boolean(target)})
- const observation=useQuery({queryKey:['pi','runtime-snapshot',target],queryFn:async()=>{await requestWithRecovery({type:'prompt',message:'/gui-observe'},30000,target);return true},enabled:online&&visible&&Boolean(target)&&!!capabilities.data?.commands.some(c=>c.name==='gui-observe'),refetchInterval:5000})
+ // 会话正在换（new/switch/clone/fork）时让开：`/gui-observe` 会落在马上就要作废的
+ // 会话上，pi 会把它当过期扩展 ctx 拒掉。换完下一轮 5 秒定时自己会补上。
+ const observation=useQuery({queryKey:['pi','runtime-snapshot',target],queryFn:async()=>{if(isSessionReplacing(route(target)))return true;await requestWithRecovery({type:'prompt',message:'/gui-observe'},30000,target);return true},enabled:online&&visible&&Boolean(target)&&!!capabilities.data?.commands.some(c=>c.name==='gui-observe'),refetchInterval:5000})
  useEffect(()=>{
   if(!state.data||!online||useWorkspace.getState().connectionId!==connectionId)return
   const current=useWorkspace.getState()

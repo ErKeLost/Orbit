@@ -5,15 +5,22 @@ import { CornerDownRight, ListEnd, Trash2 } from "../../shared/ui/icons";
  * follow-ups wait for the turn to end, steering messages are already on their
  * way into the running turn. "Steer" promotes a follow-up; the trash removes
  * the whole queue back into the draft (Pi has no per-item delete).
+ *
+ * `running` makes the row honest: steering messages are only consumed by a turn
+ * that is actually running. Once the turn has settled, the row is not
+ * 「正在引导」 — it goes out at the start of the next turn, so say that instead of
+ * showing progress that is not happening.
  */
 export function MessageQueueView({
   steering,
   followUp,
+  running,
   onSteer,
   onClear,
 }: {
   steering: string[];
   followUp: string[];
+  running?: boolean;
   onSteer?: (text: string) => void;
   onClear?: () => void;
 }) {
@@ -32,7 +39,7 @@ export function MessageQueueView({
               <div className="truncate text-content/80" title={row.text}>{row.text.trim() || "附件"}</div>
             </div>
             {row.kind === "steer" ? (
-              <span className="shrink-0 text-[11px] text-content/40">正在引导…</span>
+              <span className="shrink-0 text-[11px] text-content/40">{running === false ? "下一轮送出" : "正在引导…"}</span>
             ) : onSteer ? (
               <button
                 type="button"
