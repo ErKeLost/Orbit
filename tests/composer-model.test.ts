@@ -8,6 +8,7 @@ import {
   canSubmitPrompt,
   clipboardImageName,
   contextMeterUsage,
+  couldBeFileReference,
   draftCache,
   draftKeyIntent,
   forgetDraft,
@@ -28,6 +29,7 @@ import {
   sendBehavior,
   showsOptimisticPreview,
   splitAttachments,
+  stripPastedSuffix,
   suggestCommandMessage,
   type Attachment,
   type FileAttachment,
@@ -170,8 +172,8 @@ describe("attachment pre-processing", () => {
 });
 
 describe("paste intent", () => {
-  test("image files win over text, and only images are prepared", () => {
-    const files = [{ name: "a.png", type: "" }, { name: "notes.txt", type: "text/plain" }, { name: "b.jpg", type: "image/jpeg" }];
+  test("an all-image paste is prepared as image bytes", () => {
+    const files = [{ name: "a.png", type: "" }, { name: "b.jpg", type: "image/jpeg" }];
     const intent = pasteIntent({ files, text: "hello", desktop: true });
     expect(intent.kind).toBe("images");
     expect(intent.kind === "images" && intent.images.map((item) => item.name)).toEqual(["a.png", "b.jpg"]);
@@ -194,8 +196,47 @@ describe("paste intent", () => {
     expect(pasteIntent({ files: [], text: "hello", desktop: true }).kind).toBe("text");
   });
 
-  test("non-image files are left to the browser", () => {
-    expect(pasteIntent({ files: [{ name: "a.zip", type: "" }], text: "", desktop: true }).kind).toBe("text");
+  test("a video or an archive is a file attachment, not text", () => {
+    const intent = pasteIntent({ files: [{ name: "demo.mp4", type: "video/mp4" }], text: "", desktop: true });
+    expect(intent.kind).toBe("files");
+    expect(intent.kind === "files" && intent.files.map((item) => item.name)).toEqual(["demo.mp4"]);
+  });
+
+  test("a mixed set keeps every file, not just the images", () => {
+    const files = [{ name: "a.png", type: "image/png" }, { name: "notes.txt", type: "text/plain" }];
+    const intent = pasteIntent({ files, text: "", desktop: true });
+    expect(intent.kind).toBe("files");
+    expect(intent.kind === "files" && intent.files.length).toBe(2);
+  });
+
+  test("without a bridge to resolve paths, files stay text", () => {
+    expect(pasteIntent({ files: [{ name: "demo.mp4", type: "" }], text: "", desktop: false }).kind).toBe("text");
+  });
+});
+
+describe("text that is really a file", () => {
+  test("absolute paths and file URLs count", () => {
+    for (const text of ["/Users/work/demo.mp4", "~/Movies/demo.mov", "file:///tmp/a.mov", "C:\\clips\\a.mov"]) {
+      expect(couldBeFileReference(text)).toBe(true);
+    }
+  });
+
+  test("a bare name with an extension counts, spaces and all", () => {
+    expect(couldBeFileReference("demo.mp4")).toBe(true);
+    expect(couldBeFileReference("报价单.pdf")).toBe(true);
+    expect(couldBeFileReference("Final cut v2.mov")).toBe(true);
+  });
+
+  test("prose and code do not", () => {
+    expect(couldBeFileReference("hello")).toBe(false);
+    expect(couldBeFileReference("cd /tmp")).toBe(false);
+    expect(couldBeFileReference("const a = 1\nconst b = 2")).toBe(false);
+    expect(couldBeFileReference("")).toBe(false);
+  });
+
+  test("the pasted name is only stripped when it is still the tail of the draft", () => {
+    expect(stripPastedSuffix("看看 demo.mp4", "demo.mp4")).toBe("看看 ");
+    expect(stripPastedSuffix("看看 demo.mp4 行吗", "demo.mp4")).toBe("看看 demo.mp4 行吗");
   });
 });
 

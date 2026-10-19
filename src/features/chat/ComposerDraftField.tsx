@@ -19,6 +19,8 @@ export type DraftHandle = {
   clear: () => void;
   restore: (text: string) => void;
   focus: () => void;
+  /** The textarea itself, so a focus decision can compare it with `document.activeElement`. */
+  element: () => HTMLTextAreaElement | null;
   value: () => string;
   caret: () => number;
   setText: (text: string, caret: number) => void;
@@ -99,6 +101,7 @@ export const DraftField = memo(
           clear: () => setDraft(""),
           restore: (text) => setDraft((current) => (current ? `${text}${current}` : text)),
           focus: () => field.current?.focus(),
+          element: () => field.current,
           value: () => field.current?.value ?? "",
           caret: () => caret.current,
           setText: (text, position) => {

@@ -696,10 +696,9 @@ html.has-chat-background.chat-background-effect-ready.chat-background-gradient-b
 .agent-transcript
   [data-transcript-search-current="true"]
   .user-message-bubble
-  pre.line-clamp-4 {
-  display: block;
+  .user-message-markdown {
+  max-height: none;
   overflow: visible;
-  -webkit-line-clamp: unset;
 }
 
 /*

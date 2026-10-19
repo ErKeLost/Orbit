@@ -92,17 +92,20 @@ export function imageAttachment(image: PreparedImage): ImageAttachment {
 /** What a paste is asking for, before any of it is awaited. */
 export type PasteIntent<T> =
   | { kind: "images"; images: T[] }
+  /** Real files the DOM handed us, and at least one is not an image: the paths come from the native clipboard. */
+  | { kind: "files"; files: T[] }
   | { kind: "native-clipboard" }
   | { kind: "text" };
 
 /**
  * A paste inside the composer box.
  *
- * Files win: a screenshot arrives as both a file and (sometimes) no text. With
- * nothing but "no files and no text" on desktop, the paste is a native one —
- * Finder paths or a screenshot the clipboard manager did not expose as a file —
- * and has to be read through the bridge. Anything else is ordinary text and
- * keeps the browser's default insert.
+ * Files win: a screenshot arrives as both a file and (sometimes) no text. A set
+ * of files that is not all images (a video, a PDF, a .zip) is still an
+ * attachment, so it is not allowed to fall through as text. With nothing in the
+ * DOM at all, the paste is a native one — Finder paths or a screenshot the
+ * clipboard manager did not expose as a file — and has to be read through the
+ * bridge. Anything else is ordinary text and keeps the browser's default insert.
  */
 export function pasteIntent<T extends { name?: string; type?: string }>(input: {
   files: readonly T[];
@@ -110,9 +113,34 @@ export function pasteIntent<T extends { name?: string; type?: string }>(input: {
   desktop: boolean;
 }): PasteIntent<T> {
   const images = input.files.filter((file) => resolveImageMime(file) !== null);
-  if (images.length) return { kind: "images", images };
-  if (input.files.length === 0 && !input.text && input.desktop) return { kind: "native-clipboard" };
+  if (images.length === input.files.length && images.length > 0) return { kind: "images", images };
+  if (input.files.length) return input.desktop ? { kind: "files", files: [...input.files] } : { kind: "text" };
+  if (!input.text && input.desktop) return { kind: "native-clipboard" };
   return { kind: "text" };
+}
+
+/**
+ * Whether pasted text could be a file reference rather than prose. Only then is
+ * it worth asking the native clipboard whether it holds files: the answer costs
+ * a bridge call, and a paste of ordinary code must not pay for it.
+ *
+ * A whole absolute path (`/…`, `~/…`, `file://…`, `C:\…`) or anything that ends
+ * in an extension (`demo.mp4`, `报价单.pdf`, several of them on separate lines)
+ * both count. Finder's ⌘V does not say which of the two it will hand over, and a
+ * name with spaces is still a name. A false positive costs one probe and
+ * nothing else: prose the clipboard does not back as a file is left as text.
+ */
+export function couldBeFileReference(text: string): boolean {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length || lines.length > 50 || text.length > 2000) return false;
+  return lines.every(
+    (line) => /^(?:file:\/\/|\/|~\/|[A-Za-z]:[\\/])/.test(line) || /^.{1,200}\.[A-Za-z0-9]{1,8}$/.test(line),
+  );
+}
+
+/** The draft without the text a paste just inserted, when that text is still its tail. */
+export function stripPastedSuffix(draft: string, pasted: string): string {
+  return pasted && draft.endsWith(pasted) ? draft.slice(0, -pasted.length) : draft;
 }
 
 /** `~/shots/x.PNG` → `x.PNG`, with the last segment kept whole. */

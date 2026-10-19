@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ActivityPhases, TranscriptGroupView } from "../src/features/chat/Transcript";
-import { buildPhases, formatWorkingDuration, projectTurn, proseSummary, workSummaryLine } from "../src/features/chat/turnModel";
+import { buildPhases, formatWorkingDuration, projectTurn, proseSummary, workCategory, workSummaryLine } from "../src/features/chat/turnModel";
 import type { DisplayMessage, Tool } from "../src/lib/protocol";
 
 const text = (html: string) => html.replace(/<style[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, "");
@@ -46,6 +46,21 @@ describe("user messages", () => {
     const html = render([{ id: "u", message: { role: "user", content: "第一行\n第二行" } }]);
     expect(html).toContain("rounded-xl");
     expect(html).not.toContain("rounded-full");
+  });
+
+  test("renders the prompt as markdown", () => {
+    const html = render([{ id: "u", message: { role: "user", content: "**重点**\n\n- 一\n- 二" } }]);
+    expect(html).toContain("<strong>重点</strong>");
+    expect(html).toContain("<ul>");
+    // 渲染后只剩正文（星号是语法，不是字）；「复制消息」复制的仍是原文。
+    expect(text(html)).toContain("重点");
+    expect(text(html)).not.toContain("**");
+  });
+
+  test("clamps a long prompt until 显示全部", () => {
+    const html = render([{ id: "u", message: { role: "user", content: "第一行\n第二行" } }]);
+    expect(html).toContain("user-message-markdown");
+    expect(html).toContain("max-h-20 overflow-hidden");
   });
 });
 
@@ -140,6 +155,30 @@ describe("turn projection", () => {
     const turn = projectTurn(phases, phaseTools, false);
     expect(workSummaryLine(turn.work, phaseTools)).toBe("读取了 1 个文件 · 运行了命令");
     expect(workSummaryLine([], {}, true)).toBe("正在思考");
+  });
+
+  test("a browser or desktop `*_task` is a tool, not a delegated sub-agent", () => {
+    expect(workCategory("browser_task")).toBe("computer");
+    expect(workCategory("gui_task")).toBe("computer");
+    expect(workCategory("spawn_agent")).toBe("agent");
+    expect(workCategory("wait_agent")).toBe("agent");
+    expect(workCategory("delegate")).toBe("agent");
+  });
+
+  test("the fold line never claims a sub-agent for a browser task", () => {
+    const items: DisplayMessage[] = [
+      { id: "a", message: { role: "assistant", stopReason: "toolUse", content: [
+        { type: "toolCall", id: "bt", name: "browser_task", arguments: { goal: "打开页面" } },
+        { type: "toolCall", id: "sh", name: "bash", arguments: { command: "ls" } },
+      ] } },
+    ];
+    const tools: Record<string, Tool> = {
+      bt: { name: "browser_task", running: false, result: "ok" },
+      sh: { name: "bash", running: false, result: "ok" },
+    };
+    const line = workSummaryLine(projectTurn(items, tools, false).work, tools);
+    expect(line).not.toContain("子 agent");
+    expect(line).toContain("操作了电脑");
   });
 
   test("strips markdown from narration summaries", () => {

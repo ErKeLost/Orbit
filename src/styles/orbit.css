@@ -151,6 +151,30 @@
   color: var(--link-color);
 }
 
+/*
+ * A prompt bubble is a small piece of paper, not the transcript: keep the
+ * bubble's own leading and let block margins shrink with it, or a two-paragraph
+ * prompt reads like a document someone pasted into the chat.
+ */
+.user-message-markdown .agent-markdown {
+  line-height: 1.25rem;
+}
+
+.user-message-markdown .agent-markdown :is(p, ul, ol, blockquote, table) {
+  margin-block: 0.35em;
+}
+
+.user-message-markdown .agent-markdown > :first-child { margin-top: 0; }
+.user-message-markdown .agent-markdown > :last-child { margin-bottom: 0; }
+
+.user-message-markdown .agent-markdown :is(ul, ol) {
+  padding-inline-start: 1.15rem;
+}
+
+.user-message-markdown .agent-markdown :is(h1, h2, h3, h4) {
+  margin: 0.5em 0 0.25em;
+}
+
 .agent-markdown a:hover { text-decoration: underline; }
 
 .agent-markdown :not(pre) > code {

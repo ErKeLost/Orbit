@@ -682,7 +682,7 @@ const UserMessage = memo(function UserMessage({ item }: { item: DisplayMessage }
   const photos = userImages(item.message);
   const [expanded, setExpanded] = useState(false);
   const [clamped, setClamped] = useState(false);
-  const textRef = useRef<HTMLPreElement | null>(null);
+  const textRef = useRef<HTMLDivElement | null>(null);
   const singleLine = !text.includes("\n") && text.length < 48;
   useLayoutEffect(() => {
     const el = textRef.current;
@@ -706,9 +706,16 @@ const UserMessage = memo(function UserMessage({ item }: { item: DisplayMessage }
               singleLine ? "rounded-full" : "rounded-xl"
             }`}
           >
-            <pre ref={textRef} data-selectable-agent-response={item.id} className={`min-w-0 whitespace-pre-wrap break-words font-sans text-sm ${expanded ? "" : "line-clamp-4"}`}>
-              {text}
-            </pre>
+            {/* 提示词按 markdown 渲染：读者自己写的列表、代码块、链接、表格在气泡里
+                就应该是它们的样子。折叠仍然靠高度裁切——markdown 的块级子元素让
+                `-webkit-line-clamp` 数不准行，`max-h` + `scrollHeight` 测得到。 */}
+            <div
+              ref={textRef}
+              data-selectable-agent-response={item.id}
+              className={`user-message-markdown min-w-0 break-words ${expanded ? "" : "max-h-20 overflow-hidden"}`}
+            >
+              <Markdown content={text} links="panel" />
+            </div>
             {clamped && !expanded ? (
               <button type="button" className="mt-1 text-[12px] text-content/50 hover:text-content" onClick={() => setExpanded(true)}>
                 显示全部

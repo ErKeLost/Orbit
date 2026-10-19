@@ -85,11 +85,15 @@ export function isImageTool(part: Part, tools: Record<string, Tool>) {
 
 export function workCategory(name: string): WorkCategory {
   const kind = toolKind(name);
-  if (/(^|[_-])(agent|task|subagent|delegate)([_-]|$)/i.test(name)) return "agent";
+  // 电脑/浏览器工具自己就叫 `*_task`（`browser_task`、`gui_task`）：那是把活派给
+  // 工具，不是派给子 agent，所以 `toolKind` 先认领的归它。
+  if (kind === "computer") return "computer";
+  // 委派工具才叫子 agent：`spawn_agent` / `wait_agent` / `delegate`，或某家 harness
+  // 里光秃秃的 `task`——但 `xxx_task` 永远不是。
+  if (/(^|[_-])(agent|subagent|delegate)([_-]|$)|^task$/i.test(name)) return "agent";
   if (kind === "edit") return "edit";
   if (kind === "read" || kind === "search") return "research";
   if (kind === "command") return "run";
-  if (kind === "computer") return "computer";
   return "other";
 }
 

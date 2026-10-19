@@ -1,14 +1,16 @@
 import { invoke } from "../../lib/native";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { open } from "@tauri-apps/plugin-dialog";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useWorkspace } from "../../lib/store";
 import { perfMarkSend } from "../../lib/perf-log";
 import { ensureSessionModes, recallQueue, report, request, sendPrompt, setBrowserUseMode, setComputerUseMode, setMultiAgentMode, steerFollowUp, stop, transcribeAudio } from "../../lib/rpc";
 import { useSessionTarget } from "../shell/use-session-target";
+import { CHAT_PANE_ID, useActiveWorkspace } from "../shell/shellStore";
 import { base64ToBlob } from "../../lib/image-bytes";
 import { encodeBlobToBase64, encodeClipboardImage } from "../../lib/image-encode";
-import { shouldSubmitComposer } from "../../lib/composer";
+import { shouldFocusComposer, shouldSubmitComposer } from "../../lib/composer";
 import { useMetrics } from "../../hooks/use-metrics";
 import { useGitBranches } from "../../lib/git";
 import { Popover } from "../../shared/ui/Popover";
@@ -29,6 +31,7 @@ import {
   buildPromptMessage,
   canSubmitPrompt,
   clipboardImageName,
+  couldBeFileReference,
   contextMeterUsage,
   forgetDraft,
   hasCommand,
@@ -45,6 +48,7 @@ import {
   sendBehavior,
   showsOptimisticPreview,
   splitAttachments,
+  stripPastedSuffix,
   suggestCommandMessage,
   type Attachment,
   type ImageAttachment,
@@ -89,6 +93,21 @@ async function readClipboardImage(): Promise<ImageAttachment | null> {
     return { kind: "image", id: crypto.randomUUID(), name: clipboardImageName(mimeType), mimeType, blob };
   } finally {
     await image.close();
+  }
+}
+
+/**
+ * 桌面端的「从磁盘选择」：系统对话框交回路径，`addFilePaths` 再把图片读成字节、
+ * 把视频 / PDF / zip 之类做成路径卡片。浏览器的 `<input type=file>` 只给 File
+ * 对象不给路径，所以这条路只能在桌面端走。
+ */
+async function pickFilesFromDisk(add: (paths: string[]) => void) {
+  try {
+    const selected = await open({ multiple: true, title: "添加文件", directory: false });
+    if (!selected) return;
+    add((Array.isArray(selected) ? selected : [selected]).filter(Boolean));
+  } catch (error) {
+    report(error);
   }
 }
 
@@ -159,6 +178,18 @@ function ToolButton({ active, disabled, label, onClick, children }: { active?: b
   );
 }
 
+/**
+ * Whether the caret is already parked in some other editable control — the other
+ * pane's composer, the editor, the terminal's hidden textarea, a search box.
+ * Those are the cases where auto-focusing would type into the wrong place.
+ */
+function editingSomewhereElse(field: HTMLElement | null) {
+  const active = document.activeElement;
+  if (!active || active === field) return false;
+  if (active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement || active instanceof HTMLSelectElement) return true;
+  return active instanceof HTMLElement && active.isContentEditable;
+}
+
 /** Orbit `AccessPicker`-shaped pills for Pi's session modes. */
 /** Orbit `ComposerAction`: white square send / stop. */
 function ComposerAction({ busy, disabled, hasValue, onSend, onStop }: { busy: boolean; disabled: boolean; hasValue: boolean; onSend: () => void; onStop: () => void }) {
@@ -187,7 +218,7 @@ function ComposerAction({ busy, disabled, hasValue, onSend, onStop }: { busy: bo
   );
 }
 
-export const Composer = memo(function Composer({ onSubmitted, centered = false }: { onSubmitted: () => void; centered?: boolean }) {
+export const Composer = memo(function Composer({ onSubmitted, centered = false, paneId = CHAT_PANE_ID }: { onSubmitted: () => void; centered?: boolean; paneId?: string }) {
   const project = useWorkspace((state) => state.cwd);
   // Sends go to this pane's pi connection, not the shell's projected one.
   const target = useSessionTarget();
@@ -202,6 +233,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
   const computerUse = useWorkspace((state) => state.computerUseEnabled);
   const browserUse = useWorkspace((state) => state.browserUseEnabled);
   const dialog = useWorkspace((state) => state.dialogs[0]);
+  // 回合结束要不要把光标抢回来，取决于这个输入框是不是当前活动 pane 的。
+  const activePane = useActiveWorkspace((workspace) => workspace.activePane);
   // 分支名放在输入框上方左侧（和项目选择器同一行）：随时能看到当前 checkout，
   // 点开就能切分支 / 新建分支。
   const branches = useGitBranches(project).data;
@@ -228,6 +261,26 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
   }, [running]);
   const turnKey = transcriptTurn(useWorkspace((state) => state.transcript.messages));
   const draftRef = useRef<DraftHandle>(null);
+  // 回合结束把光标交回输入框：读完就能直接接着打字，不用先点一下。触发点就是
+  // 上面那个「真的结束」的计数，所以每一轮只聚焦一次；`focusedSettle` 记住已处理
+  // 过的那一次，守卫条件（切 pane、开弹窗）之后才变也不会再抢一次焦点。
+  const focusedSettle = useRef(0);
+  useEffect(() => {
+    if (!settleSeq || focusedSettle.current === settleSeq) return;
+    focusedSettle.current = settleSeq;
+    const field = draftRef.current?.element() ?? null;
+    if (
+      !shouldFocusComposer({
+        activePane: paneId === activePane,
+        modalOpen: Boolean(dialog) || document.querySelector('[role="dialog"][aria-modal="true"]') !== null,
+        editingElsewhere: editingSomewhereElse(field),
+        selecting: (document.getSelection()?.isCollapsed ?? true) === false,
+        handheld: runtimeTarget === "mobile",
+      })
+    )
+      return;
+    field?.focus();
+  }, [settleSeq, paneId, activePane, dialog, runtimeTarget, draftRef]);
   // Shell-style recall of what the reader already sent. Kept in refs, and the
   // transcript is read lazily inside the handler: subscribing to it here would
   // re-render the composer on every streamed token.
@@ -292,23 +345,41 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
         }
         return { kind: "file", id: crypto.randomUUID(), name, path };
       }),
-    ).then((next) => setAttachments((current) => [...current, ...next])).catch(report);
+    ).then((next) =>
+      setAttachments((current) => {
+        // 同一个文件拖两次 / 粘两次只应挂一张卡片；图片按内容区分不了，不去重。
+        const taken = new Set(current.flatMap((item) => (item.kind === "file" ? [item.path] : [])));
+        return [...current, ...next.filter((item) => item.kind !== "file" || !taken.has(item.path))];
+      }),
+    ).catch(report);
   }, []);
 
   useEffect(() => {
     const onPaste = async (event: ClipboardEvent) => {
       const target = event.target instanceof Element ? event.target : null;
       if (!target?.closest("[data-composer-box]")) return;
+      const desktop = runtimeTarget === "desktop";
       const files = Array.from(event.clipboardData?.files ?? []);
-      // 只在没有文件时才读文本：有文件就是图片粘贴，文本是什么都不影响。
-      const intent = pasteIntent({
-        files,
-        text: files.length === 0 ? (event.clipboardData?.getData("text/plain") ?? "") : "",
-        desktop: runtimeTarget === "desktop",
-      });
+      const text = files.length === 0 ? (event.clipboardData?.getData("text/plain") ?? "") : "";
+      // 只在没有文件时才读文本：有文件就是附件粘贴，文本是什么都不影响。
+      const intent = pasteIntent({ files, text, desktop });
       if (intent.kind === "images") {
         event.preventDefault();
         addPrepared(setAttachments, intent.images);
+        return;
+      }
+      // 视频 / PDF / zip：DOM 给了文件但没给路径，路径得问系统剪贴板。
+      if (intent.kind === "files") {
+        event.preventDefault();
+        const paths = await invoke<string[]>("clipboard_file_paths").catch(() => [] as string[]);
+        if (paths.length) {
+          addFilePaths(paths);
+          return;
+        }
+        // 拿不到路径（远程会话、权限），至少把图片的字节留下。
+        const images = intent.files.filter((file) => file.type.startsWith("image/"));
+        if (images.length) addPrepared(setAttachments, images);
+        else toast.error("无法读取这个文件，请用 + 号从磁盘选择");
         return;
       }
       if (intent.kind === "native-clipboard") {
@@ -320,6 +391,20 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
         }
         const image = await nativeClipboardImage();
         if (image) setAttachments((current) => [...current, image]);
+        return;
+      }
+      // 剩下的是文本。Finder 里复制的文件在 webview 里只现成名字或路径文本，
+      // 所以先让浏览器把字插进去（保留原生撤销），再问系统剪贴板：真的是文件，
+      // 就把刚插入的那行换成一个附件卡片。
+      if (!desktop || !text || !couldBeFileReference(text)) return;
+      const paths = await invoke<string[]>("clipboard_file_paths").catch(() => [] as string[]);
+      if (!paths.length) return;
+      addFilePaths(paths);
+      const field = draftRef.current;
+      if (field) {
+        const current = field.value();
+        const stripped = stripPastedSuffix(current, text);
+        if (stripped !== current) field.setText(stripped, stripped.length);
       }
     };
     const listener = (event: ClipboardEvent) => void onPaste(event);
@@ -534,7 +619,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
 
           <div className="flex items-center gap-1 px-2 pb-2">
             <div ref={plusRef} className="relative shrink-0">
-              <ToolButton label="添加图片或选择模式" active={plusOpen} onClick={() => setPlusOpen((value) => !value)}>
+              <ToolButton label="添加文件或选择模式" active={plusOpen} onClick={() => setPlusOpen((value) => !value)}>
                 <Plus className="size-3.5" strokeWidth={1.5} />
               </ToolButton>
               {plusOpen ? (
@@ -545,13 +630,20 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false }
                     className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left text-content hover:bg-content/10"
                     onClick={() => {
                       setPlusOpen(false);
+                      if (runtimeTarget === "desktop") {
+                        // 桌面端走系统对话框拿路径：图片读字节，视频 / PDF / zip 等挂路径卡片。
+                        void pickFilesFromDisk(addFilePaths);
+                        return;
+                      }
                       fileInput.current?.click();
                     }}
                   >
                     <ImagePlus className="mt-0.5 size-3.5 shrink-0 text-content/70" strokeWidth={1.75} />
                     <span className="min-w-0">
-                      <span className="block text-[13px] font-medium leading-5">图片</span>
-                      <span className="mt-0.5 block text-[11px] leading-4 text-content/50">从磁盘选择，或直接粘贴截图</span>
+                      <span className="block text-[13px] font-medium leading-5">文件</span>
+                      <span className="mt-0.5 block text-[11px] leading-4 text-content/50">
+                        {runtimeTarget === "desktop" ? "图片、视频、文档…从磁盘选择，或直接粘贴" : "从磁盘选择图片，或直接粘贴截图"}
+                      </span>
                     </span>
                   </button>
                   <p className="px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-content/40">输入</p>
