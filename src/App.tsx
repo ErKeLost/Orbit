@@ -18,6 +18,8 @@ import { FileView } from "./features/shell/files/FileView";
 import { MobileShell } from "./features/shell/rail/MobileShell";
 import { useActiveWorkspace, useShell, isHomeWorkspace, CHAT_PANE_ID } from "./features/shell/shellStore";
 import { ChatPane } from "./features/chat/ChatPane";
+import { TerminalDock } from "./features/terminal/TerminalDock";
+import { BrowserDock } from "./features/browser/BrowserDock";
 import { SettingsView } from "./features/settings/SettingsView";
 import { InboxView } from "./features/inbox/InboxView";
 import { SearchView } from "./features/search/SearchView";
@@ -58,6 +60,9 @@ function WorkArea({ withSessions }: { withSessions: boolean }) {
   const movePane = useShell((state) => state.movePane);
   const setSplitRatio = useShell((state) => state.setSplitRatio);
   const focusedPane = useActiveWorkspace((workspace) => workspace.activePane);
+  const terminalOpen = useShell((state) => state.terminalOpen);
+  const terminalPosition = useShell((state) => state.terminalPosition);
+  const terminalVertical = terminalPosition === "top" || terminalPosition === "bottom";
   const sessions = useActiveWorkspace((workspace) => workspace.sessions);
   // 面板永远跑在工作区自己的连接上（分屏会话除外）——不再回退到“全局投影”，
   // 切项目范围、切标签页时谁该换连接由控制器一处决定。
@@ -92,6 +97,10 @@ function WorkArea({ withSessions }: { withSessions: boolean }) {
   const hasSessionPanes = Object.keys(sessions).length > 0;
   const hasFileContent = Object.values(panes).some((pane) => pane.files.length > 0);
   const emptyWorkspace = leaves.length === 0 || (!hasSessionPanes && !hasFileContent);
+  // 终端是工作区级的 dock（Orbit 的 `ProjectTerminalDock`）：它和面板网格平级、
+  // 一直挂载，所以关掉最后一个会话面板、或者切到设置/收件箱，都不会把正在跑的
+  // shell 一起拆掉。其它整页面板不占终端的位置，只在聊天面上露出来。
+  const terminalDock = <TerminalDock cwd={cwd} open={panel === "chat" && terminalOpen} />;
   // A pane a split just created slides in from the edge it took. The store
   // records that edge, so `data-pane-enter` is on the pane's first paint and
   // the animation starts from the offscreen keyframe (never a final-position
@@ -196,112 +205,128 @@ function WorkArea({ withSessions }: { withSessions: boolean }) {
     flushForegroundEvents();
   }, [connectionId]);
 
-  if (panel === "settings") return <SettingsView />;
-  if (panel === "inbox") return <InboxView />;
-  if (panel === "search") return <SearchView />;
-  if (panel === "automations") return <AutomationsView />;
+  // 整页界面（设置/收件箱/搜索/自动化）不替代会话面，只是画在它旁边：会话面用
+  // `hidden` 收起来但不卸载，终端 PTY、浏览器页、编辑器状态都不会因为“去设置看一下”
+  // 而重启。收起时 `BrowserTab` 会把原生子视图 hide（它不属于页面布局，不主动藏就会
+  // 浮在设置界面上面）。
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {/* 红绿灯归属：展开栏开着→展开栏头部让位；侧栏真的画出来→侧栏头部让位；
-          侧栏没画（关掉了、或首页/没有项目）→ 标题栏自己让位，不能被 tab 盖住。 */}
-      <TitleBar
-        railsHidden={
-          !projectRailOpen &&
-          (!withSessions || !sessionSidebarOpen || panel === "mobile-access" || panel === "notes")
-        }
-      />
-      <MetricsSync />
-      {panel === "chat" ? (
-        <div ref={paneContainerRef} className="relative min-h-0 min-w-0 flex-1">
-          {emptyWorkspace ? (
-            <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col">
-              <SessionScope connectionId={workspaceConnectionId ?? ""}>
-                <div className="chat-pane-background relative isolate flex h-full min-h-0 min-w-0 flex-1 flex-col">
-                  <ChatPane onSubmitted={homeWorkspace ? tabs.promoteHome : undefined} />
-                </div>
-              </SessionScope>
-            </div>
-          ) : (
-          <>
-          {leaves.map((entry) => {
-            const dragging = paneDrag?.fromId === entry.id;
-            const hint = paneDrag?.overId === entry.id ? paneDrag.edge : null;
-            const drop = tabDrop?.toPane === entry.id ? tabDrop : null;
-            return (
-              <div
-                key={entry.id}
-                data-pane-id={entry.id}
-                onMouseDown={() => focusPane(entry.id)}
-                data-pane-enter={entering[entry.id]}
-                onAnimationEnd={(event) => {
-                  if (event.animationName !== "pane-enter") return;
-                  clearEntering(entry.id);
-                }}
-                className={`absolute flex min-h-0 min-w-0 flex-col overflow-clip ${dragging ? "opacity-60" : ""} ${detaching === entry.id ? "ring-2 ring-inset ring-accent/60" : ""}`}
-                style={{
-                  left: `${entry.rect.x * 100}%`,
-                  top: `${entry.rect.y * 100}%`,
-                  width: `${entry.rect.w * 100}%`,
-                  height: `${entry.rect.h * 100}%`,
-                }}
-              >
-                {sessions[entry.id] ? (
-                  // Every session pane is scoped to its own pi connection, so any
-                  // number of them can stream at once (Orbit's session panes).
-                  <SessionScope connectionId={entry.id === CHAT_PANE_ID ? workspaceConnectionId ?? "" : sessions[entry.id].connectionId || workspaceConnectionId || ""}>
+    <>
+      <section className={panel === "chat" ? "flex min-h-0 min-w-0 flex-1 flex-col" : "hidden"}>
+        {/* 红绿灯归属：展开栏开着→展开栏头部让位；侧栏真的画出来→侧栏头部让位；
+            侧栏没画（关掉了、或首页/没有项目）→ 标题栏自己让位，不能被 tab 盖住。 */}
+        <TitleBar
+          railsHidden={
+            !projectRailOpen &&
+            (!withSessions || !sessionSidebarOpen || panel === "mobile-access" || panel === "notes")
+          }
+        />
+        <MetricsSync />
+        {/* 终端属于工作区，不属于某一个会话面板：关掉聊天面板时 shell 必须继续跑，
+            所以 dock 挂在这一层，跟面板网格平级。它一直挂载（收起来只是 `hidden`），
+            切面板、关会话都不会重启 PTY。 */}
+        <div className={`relative flex min-h-0 min-w-0 flex-1 ${terminalVertical ? "flex-col" : "flex-row"}`}>
+          {terminalPosition === "top" || terminalPosition === "left" ? terminalDock : null}
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+            {/* 面板网格同样是「收起不卸载」：切到命令/笔记这类侧面板时它只是 `hidden`，
+                里面的浏览器页、编辑器、会话（以及它们的滚动与草稿）都还在；浏览器页的
+                原生子视图由 `BrowserTab` 在量到 0 尺寸时 hide，回来仍是同一个页面。 */}
+            <div ref={paneContainerRef} className={panel === "chat" ? "relative min-h-0 min-w-0 flex-1" : "hidden"}>
+              {emptyWorkspace ? (
+                <div className="absolute inset-0 flex min-h-0 min-w-0 flex-col">
+                  <SessionScope connectionId={workspaceConnectionId ?? ""}>
                     <div className="chat-pane-background relative isolate flex h-full min-h-0 min-w-0 flex-1 flex-col">
-                      {split ? (
-                        <SessionPaneHeader
-                          showGrip
-                          focused={focusedPane === entry.id}
-                          onClosePane={() => void tabs.closeSessionPane(entry.id)}
-                          onPaneDragStart={paneDragStart(entry.id)}
-                        />
-                      ) : null}
-                      <ChatPane
-                        key={sessions[entry.id].connectionId || workspaceConnectionId || cwd}
-                        onSubmitted={homeWorkspace ? tabs.promoteHome : undefined}
-                      />
+                      <ChatPane onSubmitted={homeWorkspace ? tabs.promoteHome : undefined} paneId={CHAT_PANE_ID} />
                     </div>
                   </SessionScope>
-                ) : panes[entry.id] ? (
-                  <FileView
-                    paneId={entry.id}
-                    cwd={cwd}
-                    showGrip={split}
-                    onPaneDragStart={paneDragStart(entry.id)}
-                  />
-                ) : null}
-                {hint ? <PaneDropHint edge={hint} /> : null}
-                {drop?.edge ? <PaneDropHint edge={drop.edge} /> : null}
-                {drop && !drop.edge ? (
-                  <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-9 ring-2 ring-inset ring-accent/60" />
-                ) : null}
-              </div>
-            );
-          })}
-          {sashes.map((sash) => (
-            <PaneSash
-              key={`${sash.splitId}:${sash.index}`}
-              sash={sash}
-              containerRef={paneContainerRef}
-              onPreview={(boundary) =>
-                setPreviewLayout(setSplitRatioLayout(layout, sash.splitId, sash.index, boundary))
-              }
-              onCommit={(boundary) => {
-                setPreviewLayout(null);
-                setSplitRatio(sash.splitId, sash.index, boundary);
-              }}
-              onCancel={() => setPreviewLayout(null)}
-            />
-          ))}
-          </>
-          )}
+                </div>
+              ) : (
+                <>
+                  {leaves.map((entry) => {
+                    const dragging = paneDrag?.fromId === entry.id;
+                    const hint = paneDrag?.overId === entry.id ? paneDrag.edge : null;
+                    const drop = tabDrop?.toPane === entry.id ? tabDrop : null;
+                    return (
+                      <div
+                        key={entry.id}
+                        data-pane-id={entry.id}
+                        onMouseDown={() => focusPane(entry.id)}
+                        data-pane-enter={entering[entry.id]}
+                        onAnimationEnd={(event) => {
+                          if (event.animationName !== "pane-enter") return;
+                          clearEntering(entry.id);
+                        }}
+                        className={`absolute flex min-h-0 min-w-0 flex-col overflow-clip ${dragging ? "opacity-60" : ""} ${detaching === entry.id ? "ring-2 ring-inset ring-accent/60" : ""}`}
+                        style={{
+                          left: `${entry.rect.x * 100}%`,
+                          top: `${entry.rect.y * 100}%`,
+                          width: `${entry.rect.w * 100}%`,
+                          height: `${entry.rect.h * 100}%`,
+                        }}
+                      >
+                        {sessions[entry.id] ? (
+                          // Every session pane is scoped to its own pi connection, so any
+                          // number of them can stream at once (Orbit's session panes).
+                          <SessionScope connectionId={entry.id === CHAT_PANE_ID ? workspaceConnectionId ?? "" : sessions[entry.id].connectionId || workspaceConnectionId || ""}>
+                            <div className="chat-pane-background relative isolate flex h-full min-h-0 min-w-0 flex-1 flex-col">
+                              {split ? (
+                                <SessionPaneHeader
+                                  showGrip
+                                  focused={focusedPane === entry.id}
+                                  onClosePane={() => void tabs.closeSessionPane(entry.id)}
+                                  onPaneDragStart={paneDragStart(entry.id)}
+                                />
+                              ) : null}
+                              <ChatPane
+                                key={sessions[entry.id].connectionId || workspaceConnectionId || cwd}
+                                onSubmitted={homeWorkspace ? tabs.promoteHome : undefined}
+                                paneId={entry.id}
+                              />
+                            </div>
+                          </SessionScope>
+                        ) : panes[entry.id] ? (
+                          <FileView
+                            paneId={entry.id}
+                            cwd={cwd}
+                            showGrip={split}
+                            onPaneDragStart={paneDragStart(entry.id)}
+                          />
+                        ) : null}
+                        {hint ? <PaneDropHint edge={hint} /> : null}
+                        {drop?.edge ? <PaneDropHint edge={drop.edge} /> : null}
+                        {drop && !drop.edge ? (
+                          <div className="pointer-events-none absolute inset-x-0 top-0 z-20 h-9 ring-2 ring-inset ring-accent/60" />
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  {sashes.map((sash) => (
+                    <PaneSash
+                      key={`${sash.splitId}:${sash.index}`}
+                      sash={sash}
+                      containerRef={paneContainerRef}
+                      onPreview={(boundary) =>
+                        setPreviewLayout(setSplitRatioLayout(layout, sash.splitId, sash.index, boundary))
+                      }
+                      onCommit={(boundary) => {
+                        setPreviewLayout(null);
+                        setSplitRatio(sash.splitId, sash.index, boundary);
+                      }}
+                      onCancel={() => setPreviewLayout(null)}
+                    />
+                  ))}
+                </>
+              )}
+            </div>
+            {panel === "chat" ? null : <Panel />}
+          </div>
+          {terminalPosition === "bottom" || terminalPosition === "right" ? terminalDock : null}
         </div>
-      ) : (
-        <Panel />
-      )}
-    </section>
+      </section>
+      {panel === "settings" ? <SettingsView /> : null}
+      {panel === "inbox" ? <InboxView /> : null}
+      {panel === "search" ? <SearchView /> : null}
+      {panel === "automations" ? <AutomationsView /> : null}
+    </>
   );
 }
 
@@ -372,6 +397,9 @@ export default function App() {
           <SessionSidebar visible={sessionSidebarOpen && !chromeless} railVisible={projectRailOpen} onSearch={openSearch} />
         ) : null}
         <WorkArea withSessions={withSessions} />
+        {/* 浏览器列是窗口的一列，不是任何工作区/面板里的一格：切标签、切面板、
+            关面板都带着它的页面一起留下。手机端没有这一栏。 */}
+        <BrowserDock />
         <QuickOpen />
       </div>
       <ScreenOverlay />

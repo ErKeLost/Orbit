@@ -136,7 +136,7 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
           <FileView paneId={paneId} cwd={cwd} showGrip={false} />
         ) : panel === "chat" ? (
           <div className="mobile-composer-dock flex min-h-0 flex-1 flex-col">
-            <ChatPane />
+            <ChatPane withTerminal />
           </div>
         ) : (
           <div className="min-h-0 flex-1 overflow-y-auto">

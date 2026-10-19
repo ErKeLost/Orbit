@@ -69,7 +69,7 @@ diff 解析，`components/Icon.tsx` 引用 `features/shell/FileTypeIcon`。这�
 | 所有者 | 内容 | 生命周期 |
 | --- | --- | --- |
 | `lib/store.ts` | 当前投影连接的 `transcript`、`state`、`telemetry`、`connection`、错误、草稿、对话框/通知/状态、`liveSessions`、`agents`、模式开关、`panel` | 应用级；`event()` 用 `reduceEvent` 归约，`set()` 被 rpc 层调用 |
-| `features/shell/shellStore.ts` | 工作区标签、`activeWorkspaceId`、`activeByProject`、每个标签的 pane 树、文件标签、侧栏/终端布局 | 标签不持久化；轨道/侧栏/终端等 UI 偏好写 localStorage，启动时重建首页 |
+| `features/shell/shellStore.ts` | 工作区标签、`activeWorkspaceId`、`activeByProject`、每个标签的 pane 树、文件标签、侧栏/终端/浏览器列布局 | 标签不持久化；轨道/侧栏/终端等 UI 偏好写 localStorage，启动时重建首页 |
 | `lib/rpc-core.ts` | `snapshots`（每条连接一份完整投影）、`connections`、`projectActive`、`sessionOwners`、待响应请求、事件队列、`pendingModels`、transcript cache | 进程/连接级；`closeConnection` 时删除对应条目 |
 | `features/*/model` | 纯函数缓存与派生数据（diff、分组、路径、格式） | 无状态或短命 memo |
 

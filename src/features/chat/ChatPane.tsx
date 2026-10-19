@@ -17,7 +17,7 @@ import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { AgentActivityFeed } from "../../components/agents/AgentActivityFeed";
 import { GalaxyDotBackground } from "../background/GalaxyDotBackground";
 import { TerminalDock } from "../terminal/TerminalDock";
-import { useShell } from "../shell/shellStore";
+import { CHAT_PANE_ID, useShell } from "../shell/shellStore";
 import { useAppearance } from "../../lib/appearance";
 import { ErrorRow, InitialWorking, TranscriptGroupView, TranscriptSkeleton, type TranscriptGroup } from "./Transcript";
 import { Composer } from "./Composer";
@@ -139,7 +139,11 @@ const noop = () => undefined;
  * `onSubmitted` 由壳层传入：首页工作区在发出第一条消息后要升格成真正的标签页。
  * 会话内的 ChatPane 不传，落到 `noop`。
  */
-export function ChatPane({ onSubmitted }: { onSubmitted?: () => void } = {}) {
+export function ChatPane({
+  onSubmitted,
+  paneId = CHAT_PANE_ID,
+  withTerminal = false,
+}: { onSubmitted?: () => void; paneId?: string; withTerminal?: boolean } = {}) {
   const project = useWorkspace((state) => state.cwd);
   const runtimeTarget = useWorkspace((state) => state.runtimeTarget);
   const agents = useWorkspace((state) => state.agents);
@@ -177,12 +181,12 @@ export function ChatPane({ onSubmitted }: { onSubmitted?: () => void } = {}) {
   const sessionFile = useWorkspace((state) => state.state?.sessionFile) ?? persistedSessionFile(project);
   const dockPosition = useShell((state) => state.terminalPosition);
   const dockOpen = useShell((state) => state.terminalOpen);
-  // The dock is a real PTY on the desktop and an xterm.js view here; what makes
-  // that work on a phone is that `pty_spawn`/`pty_write`/`pty_resize` are
-  // mirrored commands and the output is republished over the socket as
-  // `pty.event` (`src/lib/remote-pty.ts`). Nothing in the dock knows which
-  // machine it is drawing.
-  const terminalAvailable = true;
+  // 桌面端的终端挂在 `WorkArea`（工作区）而不是会话面板上：关掉会话面板不该带走
+  // 正在跑的 shell。手机端没有工作区网格，一屏就是聊天 + 终端，所以由这里挂。
+  // 这条路径在两端都是真 PTY：`pty_spawn`/`pty_write`/`pty_resize` 是镜像命令，
+  // 输出通过 socket 以 `pty.event` 回播（`src/lib/remote-pty.ts`），dock 不知道
+  // 自己画的是哪台机器。
+  const terminalAvailable = withTerminal;
   const historical = useQuery({
     queryKey: ["pi", "turn-durations", sessionFile],
     queryFn: () => getSessionTurnDurations(sessionFile),
@@ -274,11 +278,12 @@ export function ChatPane({ onSubmitted }: { onSubmitted?: () => void } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastUserId]);
   const runningLabel = transcript.compacting ? "正在压缩上下文" : transcript.phase && transcript.phase !== "就绪" ? transcript.phase : "Working…";
+  // 手机端（`MobileShell`）没有 pane 网格，一屏就是聊天 + 终端，所以 `withTerminal`
+  // 由它打开；桌面端的 dock 挂在工作区（`App.tsx` 的 `WorkArea`）上，这里拿不到。
   const dockVertical = dockPosition === "top" || dockPosition === "bottom";
   const dock = terminalAvailable ? <TerminalDock cwd={project} open={dockOpen} /> : null;
-  // 终端是 Orbit 的 `ProjectTerminalDock`：首页（新会话面）也要能开。用一个统一的
-  // 外框把 dock 撑在所有分支外面——空首页、骨架屏、正文共用同一个位置——这样
-  // 「首页 → 第一条消息」以及切项目时 xterm 不会被卸载重挂，PTY 不重启、不闪。
+  // 统一外框：空首页、骨架屏、正文共用同一个位置，这样「首页 → 第一条消息」时
+  // xterm 不会被卸载重挂，PTY 不重启、不闪。
   const sheet = (content: ReactNode) => (
     <div className={`relative flex min-h-0 min-w-0 flex-1 ${dockVertical ? "flex-col" : "flex-row"}`}>
       {dockPosition === "top" || dockPosition === "left" ? dock : null}
@@ -357,7 +362,7 @@ export function ChatPane({ onSubmitted }: { onSubmitted?: () => void } = {}) {
       </div>
       {Object.entries(statuses).flatMap(([key, value]) => (!key.startsWith("gui-") && value ? [<div key={key} className="extension-status">{key}: {value}</div>] : []))}
       {/* Sending anchors the turn to the top instead of pinning to the bottom. */}
-      <Composer onSubmitted={onSubmitted ?? noop} />
+      <Composer onSubmitted={onSubmitted ?? noop} paneId={paneId} />
     </>,
   );
 }
