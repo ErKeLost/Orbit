@@ -20,7 +20,7 @@ import { browserTabPaths, useShell } from "../shell/shellStore";
  */
 export function useBrowserViews() {
   useEffect(() => {
-    const tabsNow = () => browserTabPaths(useShell.getState().workspaces);
+    const tabsNow = () => browserTabPaths(useShell.getState().browserTabs);
     void browserViewReconcile(tabsNow()).catch(() => undefined);
     const pending = listen<{ url?: string; tab?: string }>("browser:open", event => {
       // The tab id is the app's own (`browser_view.rs` generates it and returns
@@ -48,16 +48,25 @@ export function useBrowserViews() {
     // it after startup.
     let last = tabsNow().join("|");
     const unsubscribe = useShell.subscribe(state => {
-      const tabs = browserTabPaths(state.workspaces);
+      const tabs = browserTabPaths(state.browserTabs);
       const key = tabs.join("|");
       if (key === last) return;
       last = key;
       void browserViewReconcile(tabs).catch(() => undefined);
     });
+    // ...and the third outcome of a run: it stopped where only the person can
+    // go on — a sign-in wall, a checkout. The app keeps that view alive and says
+    // so here; the tab becomes the column's own instead of vanishing and leaving
+    // the reader on whatever page was in front before the run started.
+    const handedOver = listen<{ url?: string; tab?: string }>("browser:handoff", event => {
+      const tab = event.payload?.tab?.trim();
+      if (tab) useShell.getState().adoptBrowser(tab, event.payload?.url);
+    });
     return () => {
       unsubscribe();
       void pending.then(unlisten => unlisten());
       void closing.then(unlisten => unlisten());
+      void handedOver.then(unlisten => unlisten());
     };
   }, []);
 }

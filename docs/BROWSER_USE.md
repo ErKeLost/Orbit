@@ -33,6 +33,9 @@ Orbit has two Computer-Use-class tools and they are deliberately separate:
 
 - **每个 run 一个 tab**：`view.sock` 的 `open` 由 app 生成 `browser:<id>`，写进 `browser:open` 事件并作为应答返回；此后这个 run 的每一次 `eval`/`navigate`/`go`/`reload`/`geometry`/`clickAt` 都**显式带这个 tab**。两个并发 run 因此不可能读到或点到对方的页面。没给地址时，地址从栏里当前页面继承到新 tab（仍然是自己的 tab，不会把用户正在读的页面导航走）。
 - **run 结束时关掉自己的 tab**：run 结束（成功或失败）会 `close` 它自己 mint 的那个 tab，app 同时发出 `browser:close`，前端据此移除标签项——否则每跑一次就多一个常驻标签。**已经被打开的 tab 永远不会被关**（那种情况 `ownsTab` 为 false）。一个 run 最终停留在哪个地址、页面上有什么文字，都在它的结果里，不依赖那个标签还开着。
+- **停在了只有人才能往下走的地方，tab 就不关**：登录墙、收银台需要账号或卡，run 永远过不去。这时 `close` 变成 **handoff**：视图留着、`active` 切到它、app 发 `browser:handoff`，前端把它从 run 的 tab 改成这一栏自己的（去掉 `agent`，标 `handoff`）——于是页面、滚动、已经加载好的登录框都还在，人可以接着输。判定两段：地址里的词（`login`/`account`/`pay`/`checkout`/`recharge`…，按**整词**匹配，`payload` 不算），以及页面里真的有没有密码框/一次性验证码/二维码/captcha（`eval`，1.5s 上限，run 的收尾不等页面）。调用方也可以直接发 `handoff` 操作，说自己知道这页是人的。
+
+  这条修正的是一个具体故障：run 在 `account.*/unified-login` 上停下、tab 被销毁，`browserActive` 回到 run 之前的那个 tab，于是「我帮你打开了国内控制台」看起来像「什么都没发生」。**只留一个 handoff tab**：新的接管页到来时旧的关掉——接管面不是日志，不能每跑一次多一个停在那儿的死胡同。
 - **视图的生死跟 tab 走，不跟「谁在前台」走**：切换标签页只是把视图 `hide()`（页面、滚动、登录态都留着），真正关闭标签页才由 `browser_view_reconcile` 把原生视图销毁 —— 前端启动时与标签集合每次变化时都会调用它，这也是刷新后孤儿视图的清理通道。副作用说明：前端刷新后 shell 状态是空的，启动那次 reconcile 会把包括**进行中 run** 的视图一起关掉（run 随后会在下一次 `eval` 上失败）——这是“刷新后不留孤儿视图”与“让进行中的 run 活过刷新”之间的取舍，选了前者。
 
 ```text

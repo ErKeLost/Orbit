@@ -68,12 +68,9 @@ export function browserImportState(): Promise<ImportReport | null> {
  * looking at.
  */
 export function reloadOpenBrowserTabs(): void {
-  for (const workspace of useShell.getState().workspaces) {
-    for (const pane of Object.values(workspace.panes)) {
-      for (const file of pane.files) {
-        if (file.browser) void browserViewReload(file.path).catch(() => undefined)
-      }
-    }
+  // Tabs are the window's, not a workspace's: one list, one pass.
+  for (const tab of useShell.getState().browserTabs) {
+    void browserViewReload(tab.path).catch(() => undefined)
   }
 }
 

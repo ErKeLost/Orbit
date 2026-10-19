@@ -25,16 +25,7 @@ export type OpenFile = { path: string; name: string; preview: boolean; /** Set o
    * Known on a folder opened from the tree or a listing, so the pane does not
    * have to ask the disk before it knows not to read a directory as text.
    * `lib/path-meta` stays the authority; this only avoids the first round trip.
-   */ isDir?: boolean; /**
-   * Set on a browser tab: a real web view in a pane (`browser_view.rs`), with
-   * the page it is showing. A synthetic path (`browser:<id>`) makes it an
-   * ordinary tab entry, which is what gives it tab reordering, dragging onto
-   * another pane, splitting and closing without a second implementation.
-   *
-   * `agent` marks the page a browser run asked for: that run closes it when it
-   * ends (`browser:close`), so it is a scratch page, not somewhere a link the
-   * user clicked should be sent — it would vanish under them a moment later.
-   */ browser?: { url: string; title?: string; agent?: true } };
+   */ isDir?: boolean };
 export type PaneState = { files: OpenFile[]; activeFile: string | null };
 
 /** The path prefix that marks a tab as a browser page rather than a file. */
@@ -44,13 +35,36 @@ export function isBrowserPath(path: string): boolean {
   return path.startsWith(BROWSER_PATH_PREFIX);
 }
 
-/** Every browser tab open in any workspace, by tab path (`browser:<id>`). */
-export function browserTabPaths(workspaces: WorkspaceTab[]): string[] {
-  return workspaces.flatMap((workspace) =>
-    Object.values(workspace.panes).flatMap((pane) =>
-      pane.files.filter((file) => file.browser).map((file) => file.path),
-    ),
-  );
+/**
+ * A browser tab: the window's own page, not a file in a pane.
+ *
+ * It belongs to the window the way the terminal dock does — the browser column
+ * keeps its pages while the pane grid is split, closed, or swapped for a
+ * full-page surface, and while the user switches workspace tabs. A synthetic
+ * path (`browser:<id>`) is the identity the native view is keyed by
+ * (`browser_view.rs`).
+ *
+ * `agent` marks the page a browser run asked for: that run closes it when it
+ * ends (`browser:close`), so it is a scratch page, not somewhere a link the
+ * user clicked should be sent — it would vanish under them a moment later.
+ */
+export type BrowserTabInfo = {
+  path: string;
+  url: string;
+  title?: string;
+  /** A run owns this tab; it is closed when the run ends. */
+  agent?: true;
+  /**
+   * A run's tab that outlived its run because only the person can continue
+   * there (a sign-in wall, a checkout). It is the column's tab now: links land
+   * in it and the user drives it. Only one is kept.
+   */
+  handoff?: true;
+};
+
+/** Every browser tab the window has open, by tab path (`browser:<id>`). */
+export function browserTabPaths(tabs: BrowserTabInfo[]): string[] {
+  return tabs.map((tab) => tab.path);
 }
 
 /** The session pane's leaf id; editor panes use `editor:<n>`. */

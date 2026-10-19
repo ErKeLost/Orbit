@@ -10,7 +10,7 @@ import {
   syncBrowserView,
   type ViewRect,
 } from "../../lib/browser-view"
-import { useShell, useActiveWorkspace } from "../shell/shellStore"
+import { useShell } from "../shell/shellStore"
 import { BrowserImportPrompt } from "./BrowserImportPrompt"
 import "../../styles/browser-channel.css"
 
@@ -22,13 +22,12 @@ import "../../styles/browser-channel.css"
  * OS composites into this window (`browser_view.rs`), so nothing is streamed,
  * encoded or scaled, and scrolling, selection, IME and the mouse are native.
  *
- * The tab itself is an ordinary tab entry (`shellModel.ts`), which is what gives
- * it dragging, splitting and reordering: this component only owns the page.
+ * The tab entry lives in the shell (`BrowserTabInfo`): a page belongs to the
+ * window, so it survives the pane it was opened from, the workspace tab that was
+ * in front and a switch to a full-page surface. This component only owns the
+ * page.
  */
-export function BrowserTab({ paneId, path }: { paneId: string; path: string }) {
-  const entry = useActiveWorkspace((workspace) =>
-    workspace.panes[paneId]?.files.find((file) => file.path === path),
-  )
+export function BrowserTab({ path, url, title, active = true }: { path: string; url: string; title?: string; active?: boolean }) {
   const updateBrowser = useShell((state) => state.updateBrowser)
   const [loading, setLoading] = useState(false)
   /** Whether the field currently holds something the user typed. */
@@ -54,9 +53,7 @@ export function BrowserTab({ paneId, path }: { paneId: string; path: string }) {
    * rectangle is gone.
    */
   const lastBox = useRef<ViewRect | null>(null)
-  const url = entry?.browser?.url ?? ""
   const live = url !== "" && url !== "about:blank"
-  const title = entry?.browser?.title ?? ""
 
   const fail = useCallback((reason: string) => {
     setFailure(reason)
@@ -70,10 +67,13 @@ export function BrowserTab({ paneId, path }: { paneId: string; path: string }) {
     address.current?.focus()
   }, [live])
 
-  // This tab is the one the agent's channel talks to while it is in front.
+  // This tab is the one the agent's channel talks to while it is in front. Every
+  // tab stays mounted now (a page outlives the pane it was opened from), so this
+  // follows "in front", not mount order.
   useEffect(() => {
+    if (!active) return
     void browserViewActivate(path).catch(() => undefined)
-  }, [path])
+  }, [path, active])
 
   /** Place the view where this pane's content area is. */
   useEffect(() => {
@@ -86,7 +86,16 @@ export function BrowserTab({ paneId, path }: { paneId: string; path: string }) {
       const element = stage.current
       if (!element) return
       const rect = element.getBoundingClientRect()
-      if (rect.width < 1 || rect.height < 1) return
+      // 收起的面板量到的是 0×0（切到设置/笔记这类整页界面时网格只是 `hidden`）：
+      // 原生子视图不是页面布局的一部分，没人报告矩形它就会浮在别的界面上。这里
+      // 主动 hide —— 只是隐藏，页面本身、滚动和登录态都留着，回来重新 show 同一页。
+      if (rect.width < 1 || rect.height < 1) {
+        const parked = lastBox.current
+        if (!parked || last === "hidden") return
+        last = "hidden"
+        void syncBrowserView(path, parked, undefined, false).catch(() => undefined)
+        return
+      }
       const box: ViewRect = { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
       lastBox.current = box
       const key = `${Math.round(box.x)}:${Math.round(box.y)}:${Math.round(box.width)}:${Math.round(box.height)}`
@@ -292,7 +301,8 @@ export function BrowserTab({ paneId, path }: { paneId: string; path: string }) {
       ) : null}
       {/* Same reason as the banner above: the panel is where a login is needed,
           and a toast at the bottom right is covered by the page's native view. */}
-      <BrowserImportPrompt />
+      {/* 所有标签页都常驻（页面不属于 pane），所以导入提示只由前台那个画一次。 */}
+      {active ? <BrowserImportPrompt /> : null}
       <div ref={stage} role="application" aria-label="浏览器页面" className="browser-stage relative min-h-0 min-w-0 flex-1 overflow-hidden outline-none">
         {!live ? <BrowserStart /> : null}
       </div>

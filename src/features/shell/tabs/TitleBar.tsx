@@ -138,6 +138,7 @@ function WorkspaceTabItem({
  */
 export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
   const terminalOpen = useShell((state) => state.terminalOpen);
+  const browserOpen = useShell((state) => state.browserOpen);
 
   // The hidden home workspace is not a tab: it only appears as the 首页 once
   // every tab has been closed.
@@ -231,12 +232,19 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
           <Terminal className="size-3.5" strokeWidth={1.75} />
         </TitleIconButton>
         <TitleIconButton
-          label="新建浏览器标签页"
+          label={browserOpen ? "新建浏览器标签页" : "打开浏览器"}
+          active={browserOpen}
           onClick={() => {
-            // Its own pane: a page needs width, and a browser tab squeezed into a
-            // narrow editor pane lays out wider than it can show. It is an
-            // ordinary tab from there on — drag it wherever it belongs.
-            useShell.getState().openBrowser("", { edge: "right" });
+            // The browser is its own column (third column), not a pane: a page
+            // needs width, and it must outlive the panes it was opened from.
+            const shell = useShell.getState();
+            // Closed with pages still in it: bring the column back rather than
+            // leaving those pages hidden behind a new, empty tab.
+            if (!shell.browserOpen && shell.browserTabs.length > 0) {
+              shell.setBrowserOpen(true);
+              return;
+            }
+            shell.openBrowser("");
           }}
         >
           <Globe className="size-3.5" strokeWidth={1.75} />

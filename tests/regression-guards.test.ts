@@ -60,6 +60,8 @@ describe("durable state", () => {
       "pi-gui.sidebarOpen": "cosmetic; note the narrow variant below IS durable",
       "orbit.terminal.position": "cosmetic dock placement, defaults to bottom",
       "orbit.terminal.open": "cosmetic visibility, defaults to closed",
+      "orbit.browser.open": "cosmetic visibility, defaults to closed",
+      "orbit.browser.size": "cosmetic browser column width, defaults to 520",
       "orbit.shell.collapsedRail": "cosmetic rail style, defaults to compact",
       "orbit.shell.railSessions": "cosmetic: whether the rail's session list is expanded, defaults to open",
     }
@@ -130,5 +132,79 @@ describe("window drag regions", () => {
       }
     }
     expect(bare).toEqual([])
+  })
+})
+
+describe("terminal dock ownership", () => {
+  test("the dock hangs off the workspace, not a session pane", () => {
+    // The dock used to render inside `ChatPane`, so closing the chat pane — or
+    // switching to a split whose session pane was not the one holding it —
+    // unmounted the xterm and killed the shell the user was watching. A dock is
+    // a property of the workspace: it has to sit beside the pane grid, and only
+    // the phone shell (one surface, no grid) mounts it from `ChatPane`.
+    const app = readFileSync("src/App.tsx", "utf8")
+    expect(app).toContain("<TerminalDock")
+    const workArea = app.slice(app.indexOf("function WorkArea("), app.indexOf("export default function App("))
+    expect(workArea).toContain("<TerminalDock")
+
+    const chatPane = readFileSync("src/features/chat/ChatPane.tsx", "utf8")
+    // Off by default, and the render is gated on it rather than on `true`.
+    expect(chatPane).toMatch(/withTerminal = false/)
+    expect(chatPane).toMatch(/terminalAvailable = withTerminal/)
+    expect(readFileSync("src/features/shell/rail/MobileShell.tsx", "utf8")).toContain("<ChatPane withTerminal />")
+  })
+
+  test("hiding the dock keeps its shells", () => {
+    // `hidden` is not `unmounted`: collapsing the panel must not end PTYs, and
+    // it also used to throw away the tab list, so ⌘J twice left a fresh shell.
+    const dock = readFileSync("src/features/terminal/TerminalDock.tsx", "utf8")
+    expect(dock).toContain("hidden={!open}")
+    expect(dock).toContain('invoke("pty_kill"')
+  })
+})
+
+describe("panel switches keep the work area alive", () => {
+  test("full-page surfaces are drawn beside the chat surface, not instead of it", () => {
+    // The chat surface (title bar, terminal dock, pane grid) used to be replaced
+    // by settings/inbox/search/automations through an early return, which
+    // unmounted the grid: the browser page lost its native view, editors lost
+    // scroll and drafts, and the terminal dock had to be rebuilt from scratch.
+    // Now the grid is hidden, never unmounted.
+    const app = readFileSync("src/App.tsx", "utf8")
+    const workArea = app.slice(app.indexOf("function WorkArea("), app.indexOf("export default function App("))
+    expect(workArea).not.toMatch(/if \(panel === "(settings|inbox|search|automations)"\) return/)
+    expect(workArea).toContain('{panel === "settings" ? <SettingsView /> : null}')
+    // The grid itself is conditional CSS, not a conditional render.
+    expect(workArea).toMatch(/className=\{panel === "chat" \? "relative min-h-0 min-w-0 flex-1" : "hidden"\}/)
+  })
+
+  test("a zero-sized browser stage hides the native view instead of leaving it floating", () => {
+    // The OS view is a sibling of the document, not part of layout: when the grid
+    // is hidden nobody reports a rectangle, and an un-hidden view stays drawn on
+    // top of whatever replaced it. Hiding (not closing) keeps the page alive.
+    const tab = readFileSync("src/features/browser/BrowserTab.tsx", "utf8")
+    expect(tab).toContain('last = "hidden"')
+    expect(tab).toContain("void syncBrowserView(path, parked, undefined, false)")
+  })
+})
+
+describe("browser column ownership", () => {
+  test("browser tabs are the window's, not a workspace's", () => {
+    // A page that a link opened used to be a file tab in a pane, so closing the
+    // pane, splitting it away or switching workspace tabs destroyed the native
+    // view. It is a column of the window now: the tab entry lives in the shell,
+    // and the dock sits beside `WorkArea`, outside every workspace and panel.
+    const model = readFileSync("src/features/shell/shellModel.ts", "utf8")
+    expect(model).not.toMatch(/browser\?: \{ url/)
+    expect(model).toContain("export type BrowserTabInfo")
+
+    const app = readFileSync("src/App.tsx", "utf8")
+    expect(app).toContain("<BrowserDock />")
+    expect(app.indexOf("<BrowserDock />")).toBeGreaterThan(app.indexOf("<WorkArea withSessions"))
+
+    const dock = readFileSync("src/features/browser/BrowserDock.tsx", "utf8")
+    // Collapsing keeps the pages: hiding is not unmounting.
+    expect(dock).toContain("hidden={!open}")
+    expect(dock).toContain("hidden={tab.path !== shown?.path}")
   })
 })

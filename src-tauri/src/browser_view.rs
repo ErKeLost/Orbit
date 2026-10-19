@@ -446,6 +446,94 @@ pub fn browser_view_close(app: AppHandle, host: tauri::State<'_, BrowserViewHost
     Ok(())
 }
 
+/// The addresses that belong to the person rather than to the run.
+///
+/// A run can only ever get as far as a sign-in wall or a checkout: both want an
+/// account or a card that it does not have. Whole words only, because `payload`
+/// is not a payment page and `accounting` is not an account.
+const HUMAN_MARKS: &[&str] = &[
+    "login",
+    "signin",
+    "sign-in",
+    "log-in",
+    "logon",
+    "auth",
+    "oauth",
+    "sso",
+    "passport",
+    "account",
+    "pay",
+    "payment",
+    "checkout",
+    "recharge",
+    "billing",
+    "subscribe",
+    "verify",
+    "captcha",
+];
+
+fn url_asks_for_a_human(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return false;
+    }
+    // The query is where `?redirect=` and tracking live; the address that says
+    // what this page *is* ends at the path.
+    let address = lower.split(['?', '#']).next().unwrap_or(&lower);
+    address
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|word| HUMAN_MARKS.contains(&word))
+}
+
+/// The page itself saying "a person is needed here": a password box, a one-time
+/// code, a QR code, a captcha. Only consulted when the address alone did not
+/// settle it, and bounded — a run's shutdown must not wait on a page.
+const HUMAN_PROBE: &str = r#"(() => !!document.querySelector(
+  'input[type="password"], input[autocomplete="one-time-code"], [class*="qrcode"], [id*="qrcode"], [class*="captcha"], [id*="captcha"]'
+))()"#;
+
+fn page_asks_for_a_human(app: &AppHandle, view: Webview) -> bool {
+    matches!(eval_in(app, view, HUMAN_PROBE.to_string(), 1500), Ok(text) if text.trim() == "true")
+}
+
+/// Close the tab a run opened — unless the page is one only the person can use.
+///
+/// Closing it then destroys the one thing the run did manage to load, and the
+/// window drops back to whatever page was in front *before* the run — which is
+/// how "I opened the console for you" ends up looking like "nothing happened".
+/// So that page stays: the view is kept, it comes to the front, and the frontend
+/// is told to make the tab the person's (`browser:handoff`).
+#[cfg(desktop)]
+fn close_run_tab(app: AppHandle, host: tauri::State<'_, BrowserViewHost>, tab: String) -> Result<(), String> {
+    // An unnamed close would mean "whatever is in front", and that is the page
+    // the reader is on. Every run names its own tab; this keeps that true.
+    if tab.trim().is_empty() {
+        return Err("关闭浏览器标签页需要指定 tab".to_string());
+    }
+    let id = resolve_tab_id(&host, &tab)?;
+    let (view, url) = {
+        let tabs = host.tabs.lock().map_err(|error| error.to_string())?;
+        match tabs.get(&id) {
+            Some(state) => (state.view.clone(), state.url.clone()),
+            // Already gone (a reconcile swept it): there is nothing to hand over.
+            None => return Ok(()),
+        }
+    };
+    if url_asks_for_a_human(&url) || page_asks_for_a_human(&app, view) {
+        if let Ok(mut active) = host.active.lock() {
+            *active = id.clone();
+        }
+        let _ = app.emit("browser:handoff", serde_json::json!({ "tab": id, "url": url }));
+        return Ok(());
+    }
+    browser_view_close(app, host, tab)
+}
+
+#[cfg(mobile)]
+fn close_run_tab(app: AppHandle, host: tauri::State<'_, BrowserViewHost>, tab: String) -> Result<(), String> {
+    browser_view_close(app, host, tab)
+}
+
 /// Close every browser view whose tab the frontend no longer has.
 ///
 /// The views are native child web views that **this** process owns, while the
@@ -638,7 +726,20 @@ fn handle(app: &AppHandle, request: ViewRequest) -> Result<String, String> {
                 .map_err(|error| error.to_string())?;
             Ok(serde_json::json!({ "tab": tab }).to_string())
         }
-        "close" => browser_view_close(app.clone(), host, request.tab).map(|_| "null".to_string()),
+        // A run taking its page back. Not always a close: see `close_run_tab`.
+        "close" => close_run_tab(app.clone(), host, request.tab).map(|_| "null".to_string()),
+        // A caller that already knows the page belongs to the person can say so
+        // directly, instead of leaving it to the close-time check.
+        "handoff" => {
+            let id = resolve_tab_id(&host, &request.tab)?;
+            let url = with_tab(&host, &request.tab, |state| state.url.clone())?;
+            if let Ok(mut active) = host.active.lock() {
+                *active = id.clone();
+            }
+            app.emit("browser:handoff", serde_json::json!({ "tab": id, "url": url }))
+                .map_err(|error| error.to_string())?;
+            Ok("null".to_string())
+        }
         "geometry" => {
             let rect = with_tab(&host, &request.tab, |state| state.rect)?;
             let window = app.get_window("main").ok_or_else(|| "主窗口不存在".to_string())?;

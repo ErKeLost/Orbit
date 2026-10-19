@@ -28,6 +28,7 @@ import {
   nextSessionPaneId,
   type CollapsedRailMode,
   type DockPosition,
+  type BrowserTabInfo,
   type OpenFile,
   type SidebarTab,
   type WorkspaceTab,
@@ -35,14 +36,6 @@ import {
 
 export { CHAT_PANE_ID, HOME_WORKSPACE_ID, isHomeWorkspace, projectWorkspaceTabs, browserTabPaths, newHomeWorkspace, newWorkspaceTab } from "./shellModel";
 
-/** The tab strip's label for a page: its host, until the page reports its title. */
-function browserTabName(url: string): string {
-  try {
-    return new URL(url).host || "新标签页";
-  } catch {
-    return url || "新标签页";
-  }
-}
 export type { CollapsedRailMode, DockPosition, OpenFile, PaneState, SidebarTab, WorkspaceTab } from "./shellModel";
 
 /**
@@ -112,16 +105,26 @@ type ShellState = {
   terminalPosition: DockPosition;
   terminalSize: number;
   terminalOpen: boolean;
-  /**
-   * Browser Use's第三栏 (`docs/BROWSER_USE.md`). A shell-level column, not a
-   * pane: it belongs to the window, not to one workspace, because the Chrome
-   * behind it outlives any single session — the agent may start a task from
-   * another workspace, and the picture must not disappear when the user
-   * switches tabs.
-   */
   setTerminalSize: (size: number) => void;
   setTerminalOpen: (open: boolean) => void;
   setTerminalPosition: (position: DockPosition) => void;
+  /**
+   * Browser Use's第三栏 (`docs/BROWSER_USE.md`). A shell-level column, not a
+   * pane: it belongs to the window, not to one workspace, because the web view
+   * behind it outlives any single session, pane and panel — the agent may start
+   * a task from another workspace, and the page must not disappear when the
+   * user splits, closes a pane or opens settings.
+   *
+   * Tabs live here rather than in a workspace's pane list: a page that a link
+   * opened must survive the pane it was opened from.
+   */
+  browserTabs: BrowserTabInfo[];
+  browserActive: string | null;
+  browserOpen: boolean;
+  browserWidth: number;
+  setBrowserOpen: (open: boolean) => void;
+  setBrowserWidth: (width: number) => void;
+  setBrowserActive: (path: string | null) => void;
   collapsedRailMode: CollapsedRailMode;
   setCollapsedRailMode: (mode: CollapsedRailMode) => void;
   projectRailWidth: number;
@@ -154,7 +157,7 @@ type ShellState = {
    * `changes`/`commit` open the review tabs (synthetic paths, no real file). */
   openFile: (path: string, options?: { pin?: boolean; pane?: string; diff?: "staged" | "unstaged"; isDir?: boolean; changes?: true; commit?: { sha: string; shortSha: string; subject: string }; name?: string }) => void;
   /** Open a browser tab (a real web view) in a pane, and return its tab path. */
-  openBrowser: (url: string, options?: { pane?: string; edge?: PaneEdge; path?: string }) => string;
+  openBrowser: (url: string, options?: { path?: string }) => string;
   /**
    * Open an http(s) link from inside the app.
    *
@@ -166,6 +169,16 @@ type ShellState = {
   openLink: (url: string) => string;
   /** The page a browser tab is showing, as the tab strip's label and the page itself report it. */
   updateBrowser: (path: string, patch: { url?: string; title?: string }) => void;
+  /**
+   * Take a run's tab over, page and all (`browser:handoff`).
+   *
+   * A run that dead-ends on a sign-in wall or a checkout cannot finish the job,
+   * and closing its tab would take the only page that can — the one it just
+   * loaded — with it, dropping the window back to whatever was in front before.
+   * This is that page staying instead: the tab stops being the run's (a link
+   * lands in it, the user types in it) and becomes the column's own.
+   */
+  adoptBrowser: (path: string, url?: string) => void;
   pinFile: (path: string, pane?: string) => void;
   closeFile: (path: string, pane?: string) => void;
   focusFile: (path: string | null, pane?: string) => void;
@@ -243,6 +256,15 @@ export const useShell = create<ShellState>((set, get) => {
     terminalOpen: (() => { try { return localStorage.getItem("orbit.terminal.open") === "true"; } catch { return false; } })(),
     setTerminalSize: (terminalSize) => { write("orbit.terminal.size", String(terminalSize)); set({ terminalSize }); },
     setTerminalOpen: (terminalOpen) => { write("orbit.terminal.open", String(terminalOpen)); set({ terminalOpen }); },
+    // 浏览器列（第三栏）：跟终端 dock 一样属于窗口，不属于某个工作区或面板——切工作区
+    // 标签、切设置、关面板都不该带走正在看的页面。
+    browserTabs: [] as BrowserTabInfo[],
+    browserActive: null as string | null,
+    browserOpen: readBool("orbit.browser.open", false),
+    browserWidth: readNumber("orbit.browser.size", 520),
+    setBrowserOpen: (browserOpen) => { write("orbit.browser.open", String(browserOpen)); set({ browserOpen }); },
+    setBrowserWidth: (browserWidth) => { write("orbit.browser.size", String(browserWidth)); set({ browserWidth }); },
+    setBrowserActive: (browserActive) => set({ browserActive }),
     // On by default, and off only when the user said so: the column is where
     // the browser lives, and a task's page has to stay visible while the user
     // works in other panels.
@@ -457,88 +479,76 @@ export const useShell = create<ShellState>((set, get) => {
     },
 
     openBrowser: (url, options) => {
-      const state = get();
-      const index = activeIndex(state);
-      const workspace = state.workspaces[index];
       // An agent can name the tab (`browser:open` carries the id the app itself
       // generated), which is what lets a run address the page it asked for
       // instead of whatever happens to be in front. Two rules keep that honest:
-      // the same request twice focuses the existing tab instead of adding a
+      // the same request twice navigates the existing tab instead of adding a
       // second one, and only a real browser path is accepted as a name.
       const asked = options?.path?.trim();
-      if (asked) {
-        const existing = findFile(workspace, asked);
-        if (existing) {
-          get().focusFile(asked, existing.paneId);
-          return asked;
-        }
+      const existing = asked ? get().browserTabs.find((tab) => tab.path === asked) : undefined;
+      if (existing) {
+        get().updateBrowser(existing.path, url ? { url } : {});
+        get().setBrowserActive(existing.path);
+        get().setBrowserOpen(true);
+        return existing.path;
       }
       const path = asked && isBrowserPath(asked) ? asked : `browser:${crypto.randomUUID().slice(0, 8)}`;
-      const name = browserTabName(url);
       // A named tab is the agent's (`browser:open` carries the id the app minted
       // for a run). Marking it is what keeps a link the user clicks from landing
       // on a page that run will close the moment it finishes.
-      const entry: OpenFile = { path, name, preview: false, browser: { url, ...(asked ? { agent: true as const } : {}) } };
-      const requested = options?.pane && workspace.panes[options.pane] ? options.pane : null;
-      const target = requested ?? (workspace.panes[workspace.activePane] ? workspace.activePane : Object.keys(workspace.panes)[0] ?? null);
-      if (target && !options?.edge) {
-        patchActive((current) => {
-          const pane = current.panes[target];
-          return { ...current, panes: { ...current.panes, [target]: { files: [...pane.files, entry], activeFile: path } }, activePane: target };
-        });
-        return path;
-      }
-      // No editor pane (or an edge was asked for): the browser gets its own.
-      const paneId = nextEditorPaneId(workspace.panes);
-      const edge = options?.edge ?? "right";
-      patchActive(
-        (current) => ({
-          ...current,
-          layout: placeNewPane(current.layout, current.activePane, paneId, edge),
-          panes: { ...current.panes, [paneId]: { files: [entry], activeFile: path } },
-          activePane: paneId,
-        }),
-        { entering: { ...state.entering, [paneId]: edge } },
-      );
+      const tab: BrowserTabInfo = { path, url, ...(asked ? { agent: true as const } : {}) };
+      set({
+        browserTabs: [...get().browserTabs, tab],
+        browserActive: path,
+        browserOpen: true,
+      });
       return path;
     },
 
     openLink: (url) => {
-      const state = get();
-      const workspace = state.workspaces[activeIndex(state)];
-      const browserTabs = Object.entries(workspace.panes)
-        .flatMap(([paneId, pane]) => pane.files.filter((file) => file.browser).map((file) => ({ paneId, file })));
-      // The user's own page, if the workspace has one: a link navigates it and
-      // brings it forward, instead of leaving a stale page per click behind.
-      const own = browserTabs.find((entry) => !entry.file.browser?.agent);
+      // The user's own page, if the window has one: a link navigates it and
+      // brings it forward, instead of leaving a stale page per click behind. A
+      // run's tab is never the destination — it is closed when the run ends.
+      const own = get().browserTabs.find((tab) => !tab.agent);
       if (own) {
-        get().updateBrowser(own.file.path, { url });
-        get().focusFile(own.file.path, own.paneId);
-        return own.file.path;
+        get().updateBrowser(own.path, { url });
+        get().setBrowserActive(own.path);
+        get().setBrowserOpen(true);
+        return own.path;
       }
-      // Only a run's page exists: share its pane rather than opening a second
-      // split. The run closes its own tab when it ends, so the page the user
-      // clicked stays — as the one tab left in that pane.
-      const host = browserTabs[0];
-      return get().openBrowser(url, host ? { pane: host.paneId } : { edge: "right" });
+      return get().openBrowser(url);
+    },
+
+    adoptBrowser: (path, url) => {
+      // Exactly one handed-over page: a takeover surface is not a log, so the
+      // previous one goes as the new one arrives. Closing it here is what keeps
+      // "every run leaves a tab behind" from becoming a tab strip of dead ends.
+      for (const stale of get().browserTabs.filter((tab) => tab.handoff && tab.path !== path)) {
+        get().closeFile(stale.path);
+      }
+      const tabs = get().browserTabs;
+      const existing = tabs.find((tab) => tab.path === path);
+      if (!existing) {
+        set({ browserTabs: [...tabs, { path, url: url ?? "", handoff: true as const }], browserActive: path, browserOpen: true });
+        return;
+      }
+      // `agent` has to go, not become false: `openLink` looks for a tab without
+      // it, and a link the user clicks must be able to land on this page.
+      const { agent: _wasTheRuns, ...rest } = existing;
+      set({
+        browserTabs: tabs.map((tab) => (tab.path === path ? { ...rest, url: url || tab.url, handoff: true as const } : tab)),
+        browserActive: path,
+        browserOpen: true,
+      });
     },
 
     updateBrowser: (path, patch) => {
-      patchActive((current) => {
-        let changed = false;
-        const panes = Object.fromEntries(Object.entries(current.panes).map(([paneId, pane]) => {
-          if (!pane.files.some((file) => file.path === path && file.browser)) return [paneId, pane];
-          const files = pane.files.map((file) => {
-            if (file.path !== path || !file.browser) return file;
-            const next = { ...file.browser, ...patch };
-            if (next.url === file.browser.url && next.title === file.browser.title) return file;
-            changed = true;
-            return { ...file, browser: next, name: patch.title?.trim() || file.name };
-          });
-          return [paneId, { ...pane, files }];
-        }));
-        return changed ? { ...current, panes } : current;
-      });
+      const tabs = get().browserTabs;
+      const tab = tabs.find((item) => item.path === path);
+      if (!tab) return;
+      const next = { ...tab, ...patch };
+      if (next.url === tab.url && next.title === tab.title) return;
+      set({ browserTabs: tabs.map((item) => (item.path === path ? next : item)) });
     },
 
     pinFile: (path, paneId) => {
@@ -552,6 +562,22 @@ export const useShell = create<ShellState>((set, get) => {
     },
 
     closeFile: (path, paneId) => {
+      // A browser tab is closed here, not by the pane holding it: the page is the
+      // window's. `browser_view_reconcile` sees the shorter tab list and destroys
+      // the native view (`use-browser-views.ts`).
+      if (isBrowserPath(path)) {
+        const tabs = get().browserTabs;
+        if (!tabs.some((tab) => tab.path === path)) return;
+        const rest = tabs.filter((tab) => tab.path !== path);
+        set({
+          browserTabs: rest,
+          browserActive: get().browserActive === path ? (rest.at(-1)?.path ?? null) : get().browserActive,
+          // An empty browser column is nothing to look at: with its last page
+          // gone the column goes too (there is nothing left to lose).
+          browserOpen: rest.length === 0 ? false : get().browserOpen,
+        });
+        return;
+      }
       const workspace = get().workspaces[activeIndex(get())];
       const target = paneId && workspace.panes[paneId] ? paneId : findFile(workspace, path)?.paneId;
       if (!target) return;
@@ -580,6 +606,11 @@ export const useShell = create<ShellState>((set, get) => {
     },
 
     focusFile: (path, paneId) => {
+      if (path && isBrowserPath(path)) {
+        get().setBrowserActive(path);
+        get().setBrowserOpen(true);
+        return;
+      }
       const workspace = get().workspaces[activeIndex(get())];
       const target = paneId && workspace.panes[paneId] ? paneId : (path ? findFile(workspace, path)?.paneId : workspace.activePane);
       if (!target || !workspace.panes[target]) {
