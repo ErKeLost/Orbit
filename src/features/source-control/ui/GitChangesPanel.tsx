@@ -424,7 +424,8 @@ function ChangedFiles({
   useEffect(() => {
     if (!enabled) return;
     const el = messageRef.current;
-    if (!el) return;
+    // 面板收起（`display:none`）时 scrollHeight 是 0，写进去会把提交框压塌。
+    if (!el || el.getClientRects().length === 0) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [message, enabled]);

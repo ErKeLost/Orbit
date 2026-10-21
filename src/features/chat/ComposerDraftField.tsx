@@ -1,4 +1,4 @@
-import { forwardRef, memo, useEffect, useImperativeHandle, useRef, useState, type KeyboardEvent } from "react";
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState, type KeyboardEvent } from "react";
 import { useWorkspace } from "../../lib/store";
 import { ComposerHighlight } from "./ComposerHighlight";
 import { paletteRequest, type PaletteRequest } from "./ComposerPalette";
@@ -90,11 +90,34 @@ export const DraftField = memo(
       // A reply is used only for the draft (or the turn) it was asked about, so
       // a slow answer can never land on newer text or a newer conversation.
       const ghost = suggestEnabled && dismissed !== ghostKey ? suggestionFor(reply, draft, atEnd, turnKey) : null;
-      const resize = (el: HTMLTextAreaElement | null) => {
-        if (!el) return;
+      /**
+       * 高度跟着内容长。但收起的面板量不到高度：设置/收件箱这类整页面板把会话面
+       * 用 `display:none` 收起来（`App.tsx` 的 `WorkArea`），此时 `scrollHeight` 是
+       * 0，写进去的 `0px` 会把输入框压成只剩 padding——回到会话面时草稿没变，也就
+       * 没人再量一次，输入框就一直是塌的。所以没有布局盒时不动内联高度，等它重新
+       * 有布局（下面的 ResizeObserver）再量。
+       */
+      const resize = useCallback((el: HTMLTextAreaElement | null) => {
+        if (!el || el.getClientRects().length === 0) return;
         el.style.height = "auto";
         el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-      };
+      }, []);
+      // 收起期间挂上来的输入框（比如重连后重新渲染的会话面板）高度还没量过：一有
+      // 布局盒就立刻量一次。之后内容变化已经由下面的 draft 副作用负责，这里只补
+      // 「从 0 尺寸变回可见」这一种情况。
+      useEffect(() => {
+        const el = field.current;
+        if (!el || typeof ResizeObserver === "undefined") return;
+        let laidOut = el.getClientRects().length > 0;
+        const observer = new ResizeObserver(() => {
+          const next = el.getClientRects().length > 0;
+          const regained = next && !laidOut;
+          laidOut = next;
+          if (regained) resize(el);
+        });
+        observer.observe(el);
+        return () => observer.disconnect();
+      }, [resize]);
       useImperativeHandle(
         ref,
         () => ({
@@ -123,7 +146,7 @@ export const DraftField = memo(
         rememberDraft(composerKey, draft);
         onHasValue(Boolean(draft.trim()));
         resize(field.current);
-      }, [composerKey, draft, onHasValue]);
+      }, [composerKey, draft, onHasValue, resize]);
       // 回合结束、输入框空着：猜「你下一句想说什么」。**一轮只问一次** ——
       // 重渲染、切光标、开合面板、把草稿删回空白都不会再花一次调用。
       // 打字过程本身永远不调模型：联想只在 agent 每次 run 结束时产生一次。
