@@ -36,7 +36,7 @@ export function MessageQueueView({
           <div key={`${row.kind}-${index}`} className={`flex min-h-7 items-center gap-2 text-[12px] ${index > 0 ? "border-t border-stroke" : ""}`}>
             {row.kind === "steer" ? <CornerDownRight className="size-3.5 shrink-0" /> : <ListEnd className="size-3.5 shrink-0" />}
             <div className="min-w-0 flex-1 py-1">
-              <div className="truncate text-content/80" title={row.text}>{row.text.trim() || "附件"}</div>
+              <div className="truncate text-content/80" title={row.text.length > 200 ? `${row.text.slice(0, 200)}…` : row.text}>{row.text.trim() || "附件"}</div>
             </div>
             {row.kind === "steer" ? (
               <span className="shrink-0 text-[11px] text-content/40">{running === false ? "下一轮送出" : "正在引导…"}</span>

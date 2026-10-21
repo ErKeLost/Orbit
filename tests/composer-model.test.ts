@@ -18,8 +18,14 @@ import {
   insertPalettePick,
   isImageFileName,
   isImagePath,
+  isLargePaste,
+  LARGE_PASTE_THRESHOLD,
   lruCache,
   pasteIntent,
+  pastedTextAttachment,
+  pastedTextPreview,
+  pasteTooLarge,
+  MAX_PASTE_CHARS,
   prepareImageFiles,
   previewUserMessage,
   recallAttachments,
@@ -35,6 +41,7 @@ import {
   type FileAttachment,
   type ImageAttachment,
   type PickedFile,
+  type PastedTextAttachment,
 } from "../src/features/chat/composerModel";
 import type { PreparedImage } from "../src/lib/image-attachment";
 
@@ -64,6 +71,11 @@ const chip = (id = "file-1", path = "/repo/src/App.tsx"): FileAttachment => ({
 });
 
 const caret = (start: number, end = start, length = end) => ({ start, end, length });
+
+const paste = (text = "x".repeat(2000), id = "paste-1"): PastedTextAttachment => ({
+  ...pastedTextAttachment(text),
+  id,
+});
 
 const file = (relative: string): PalettePick["file"] => ({
   path: `/repo/${relative}`,
@@ -119,11 +131,31 @@ describe("what the harness receives", () => {
     expect(buildPromptMessage("", [chip("a", "/r/a.ts")])).toBe("[文件] /r/a.ts");
   });
 
+  test("a pasted block is expanded above the instruction the reader typed", () => {
+    expect(buildPromptMessage("分析这个", [], [paste("{\"a\":1}")])).toBe("{\"a\":1}\n\n分析这个");
+    expect(buildPromptMessage("分析这个", [chip("a", "/r/a.ts")], [paste("{\"a\":1}")])).toBe(
+      "[文件] /r/a.ts\n\n{\"a\":1}\n\n分析这个",
+    );
+  });
+
+  test("a paste alone still sends, keeping its own leading and trailing whitespace", () => {
+    expect(buildPromptMessage("", [], [paste("  line\n")])).toBe("  line\n");
+  });
+
   test("attachments split into bytes and path chips", () => {
     const list: Attachment[] = [image(), chip(), image("img-2")];
-    const { images, files } = splitAttachments(list);
+    const { images, files, pastes } = splitAttachments(list);
     expect(images.map((item) => item.id)).toEqual(["img-1", "img-2"]);
     expect(files.map((item) => item.path)).toEqual(["/repo/src/App.tsx"]);
+    expect(pastes).toEqual([]);
+  });
+
+  test("a pasted block is its own kind of attachment", () => {
+    const list: Attachment[] = [image(), chip(), paste("abc", "paste-9")];
+    const { images, files, pastes } = splitAttachments(list);
+    expect(images).toHaveLength(1);
+    expect(files).toHaveLength(1);
+    expect(pastes.map((item) => item.id)).toEqual(["paste-9"]);
   });
 
   test("an image attachment keeps the prepared name and type, with a fresh id", () => {
@@ -211,6 +243,38 @@ describe("paste intent", () => {
 
   test("without a bridge to resolve paths, files stay text", () => {
     expect(pasteIntent({ files: [{ name: "demo.mp4", type: "" }], text: "", desktop: false }).kind).toBe("text");
+  });
+});
+
+describe("large pastes", () => {
+  test("the threshold is Codex's 1000 characters, inclusive", () => {
+    expect(isLargePaste("x".repeat(LARGE_PASTE_THRESHOLD))).toBe(false);
+    expect(isLargePaste("x".repeat(LARGE_PASTE_THRESHOLD + 1))).toBe(true);
+  });
+
+  test("Codex's 1 MiB hard limit refuses absurd pastes", () => {
+    expect(pasteTooLarge("x".repeat(MAX_PASTE_CHARS))).toBe(false);
+    expect(pasteTooLarge("x".repeat(MAX_PASTE_CHARS + 1))).toBe(true);
+  });
+
+  test("the chip carries a one-line preview and the real character count", () => {
+    const text = `{\n  "remixId": "3a204${"0".repeat(60)}"\n}`;
+    const attachment = pastedTextAttachment(text);
+    expect(attachment.kind).toBe("text");
+    expect(attachment.name).toBe("粘贴的文本");
+    expect(attachment.text).toBe(text);
+    expect(attachment.chars).toBe(text.length);
+    expect(attachment.preview.startsWith('{ "remixId": "3a204')).toBe(true);
+    expect(attachment.preview.endsWith("…")).toBe(true);
+  });
+
+  test("a short first line is shown whole, and blank text stays blank", () => {
+    expect(pastedTextPreview("  hello   world \n more")).toBe("hello world more");
+    expect(pastedTextPreview("\n\n   \n")).toBe("");
+  });
+
+  test("two pastes keep their attach order", () => {
+    expect(buildPromptMessage("go", [], [paste("one", "p1"), paste("two", "p2")])).toBe("one\n\ntwo\n\ngo");
   });
 });
 

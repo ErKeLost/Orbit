@@ -4,6 +4,14 @@ import { fileMentionParts, type MentionFile } from "./fileMentions";
 import { skillTextParts } from "./skillTokens";
 
 /**
+ * Drafts above this length skip token parsing. A paste this big belongs in a
+ * `粘贴的文本` chip, but extensions (`set_editor_text`) and history recall can
+ * still put one in the textarea; highlighting it token by token is what makes
+ * the window crawl.
+ */
+const MAX_HIGHLIGHT_CHARS = 20_000;
+
+/**
  * Orbit `ComposerHighlight`: the coloured copy of the draft that sits behind
  * the transparent `.composer-field` textarea. Tokens the user picked from the
  * `/` and `@` palettes keep their styling once they land in the text.
@@ -20,6 +28,15 @@ export function ComposerHighlight({
   /** Continuation shown after the caret; muted, and never part of the draft. */
   ghost?: string | null;
 }): ReactNode {
+  if (text.length > MAX_HIGHLIGHT_CHARS) {
+    return (
+      <>
+        {text}
+        {ghost ? <span className="composer-ghost">{ghost}</span> : null}
+        {text.endsWith("\n") ? "\n" : null}
+      </>
+    );
+  }
   return (
     <>
       {skillTextParts(text, names).map((part, index) =>

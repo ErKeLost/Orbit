@@ -12,7 +12,49 @@ import type { PalettePick, PaletteRequest } from "./ComposerPalette";
 
 export type ImageAttachment = { kind: "image"; id: string; name: string; mimeType: string; blob: Blob };
 export type FileAttachment = { kind: "file"; id: string; name: string; path: string };
-export type Attachment = ImageAttachment | FileAttachment;
+/**
+ * A paste too large to live in the textarea. Codex collapses these into a chip
+ * (`粘贴的文本`) and expands the payload only when the prompt is sent; the text
+ * never reaches the editor, the highlight mirror or the markdown renderer.
+ */
+export type PastedTextAttachment = { kind: "text"; id: string; name: string; text: string; chars: number; preview: string };
+export type Attachment = ImageAttachment | FileAttachment | PastedTextAttachment;
+
+/**
+ * Paste bigger than this many characters becomes a chip instead of draft text.
+ * Same threshold as Codex's `LARGE_PASTE_CHAR_THRESHOLD` (1000): below it a
+ * paste is still ordinary prose worth editing in place.
+ */
+export const LARGE_PASTE_THRESHOLD = 1000;
+
+/** Codex 的硬上限（`MAX_USER_INPUT_TEXT_CHARS = 1 << 20`）：再大就不收，也不发给模型。 */
+export const MAX_PASTE_CHARS = 1 << 20;
+
+export function isLargePaste(text: string): boolean {
+  return text.length > LARGE_PASTE_THRESHOLD;
+}
+
+export function pasteTooLarge(text: string): boolean {
+  return text.length > MAX_PASTE_CHARS;
+}
+
+/** One line of the paste, short enough for a chip, with the whitespace folded. */
+export function pastedTextPreview(text: string, max = 48): string {
+  // 只处理开头一小段：预览不该为了一兆字再复制一份一兆字的临时串。
+  const head = text.trimStart().slice(0, Math.max(400, max * 4)).replace(/\s+/g, " ");
+  return head.length > max ? `${head.slice(0, max)}…` : head;
+}
+
+export function pastedTextAttachment(text: string): PastedTextAttachment {
+  return {
+    kind: "text",
+    id: crypto.randomUUID(),
+    name: "粘贴的文本",
+    text,
+    chars: text.length,
+    preview: pastedTextPreview(text),
+  };
+}
 
 /** Extensions we are willing to re-open through `read_file_attachment`. */
 export const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp"]);
@@ -165,21 +207,34 @@ export function clipboardImageName(mimeType: string): string {
   return `粘贴的图片.${mimeType === "image/jpeg" ? "jpg" : "png"}`;
 }
 
-/** Attachments split the way a send needs them: bytes first, path chips second. */
-export function splitAttachments(attachments: readonly Attachment[]): { images: ImageAttachment[]; files: FileAttachment[] } {
+/** Attachments split the way a send needs them: bytes, path chips, pasted blocks. */
+export function splitAttachments(attachments: readonly Attachment[]): {
+  images: ImageAttachment[];
+  files: FileAttachment[];
+  pastes: PastedTextAttachment[];
+} {
   return {
     images: attachments.filter((item): item is ImageAttachment => item.kind === "image"),
     files: attachments.filter((item): item is FileAttachment => item.kind === "file"),
+    pastes: attachments.filter((item): item is PastedTextAttachment => item.kind === "text"),
   };
 }
 
 /**
  * The prompt Pi receives. File chips become `[文件] <path>` lines because a chip
- * carries a path, not text; an empty draft with only chips still sends.
+ * carries a path, not text; pasted blocks are expanded here, in the order they
+ * were attached, just above the instruction the reader typed. An empty draft
+ * with only chips still sends.
  */
-export function buildPromptMessage(text: string, files: readonly FileAttachment[]): string {
+export function buildPromptMessage(
+  text: string,
+  files: readonly FileAttachment[],
+  pastes: readonly PastedTextAttachment[] = [],
+): string {
   const prefix = files.map((item) => `[文件] ${item.path}`).join("\n");
-  return prefix ? `${prefix}\n\n${text}`.trim() : text;
+  const body = [...pastes.map((item) => item.text), text].filter(Boolean).join("\n\n");
+  if (!prefix) return body;
+  return body ? `${prefix}\n\n${body}` : prefix;
 }
 
 /** Nothing to send: neither text nor an attachment. */

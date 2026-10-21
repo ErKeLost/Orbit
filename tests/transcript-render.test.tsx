@@ -135,3 +135,25 @@ describe("work fold rendering", () => {
     expect(html).not.toContain("未返回输出");
   });
 });
+
+/**
+ * 大粘贴（/logs、整份 JSON、几十万字的文件）会被 composer 收进一张
+ * `粘贴的文本` 卡片，发送时再把原文展开成消息。回到会话里时它仍然是一条
+ * 巨大的用户消息：markdown 解析成本按字符数走，气泡却只露出开头，所以过了
+ * 阈值就换成纯文本折叠。
+ */
+describe("a huge pasted prompt", () => {
+  test("folds to a plain-text preview instead of parsing the whole message", () => {
+    const tail = "TAIL_MARKER_AT_THE_END";
+    const content = `${"语".repeat(30_000)}${tail}`;
+    const html = renderToStaticMarkup(
+      <TranscriptGroupView
+        group={{ id: "g", items: [item("m1", { role: "user", content, timestamp: Date.now() })] }}
+        tools={{} as Record<string, Tool>}
+        streaming={false}
+      />,
+    );
+    expect(html).toContain("<pre");
+    expect(html).not.toContain(tail);
+  });
+});

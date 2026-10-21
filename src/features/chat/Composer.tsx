@@ -14,9 +14,10 @@ import { shouldFocusComposer, shouldSubmitComposer } from "../../lib/composer";
 import { useMetrics } from "../../hooks/use-metrics";
 import { useGitBranches } from "../../lib/git";
 import { Popover } from "../../shared/ui/Popover";
+import { Modal } from "../../shared/ui/Modal";
 import { ImageLightbox } from "../../shared/ui/ImageLightbox";
 import { toast } from "../../shared/ui/toast";
-import { ArrowUp, CursorMagicSelection, Globe, ImagePlus, Square, Sparkles, Ungroup, X, Plus } from "../../shared/ui/icons";
+import { ArrowUp, CodeSimple, CursorMagicSelection, Globe, ImagePlus, Square, Sparkles, Ungroup, X, Plus } from "../../shared/ui/icons";
 import { FileTypeIcon } from "../shell/FileTypeIcon";
 import { ADD_NOTE_TO_CHAT_EVENT, appendNoteReference, type NoteComposerCard } from "../notes/notes";
 import { ModelPicker } from "./ModelPicker";
@@ -40,6 +41,10 @@ import {
   insertPalettePick,
   isImagePath,
   pasteIntent,
+  isLargePaste,
+  pasteTooLarge,
+  MAX_PASTE_CHARS,
+  pastedTextAttachment,
   prepareImageFiles,
   previewUserMessage,
   recallAttachments,
@@ -125,6 +130,61 @@ function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRe
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   const [preview, setPreview] = useState(false);
   const image = attachment.kind === "image";
+  if (attachment.kind === "text") {
+    // Codex 式的大粘贴：正文留在数据里，输入框只挂一张卡片。展开发生在发送时，
+    // 所以字数再大也不会进 textarea、高亮层或 markdown 渲染。
+    return (
+      <>
+        <div
+          className="relative flex min-w-0 items-center gap-2 rounded-lg border border-content/10 bg-content/4 py-1.5 pl-2 pr-1.5"
+          title={`${attachment.name} · ${attachment.chars.toLocaleString()} 字`}
+        >
+          <button
+            type="button"
+            onClick={() => setPreview(true)}
+            aria-label={`查看${attachment.name}`}
+            className="flex min-w-0 items-center gap-2 text-left"
+          >
+            <CodeSimple className="size-4 shrink-0 text-content/40" strokeWidth={1.6} />
+            <span className="min-w-0">
+              <span className="block max-w-[min(60vw,260px)] truncate font-mono text-[11px] leading-4 text-content/85">
+                {attachment.preview || "（空白）"}
+              </span>
+              <span className="block text-[10px] leading-3.5 text-content/45">
+                {attachment.name} · {attachment.chars.toLocaleString()} 字
+              </span>
+            </span>
+          </button>
+          <button
+            type="button"
+            title="移除"
+            aria-label={`移除 ${attachment.name}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRemove();
+            }}
+            className="grid size-4 shrink-0 place-items-center rounded-full text-content/40 hover:bg-content/15 hover:text-content"
+          >
+            <X className="size-3" strokeWidth={2} />
+          </button>
+        </div>
+        {preview ? (
+          <Modal
+            title={attachment.name}
+            description={`${attachment.chars.toLocaleString()} 字`}
+            fitViewport
+            onClose={() => setPreview(false)}
+          >
+            {/* 预览也有上限：这里只证明“收到的是什么”，不是给一兆字做渲染。 */}
+            <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-md bg-content/5 p-3 font-mono text-[12px] leading-5 text-content/80">
+              {attachment.text.slice(0, 8000)}
+              {attachment.chars > 8000 ? "\n…" : ""}
+            </pre>
+          </Modal>
+        ) : null}
+      </>
+    );
+  }
   return (
     <>
       <div className={`group relative flex min-w-0 items-center gap-1.5 rounded-md ${image ? "" : "bg-content/10 py-0.5 pl-1 pr-1"}`} title={attachment.kind === "file" ? attachment.path : attachment.name}>
@@ -396,6 +456,18 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
       // 剩下的是文本。Finder 里复制的文件在 webview 里只现成名字或路径文本，
       // 所以先让浏览器把字插进去（保留原生撤销），再问系统剪贴板：真的是文件，
       // 就把刚插入的那行换成一个附件卡片。
+      // 大文本（>1000 字）不插入，改成一张「粘贴的文本」卡片：这类内容进
+      // textarea / 高亮层 / markdown 渲染会把整个 WebView 拖到黑屏。
+      if (pasteTooLarge(text)) {
+        event.preventDefault();
+        toast.error("粘贴内容太大了", { description: `上限 ${MAX_PASTE_CHARS.toLocaleString()} 字，请只粘需要的部分` });
+        return;
+      }
+      if (isLargePaste(text)) {
+        event.preventDefault();
+        setAttachments((current) => [...current, pastedTextAttachment(text)]);
+        return;
+      }
       if (!desktop || !text || !couldBeFileReference(text)) return;
       const paths = await invoke<string[]>("clipboard_file_paths").catch(() => [] as string[]);
       if (!paths.length) return;
@@ -444,10 +516,10 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
       const text = expandMentionLabels(draftText, mentionLabels);
       perfMarkSend();
       const attachmentsAtSend = attachments;
-      const { images, files: fileChips } = splitAttachments(attachmentsAtSend);
+      const { images, files: fileChips, pastes } = splitAttachments(attachmentsAtSend);
       useWorkspace.getState().event({ type: "prompt_submitted" });
       const previewId = `queued-${crypto.randomUUID()}`;
-      const message = buildPromptMessage(text, fileChips);
+      const message = buildPromptMessage(text, fileChips, pastes);
       const before = attachmentsAtSend;
       setAttachments([]);
       draftRef.current?.clear();

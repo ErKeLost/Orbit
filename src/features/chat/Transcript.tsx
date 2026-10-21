@@ -62,6 +62,14 @@ function withoutImageNotes(text: string) {
 const EMPTY_IMAGES: ToolImage[] = [];
 
 /**
+ * 一条用户消息里能被 markdown 解析的正文上限。超过它就是一次大粘贴（/logs、
+ * JSON、整份文件），解析成本按字符数爆炸，而读者在气泡里本来也只看开头，
+ * 所以先按纯文本折叠，点「显示全部」才渲染剩下的。
+ */
+const HUGE_USER_MESSAGE_CHARS = 20_000;
+const HUGE_USER_MESSAGE_PREVIEW_CHARS = 4_000;
+
+/**
  * One image from a tool result. The bytes may still be in the session file
  * (`{session, at, ordinal}`, see `history::project`), so the source is resolved
  * here rather than in a `.map()` — the hook fetches only what is rendered.
@@ -684,6 +692,9 @@ const UserMessage = memo(function UserMessage({ item }: { item: DisplayMessage }
   const [clamped, setClamped] = useState(false);
   const textRef = useRef<HTMLDivElement | null>(null);
   const singleLine = !text.includes("\n") && text.length < 48;
+  // 大粘贴不走 markdown：既避免解析整段大文本，也避免把几十万个节点塞进气泡。
+  const huge = text.length > HUGE_USER_MESSAGE_CHARS;
+  const shown = huge && !expanded ? `${text.slice(0, HUGE_USER_MESSAGE_PREVIEW_CHARS)}\n…` : text;
   useLayoutEffect(() => {
     const el = textRef.current;
     if (el) setClamped(el.scrollHeight > el.clientHeight + 1);
@@ -714,7 +725,11 @@ const UserMessage = memo(function UserMessage({ item }: { item: DisplayMessage }
               data-selectable-agent-response={item.id}
               className={`user-message-markdown min-w-0 break-words ${expanded ? "" : "max-h-20 overflow-hidden"}`}
             >
-              <Markdown content={text} links="panel" />
+              {huge ? (
+                <pre className="min-w-0 whitespace-pre-wrap break-words font-sans text-[13px] leading-5 text-content">{shown}</pre>
+              ) : (
+                <Markdown content={text} links="panel" />
+              )}
             </div>
             {clamped && !expanded ? (
               <button type="button" className="mt-1 text-[12px] text-content/50 hover:text-content" onClick={() => setExpanded(true)}>
