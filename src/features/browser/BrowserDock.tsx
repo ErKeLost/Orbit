@@ -49,6 +49,8 @@ export function BrowserDock() {
   const setActive = useShell((state) => state.setBrowserActive);
   const openBrowser = useShell((state) => state.openBrowser);
   const closeFile = useShell((state) => state.closeFile);
+  /** 画中画里浮着的那一页：标签上给它一个记号，否则那一格会像是空的。 */
+  const floatingTab = useShell((state) => state.browserPip?.tab ?? null);
 
   // Drag state lives here, not in the store: a pointermove should repaint this
   // column, not every subscriber, and the width is only worth persisting once
@@ -134,6 +136,13 @@ export function BrowserDock() {
                 >
                   <Globe className="size-3.5 shrink-0" strokeWidth={1.75} />
                   <span className="min-w-0 flex-1 truncate">{tabName(tab.url, tab.title)}</span>
+                  {tab.path === floatingTab ? (
+                    <span
+                      title="这一页在画中画里"
+                      aria-label="这一页在画中画里"
+                      className="size-1.5 shrink-0 rounded-full bg-accent/70"
+                    />
+                  ) : null}
                 </button>
                 <button
                   type="button"

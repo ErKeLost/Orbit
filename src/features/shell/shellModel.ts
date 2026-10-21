@@ -62,6 +62,29 @@ export type BrowserTabInfo = {
   handoff?: true;
 };
 
+/**
+ * The page that floats over the app instead of sitting in the browser column.
+ *
+ * It is **the same page**: a native view placed at a rectangle, and a floating
+ * page is that view asked to sit somewhere else. Nothing is screenshotted,
+ * mirrored or streamed a second time — which is why the floating page keeps
+ * scrolling, selection, IME and its login session, and why the agent's
+ * channel can keep driving it while it floats.
+ *
+ * The rectangle is in window-logical pixels, the same units the view is placed
+ * in (`browser_view.rs`), so a floating page is exactly a second placement of
+ * one view rather than a second view.
+ */
+export type BrowserPipState = {
+  /** The tab whose page is floating (`browser:<id>`). */
+  tab: string;
+  /** Where it sits, in window-logical pixels. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 /** Every browser tab the window has open, by tab path (`browser:<id>`). */
 export function browserTabPaths(tabs: BrowserTabInfo[]): string[] {
   return tabs.map((tab) => tab.path);

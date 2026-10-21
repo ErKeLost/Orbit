@@ -20,6 +20,7 @@ import { useActiveWorkspace, useShell, isHomeWorkspace, CHAT_PANE_ID } from "./f
 import { ChatPane } from "./features/chat/ChatPane";
 import { TerminalDock } from "./features/terminal/TerminalDock";
 import { BrowserDock } from "./features/browser/BrowserDock";
+import { BrowserPip } from "./features/browser/BrowserPip";
 import { SettingsView } from "./features/settings/SettingsView";
 import { InboxView } from "./features/inbox/InboxView";
 import { SearchView } from "./features/search/SearchView";
@@ -400,6 +401,9 @@ export default function App() {
         {/* 浏览器列是窗口的一列，不是任何工作区/面板里的一格：切标签、切面板、
             关面板都带着它的页面一起留下。手机端没有这一栏。 */}
         <BrowserDock />
+        {/* 画中画：浮在窗口上的那一页。它是同一个原生视图换了个矩形，所以画在
+            页面之上（系统子视图永远在上面），而工具条在页面上面那条空地里。 */}
+        <BrowserPip />
         <QuickOpen />
       </div>
       <ScreenOverlay />

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ArrowLeft, ArrowRight, Globe, RefreshCw, X } from "../../shared/ui/icons"
+import { AppWindow, ArrowLeft, ArrowRight, Globe, RefreshCw, X } from "../../shared/ui/icons"
 import { reportBrowserFailure, normalizeAddress } from "../../lib/browser"
 import {
   browserViewActivate,
@@ -29,6 +29,15 @@ import "../../styles/browser-channel.css"
  */
 export function BrowserTab({ path, url, title, active = true }: { path: string; url: string; title?: string; active?: boolean }) {
   const updateBrowser = useShell((state) => state.updateBrowser)
+  /**
+   * 这一页现在是不是浮在窗口上。
+   *
+   * 视图只有一个，位置也只有一个：页面归列，列来摆；页面归画中画，画中画来摆。
+   * 两边都问 store 是为了不让它们抢——两个地方同时 `set_position`，页面会
+   * 在列和浮窗之间来回跳。
+   */
+  const floating = useShell((state) => state.browserPip?.tab === path)
+  const toggleBrowserPip = useShell((state) => state.toggleBrowserPip)
   const [loading, setLoading] = useState(false)
   /** Whether the field currently holds something the user typed. */
   const [drafting, setDrafting] = useState(false)
@@ -83,6 +92,8 @@ export function BrowserTab({ path, url, title, active = true }: { path: string; 
     let last = ""
     const place = () => {
       frame = 0
+      // 页面在浮的时候由画中画来摆，这里必须让位。
+      if (floating) return
       const element = stage.current
       if (!element) return
       const rect = element.getBoundingClientRect()
@@ -145,7 +156,7 @@ export function BrowserTab({ path, url, title, active = true }: { path: string; 
       if (frame) window.cancelAnimationFrame(frame)
       if (follow) window.cancelAnimationFrame(follow)
     }
-  }, [path, url, live, fail])
+  }, [path, url, live, fail, floating])
 
   // The page owns the address while the field is not being edited: the field is
   // written by code, never by a re-render.
@@ -200,10 +211,12 @@ export function BrowserTab({ path, url, title, active = true }: { path: string; 
   // by the browser feature's reconciler, which is the only thing that knows the
   // difference (`use-browser-views.ts`).
   useEffect(() => () => {
+    // 浮着的那一页由画中画负责，收回列里是另一件事。
+    if (floating) return
     const box = lastBox.current
     if (!box) return
     void syncBrowserView(path, box, undefined, false).catch(() => undefined)
-  }, [path])
+  }, [path, floating])
 
   const run = (label: string, action: () => Promise<unknown>) => {
     void action().catch(error => fail(`${label}失败：${error instanceof Error ? error.message : String(error)}`))
@@ -288,6 +301,13 @@ export function BrowserTab({ path, url, title, active = true }: { path: string; 
             {title && !drafting ? <span className="max-w-[40%] shrink-0 truncate text-[11px] text-content/35" title={title}>{title}</span> : null}
           </div>
         </form>
+        <TabIcon
+          label={floating ? "收回浏览器列" : "画中画"}
+          disabled={!live}
+          onClick={() => toggleBrowserPip(path)}
+        >
+          <AppWindow className="size-3.5" strokeWidth={1.75} />
+        </TabIcon>
       </div>
       {/* The banner lives *above* the stage on purpose: the page is a native view
           that covers the stage, so anything rendered inside it would be invisible
@@ -305,6 +325,22 @@ export function BrowserTab({ path, url, title, active = true }: { path: string; 
       {active ? <BrowserImportPrompt /> : null}
       <div ref={stage} role="application" aria-label="浏览器页面" className="browser-stage relative min-h-0 min-w-0 flex-1 overflow-hidden outline-none">
         {!live ? <BrowserStart /> : null}
+        {/* 页面在浮的时候，这里是空的：那一页画在窗口上层，别处的画中画卡片里。 */}
+        {live && floating ? (
+          <div className="absolute inset-0 grid place-items-center">
+            <div className="flex flex-col items-center gap-2 text-content/40">
+              <AppWindow className="size-6" strokeWidth={1.5} />
+              <span className="text-[12px]">这一页在画中画里</span>
+              <button
+                type="button"
+                onClick={() => toggleBrowserPip(path)}
+                className="rounded-md border border-stroke px-2 py-1 text-[12px] text-content/60 hover:bg-content/5 hover:text-content"
+              >
+                收回列里
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   )

@@ -28,6 +28,7 @@ import {
   nextSessionPaneId,
   type CollapsedRailMode,
   type DockPosition,
+  type BrowserPipState,
   type BrowserTabInfo,
   type OpenFile,
   type SidebarTab,
@@ -36,7 +37,7 @@ import {
 
 export { CHAT_PANE_ID, HOME_WORKSPACE_ID, isHomeWorkspace, projectWorkspaceTabs, browserTabPaths, newHomeWorkspace, newWorkspaceTab } from "./shellModel";
 
-export type { CollapsedRailMode, DockPosition, OpenFile, PaneState, SidebarTab, WorkspaceTab } from "./shellModel";
+export type { BrowserPipState, CollapsedRailMode, DockPosition, OpenFile, PaneState, SidebarTab, WorkspaceTab } from "./shellModel";
 
 /**
  * Layout state for the Orbit-style shell. Pi state (connections,
@@ -74,6 +75,39 @@ function readNumber(key: string, fallback: number) {
 
 function write(key: string, value: string) {
   try { localStorage.setItem(key, value); } catch { /* storage unavailable */ }
+}
+
+const BROWSER_PIP_RECT_KEY = "orbit.browser.pip";
+
+/** 画中画上次停在哪。没有就落在右下角。 */
+function readPipRect(): { x: number; y: number; width: number; height: number } {
+  const fallback = { x: 0, y: 0, width: 460, height: 340 };
+  try {
+    const raw = localStorage.getItem(BROWSER_PIP_RECT_KEY);
+    if (!raw) return fallback;
+    const value = JSON.parse(raw) as Partial<typeof fallback>;
+    if (![value.x, value.y, value.width, value.height].every((part) => typeof part === "number" && Number.isFinite(part))) {
+      return fallback;
+    }
+    return {
+      x: value.x!,
+      y: value.y!,
+      width: Math.max(240, value.width!),
+      height: Math.max(180, value.height!),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function writePipRect(rect: { x: number; y: number; width: number; height: number }) {
+  try { localStorage.setItem(BROWSER_PIP_RECT_KEY, JSON.stringify(rect)); } catch { /* storage unavailable */ }
+}
+
+/** 窗口有多大。没有窗口的地方（服务端、单测）给一个够用的默认值。 */
+function viewport() {
+  if (typeof window === "undefined") return { width: 1280, height: 800 };
+  return { width: window.innerWidth, height: window.innerHeight };
 }
 
 type ShellState = {
@@ -125,6 +159,22 @@ type ShellState = {
   setBrowserOpen: (open: boolean) => void;
   setBrowserWidth: (width: number) => void;
   setBrowserActive: (path: string | null) => void;
+  /**
+   * 画中画：浮在窗口上的那一页。
+   *
+   * 它不是第二份页面，而是**同一个原生视图换了个矩形**（`browser_view.rs`
+   * 的 `set_position`/`set_size`）——所以浮起来的页面照样能滚动、能选中、
+   * 能登录，agent 的通道也照样能驱动它。
+   *
+   * 同一时刻只有一页在浮：视图只有一个，位置也只有一个。
+   */
+  browserPip: BrowserPipState | null;
+  /** 把某一页弹成画中画；已经是画中画的那一页再点一次就收回列里。 */
+  toggleBrowserPip: (path: string) => void;
+  /** 把画中画收回浏览器列（页面还在，只是回到了列里）。 */
+  dockBrowserPip: () => void;
+  /** 拖动或缩放画中画。 */
+  moveBrowserPip: (patch: Partial<Pick<BrowserPipState, "x" | "y" | "width" | "height">>) => void;
   collapsedRailMode: CollapsedRailMode;
   setCollapsedRailMode: (mode: CollapsedRailMode) => void;
   projectRailWidth: number;
@@ -265,6 +315,37 @@ export const useShell = create<ShellState>((set, get) => {
     setBrowserOpen: (browserOpen) => { write("orbit.browser.open", String(browserOpen)); set({ browserOpen }); },
     setBrowserWidth: (browserWidth) => { write("orbit.browser.size", String(browserWidth)); set({ browserWidth }); },
     setBrowserActive: (browserActive) => set({ browserActive }),
+    // 画中画：位置记在本地，下次弹出还在原处。
+    browserPip: null as BrowserPipState | null,
+    toggleBrowserPip: (path) => {
+      const state = get();
+      if (state.browserPip?.tab === path) {
+        state.dockBrowserPip();
+        return;
+      }
+      const tab = state.browserTabs.find((item) => item.path === path);
+      if (!tab) return;
+      const remembered = readPipRect();
+      const screen = viewport();
+      const width = Math.min(remembered.width, Math.floor(screen.width * 0.5));
+      const height = Math.min(remembered.height, Math.floor(screen.height * 0.6));
+      // 默认落在右下角：那里是聊天最后一行之外的地方，浮起来不会盖住正在读的话。
+      const x = Math.max(0, Math.min(remembered.x, screen.width - width - 16));
+      const y = Math.max(0, Math.min(remembered.y, screen.height - height - 16));
+      set({ browserPip: { tab: path, x, y, width, height } });
+      // 浮起来的页也是"在前面的那一页"：agent 的通道默认对它说话。
+      set({ browserActive: path });
+    },
+    dockBrowserPip: () => set({ browserPip: null }),
+    moveBrowserPip: (patch) => {
+      const state = get();
+      const pip = state.browserPip;
+      if (!pip) return;
+      const next = { ...pip, ...patch };
+      // 记住它停在哪：下次弹出还是这个角落。
+      writePipRect(next);
+      set({ browserPip: next });
+    },
     // On by default, and off only when the user said so: the column is where
     // the browser lives, and a task's page has to stay visible while the user
     // works in other panels.

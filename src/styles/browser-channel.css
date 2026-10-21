@@ -75,3 +75,71 @@
   user-select: none;
 }
 
+/*
+ * 画中画（`BrowserPip.tsx`）。
+ *
+ * 一张浮在窗口上的卡片：上面一条工具条（DOM，可点），下面一块空地，真正的
+ * 页面是系统画在这个矩形上的原生视图——它是窗口的子层，永远在页面之上。
+ *
+ * 所以卡片内边距是留给圆角的：原生视图是直角，卡片是圆角，不留这一圈圆角就
+ * 被直角顶破了。
+ */
+.browser-pip {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-stroke);
+  border-radius: 12px;
+  background: var(--color-background-base);
+  box-shadow:
+    0 18px 48px rgb(0 0 0 / 0.34),
+    0 2px 8px rgb(0 0 0 / 0.22);
+  overflow: hidden;
+  /* 卡片本身不吃事件，只有它里面的东西吃：不然它会盖住底下整片聊天。 */
+  pointer-events: none;
+}
+
+.browser-pip > * {
+  pointer-events: auto;
+}
+
+.browser-pip-bar {
+  display: flex;
+  height: 34px;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid var(--color-stroke);
+  background: color-mix(in srgb, var(--color-background-base) 92%, transparent);
+  /* 抓着走的是标题栏，不是页面。 */
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.browser-pip-bar:active {
+  cursor: grabbing;
+}
+
+.browser-pip-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 8px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--color-background-base);
+}
+
+.browser-pip-grip {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+
