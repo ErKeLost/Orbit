@@ -39,6 +39,7 @@ import {
   reconnectingProjects,
   refresh,
   request,
+  route,
   sessionOwners,
   snapshot,
   snapshotListeners,
@@ -229,19 +230,53 @@ export function setDesktopScope(cwd:string,workspaceMode:WorkspaceMode){
  useWorkspace.getState().set({cwd:path,workspaceMode})
  return path
 }
+/**
+ * A call that may repair the project connection before giving up.
+ *
+ * `项目尚未连接` means the Rust registry holds no pi worker under the id the
+ * command routed to — the process exited, or a session switch replaced it and
+ * the new one is still starting. Only the connection the shell is projecting is
+ * worth reconnecting for: a background pane's id is fixed, and reconnecting the
+ * workspace would not bring that id back.
+ */
 export async function requestWithRecovery<T=unknown>(command:RpcCommand,timeoutMs=30000,target=activeTarget()):Promise<T>{
  try{return await request<T>(command,timeoutMs,target)}catch(error){
   const workspace=useWorkspace.getState()
-  if(!projectDisconnected(error)||mobileRuntime()||workspace.connectionId!==target||!workspace.cwd)throw error
-  const cwd=workspace.cwd
-  let task=reconnectingProjects.get(cwd)
-  if(!task){
-   task=connect(cwd,workspace.workspaceMode).finally(()=>reconnectingProjects.delete(cwd))
-   reconnectingProjects.set(cwd,task)
-  }
-  await task
-  return request<T>(command,timeoutMs,target)
+  if(!projectDisconnected(error)||mobileRuntime()||!workspace.cwd||!isProjectedConnection(target))throw error
+  await reconnectProject(workspace.cwd,workspace.workspaceMode)
+  return request<T>(command,timeoutMs,retryTarget(target))
  }
+}
+/**
+ * Whether this call acts on the connection the shell is projecting.
+ *
+ * Compared through `route` on both sides: a caller may pass the project path
+ * while the store holds the connection id (or nothing at all, before the first
+ * process is registered), and those are the same connection.
+ */
+function isProjectedConnection(target:string){
+ const workspace=useWorkspace.getState()
+ return route(target)===route(workspace.connectionId||workspace.cwd)
+}
+/** Reconnecting one project shares a single attempt: concurrent polls must not each spawn a pi process. */
+function reconnectProject(cwd:string,workspaceMode:WorkspaceMode){
+ const running=reconnectingProjects.get(cwd)
+ if(running)return running
+ const task=connect(cwd,workspaceMode).finally(()=>reconnectingProjects.delete(cwd))
+ reconnectingProjects.set(cwd,task)
+ return task
+}
+/**
+ * Where the retry goes.
+ *
+ * A reconnect can land on a different id: when the worker died, `connect` falls
+ * back to the project path. The id the caller held then has no process at all,
+ * and retrying it would only reproduce the same error.
+ */
+function retryTarget(target:string){
+ if(connections.has(target))return target
+ const workspace=useWorkspace.getState()
+ return workspace.connectionId||workspace.cwd
 }
 export async function disconnect(){const cwd=useWorkspace.getState().cwd;await Promise.all(connectionsFor(cwd).map(id=>closeConnection(id,'项目已断开')));projectActive.delete(cwd);useWorkspace.getState().set({...fresh(),cwd,connectionId:'',workspaceMode:useWorkspace.getState().workspaceMode})}
 export async function forgetProject(project:string){

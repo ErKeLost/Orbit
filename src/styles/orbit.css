@@ -925,6 +925,28 @@ html[data-page-visible="false"] * {
   background: color-mix(in srgb, var(--color-content) 5%, transparent);
 }
 
+/* ---- Runtime heartbeat failure (lib/metrics.tsx) ------------------------- */
+/*
+ * One quiet line under the title bar, not a takeover: the message can be long
+ * and usually disappears on its own within a poll. Truncate instead of wrapping
+ * so a failing poll never reflows the pane under the user's cursor.
+ */
+.runtime-error {
+  display: block;
+  margin: 0 8px 4px;
+  padding: 4px 10px;
+  max-width: fit-content;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-diff-del) 45%, transparent);
+  border-radius: 8px;
+  background: var(--color-diff-del-bg);
+  color: var(--color-diff-del-fg);
+  font-size: 11px;
+  line-height: 1.6;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Quieter chrome: the rail rows sit flat, and the composer's light-mode
    shadow is dialled well back from Orbit's 24px ambient blur. */
 nav[aria-label="Projects"] button {

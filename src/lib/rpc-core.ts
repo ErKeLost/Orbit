@@ -3,6 +3,7 @@ import { invoke } from "./native";
 import type { RpcCommand, RpcResponse } from "@earendil-works/pi-coding-agent";
 import { useWorkspace, type LiveSession, type Workspace } from "./store";
 import { parseAgentSnapshot } from "./agents";
+import { projectDisconnected } from "./runtime-error";
 import { emptyTelemetry, observe } from "./telemetry";
 import {
   emptyTranscript,
@@ -465,7 +466,6 @@ export async function loadMessages(target=activeTarget(),hintSessionPath?:string
 }
 /** 这条连接的历史消息是否正在加载（供切面时决定要不要收骨架屏）。 */
 export function isLoadingConnection(id:string){return loadingConnections.has(id)}
-function projectDisconnected(error:unknown){return String(error instanceof Error?error.message:error).includes('项目尚未连接')}
 
 // The connection/session modules are built on these internals; export them so
 // the shared state stays owned by one module instead of being copied around.

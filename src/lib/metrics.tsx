@@ -3,13 +3,16 @@ import {useQuery} from '@tanstack/react-query'
 import type {RpcSessionState} from '@earendil-works/pi-coding-agent'
 import {isSessionReplacing,pendingModel,requestWithRecovery,route} from './rpc'
 import {withPendingModel} from './protocol'
+import {runtimeErrorToShow} from './runtime-error'
 import {useWorkspace} from './store'
 import {usePageVisible} from './page-visibility'
+
 // get_state 的返回是浅层可序列化对象，用 JSON 比较足够；体积很小（不含消息）。
 function sameShallowJson(a:unknown,b:unknown){
  if(a===b)return true
  try{return JSON.stringify(a)===JSON.stringify(b)}catch{return false}
 }
+
 export function MetricsSync(){
  const cwd=useWorkspace(s=>s.cwd),connectionId=useWorkspace(s=>s.connectionId)
  const visible=usePageVisible()
@@ -20,7 +23,19 @@ export function MetricsSync(){
  const capabilities=useQuery({queryKey:['pi','capabilities',target],queryFn:()=>requestWithRecovery<{commands:{name:string}[]}>({type:'get_commands'},30000,target),enabled:online&&Boolean(target)})
  // 会话正在换（new/switch/clone/fork）时让开：`/gui-observe` 会落在马上就要作废的
  // 会话上，pi 会把它当过期扩展 ctx 拒掉。换完下一轮 5 秒定时自己会补上。
- const observation=useQuery({queryKey:['pi','runtime-snapshot',target],queryFn:async()=>{if(isSessionReplacing(route(target)))return true;await requestWithRecovery({type:'prompt',message:'/gui-observe'},30000,target);return true},enabled:online&&visible&&Boolean(target)&&!!capabilities.data?.commands.some(c=>c.name==='gui-observe'),refetchInterval:5000})
+ const observation=useQuery({
+  queryKey:['pi','runtime-snapshot',target],
+  queryFn:async()=>{
+   if(isSessionReplacing(route(target)))return true
+   await requestWithRecovery({type:'prompt',message:'/gui-observe'},30000,target)
+   return true
+  },
+  enabled:online&&visible&&Boolean(target)&&!!capabilities.data?.commands.some(c=>c.name==='gui-observe'),
+  refetchInterval:5000,
+  // 心跳每 5 秒自己重来一次，而且掉线时 requestWithRecovery 已经在重连了：
+  // react-query 再退避重试只会把一次抖动拖成好几秒，让用户看见一条本会消失的报错。
+  retry:false,
+ })
  useEffect(()=>{
   if(!state.data||!online||useWorkspace.getState().connectionId!==connectionId)return
   const current=useWorkspace.getState()
@@ -42,5 +57,7 @@ export function MetricsSync(){
    }}),
   })
  },[state.data,online,connectionId])
- return observation.error?<span className="runtime-error">SDK 状态读取失败：{String(observation.error)}</span>:null
+ // `项目尚未连接` 是重连过程中自己会好的失败，前几轮静默（见 runtime-error.ts）。
+ const message=runtimeErrorToShow(observation.error,observation.failureCount)
+ return message===null?null:<span className="runtime-error">SDK 状态读取失败：{message}</span>
 }
