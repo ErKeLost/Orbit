@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
+import { installMemoryLocalStorage } from "./support/local-storage"
 
 /**
  * Launch defaults: the panel a cold start opens on, and the assertion that
@@ -12,19 +13,15 @@ import { readFileSync } from "node:fs"
  * the choice or quietly reverts it.
  */
 
-const globals = globalThis as unknown as Record<string, unknown>
-const memory = new Map<string, string>()
-globals.localStorage ??= {
-  getItem: (key: string) => memory.get(key) ?? null,
-  setItem: (key: string, value: string) => { memory.set(key, String(value)) },
-  removeItem: (key: string) => { memory.delete(key) },
-}
+// The shared in-memory store, not `??=`: another suite may have installed a
+// no-op mock before this file runs (see `tests/support/local-storage.ts`).
+const memory = installMemoryLocalStorage()
 
 const { readStartupPanel, writeStartupPanel, STARTUP_PANEL_DEFAULT, STARTUP_PANEL_KEY, STARTUP_PANELS } = await import("../src/lib/startup-panel")
 const { KEEP_AWAKE_KEY, readKeepAwake, writeKeepAwake } = await import("../src/lib/desktop-integration")
 
 function reset() {
-  memory.clear()
+  memory.entries.clear()
 }
 
 describe("startup panel", () => {
@@ -41,13 +38,13 @@ describe("startup panel", () => {
     reset()
     writeStartupPanel("inbox")
     expect(readStartupPanel()).toBe("inbox")
-    expect(memory.get(STARTUP_PANEL_KEY)).toBe("inbox")
+    expect(memory.entries.get(STARTUP_PANEL_KEY)).toBe("inbox")
   })
 
   test("falls back when the stored value is not a landing surface", () => {
     reset()
     // `settings` is a real panel, but not one a launch should open on.
-    memory.set(STARTUP_PANEL_KEY, "settings")
+    memory.setItem(STARTUP_PANEL_KEY, "settings")
     expect(readStartupPanel()).toBe(STARTUP_PANEL_DEFAULT)
   })
 })
@@ -57,7 +54,7 @@ describe("keep awake", () => {
     reset()
     expect(readKeepAwake()).toBe(true)
     // Only the explicit off is stored, so the default survives a new key.
-    expect(memory.size).toBe(0)
+    expect(memory.entries.size).toBe(0)
   })
 
   test("stores the choice and reports what the runtime holds", async () => {
@@ -65,7 +62,7 @@ describe("keep awake", () => {
     // Tests run without a Tauri backend, where the request is simply echoed.
     expect(await writeKeepAwake(false)).toBe(false)
     expect(readKeepAwake()).toBe(false)
-    expect(memory.get(KEEP_AWAKE_KEY)).toBe("false")
+    expect(memory.entries.get(KEEP_AWAKE_KEY)).toBe("false")
   })
 })
 

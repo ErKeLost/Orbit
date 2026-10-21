@@ -11,6 +11,7 @@
  * gestures possible, not the gestures themselves.
  */
 import { describe, expect, test } from "bun:test"
+import { installMemoryLocalStorage } from "./support/local-storage"
 
 // A viewport and a storage area, defined before anything reads them: the
 // geometry is a pure function of the visual viewport, so a component that
@@ -24,11 +25,7 @@ Object.assign(globals.window ??= {}, {
   addEventListener() {},
   removeEventListener() {},
 })
-globals.localStorage ??= {
-  getItem: () => null,
-  setItem: () => undefined,
-  removeItem: () => undefined,
-}
+installMemoryLocalStorage()
 
 const { renderToStaticMarkup } = await import("react-dom/server")
 const { ScreenPip } = await import("../src/components/screen/ScreenPip")

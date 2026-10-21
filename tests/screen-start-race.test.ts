@@ -1,4 +1,5 @@
 import { describe, expect, mock, test } from "bun:test"
+import { installMemoryLocalStorage } from "./support/local-storage"
 
 // The first frame of a stream can reach the phone before the reply to
 // `screen.start`. It is the only frame that carries the decoder configuration,
@@ -26,7 +27,7 @@ class FakeEncodedVideoChunk { constructor(public init: unknown) {} }
 globals.VideoDecoder = FakeVideoDecoder
 globals.EncodedVideoChunk = FakeEncodedVideoChunk
 globals.window ??= { addEventListener() {}, removeEventListener() {} }
-globals.localStorage ??= { getItem: () => null, setItem: () => undefined, removeItem: () => undefined }
+installMemoryLocalStorage()
 
 type Handlers = { onEvent?: (event: unknown) => void; onState?: (s: string) => void; onHandshake?: (t: number) => void }
 let handlers: Handlers = {}
