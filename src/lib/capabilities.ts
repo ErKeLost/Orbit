@@ -2,7 +2,7 @@
 // media models, virtual models, or tool exposure, so the GUI extension publishes
 // them as `setStatus` payloads; this module parses them for the UI.
 
-export type MediaModelInfo = { provider: string; id: string; name?: string; available: boolean };
+export type MediaModelInfo = { provider: string; id: string; name?: string; available: boolean; input?: string[] };
 export type McpServerInfo = {
   name: string;
   source: "extension" | "mcp.json";
@@ -67,7 +67,7 @@ function readMediaModels(value: unknown): MediaModelInfo[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap(item => {
     if (!isRecord(item) || typeof item.provider !== "string" || typeof item.id !== "string") return [];
-    return [{ provider: item.provider, id: item.id, name: typeof item.name === "string" ? item.name : undefined, available: item.available === true }];
+    return [{ provider: item.provider, id: item.id, name: typeof item.name === "string" ? item.name : undefined, available: item.available === true, input: Array.isArray(item.input) ? item.input.filter((part): part is string => typeof part === "string") : undefined }];
   });
 }
 

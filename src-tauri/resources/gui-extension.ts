@@ -264,7 +264,7 @@ export const SUGGEST_MAX_CHARS=160
 export const VIRTUAL_MODEL_API_ID='pi-virtual'
 export const MEDIA_DIR=join(homedir(),'.pi/agent/orbit-media')
 const MCP_NAMESPACE_PREFIX='mcp__'
-export type MediaModelInfo={provider:string;id:string;name?:string;available:boolean}
+export type MediaModelInfo={provider:string;id:string;name?:string;available:boolean;input:string[]}
 export type McpServerInfo={name:string;source:'extension'|'mcp.json';transport:'stdio'|'http'|'unknown';exposure?:string;description?:string;enabled?:boolean;tools:string[];extensionPath?:string}
 export type RouteRule={match?:{reason?:string[];model?:string[];thinkingLevel?:string[]};model:{provider:string;id:string;thinkingLevel?:string}}
 export type GuiVirtualModelInput={provider:string;id:string;name:string;thinkingLevels?:string[];contextWindow?:number;maxTokens?:number;sticky?:boolean;rules:RouteRule[]}
@@ -294,7 +294,7 @@ export function collectMcpServers(pi:ExtensionAPI):McpServerInfo[]{
   return [...servers.values()].sort((left,right)=>left.name.localeCompare(right.name))
 }
 function modelTypeInventory(ctx:ExtensionContext,type:'image'|'classifier'):MediaModelInfo[]{
-  return safe(()=>ctx.modelRegistry.getModelsOfType(type).map(model=>({provider:model.provider,id:model.id,name:'name' in model&&typeof model.name==='string'?model.name:undefined,available:ctx.modelRegistry.hasConfiguredAuth(model as never)})),[])
+  return safe(()=>ctx.modelRegistry.getModelsOfType(type).map(model=>({provider:model.provider,id:model.id,name:'name' in model&&typeof model.name==='string'?model.name:undefined,available:ctx.modelRegistry.hasConfiguredAuth(model as never),input:[...model.input]})),[])
 }
 function virtualModelInventory(ctx:ExtensionContext){
   return safe(()=>ctx.modelRegistry.getAll().filter(model=>model.api===VIRTUAL_MODEL_API_ID).map(model=>({provider:model.provider,id:model.id,name:model.name,thinkingLevels:model.thinkingLevels??[]})),[])
@@ -352,6 +352,28 @@ export function writeMediaFile(dataBase64:string,index:number,mimeType:string):s
   const path=join(MEDIA_DIR,`image-${Date.now()}-${index+1}.${mimeType==='image/png'?'png':'jpg'}`)
   writeFileSync(path,Buffer.from(dataBase64,'base64'))
   return path
+}
+
+/** 分类器能读的图片格式。JPEG 是两种扩展名。 */
+const CLASSIFIER_IMAGE_MIME:Record<string,string>={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp','.gif':'image/gif'}
+/** 一张图 40 MiB：System One 网关自己的上限比这低，这里的目的是别把整个进程读卡。 */
+const CLASSIFIER_IMAGE_MAX_BYTES=40*1024*1024
+/**
+ * `gui-media` 的 `images`：data URL 或磁盘路径，统一成 `classify()` 要的 image block。
+ * Pi 1.4 起支持图片的分类器（Jev 1.14、Clef Omni）可以「图文一起判断」，
+ * 截图 + 一句问题就能跑，不必先让视觉模型把图描述成文字。
+ */
+export function readClassifierImages(entries:readonly string[]):{type:'image';data:string;mimeType:string}[]{
+  return entries.map(entry=>{
+    const inline=entry.match(/^data:(image\/[a-z0-9.+-]+);base64,([\s\S]*)$/i)
+    if(inline)return {type:'image' as const,data:inline[2],mimeType:inline[1]}
+    const path=entry.startsWith('file://')?new URL(entry).pathname:entry
+    const mimeType=CLASSIFIER_IMAGE_MIME[extname(path).toLowerCase()]
+    if(!mimeType)throw new Error(`分类器不支持这种图片：${path}（支持 png/jpg/webp/gif）`)
+    const bytes=readFileSync(path)
+    if(bytes.byteLength>CLASSIFIER_IMAGE_MAX_BYTES)throw new Error(`图片太大（${Math.round(bytes.byteLength/1024/1024)} MiB）：${path}`)
+    return {type:'image' as const,data:bytes.toString('base64'),mimeType}
+  })
 }
 /** The provider `gui-extension.ts` registers when nothing is configured.
  *
@@ -1150,7 +1172,7 @@ export default async function (pi: ExtensionAPI) {
     ctx.ui.setStatus(VIRTUAL_MODEL_STATUS,JSON.stringify({virtualModels:virtualModelInventory(ctx)}));publishCapabilities(ctx)
   }})
   pi.registerCommand('gui-media',{description:'GUI: list image and classifier models, generate images, run classifiers',handler:async(args:string,ctx:ExtensionCommandContext)=>{
-    const value=JSON.parse(args||'{}') as {action?:string;provider?:string;id?:string;prompt?:string;text?:string;question?:string;criteria?:Record<string,string>}
+    const value=JSON.parse(args||'{}') as {action?:string;provider?:string;id?:string;prompt?:string;text?:string;images?:string[];question?:string;criteria?:Record<string,string>}
     const action=value.action??'list'
     if(action==='list'){publishMedia(ctx);return}
     const pick=<T extends {provider:string;id:string}>(models:readonly T[]):T=>{
@@ -1170,11 +1192,14 @@ export default async function (pi: ExtensionAPI) {
       ctx.ui.notify(`图片已保存：${paths.join('、')}`,'info');return
     }
     if(action==='classify'){
-      if(!value.text?.trim())throw new Error('分类需要 text')
+      // 文本可以空（纯图片分类），但两者不能都空。
+      const images=readClassifierImages(value.images??[])
+      if(!value.text?.trim()&&!images.length)throw new Error('分类需要 text 或 images')
       const criteria=value.criteria??{'是':'符合判断条件','否':'不符合判断条件'}
       const model=pick(ctx.modelRegistry.getModelsOfType('classifier'))
-      const result=await ctx.modelRegistry.classify(model,{state:{text:value.text},questions:{answer:{type:'choice',instructions:value.question??'判断这段内容属于哪一类。',criteria}}})
-      ctx.ui.setStatus(MEDIA_STATUS,JSON.stringify({image:modelTypeInventory(ctx,'image'),classifier:modelTypeInventory(ctx,'classifier'),classified:{model:`${result.provider}/${result.model}`,answers:result.answers,usage:result.usage??null}}))
+      if(images.length&&!model.input.includes('image'))throw new Error(`${model.provider}/${model.id} 不接受图片输入，换一个支持 image 的分类器`)
+      const result=await ctx.modelRegistry.classify(model,{state:{text:value.text??''},...(images.length?{images}:{}) ,questions:{answer:{type:'choice',instructions:value.question??'判断这段内容属于哪一类。',criteria}}})
+      ctx.ui.setStatus(MEDIA_STATUS,JSON.stringify({image:modelTypeInventory(ctx,'image'),classifier:modelTypeInventory(ctx,'classifier'),classified:{model:`${result.provider}/${result.model}`,images:images.length,answers:result.answers,usage:result.usage??null}}))
       ctx.ui.notify(`分类结果：${JSON.stringify(result.answers)}`,'info');return
     }
     throw new Error(`未知的媒体操作 ${action}`)

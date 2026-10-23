@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { applyGuiToolSelection, parseSessionMetadata, parseSuggestionText, suggestionConversation, suggestionFailure, suggestionUserText } from '../src-tauri/resources/gui-extension'
+import { applyGuiToolSelection, parseSessionMetadata, parseSuggestionText, readClassifierImages, suggestionConversation, suggestionFailure, suggestionUserText } from '../src-tauri/resources/gui-extension'
 import { enableFastSearchTools, FAST_SEARCH_TOOLS } from '../src-tauri/resources/search-tools'
 import { enableWebSearchTool, formatWebSearchResult, resolveWebSearchSettings, webSearchRequest, WEB_SEARCH_TOOL } from '../src-tauri/resources/web-search'
 
@@ -261,5 +261,15 @@ describe('Expand web search tool', () => {
 
   test('bounds fetched Markdown while retaining the mode label', () => {
     expect(formatWebSearchResult('docs', 'result', 3)).toBe('Expand Web Search：docs\n\nres\n\n[结果过长，已截断]')
+  })
+})
+
+describe('classifier image input', () => {
+  test('accepts data URLs and keeps the declared mime type', () => {
+    expect(readClassifierImages(['data:image/png;base64,QUJD'])).toEqual([{type:'image',data:'QUJD',mimeType:'image/png'}])
+  })
+
+  test('rejects a file the classifier cannot read before the request is made', () => {
+    expect(() => readClassifierImages(['/tmp/notes.txt'])).toThrow('分类器不支持这种图片')
   })
 })
