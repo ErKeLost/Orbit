@@ -1,6 +1,6 @@
 # Pi 功能覆盖与边界
 
-以 Pi 1.3.0 官方 RPC / SDK / extensions 文档为基准（2026-10-17 复核；1.0.0 基线见文末升级备注）。这里区分原生 GUI、控制台和原始终端入口，不把“有个按钮”当作已支持。
+以 Pi 1.4.0 官方 RPC / SDK / extensions 文档为基准（2026-10-23 复核；1.3.0 与 1.0.0 基线见文末升级备注）。这里区分原生 GUI、控制台和原始终端入口，不把“有个按钮”当作已支持。
 
 ## 覆盖结论
 
@@ -37,10 +37,10 @@
 | MCP 服务器（stdio / streamable HTTP） | 设置 → Pi 1.0 能力：Rust 读写 `~/.pi/agent/mcp.json`（写入前备份，密钥值只留在磁盘，列表只暴露 key 名与 OAuth 登录名）；连接状态、工具数量和 exposure 来自扩展的 `pi.getMcpServers()` 与工具 namespace。会话内临时注册用 `pi.registerMcpServer()`；OAuth 登录仍走 `/mcp` 或原始终端 |
 | Codemode 与 Tool Search | 设置开关通过 `gui-tools-set` 激活这两个内置扩展工具；`codemode` 与 `tool_search` 在 Pi 1.0 中是 `model-only` 暴露，未激活时不计入 prompt 工具集。`codemode.mode`（on/only）由设置写入 settings.json |
 | 工具暴露分类 | `gui-capabilities` 报告 direct / model-only / codemode / deferred / hidden 的数量；MCP 服务器可逐个切换 exposure（写入 `mcp.json`） |
-| 图片生成与分类器模型 | `gui-media` 用 `getModelsOfType()` + `hasConfiguredAuth()` 列出可用图片/分类器模型；codemode 脚本可用 `models.generateImages()`、`models.classify()`，GUI 触发的生成结果写入 `~/.pi/agent/orbit-media/` 并提示路径。出图端点（provider / Base URL / 模型 / 密钥）在设置里可配，见下节 |
+| 图片生成与分类器模型 | `gui-media` 用 `getModelsOfType()` + `hasConfiguredAuth()` 列出可用图片/分类器模型，连模型的 `input` 一起发布，设置页标出哪些分类器能读图；`gui-media classify` 的 `images` 接受 data URL 或磁盘路径（png/jpg/webp/gif），交给 Pi 1.4 的图文分类。codemode 脚本可用 `models.generateImages()`、`models.classify()`，GUI 触发的生成结果写入 `~/.pi/agent/orbit-media/` 并提示路径。出图端点（provider / Base URL / 模型 / 密钥）在设置里可配，见下节 |
 | 生成能力按 kind 配置 | `~/.pi/agent/image.json` 的 `kinds` 是能力表：一种能力（今天只有 `image`）自带参数表、`recipe`（`sync` 直接回字节 / `async-task` 起任务再轮询）和 `enabled` 开关，工具名是 `generate_${kind}`。**参数表是数据**：`from:'sizes'` 取该模型自己的尺寸表，`from:'catalog'` 取该 kind 的模型列表，所以「不同模型不一样」不用改代码。模型可带自己的 `sizes` / `params` / `taskTypes`，默认值会收敛到默认模型支持的档位上。schema 与设置页的选项来自同一处 `optionsFor()`，但**一次调用按实际选中的模型校验**：不支持的组合明确报错，不再静默兜底成默认值。关掉的能力不注册工具，schema 和 guidelines 都不进提示。模型列表从每个有凭据的 provider 的 `/models` 发现（判据 `output_modalities` → `domain`，`Shutdown` 的丢掉），缓存由 Pi 的 `refreshModels` / `publish({persist})` 负责，扩展一行缓存都不写 |
 | 虚拟（路由）模型 | 扩展调用 `pi.registerVirtualModel()`；`/gui-virtual-model register` 接收数据驱动的路由规则，continuation/retry 默认粘在上一次成功回答的物理模型上以保缓存；`gui-virtual-models` 列出已注册项 |
-| 缓存预热与 Codemode 设置 | 设置写入 `~/.pi/agent/settings.json` 的白名单键（`cacheWarming`、`codemode`），Rust 侧先校验取值；非白名单键直接拒绝 |
+| 缓存预热、Codemode 与压缩设置 | 设置写入 `~/.pi/agent/settings.json` 的白名单键（`cacheWarming`、`codemode`、`compaction`），Rust 侧先校验取值；非白名单键直接拒绝。`compaction.reserveTokens` / `keepRecentTokens` 可在设置页调，`modelOverrides` 原样透传 |
 | 分支摘要导航 | 会话树同时提供普通导航和 `navigateTree({ summarize: true })` |
 | 会话附加项目 | 顶栏标题弹出 roots；同一 session 可挂多个侧栏项目，扩展写入会话记录并注入根列表与各项目 AGENTS.md |
 | 动态多 agent | 父 Pi 通过 `spawn_agent` 异步委派：派完立即返回，子 agent 完成后以 `FINAL_ANSWER` 消息回流到父的上下文，父全程不被阻塞。工具面与 Codex V2 对齐（`spawn_agent` / `send_message` / `followup_task` / `wait_agent` / `interrupt_agent` / `list_agents`）。子进程复用 Orbit 内置 Pi，继承语料默认经过滤（丢弃 toolResult/toolCall），支持嵌套、消息、跟进、等待、中止、状态树与持久化子会话。架构见 [MULTI_AGENT.md](MULTI_AGENT.md) |
@@ -73,7 +73,7 @@
 - 请求体预算：一次请求里的图片总量按预算裁剪，**新的先留、旧的先丢**，被丢掉的在原位换成一行占位文本。起因是一个 51MB 的会话（18 张 2048px 截图，base64 合计 46.8MB）在第十九次提问时被网关拒了 —— `413 Failed to buffer the request body: length limit exceeded`：单张图有上限（Pi 自己的 `inputLimits.images.resize`），**总量没有**。上限是实测的：`api.deepseek.com` 在 50 331 630 字节放行（400 模型名错），51 380 206 字节就是那条 413，所以默认预算取 24MiB，给工具 schema、provider 包装和估算误差留一半余量。最近两张图永远保留 —— 用户当前问的那张不会被自己的历史挤掉；裁剪只作用于这一次调用（`context` 是 request-local 的），会话历史、界面里的图和磁盘上的 session 文件都不动。开始裁剪时提示一次，并把 `{limitBytes, keepRecentImages, dropped, bytesBefore, bytesAfter}` 发布到 `gui-request-budget` 状态。配置在 `~/.pi/agent/request-budget.json`（`enabled` / `maxRequestBytes` / `keepRecentImages`），没有文件时听模型目录声明的 `inputLimits.maxRequestBytes`。裁完**仍然**超预算时不再假装装得下：`bytesAfter` 是量出来的（含占位文本），超限还进 `gui-request-budget` 状态并提示一次（非图片部分自己就超了，或最近几张图加起来就超了）。逻辑见 `src-tauri/resources/request-budget.ts`，单测见 `tests/request-budget.test.ts`，真实 runtime + 真实 DeepSeek 的端到端验过两种场景（全裁 / 保底不裁）
 
 - 可搜索项目菜单，系统目录选择器支持一次添加多个目录。保存列表、切换项目、保留会话与输入草稿；各项目拥有独立 Pi 进程，后台任务继续运行。
-- 输入框右上角的上下文卡（`ContextMeter`）：一颗环 → 弹出一张「Context」卡片，把窗口拆成 **System / 对话 / 工具结果 / 附件与图片** 四段分色条，另起一行**剩余额度**；大数是 provider 回报的 `contextUsage.tokens`，右侧是百分比，悬停即预览、点击固定后才出现「立即压缩」，点任意一行展开该类到底算了什么。**只有总量是真的**：Pi 不提供分类，四段由本地三份材料折算 —— `/gui-observe` 回传的 `systemPrompt`、`before_provider_request` 数到的工具 schema 字符数、transcript 里的正文/思考/工具调用/工具结果 —— 再按最大余数法**等比缩放到真实总量**，所以四段之和永远等于那个真数，变的只是比例；折算不到时会诚实退化成一行「已用量」，而不是编造四段颜色。卡片脚注固定写明「分类值为预估，总量以 provider 回报为准」。逻辑见 `src/features/chat/contextBreakdown.ts`，单测见 `tests/context-breakdown.test.ts`。
+- 输入框右上角的上下文卡（`ContextMeter`）：一颗环 → 弹出一张「Context」卡片，把窗口拆成 **System / 对话 / 工具结果 / 附件与图片** 四段分色条，另起一行**剩余额度**；大数是 provider 回报的 `contextUsage.tokens`，右侧是百分比，悬停即预览、点击固定后才出现「立即压缩」，点任意一行展开该类到底算了什么。**只有总量是真的**：Pi 不提供分类，四段由本地三份材料折算 —— `/gui-observe` 回传的 `systemPrompt`、`before_provider_request` 数到的工具 schema 字符数、transcript 里的正文/思考/工具调用/工具结果 —— 再按最大余数法**等比缩放到真实总量**，所以四段之和永远等于那个真数，变的只是比例；折算不到时会诚实退化成一行「已用量」，而不是编造四段颜色。卡片脚注固定写明「分类值为预估，总量以 provider 回报为准」。条上还有一道**自动压缩刻度**：Pi 在 `used > window - reserveTokens` 时才动手（1M 窗口、默认 16K 预留 = 98.4%），刻度画的就是这条线，卡片下方写明 `Compacts at …` —— 98% 显示红色但没压缩不是算错，是还没到线。逻辑见 `src/features/chat/contextBreakdown.ts`，单测见 `tests/context-breakdown.test.ts`。
 - 常驻 Context 状态栏与可收起的运行详情：上下文用量/配置上限、剩余量、最大输出、预留 tokens、近期保留量、累计及当前回复用量、缓存读写、费用估算、压缩前后统计、摘要、取消/失败/重试、队列、工具、模型和会话信息。
 - 实时压缩没有虚构百分比；测试确认压缩后 contextUsage 返回 null 时显示待更新。
 - LobeHub Markdown、AI Elements Conversation/PromptInput/Shimmer、assistant-ui ToolCall、组件库控件、Motion 交互动画及 Pierre 文件/差异视图已实际接入。连接提示、版本页脚、快捷键说明和原生 window.prompt 已从常用界面移除。
@@ -122,6 +122,29 @@
 - `bun test ./tests ./src/features/source-control/model`：744 通过 / 0 失败。
 - `bunx vitest run`：28 通过。
 - `bun run test:pi`：用真实 1.3.0 运行时跑通 RPC、扩展工具清单、多 agent 工具启停、computer-use 模式、bash 执行、MCP 会话注册、虚拟模型、图片与分类器目录。
+
+## Pi 1.4.0 升级备注（2026-10-23）
+
+项目已升级到 npm 最新正式版 **1.4.0**（2026-10-21 发布），内置 runtime 重新打包为 `orbit-pi-runtime` 1.4.0。`@earendil-works/pi-coding-agent` 与全部 `@earendil-works/pi-*` 子包统一钉在 1.4.0（`pi-codemode` 会被 1.4.0 的 coding-agent 再次提升，锁文件里记的是嵌套版本）。
+
+**升级可行性结论：类型层零破坏。** `npx tsc -b`、`check:subagents`、`check:computer-use`、`check:browser-use` 与 lint 在升级后全部零错误，`bun run test:pi` 用真实 1.4.0 runtime 跑通全部 17 项。
+
+| Pi 1.4.0 变化 | 我们的判定与处理 |
+| --- | --- |
+| 压缩/分支摘要改用模型的 output limit，`compaction.reserveTokens` **只**决定何时开始压缩（1.4.0 行为变化） | **已采纳并呈现。** 设置 → 上下文新增「压缩预留额度」「保留最近内容」两档选择，写入 `settings.json` 的 `compaction`；Context 卡片加了自动压缩触发刻度（`window - reserveTokens`），因此 1M 窗口显示 98% 却还没压缩这件事有了可见解释 —— 默认阈值是 98.4%。`generateSummary()` 的 `reserveTokens` 参数被忽略，我们本来也不直接调用它 |
+| `models.classify()` 支持 `images`（Jev 1.14 / Clef Omni，typesafe、cloudflare-workers-ai、OpenRouter） | **已采纳。** `gui-media classify` 新增 `images`（data URL 或磁盘路径，png/jpg/webp/gif，单图上限 40 MiB），模型 `input` 不含 `image` 时提前报错；分类器目录把 `input` 一并发布，设置页标出可读图的模型 |
+| codemode worker 满载改排队（最多 60s），`PI_CODEMODE_MAX_WORKERS` 提升上限；`models.classify()` / `generateImages()` 每脚本最多 4 个并发 | **无需改。** 我们每个子 agent 是独立 Pi 子进程，名额各自独立；排队只是让并行脚本不再报错，没有需要我们调整的配置 |
+| 扩展并发 dialog（`select`/`confirm`/`input`/`editor`/`custom()`）不再互相顶掉 | **无需改，但受益。** Orbit 的扩展弹窗走 `gui-extension` 自有 dialog 通道，仍按单弹窗呈现；Pi 侧修掉的是 promise 不 settle 的悬挂 |
+| 截断响应恢复后会话不再坏掉、空白 tool 输出不再 400、`grep` 走 `rg --no-config`、网关瞬时错误重试覆盖更广、Copilot 413 先压缩再重试 | **无需改。** 全部是运行时修复，直接生效 |
+| Markdown/CJK 修复（`$$` 吞表格、CJK 标点旁的粗体斜体） | **不适用。** Orbit 用 LobeHub Streamdown 自绘 Markdown，不经过 pi-tui 的 CSS 修复；如渲染仍有问题需在 Orbit 侧单独修 |
+| `models.json` 全字段参考文档；默认模型调整（Copilot → `gpt-6.1-sol`、NVIDIA、Xiaomi） | **无需改。** 我们不写死这些默认模型，模型目录随 runtime 更新 |
+
+### 验证方式
+
+- `bun run check`：类型与 lint 全过（改动文件零告警）。
+- `bun test ./tests ./src/features/source-control/model`：976 通过 / 1 skip / 0 失败。
+- `bun run test:pi`：1.4.0 运行时 17 项全过，含 codemode sandbox、压缩配置、能力快照、图片与分类器目录。
+- `cargo test gui_settings`：新增 `compaction` 白名单校验通过。
 
 ## Pi 1.0.0 升级备注（2026-10-02）
 
