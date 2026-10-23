@@ -240,7 +240,7 @@ export function SurfaceTabs({
                   focusFile(file.path, paneId);
                 }}
                 onDoubleClick={() => pinFile(file.path, paneId)}
-                className={`relative flex h-7.5 min-w-0 flex-1 cursor-default items-center gap-1.5 self-center rounded-md px-2 pr-7 text-left text-[13px] ${
+                className={`relative flex h-7.5 min-w-0 flex-1 cursor-default items-center gap-1.5 self-center rounded-md px-2 text-left text-[13px] ${dirty ? "pr-10" : "pr-7"} ${
                   active ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
                 }`}
               >
@@ -253,7 +253,8 @@ export function SurfaceTabs({
                 </span>
                 <TabLabel className={`flex-1 ${file.preview ? "italic" : ""}`}>{file.name}</TabLabel>
               </button>
-              {dirty ? <span aria-label="有未保存的修改" title="有未保存的修改" className="absolute right-1 top-1/2 size-2 -translate-y-1/2 rounded-full bg-accent group-hover:opacity-0" /> : null}
+              {/* 未保存的圆点贴在关闭按钮左侧，两者同时可见，不再互相顶替。 */}
+              {dirty ? <span aria-label="有未保存的修改" title="有未保存的修改" className="pointer-events-none absolute right-[26px] top-1/2 size-2 -translate-y-1/2 rounded-full bg-accent" /> : null}
               <button
                 type="button"
                 data-no-drag
