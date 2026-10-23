@@ -5,6 +5,7 @@ import { useWorkspace } from "../../lib/store";
 import { useMetrics } from "../../hooks/use-metrics";
 import {
   CONTEXT_SOURCE_KEYS,
+  compactionThreshold,
   contextBarSegments,
   estimateContextSources,
   fitToUsed,
@@ -117,6 +118,10 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
   const used = usage?.used ?? 0;
   const buckets = useMemo(() => fitToUsed(raw, used), [raw, used]);
   const segments = useMemo(() => contextBarSegments(buckets, usage?.window ?? 0), [buckets, usage?.window]);
+  // 自动压缩的触发线：Pi 在 `used > window - reserveTokens` 时才动手，所以
+  // 一条 1M 窗口的会话在 98% 也可能还没压缩 —— 这根刻度就是那条线。
+  const compactionRuntime = runtime?.compaction;
+  const threshold = compactionThreshold(usage, compactionRuntime);
 
   const ratio = usage ? Math.min(1, Math.max(0, usage.used / usage.window)) : compacting ? 0.25 : null;
   if (ratio === null) return null;
@@ -189,7 +194,20 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
                       }}
                     />
                   ))}
+                  {threshold != null ? (
+                    <span
+                      className="absolute inset-y-0 w-px bg-content/60"
+                      style={{ left: `${Math.min(100, Math.max(0, threshold.ratio * 100))}%` }}
+                      title={`自动压缩从这里开始：${percentLabel(threshold.ratio)}`}
+                    />
+                  ) : null}
                 </div>
+                {threshold != null ? (
+                  <div className="flex items-center justify-between text-[10.5px] leading-4 text-content/40">
+                    <span>Compacts at {percentLabel(threshold.ratio)}</span>
+                    <span className="tabular-nums">{compact.format(threshold.tokens)} tokens</span>
+                  </div>
+                ) : null}
 
                 <div>
                   {used > 0 ? (

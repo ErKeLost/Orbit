@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   CONTEXT_SOURCE_KEYS,
+  compactionThreshold,
   contextBarSegments,
   estimateContextSources,
   estimateTextTokens,
@@ -102,5 +103,27 @@ describe("context bar segments", () => {
   test("draws nothing without a window", () => {
     expect(contextBarSegments({ system: 1, conversation: 0, tools: 0, app: 0 }, 0)).toEqual([]);
     expect(contextBarSegments({ system: 0, conversation: 0, tools: 0, app: 0 }, 128000)).toEqual([]);
+  });
+});
+
+describe("compaction threshold", () => {
+  test("marks the line where Pi starts compacting", () => {
+    // 1M 窗口 + 16K 预留 = 98.4% 才开始压缩，所以 98% 显示「快满了」但不动手。
+    const threshold = compactionThreshold({ used: 982000, window: 1_000_000 }, { reserveTokens: 16384 });
+    expect(threshold).not.toBeNull();
+    expect(threshold?.tokens).toBe(983616);
+    expect(threshold?.ratio).toBeCloseTo(0.983616, 6);
+  });
+
+  test("draws nothing when compaction is off, unknown, or the reserve swallows the window", () => {
+    expect(compactionThreshold(undefined, { reserveTokens: 16384 })).toBeNull();
+    expect(compactionThreshold({ used: 1, window: 0 }, { reserveTokens: 16384 })).toBeNull();
+    expect(compactionThreshold({ used: 1, window: 1000 }, { enabled: false, reserveTokens: 10 })).toBeNull();
+    expect(compactionThreshold({ used: 1, window: 1000 }, { reserveTokens: 1000 })).toBeNull();
+  });
+
+  test("treats a missing reserve as no reserve", () => {
+    expect(compactionThreshold({ used: 1, window: 1000 }, null)?.ratio).toBe(1);
+    expect(compactionThreshold({ used: 1, window: 1000 }, { reserveTokens: -5 })?.tokens).toBe(1000);
   });
 });

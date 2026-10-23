@@ -39,10 +39,11 @@ export async function listMcpServers():Promise<McpServerList> { if(!workspaceBac
 export async function saveMcpServer(name:string,config:Record<string,unknown>):Promise<McpServerView> { if(!workspaceBackend()) throw new Error('MCP 服务器请在电脑端管理'); return invoke<McpServerView>('save_mcp_server',{name,config}) }
 export async function deleteMcpServer(name:string):Promise<{name:string;deleted:boolean}> { if(!workspaceBackend()) throw new Error('MCP 服务器请在电脑端管理'); return invoke<{name:string;deleted:boolean}>('delete_mcp_server',{name}) }
 export async function mcpConfigLocation():Promise<{path:string;authPath:string;logPath:string}> { if(!workspaceBackend()) throw new Error('MCP 配置路径需要电脑端'); return invoke<{path:string;authPath:string;logPath:string}>('mcp_config_location') }
-/** Pi settings Orbit can write: `cacheWarming` and `codemode`. */
-export type GuiSettings={path:string;settings:{cacheWarming:string|null;codemode:{mode?:'on'|'only';inlineBudget?:number}|null}}
+/** Pi settings Orbit can write: `cacheWarming`, `codemode` and `compaction`. */
+export type CompactionSettings={enabled?:boolean;reserveTokens?:number;keepRecentTokens?:number;modelOverrides?:Record<string,unknown>}|null
+export type GuiSettings={path:string;settings:{cacheWarming:string|null;codemode:{mode?:'on'|'only';inlineBudget?:number}|null;compaction:CompactionSettings}}
 export async function getGuiSettings():Promise<GuiSettings> { if(!workspaceBackend()) throw new Error('Pi 设置请在电脑端修改'); return invoke<GuiSettings>('get_gui_settings') }
-export async function setGuiSetting(key:'cacheWarming'|'codemode',value:unknown):Promise<{key:string;value:unknown}> { if(!workspaceBackend()) throw new Error('Pi 设置请在电脑端修改'); return invoke<{key:string;value:unknown}>('set_gui_setting',{key,value}) }
+export async function setGuiSetting(key:'cacheWarming'|'codemode'|'compaction',value:unknown):Promise<{key:string;value:unknown}> { if(!workspaceBackend()) throw new Error('Pi 设置请在电脑端修改'); return invoke<{key:string;value:unknown}>('set_gui_setting',{key,value}) }
 /**
  * Request budget: how much of the *history* goes out on every request. Images are
  * re-uploaded each turn, so `maxImages` is a perceived-latency knob, not just a

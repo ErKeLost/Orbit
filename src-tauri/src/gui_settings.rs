@@ -51,9 +51,16 @@ pub fn set_project_trust_mode(mode: String) -> Result<String, String> {
     Ok(mode)
 }
 
-/// Pi 1.0 settings Orbit can edit. `cacheWarming` and `codemode` only exist in
-/// the global settings file, so the GUI needs its own validated write path.
-const GUI_SETTING_KEYS: [&str; 2] = ["cacheWarming", "codemode"];
+/// Pi settings Orbit can edit. `cacheWarming`, `codemode` and `compaction` only
+/// exist in the global settings file, so the GUI needs its own validated write
+/// path.
+const GUI_SETTING_KEYS: [&str; 3] = ["cacheWarming", "codemode", "compaction"];
+
+/// Pi 1.4: `compaction.reserveTokens` only decides *when* compaction starts.
+/// The summary itself now uses the model's output limit. Orbit keeps the two
+/// token knobs editable so a 1M-token window can be tuned without hand-editing
+/// settings.json, and leaves `modelOverrides` untouched.
+const COMPACTION_TOKEN_MAX: u64 = 2_000_000;
 
 fn validate_gui_setting(key: &str, value: &Value) -> Result<(), String> {
     match key {
@@ -82,6 +89,39 @@ fn validate_gui_setting(key: &str, value: &Value) -> Result<(), String> {
                 };
                 if budget > 100_000 {
                     return Err("codemode.inlineBudget 不能超过 100000".into());
+                }
+            }
+            Ok(())
+        }
+        "compaction" => {
+            if value.is_null() {
+                return Ok(());
+            }
+            let Some(object) = value.as_object() else {
+                return Err("compaction 需要对象或 null".into());
+            };
+            for (key, value) in object {
+                match key.as_str() {
+                    "enabled" => {
+                        if !value.is_boolean() {
+                            return Err("compaction.enabled 需要 true 或 false".into());
+                        }
+                    }
+                    "reserveTokens" | "keepRecentTokens" => {
+                        let Some(tokens) = value.as_u64() else {
+                            return Err(format!("compaction.{key} 需要非负整数"));
+                        };
+                        if tokens > COMPACTION_TOKEN_MAX {
+                            return Err(format!("compaction.{key} 不能超过 {COMPACTION_TOKEN_MAX}"));
+                        }
+                    }
+                    // 来源：用户自己的 settings.json。GUI 原样带回来，不解释也不改。
+                    "modelOverrides" => {
+                        if !value.is_object() {
+                            return Err("compaction.modelOverrides 需要对象".into());
+                        }
+                    }
+                    other => return Err(format!("不支持的 compaction 字段：{other}")),
                 }
             }
             Ok(())
@@ -228,6 +268,22 @@ mod gui_settings_tests {
         assert!(validate_gui_setting("codemode", &json!({"inlineBudget":-1})).is_err());
         assert!(validate_gui_setting("codemode", &json!({"inlineBudget":200000})).is_err());
         assert!(validate_gui_setting("codemode", &json!("only")).is_err());
+    }
+
+    #[test]
+    fn compaction_settings_keep_only_token_knobs_and_passthrough_overrides() {
+        assert!(validate_gui_setting("compaction", &Value::Null).is_ok());
+        assert!(validate_gui_setting("compaction", &json!({"reserveTokens":8192,"keepRecentTokens":12000})).is_ok());
+        assert!(validate_gui_setting("compaction", &json!({"enabled":false})).is_ok());
+        // 0 合法：立刻压缩 / 不保留最近内容。
+        assert!(validate_gui_setting("compaction", &json!({"reserveTokens":0,"keepRecentTokens":0})).is_ok());
+        assert!(validate_gui_setting("compaction", &json!({"modelOverrides":{"anthropic/claude":{"reserveTokens":1000}}})).is_ok());
+        assert!(validate_gui_setting("compaction", &json!({"reserveTokens":-1})).is_err());
+        assert!(validate_gui_setting("compaction", &json!({"keepRecentTokens":3000000})).is_err());
+        assert!(validate_gui_setting("compaction", &json!({"enabled":"yes"})).is_err());
+        assert!(validate_gui_setting("compaction", &json!({"modelOverrides":[]})).is_err());
+        assert!(validate_gui_setting("compaction", &json!({"threshold":1})).is_err());
+        assert!(validate_gui_setting("compaction", &json!(16384)).is_err());
     }
 
     #[test]

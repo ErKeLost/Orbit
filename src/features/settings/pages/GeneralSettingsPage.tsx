@@ -54,6 +54,22 @@ const CODEMODE_MODE_OPTIONS = [
   { value: "only", label: "only" },
 ];
 
+/** Pi 的默认值，和 `settings.json` 里缺失时的兜底保持一致。 */
+const DEFAULT_RESERVE_TOKENS = 16384;
+const DEFAULT_KEEP_RECENT_TOKENS = 20000;
+
+/** 预留额度是「离满载还有多少就开始压缩」，越大压缩越早。 */
+const RESERVE_TOKEN_OPTIONS = [8192, 16384, 32768, 65536, 131072, 262144].map(value => ({
+  value: String(value),
+  label: `${value.toLocaleString()} tokens${value === DEFAULT_RESERVE_TOKENS ? "（默认）" : ""}`,
+}));
+
+/** 保留额度是「压缩后最近多少 token 原文不动」。 */
+const KEEP_RECENT_TOKEN_OPTIONS = [10000, 20000, 40000, 80000, 160000].map(value => ({
+  value: String(value),
+  label: `${value.toLocaleString()} tokens${value === DEFAULT_KEEP_RECENT_TOKENS ? "（默认）" : ""}`,
+}));
+
 const PROJECT_TRUST_OPTIONS = [
   { value: "always", label: "完全访问" },
   { value: "ask", label: "每次询问" },
@@ -145,6 +161,8 @@ function PiCapabilitiesSettings({ desktop, online, running, tools }: { desktop: 
   }
   const images = availableMediaModels(capabilities?.media.image ?? []);
   const classifiers = availableMediaModels(capabilities?.media.classifier ?? []);
+  // Pi 1.4 起部分分类器能同时看图和文字（Jev 1.14、Clef Omni），模型目录的 `input` 里会带 "image"。
+  const imageCapable = classifiers.filter(model => model.input?.includes("image"));
   const imageOptions = capabilities?.media.imageOptions ?? { resolutions: [], aspects: [] };
   const imageSettings = useQuery({ queryKey: ["pi", "image-config"], queryFn: imageConfig, enabled: desktop });
   const [imageEndpointOpen, setImageEndpointOpen] = useState(false);
@@ -193,7 +211,7 @@ function PiCapabilitiesSettings({ desktop, online, running, tools }: { desktop: 
       </div> : <span className="remote-settings-note">{images.length ? `${images.length} 个可用` : "电脑端设置"}</span>}
     </SettingRow>
     <ImageEndpointDialog open={imageEndpointOpen} onOpenChange={setImageEndpointOpen} config={imageSettings.data} onSaved={() => { void imageSettings.refetch(); void refreshCapabilities(); }} />
-    <SettingRow title="分类器模型" description={classifiers.length ? classifiers.map(model => `${model.provider}/${model.id}`).join("、") : "可用 Jev 或 llama.cpp 分类器模型运行 codemode 中的 models.classify()。"}><span className="remote-settings-note">{classifiers.length ? `${classifiers.length} 个可用` : "无可用凭据"}</span></SettingRow>
+    <SettingRow title="分类器模型" description={classifiers.length ? `${classifiers.map(model => `${model.provider}/${model.id}`).join("、")}${imageCapable.length ? `；其中 ${imageCapable.length} 个接受图片，可以连截图一起判断` : ""}` : "可用 Jev 或 llama.cpp 分类器模型运行 codemode 中的 models.classify()。"}><span className="remote-settings-note">{classifiers.length ? `${classifiers.length} 个可用` : "无可用凭据"}</span></SettingRow>
     <SettingRow title="缓存预热" description="长工具调用期间保活可缓存的 prompt 前缀，按避免的缓存未命中成本决定是否刷新。写入 ~/.pi/agent/settings.json。">
       {desktop ? <Select label="缓存预热" value={typeof guiSettings.data?.settings.cacheWarming === "string" ? guiSettings.data.settings.cacheWarming : ""} options={CACHE_WARMING_OPTIONS} onChange={value => void writeSetting("cacheWarming", value || null)} /> : <span className="remote-settings-note">{CACHE_WARMING_LABELS[capabilities?.settings?.cacheWarming ?? ""] ?? "—"}</span>}
     </SettingRow>
@@ -223,10 +241,33 @@ function TrustSettings({ mode, busy, desktop, onChange }: { mode: ProjectTrustMo
   return <SettingRow title="项目资源信任" description={desktop ? "控制是否加载项目本地的设置、扩展、技能和主题。切换后会重启 Pi 连接。" : "项目资源信任由电脑端管理，请在电脑端查看和修改。"}>{desktop ? <Select label="项目资源信任" disabled={busy} value={mode} options={PROJECT_TRUST_OPTIONS} onChange={value => void onChange(value as ProjectTrustMode)} /> : <span className="remote-settings-note">电脑端设置</span>}</SettingRow>;
 }
 
-function ContextSettings({ cwd, status, running, state, onCompact }: { cwd: string; status: string; running: boolean; state: RpcSessionState | null; onCompact: () => Promise<void> }) {
+function ContextSettings({ cwd, desktop, status, running, state, onCompact }: { cwd: string; desktop: boolean; status: string; running: boolean; state: RpcSessionState | null; onCompact: () => Promise<void> }) {
   const stats = useQuery({ queryKey: ["pi", "stats", cwd], queryFn: () => request<{ tokens: { total: number }; cost: number; contextUsage?: { percent: number | null; contextWindow: number } }>({ type: "get_session_stats" }), enabled: status === "online" });
+  const guiSettings = useQuery({ queryKey: ["pi", "gui-settings"], queryFn: getGuiSettings, enabled: desktop });
+  // 压缩设置里可能还有 Orbit 不认识的东西（modelOverrides），写回时原样带上。
+  const compaction = guiSettings.data?.settings.compaction ?? null;
+  const writeCompaction = async (patch: { reserveTokens?: number; keepRecentTokens?: number }) => {
+    try {
+      await setGuiSetting("compaction", { ...compaction, ...patch });
+      await guiSettings.refetch();
+      gooeyToast.success("压缩设置已写入 settings.json", { description: "重连项目或运行 /reload 后生效", showTimestamp: false });
+    } catch (error) { report(error); }
+  };
+  // 触发阈值：上下文超过「窗口 - 预留」才自动压缩，而不是一过 90% 就压。
+  const threshold = (() => {
+    const window = stats.data?.contextUsage?.contextWindow;
+    const reserve = compaction?.reserveTokens ?? DEFAULT_RESERVE_TOKENS;
+    if (!window || window <= reserve) return null;
+    return { tokens: window - reserve, percent: ((window - reserve) / window) * 100 };
+  })();
   return <>
     <SettingRow title="自动压缩" description="接近上下文容量时，让 Pi 整理较早的内容。"><Toggle label="自动压缩" on={state?.autoCompactionEnabled ?? false} disabled={status !== "online" || running} onChange={checked => void applySetting({ type: "set_auto_compaction", enabled: checked }).catch(report)} /></SettingRow>
+    <SettingRow title="压缩预留额度" description={threshold ? `上下文用到 ${threshold.percent.toFixed(1)}%（${threshold.tokens.toLocaleString()} tokens）时才开始压缩。Pi 1.4 起这个值只决定何时触发，不再限制摘要长度。` : "离窗口满载还差多少 token 时自动开始压缩。Pi 1.4 起这个值只决定何时触发，不再限制摘要长度。"}>
+      {desktop ? <Select label="压缩预留额度" value={compaction?.reserveTokens == null ? "" : String(compaction.reserveTokens)} options={[{ value: "", label: `跟随 Pi 默认（${DEFAULT_RESERVE_TOKENS.toLocaleString()}）` }, ...RESERVE_TOKEN_OPTIONS]} onChange={value => void writeCompaction({ reserveTokens: value ? Number(value) : DEFAULT_RESERVE_TOKENS })} /> : <span className="remote-settings-note">电脑端设置</span>}
+    </SettingRow>
+    <SettingRow title="保留最近内容" description="压缩后最近这么多 token 的原文直接保留，不写进摘要。留得越多，压缩后越省不下来。">
+      {desktop ? <Select label="保留最近内容" value={compaction?.keepRecentTokens == null ? "" : String(compaction.keepRecentTokens)} options={[{ value: "", label: `跟随 Pi 默认（${DEFAULT_KEEP_RECENT_TOKENS.toLocaleString()}）` }, ...KEEP_RECENT_TOKEN_OPTIONS]} onChange={value => void writeCompaction({ keepRecentTokens: value ? Number(value) : DEFAULT_KEEP_RECENT_TOKENS })} /> : <span className="remote-settings-note">电脑端设置</span>}
+    </SettingRow>
     <SettingRow title="立即压缩" description="现在生成摘要，并可补充需要保留的重点。"><Button variant="outline" disabled={status !== "online" || running} onClick={() => void onCompact().catch(report)}>压缩</Button></SettingRow>
     <div className="settings-stats" aria-busy={stats.isLoading}>
       <div><span>累计 tokens</span><strong>{stats.data?.tokens.total.toLocaleString() ?? "—"}</strong></div>
@@ -690,7 +731,7 @@ export function GeneralSettingsPage() {
     <SettingsGroup title="桌面集成" icon="dashboard-square" description="启动页面、屏幕保持唤醒、系统通知、全局快捷键与开机自启。"><DesktopIntegrationSettings desktop={desktop} /></SettingsGroup>
     <SettingsGroup title="工作区" icon="folder"><TrustSettings mode={trustMode} busy={trustBusy} desktop={desktop} onChange={changeTrustMode} /></SettingsGroup>
     {runtimeTarget === "mobile" && <SettingsGroup title="后台与更新" icon="refresh-cw" description="保持配对连接，以及从 GitHub Release 检查 Android 安装包。"><BackgroundConnectionSettings /><MobileAppUpdateSettings /></SettingsGroup>}
-    <SettingsGroup title="上下文" icon="brain" description="管理当前会话的容量与压缩方式。"><ContextSettings cwd={cwd} status={status} running={running} state={state} onCompact={manualCompact} /></SettingsGroup>
+    <SettingsGroup title="上下文" icon="brain" description="管理当前会话的容量与压缩方式。"><ContextSettings cwd={cwd} desktop={desktop} status={status} running={running} state={state} onCompact={manualCompact} /></SettingsGroup>
     <SettingsGroup title="消息队列" icon="message-multiple"><QueueSettings status={status} state={state} /></SettingsGroup>
     <SettingsGroup title="运行环境" icon="terminal" description="Pi、Node、配置和资源目录的实际解析结果。"><RuntimeSettings desktop={desktop} cwd={cwd} /></SettingsGroup>
     <SettingsGroup title="更新" icon="refresh-cw"><DesktopUpdateSettings desktop={desktop} /></SettingsGroup>

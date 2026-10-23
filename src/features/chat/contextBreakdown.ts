@@ -123,6 +123,21 @@ export function fitToUsed(sources: ContextSources, used: number): ContextSources
   return { system: tokens[0], conversation: tokens[1], tools: tokens[2], app: tokens[3] };
 }
 
+export type ContextUsage = { used: number; window: number };
+
+/** Pi 的压缩设置（只取 GUI 用得到的两个字段）。 */
+export type CompactionBudget = { enabled?: boolean; reserveTokens?: number };
+
+/** Pi 在 `used > window - reserveTokens` 时才自动压缩。 */
+export function compactionThreshold(usage: ContextUsage | undefined, compaction: CompactionBudget | null | undefined): { tokens: number; ratio: number } | null {
+  if (!usage || !(usage.window > 0)) return null;
+  if (compaction?.enabled === false) return null;
+  const reserve = Math.max(0, compaction?.reserveTokens ?? 0);
+  if (reserve >= usage.window) return null;
+  const tokens = usage.window - reserve;
+  return { tokens, ratio: tokens / usage.window };
+}
+
 export type ContextSegment = { key: ContextSourceKey; left: number; width: number };
 
 /**
