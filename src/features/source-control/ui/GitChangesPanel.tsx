@@ -327,6 +327,7 @@ export function GitChangesPanel({
         style={graphExpanded ? { height: graphHeight } : undefined}
       >
         <GitHistoryGraph
+          key={cwd}
           cwd={cwd}
           enabled={enabled}
           expanded={graphExpanded}

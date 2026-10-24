@@ -105,7 +105,7 @@ export function parseAgentSnapshot(input: unknown): AgentSnapshot | null {
   return { version: source.version, rootId: source.rootId, active, recent: recent.filter(agent => !activeIds.has(agent.id)), updatedAt: source.updatedAt };
 }
 
-export function agentNodes(snapshot: AgentSnapshot | null): AgentNode[] {
+function agentNodes(snapshot: AgentSnapshot | null): AgentNode[] {
   if (!snapshot) return [];
   const result: AgentNode[] = [];
   const seen = new Set<string>();

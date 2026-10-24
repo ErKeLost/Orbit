@@ -89,9 +89,6 @@ const EXCLUDED: Record<string, string> = {
   screen_displays: "the screen channel is captured and subscribed, not called",
   screen_request_permission: "screen-recording consent is given at the desktop",
   screen_stop: "the screen channel is captured and subscribed, not called",
-  git_checkpoint_capture: "captures this machine's working tree",
-  git_checkpoint_diff: "reads this machine's git objects",
-  git_checkpoint_restore: "writes this machine's working tree",
   // 语音转写在桌面今天就是仅本机的：读写这台机器的 speech.json / auth.json，
   // 转写请求也从桌面的网络发出。镜像到手机等手机端麦克风权限打通后再说。
   // 浏览器栏在桌面上（screencast 帧 + 真实 Chrome 进程），手机端没有这一栏：

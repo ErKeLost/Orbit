@@ -6,7 +6,6 @@ import {
   type GitDiffIndex,
 } from "../../../platform/tauri/fs";
 import { invalidateWatchedFiles } from "../../files/model/fileWatch";
-import { applyProjectDiffStats } from "./useProjectDiffStats";
 import { changedFilePaths, sameDiffIndex } from "../model/gitChanges";
 
 const GIT_POLL_MS = 2000;
@@ -66,11 +65,6 @@ export function useDiffIndex(
         indexByCwd.set(cwd, next);
         indexRef.current = next;
         setIndex(next);
-        applyProjectDiffStats(cwd, {
-          files: next.files.length,
-          additions: next.additions,
-          deletions: next.deletions,
-        });
         if (prev) {
           const paths = changedFilePaths(prev, next);
           invalidateWatchedFiles(paths);

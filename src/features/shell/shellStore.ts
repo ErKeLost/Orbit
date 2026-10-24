@@ -834,5 +834,3 @@ export const useShell = create<ShellState>((set, get) => {
 export function useActiveWorkspace<T>(selector: (workspace: WorkspaceTab) => T): T {
   return useShell((state) => selector(state.workspaces[activeIndex(state)]));
 }
-
-export type { LayoutNode, LayoutSash, PaneEdge, SplitDir } from "./paneLayout";

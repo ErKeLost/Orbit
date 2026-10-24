@@ -363,7 +363,7 @@ pub async fn pi_connect(
             id.clone(),
             Worker {
                 child: child.clone(),
-                stdin,
+                stdin: Arc::new(Mutex::new(stdin)),
                 cwd: path.clone(),
             },
         );
@@ -415,12 +415,12 @@ pub async fn pi_connect(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_send(project: String, command: Value, state: State<'_, Bridge>) -> Result<(), String> {
     state.send(&project, command)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pi_disconnect(app: AppHandle, project: String, state: State<'_, Bridge>) {
     state.stop_project(&project);
     crate::remote::publish_connection_closed(&app, &project);

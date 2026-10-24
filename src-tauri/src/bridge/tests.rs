@@ -120,7 +120,7 @@ fn worker() -> Worker {
     let stdin = child.stdin.take().unwrap();
     Worker {
         child: Arc::new(Mutex::new(child)),
-        stdin,
+        stdin: Arc::new(Mutex::new(stdin)),
         cwd: std::env::temp_dir(),
     }
 }

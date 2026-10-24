@@ -53,8 +53,3 @@ export function setDraftFor(path: string, text: string): void {
 export function dropDraftFor(path: string): void {
   useDrafts.getState().dropDraft(path)
 }
-
-/** Whether a path has unsaved text. Subscribes: the tab dot reads it. */
-export function useIsDirty(path: string | null | undefined): boolean {
-  return useDrafts((state) => (path ? path in state.drafts : false))
-}

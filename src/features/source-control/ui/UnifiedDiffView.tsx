@@ -10,6 +10,7 @@ import {
 } from "../../../shared/ui/icons";
 import {
   memo,
+  type CSSProperties,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -19,9 +20,7 @@ import {
 } from "react";
 import { FileTypeIcon } from "../../files/ui/FileTypeIcon";
 import { useLockOverscroll } from "../../../shared/hooks/useLockOverscroll";
-import { useColorScheme } from "../../../lib/appearance";
 import { formatInteger } from "../../../shared/lib/numbers";
-import type { ResolvedTheme } from "../../../lib/theme";
 import { basename } from "../../../platform/tauri/fs";
 import { highlightDiffFile, type SyntaxToken } from "../../files/editor/syntaxTokens";
 import { DiffCommentComposer } from "./DiffCommentComposer";
@@ -100,7 +99,6 @@ export function UnifiedDiffView({
   onFileVisibility,
 }: Props) {
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
-  const colorScheme = useColorScheme();
   const [open, setOpen] = useState<Set<string>>(() =>
     initiallyOpenIds(files, initialExpansion),
   );
@@ -265,7 +263,6 @@ export function UnifiedDiffView({
               busy={busyId === file.id}
               reveals={reveals[file.id] ?? EMPTY_REVEALS}
               fileLayout={fileLayout}
-              colorScheme={colorScheme}
               scrollerRef={scrollerRef}
               onToggle={toggleFile}
               onReveal={revealFold}
@@ -289,7 +286,6 @@ type FileSectionProps = {
   busy: boolean;
   reveals: Record<string, FoldReveal>;
   fileLayout: FileLayout;
-  colorScheme: ResolvedTheme;
   scrollerRef: React.RefObject<HTMLDivElement | null>;
   onToggle: (id: string) => void;
   onReveal: (
@@ -312,7 +308,6 @@ const FileSection = memo(function FileSection({
   busy,
   reveals,
   fileLayout,
-  colorScheme,
   scrollerRef,
   onToggle,
   onReveal,
@@ -338,13 +333,14 @@ const FileSection = memo(function FileSection({
   useEffect(() => {
     if (!expanded || !near) return;
     let cancelled = false;
-    void highlightDiffFile(file, colorScheme).then((next) => {
+    // 两个调色板一次算出，切主题不再重新 tokenize，所以这里不依赖 colorScheme。
+    void highlightDiffFile(file).then((next) => {
       if (!cancelled) setTokens(next);
     });
     return () => {
       cancelled = true;
     };
-  }, [colorScheme, expanded, file, near]);
+  }, [expanded, file, near]);
 
   const setSection = useCallback(
     (node: HTMLElement | null) => {
@@ -477,7 +473,6 @@ function equalFileSectionProps(
     previous.busy === next.busy &&
     previous.reveals === next.reveals &&
     previous.fileLayout === next.fileLayout &&
-    previous.colorScheme === next.colorScheme &&
     previous.scrollerRef === next.scrollerRef &&
     previous.onToggle === next.onToggle &&
     previous.onReveal === next.onReveal &&
@@ -1046,13 +1041,25 @@ function renderLineText(line: UnifiedLine, tokens?: SyntaxToken[]) {
       {pieces.map((piece, index) => (
         <span
           key={index}
-          style={piece.color ? { color: piece.color } : undefined}
+          className={piece.darkColor ? "syntax-token" : undefined}
+          style={tokenStyle(piece)}
         >
           {piece.text}
         </span>
       ))}
     </>
   );
+}
+
+/**
+ * 两套颜色同时挂在行内样式上：浅色直接生效，深色由 CSS 在
+ * `html:not(.theme-light) .syntax-token` 下换成 `--shiki-dark`。
+ */
+function tokenStyle(piece: SyntaxToken): CSSProperties | undefined {
+  if (!piece.color) return undefined;
+  return piece.darkColor
+    ? ({ color: piece.color, "--shiki-dark": piece.darkColor } as CSSProperties)
+    : { color: piece.color };
 }
 
 function EmptyBody({ children }: { children: string }) {

@@ -6,6 +6,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from './lib/rpc'
 import { installExternalLinkHandler } from './lib/external-links'
 import { installPerfLog } from './lib/perf-log'
+import { warmHighlight } from './lib/highlight'
 import './lib/perf-tier'
 import { Providers } from './components/Providers'
 import './index.css'
@@ -54,3 +55,11 @@ function mount(App: ComponentType) {
 }
 
 void appLoaded.then(({ default: App }) => mount(App))
+
+// 首个代码块/差异块出现前把高亮 Worker 预热好：shiki 的语法和主题是懒加载的，
+// 那几百毫秒不该由「第一次滚到那段代码」来买单。启动路径上只排队，不抢首帧。
+if (typeof window.requestIdleCallback === 'function') {
+  window.requestIdleCallback(warmHighlight, { timeout: 3000 })
+} else {
+  window.setTimeout(warmHighlight, 1500)
+}

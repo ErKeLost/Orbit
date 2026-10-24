@@ -1,20 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { highlightToHtml, peekHtml } from "../lib/highlight";
 
-/** File-preview highlighting straight on shiki — no diff machinery. */
+/** File-preview highlighting. shiki lives in a Worker; this file only paints. */
 
-const cache = new Map<string, string>();
-const CACHE_LIMIT = 40;
 const MAX_CHARS = 400_000;
-
-const cacheKey = (code: string, language: string) => `${language}\u0000${code}`;
-
-function rememberCache(key: string, html: string) {
-  cache.set(key, html);
-  if (cache.size > CACHE_LIMIT) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
-  }
-}
 
 const EXTENSION_LANGUAGE: Record<string, string> = {
   ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx", mjs: "javascript", cjs: "javascript",
@@ -39,59 +28,57 @@ export function languageForFileName(name: string): string {
 
 export function FileHighlighter({ code, fileName, wrap = false }: { code: string; fileName: string; wrap?: boolean }) {
   const language = languageForFileName(fileName);
-  const key = cacheKey(code, language);
-  const [html, setHtml] = useState<string | null>(() => cache.get(key) ?? null);
+  // null = 还没有结果（渲染纯文本）；"" = 这段不打算上色（纯文本/超大文件）。
+  // 共享缓存命中时同步给出成品，重开一个文件不会先闪一下无色的文本。
+  const [html, setHtml] = useState<string | null>(() =>
+    language === "text" ? "" : peekHtml(code, language),
+  );
   const rootRef = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(() => typeof IntersectionObserver !== "function");
+
+  // 打开了整个仓库也不该为大文件里看不见的代码付 tokenize：接近视口再要。
+  useEffect(() => {
+    const node = rootRef.current;
+    if (!node || visible) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) setVisible(true);
+      },
+      { rootMargin: "1200px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [visible]);
 
   useEffect(() => {
-    const cached = cache.get(key);
-    if (cached !== undefined) {
-      setHtml(cached);
-      return;
-    }
-    // 超大文件直接纯文本，不让主线程为一次性预览跑几秒的 tokenize。
-    if (code.length > MAX_CHARS || language === "text") {
+    if (language === "text" || code.length > MAX_CHARS) {
       setHtml("");
       return;
     }
+    const cached = peekHtml(code, language);
+    if (cached !== null) {
+      setHtml(cached);
+      return;
+    }
+    if (!visible) return;
     let cancelled = false;
-    const schedule = (run: () => void) => {
-      if (typeof window.requestIdleCallback === "function") {
-        window.requestIdleCallback(run, { timeout: 500 });
-        return;
-      }
-      window.setTimeout(run, 0);
-    };
-    schedule(() => {
-      void import("shiki")
-        .then(({ codeToHtml }) =>
-          codeToHtml(code, {
-            lang: language,
-            themes: { dark: "vitesse-dark", light: "vitesse-light" },
-          }),
-        )
-        .then((result) => {
-          if (cancelled) return;
-          rememberCache(key, result);
-          setHtml(result);
-        })
-        .catch(() => {
-          if (!cancelled) setHtml("");
-        });
+    void highlightToHtml(code, language).then((next) => {
+      // null 表示这条路径不可用（Worker 起不来/语言不认识），按纯文本收尾。
+      if (!cancelled) setHtml(next ?? "");
     });
     return () => {
       cancelled = true;
     };
-  }, [code, key, language]);
+  }, [code, language, visible]);
 
-  const plain = html === "";
+  const plain = html === "" || html === null;
   return (
     <div
       ref={rootRef}
       data-file-highlighter
       className={`file-highlighter min-w-0 ${wrap ? "[&>pre]:whitespace-pre-wrap [&>pre]:break-words" : "[&>pre]:whitespace-pre"}`}
     >
-      {html === null || plain ? (
+      {plain ? (
         <pre className={`font-mono text-[12.5px] leading-5 text-content/85 ${wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>{code}</pre>
       ) : (
         <div dangerouslySetInnerHTML={{ __html: html }} />

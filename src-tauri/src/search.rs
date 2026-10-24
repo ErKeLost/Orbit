@@ -3,6 +3,7 @@
 //! past Pi sessions (titles plus message text).
 
 use serde::Serialize;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -22,11 +23,14 @@ fn expand_home(path: &str) -> PathBuf {
 }
 
 fn sessions_dir() -> Option<PathBuf> {
+    if let Ok(current) = crate::sessions::sessions_root() {
+        if current.is_dir() {
+            return Some(current);
+        }
+    }
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
-    let home = PathBuf::from(home);
-    [home.join(".pi/agent/sessions"), home.join(".pi/sessions")]
-        .into_iter()
-        .find(|candidate| candidate.is_dir())
+    let legacy = PathBuf::from(home).join(".pi/sessions");
+    legacy.is_dir().then_some(legacy)
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -94,10 +98,11 @@ fn name_hits(root: &Path, query: &str) -> Vec<FileHit> {
 }
 
 fn content_hits(root: &Path, query: &str, skip: &[String]) -> Vec<FileHit> {
-    let Ok(pattern) = regex_escape(query) else { return Vec::new() };
+    // `-F` means a literal query. Escaping a BRE by hand is not equivalent:
+    // sequences such as `\+` and `\?` become operators in GNU basic regex.
     let Some(text) = git(
         root,
-        &["grep", "-n", "-I", "--no-color", "-m", "2", "-e", &pattern],
+        &["grep", "-n", "-I", "--no-color", "-m", "2", "-F", "-e", query],
     ) else {
         return Vec::new();
     };
@@ -120,22 +125,6 @@ fn content_hits(root: &Path, query: &str, skip: &[String]) -> Vec<FileHit> {
         }
     }
     hits
-}
-
-/// `git grep` takes a basic regex; escape everything so a literal query works.
-fn regex_escape(query: &str) -> Result<String, ()> {
-    if query.is_empty() {
-        return Err(());
-    }
-    Ok(query
-        .chars()
-        .flat_map(|c| match c {
-            '.' | '^' | '$' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '\\' => {
-                vec!['\\', c]
-            }
-            other => vec![other],
-        })
-        .collect())
 }
 
 fn walk_names(root: &Path, query: &str, hits: &mut Vec<FileHit>) {
@@ -204,19 +193,72 @@ pub struct SessionHit {
     pub modified: String,
 }
 
-fn session_text(path: &Path) -> Option<(String, String, Option<String>, String)> {
+/// Map a byte offset in `text.to_lowercase()` back to a UTF-8 boundary in the
+/// original. Lowercasing can expand a character, so this must not treat the
+/// offset as a character count (or blindly slice at the same byte).
+fn original_offset(text: &str, folded_offset: usize) -> usize {
+    let mut current = 0usize;
+    for (index, character) in text.char_indices() {
+        if current >= folded_offset {
+            return index;
+        }
+        current += character
+            .to_lowercase()
+            .map(|part| part.len_utf8())
+            .sum::<usize>();
+        if current > folded_offset {
+            return index;
+        }
+    }
+    text.len()
+}
+
+fn matching_snippet(text: &str, query: &str) -> Option<String> {
+    let folded_at = text.to_lowercase().find(query)?;
+    let matched_at = original_offset(text, folded_at);
+    let prefix = &text[..matched_at];
+    let start = prefix
+        .char_indices()
+        .rev()
+        .nth(59)
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+    let mut end = text.len();
+    for (count, (offset, _)) in text[start..].char_indices().enumerate() {
+        if count == 200 {
+            end = start + offset;
+            break;
+        }
+    }
+    Some(text[start..end].replace('\n', " "))
+}
+
+/// Search one JSONL file incrementally. Real Pi records nest role/content under
+/// `message`; accepting the root as a fallback also keeps older fixtures valid.
+/// A hit returns as soon as its title and snippet are known, instead of building
+/// a second lowercase copy of the entire conversation first.
+fn session_hit(path: &Path, query: &str) -> Option<SessionHit> {
     let meta = std::fs::metadata(path).ok()?;
     if meta.len() > MAX_FILE_BYTES * 8 {
         return None;
     }
-    let body = std::fs::read_to_string(path).ok()?;
+    let file = std::fs::File::open(path).ok()?;
+    let mut reader = BufReader::with_capacity(64 * 1024, file);
+    let mut raw = Vec::with_capacity(8192);
     let mut title = String::new();
-    let mut blob = String::new();
-    let mut count = 0usize;
-    for line in body.lines() {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else { continue };
-        let role = value.get("role").and_then(|v| v.as_str()).unwrap_or("");
-        let text = value
+    let mut title_match = false;
+    let mut snippet = None;
+    loop {
+        raw.clear();
+        match reader.read_until(b'\n', &mut raw) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => return None,
+        }
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&raw) else { continue };
+        let message = value.get("message").unwrap_or(&value);
+        let role = message.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        let text = message
             .get("content")
             .map(|content| match content {
                 serde_json::Value::String(text) => text.clone(),
@@ -231,14 +273,21 @@ fn session_text(path: &Path) -> Option<(String, String, Option<String>, String)>
         if text.trim().is_empty() {
             continue;
         }
-        count += 1;
         if title.is_empty() && role == "user" {
             title = text.trim().replace('\n', " ").chars().take(90).collect();
+            title_match = title.to_lowercase().contains(query);
+            if title_match {
+                break;
+            }
         }
-        blob.push_str(&text);
-        blob.push('\n');
+        if snippet.is_none() {
+            snippet = matching_snippet(&text, query);
+        }
+        if snippet.is_some() && !title.is_empty() {
+            break;
+        }
     }
-    if count == 0 {
+    if !title_match && snippet.is_none() {
         return None;
     }
     let modified = meta
@@ -247,7 +296,16 @@ fn session_text(path: &Path) -> Option<(String, String, Option<String>, String)>
         .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|since| since.as_secs().to_string())
         .unwrap_or_default();
-    Some((title, blob, None, modified))
+    Some(SessionHit {
+        path: path.to_string_lossy().into_owned(),
+        title: if title.is_empty() {
+            path.file_stem().map(|v| v.to_string_lossy().into_owned()).unwrap_or_default()
+        } else {
+            title
+        },
+        snippet,
+        modified,
+    })
 }
 
 /// Past conversations whose title or message text matches.
@@ -279,32 +337,62 @@ pub async fn search_sessions(query: String) -> Result<Vec<SessionHit>, String> {
         files.sort_by_key(|a| std::cmp::Reverse(a.1));
         let mut hits = Vec::new();
         for (path, _) in files.into_iter().take(MAX_SESSIONS_SCANNED) {
-            let Some((title, blob, _, modified)) = session_text(&path) else { continue };
-            let haystack = blob.to_lowercase();
-            let in_title = title.to_lowercase().contains(&query);
-            if !in_title && !haystack.contains(&query) {
-                continue;
-            }
-            let snippet = if in_title {
-                None
-            } else {
-                haystack.find(&query).map(|index| {
-                    let start = index.saturating_sub(60);
-                    blob.chars().skip(start).take(200).collect::<String>().replace('\n', " ")
-                })
-            };
-            hits.push(SessionHit {
-                path: path.to_string_lossy().into_owned(),
-                title: if title.is_empty() { path.file_stem().map(|v| v.to_string_lossy().into_owned()).unwrap_or_default() } else { title },
-                snippet,
-                modified,
-            });
-            if hits.len() >= MAX_SESSION_HITS {
-                break;
+            if let Some(hit) = session_hit(&path, &query) {
+                hits.push(hit);
+                if hits.len() >= MAX_SESSION_HITS {
+                    break;
+                }
             }
         }
         Ok(hits)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(name: &str, body: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "orbit-search-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    #[test]
+    fn session_search_reads_nested_pi_messages() {
+        let path = fixture(
+            "nested.jsonl",
+            concat!(
+                "{\"type\":\"session\",\"id\":\"s1\"}\n",
+                "{\"type\":\"message\",\"message\":{\"role\":\"user\",\"content\":\"第一句\"}}\n",
+                "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"需要优化 Rust 搜索\"}]}}\n"
+            ),
+        );
+        let hit = session_hit(&path, "rust").expect("nested assistant text is searchable");
+        assert_eq!(hit.title, "第一句");
+        assert_eq!(hit.snippet.as_deref(), Some("需要优化 Rust 搜索"));
+        assert!(session_hit(&path, "not-present").is_none());
+        let title = session_hit(&path, "第一").expect("the first user message is the title");
+        assert_eq!(title.snippet, None);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn snippets_keep_utf8_and_original_case() {
+        let snippet = matching_snippet("这是中文前缀，需要检索 Rust 性能", "性能").unwrap();
+        assert_eq!(snippet, "这是中文前缀，需要检索 Rust 性能");
+        let expanded = matching_snippet("xİy", "y").unwrap();
+        assert_eq!(expanded, "xİy");
+    }
 }

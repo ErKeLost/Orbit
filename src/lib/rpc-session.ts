@@ -66,13 +66,7 @@ export async function deliveryFor(command:RpcCommand,target=activeTarget()):Prom
 export async function sendPrompt(command:RpcCommand,target=activeTarget(),wasRunning?:boolean){
  // 一切都落在这条连接自己的快照上：后台面板/分屏发消息，不会把乐观预览、等待位写进别的会话。
  const id=route(target),running=wasRunning??current(id).transcript.running
- const cwd=connections.get(id)?.cwd??useWorkspace.getState().cwd
  try{
-  // 回合检查点：真实用户消息（非 /gui-* 内部命令）发出前捕获工作区快照。
-  if(command.type==='prompt'&&!command.message.startsWith('/')){
-   const sessionFile=current(id).state?.sessionFile
-   if(sessionFile)window.dispatchEvent(new CustomEvent('orbit-turn-started',{detail:{cwd,sessionFile,connectionId:id}}))
-  }
   const delivery=await deliveryFor(command,id)
   const result=await request<{disposition?:string}>(delivery.command,45000,id)
   // 退化成普通 prompt 的那一条已经开了一轮，不再需要用 `prompt_settled` 收等待位。

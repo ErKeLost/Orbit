@@ -70,29 +70,3 @@ export function useGitBranches(cwd: string | undefined, enabled = true) {
     staleTime: 3000,
   });
 }
-
-/* ------------------------------ 回合检查点 ------------------------------ */
-
-export type CheckpointFileDiff = {
-  path: string;
-  relative: string;
-  status: string;
-  original: string;
-  current: string;
-  binary: boolean;
-  too_large: boolean;
-};
-
-/** 把当前工作区（含未跟踪）捕获成 tree sha；不动暂存区与工作区。 */
-export function gitCheckpointCapture(cwd: string): Promise<string> {
-  return invoke<string>("git_checkpoint_capture", { cwd });
-}
-
-export function gitCheckpointDiff(cwd: string, from: string, to: string): Promise<CheckpointFileDiff[]> {
-  return invoke<CheckpointFileDiff[]>("git_checkpoint_diff", { cwd, from, to });
-}
-
-/** 撤销 = 工作区恢复到检查点；会覆盖当前未提交改动，调用方先确认。 */
-export function gitCheckpointRestore(cwd: string, tree: string): Promise<void> {
-  return invoke<void>("git_checkpoint_restore", { cwd, tree });
-}

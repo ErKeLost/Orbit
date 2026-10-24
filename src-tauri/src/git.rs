@@ -583,6 +583,67 @@ mod tests {
         assert_eq!(files["img.png"].additions, 0);
         assert!(files.contains_key("src/new.ts"));
     }
+
+    #[test]
+    fn porcelain_v2_reads_sync_state_and_paths_with_spaces() {
+        let parsed = parse_status_v2(concat!(
+            "# branch.oid abc123\0",
+            "# branch.head feature\0",
+            "# branch.upstream origin/feature\0",
+            "# branch.ab +3 -2\0",
+            "1 MM N... 100644 100644 100644 abc def src/file with space.ts\0",
+            "u UU N... 1 2 3 4 5 6 7 src/conflict.ts\0",
+            "? new.ts\0"
+        ));
+        assert_eq!(parsed.branch_oid.as_deref(), Some("abc123"));
+        assert_eq!(parsed.branch_head.as_deref(), Some("feature"));
+        assert_eq!(parsed.upstream.as_deref(), Some("origin/feature"));
+        assert_eq!((parsed.ahead, parsed.behind), (3, 2));
+        assert_eq!(parsed.entries.len(), 3);
+        assert_eq!(parsed.entries[0].path, "src/file with space.ts");
+        assert_eq!((parsed.entries[0].x, parsed.entries[0].y), ('M', 'M'));
+        assert_eq!(parsed.entries[1].path, "src/conflict.ts");
+        assert_eq!(parsed.entries[2].path, "new.ts");
+    }
+
+    #[test]
+    fn index_reads_a_real_worktree_without_extra_status_processes() {
+        let root = std::env::temp_dir().join(format!(
+            "orbit-git-index-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let git = |args: &[&str]| {
+            let output = git_cmd().arg("-C").arg(&root).args(args).output().unwrap();
+            assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        };
+        git(&["init", "-b", "main"]);
+        git(&["config", "user.email", "orbit@example.invalid"]);
+        git(&["config", "user.name", "Orbit Test"]);
+        std::fs::write(root.join("tracked.txt"), "one\n").unwrap();
+        git(&["add", "tracked.txt"]);
+        git(&["commit", "-m", "initial"]);
+        std::fs::write(root.join("tracked.txt"), "one\ntwo\n").unwrap();
+        git(&["add", "tracked.txt"]);
+        std::fs::write(root.join("new file.txt"), "new\n").unwrap();
+
+        let index = diff_index(&root, false);
+        assert_eq!(index.branch.as_deref(), Some("main"));
+        assert_eq!(index.head.as_deref().map(str::len), Some(40));
+        assert_eq!(index.files.len(), 2);
+        let tracked = index.files.iter().find(|file| file.relative == "tracked.txt").unwrap();
+        assert!(tracked.staged && !tracked.unstaged);
+        assert_eq!(tracked.additions, 1);
+        let untracked = index.files.iter().find(|file| file.relative == "new file.txt").unwrap();
+        assert_eq!(untracked.status, "untracked");
+        assert!(untracked.unstaged);
+        assert_eq!(untracked.additions, 1);
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
 
 // ── Source-control surface (Orbit's git API surface, Orbit's git plumbing) ──
@@ -655,9 +716,88 @@ pub struct GitHistory {
     pub commits: Vec<GitHistoryCommit>,
 }
 
+#[derive(Default)]
+struct WorktreeStatus {
+    branch_oid: Option<String>,
+    branch_head: Option<String>,
+    upstream: Option<String>,
+    ahead: i64,
+    behind: i64,
+    entries: Vec<StatusEntry>,
+}
+
+struct StatusEntry {
+    x: char,
+    y: char,
+    path: String,
+}
+
+/// Parse the NUL-separated porcelain-v2 stream. Ordinary entries have six
+/// metadata fields after XY; unmerged entries have eight. Paths are the final
+/// field and may contain spaces, so splitting the whole record is not allowed.
+fn status_record<'a>(record: &'a str, metadata: usize) -> Option<(&'a str, &'a str)> {
+    let mut fields = record.splitn(metadata + 3, ' ');
+    fields.next()?;
+    let xy = fields.next()?;
+    for _ in 0..metadata {
+        fields.next()?;
+    }
+    Some((xy, fields.next()?))
+}
+
+fn parse_status_v2(text: &str) -> WorktreeStatus {
+    let mut status = WorktreeStatus::default();
+    for record in text.split('\0').filter(|record| !record.is_empty()) {
+        if let Some(oid) = record.strip_prefix("# branch.oid ") {
+            status.branch_oid = (oid != "(initial)").then(|| oid.to_owned());
+        } else if let Some(head) = record.strip_prefix("# branch.head ") {
+            status.branch_head = Some(head.to_owned());
+        } else if let Some(upstream) = record.strip_prefix("# branch.upstream ") {
+            status.upstream = Some(upstream.to_owned());
+        } else if let Some(counts) = record.strip_prefix("# branch.ab ") {
+            for value in counts.split_whitespace() {
+                if let Some(ahead) = value.strip_prefix('+') {
+                    status.ahead = ahead.parse().unwrap_or(0);
+                } else if let Some(behind) = value.strip_prefix('-') {
+                    status.behind = behind.parse().unwrap_or(0);
+                }
+            }
+        } else if let Some(path) = record.strip_prefix("? ") {
+            status.entries.push(StatusEntry { x: '?', y: '?', path: path.to_owned() });
+        } else {
+            let parsed = if record.starts_with("1 ") {
+                status_record(record, 6)
+            } else if record.starts_with("u ") {
+                status_record(record, 8)
+            } else {
+                None
+            };
+            if let Some((xy, path)) = parsed {
+                let mut chars = xy.chars();
+                if let (Some(x), Some(y)) = (chars.next(), chars.next()) {
+                    status.entries.push(StatusEntry { x, y, path: path.to_owned() });
+                }
+            }
+        }
+    }
+    status
+}
+
+struct IndexFiles {
+    files: Vec<SourceControlFile>,
+    status: WorktreeStatus,
+}
+
 /// Per-file staged/unstaged bookkeeping, so the panel can split rows like
-/// Orbit's Changes list does.
-fn index_files(root: &Path) -> Vec<SourceControlFile> {
+/// Orbit's Changes list does. One status process covers paths, HEAD, upstream
+/// and ahead/behind; only the two numstat passes remain separate.
+fn index_files(root: &Path) -> IndexFiles {
+    let status = git_run(
+        root,
+        &["status", "--porcelain=v2", "--branch", "-z", "--no-renames", "--untracked-files=all", "--", "."],
+    )
+    .map(|text| parse_status_v2(&text))
+    .unwrap_or_default();
     let mut staged_map: HashMap<String, FileAcc> = HashMap::new();
     if let Some(text) = git_run(root, &["diff", "--relative", "--no-ext-diff", "--cached", "--numstat", "--", "."]) {
         add_numstat_map(&text, &mut staged_map);
@@ -666,37 +806,28 @@ fn index_files(root: &Path) -> Vec<SourceControlFile> {
     if let Some(text) = git_run(root, &["diff", "--relative", "--no-ext-diff", "--numstat", "--", "."]) {
         add_numstat_map(&text, &mut unstaged_map);
     }
-    if let Some(text) = git_run(root, &["ls-files", "-o", "--exclude-standard", "-z", "--", "."]) {
-        for rel in text.split('\0').filter(|rel| !rel.is_empty()) {
-            let entry = unstaged_map.entry(path_to_js(Path::new(rel))).or_default();
-            entry.untracked = true;
-            if entry.additions == 0 {
-                entry.additions = text_line_count(&root.join(rel));
-            }
-        }
-    }
-    // Rename detection keeps the status letters honest for renamed files.
     let mut statuses: HashMap<String, String> = HashMap::new();
-    for args in [
-        vec!["diff", "--relative", "--name-status", "--no-renames", "--cached", "--", "."],
-        vec!["diff", "--relative", "--name-status", "--no-renames", "--", "."],
-    ] {
-        if let Some(text) = git_run(root, &args) {
-            for line in text.lines() {
-                if let Some((code, rest)) = line.split_once('\t') {
-                    let letter = match code.as_bytes().first() {
-                        Some(b'A') => "added",
-                        Some(b'D') => "deleted",
-                        _ => "modified",
-                    };
-                    statuses.entry(normalize_diff_path(rest.trim())).or_insert(letter.into());
-                }
+    for entry in &status.entries {
+        let path = path_to_js(Path::new(&entry.path));
+        if entry.x == '?' && entry.y == '?' {
+            let acc = unstaged_map.entry(path.clone()).or_default();
+            acc.untracked = true;
+            if acc.additions == 0 {
+                acc.additions = text_line_count(&root.join(&entry.path));
             }
+            statuses.entry(path).or_insert("untracked".into());
+            continue;
         }
-    }
-    if let Some(text) = git_run(root, &["ls-files", "-o", "--exclude-standard", "-z", "--", "."]) {
-        for rel in text.split('\0').filter(|rel| !rel.is_empty()) {
-            statuses.entry(path_to_js(Path::new(rel))).or_insert("untracked".into());
+        for code in [entry.x, entry.y] {
+            if code == '.' {
+                continue;
+            }
+            let letter = match code {
+                'A' => "added",
+                'D' => "deleted",
+                _ => "modified",
+            };
+            statuses.entry(path.clone()).or_insert_with(|| letter.into());
         }
     }
 
@@ -722,7 +853,7 @@ fn index_files(root: &Path) -> Vec<SourceControlFile> {
             unstaged: unstaged_acc.is_some() || untracked,
         });
     }
-    files
+    IndexFiles { files, status }
 }
 
 fn default_branch(root: &Path, remote: &str) -> Option<String> {
@@ -741,9 +872,11 @@ fn diff_index(root: &Path, include_sync: bool) -> GitDiffIndex {
     if !git_is_work_tree(root) {
         return GitDiffIndex::default();
     }
-    let branch = git_head_branch(root);
-    let head = git_stdout(root, &["rev-parse", "HEAD"]);
-    let files = index_files(root);
+    let IndexFiles { files, status } = index_files(root);
+    let branch = status.branch_head.as_ref().and_then(|head| {
+        (head != "HEAD" && head != "(detached)").then(|| head.clone())
+    });
+    let head = status.branch_oid.clone();
     let additions = files.iter().map(|file| file.additions).sum();
     let deletions = files.iter().map(|file| file.deletions).sum();
     if !include_sync {
@@ -757,19 +890,6 @@ fn diff_index(root: &Path, include_sync: bool) -> GitDiffIndex {
         };
     }
     let remote = git_remote_name(root);
-    let upstream = branch
-        .as_deref()
-        .and_then(|branch| git_stdout(root, &["rev-parse", "--abbrev-ref", &format!("{branch}@{{upstream}}")]));
-    let mut ahead = 0;
-    let mut behind = 0;
-    if let Some(upstream) = upstream.as_deref() {
-        if let Some(count) = git_stdout(root, &["rev-list", "--count", &format!("{upstream}..HEAD")]) {
-            ahead = count.parse().unwrap_or(0);
-        }
-        if let Some(count) = git_stdout(root, &["rev-list", "--count", &format!("HEAD..{upstream}")]) {
-            behind = count.parse().unwrap_or(0);
-        }
-    }
     let default_branch = remote.as_deref().and_then(|remote| default_branch(root, remote));
     let mut ahead_of_default = 0;
     let mut head_pushed = false;
@@ -777,7 +897,8 @@ fn diff_index(root: &Path, include_sync: bool) -> GitDiffIndex {
         if let Some(count) = git_stdout(root, &["rev-list", "--count", &format!("{remote}/{default_branch}..HEAD")]) {
             ahead_of_default = count.parse().unwrap_or(0);
         }
-        head_pushed = git_run(root, &["branch", "-r", "--contains", "HEAD"]).is_some();
+        // An empty successful result means no remote branch contains HEAD.
+        head_pushed = git_stdout(root, &["branch", "-r", "--contains", "HEAD"]).is_some();
     }
     GitDiffIndex {
         branch,
@@ -786,10 +907,10 @@ fn diff_index(root: &Path, include_sync: bool) -> GitDiffIndex {
         additions,
         deletions,
         remote,
-        upstream,
+        upstream: status.upstream,
         default_branch,
-        ahead,
-        behind,
+        ahead: status.ahead,
+        behind: status.behind,
         ahead_of_default,
         head_pushed,
     }
@@ -1303,134 +1424,6 @@ pub async fn git_pr_create(cwd: String, title: String, body: String, base: Strin
             .find(|line| line.starts_with("http"))
             .map(str::to_string)
             .ok_or_else(|| stdout.trim().to_string())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/* ----------------------------- Turn checkpoints ---------------------------- */
-/*
- * monocode 的回合检查点：每轮对话前后把整个工作区（含未跟踪文件，不含
- * ignored）捕获成 git tree 对象——临时 index + `write-tree`，完全不碰真实的
- * index 和工作区。撤销 = 临时 index `read-tree` + `checkout-index -af`，再清掉
- * 检查点之后新建的文件。磁盘零成本，速度快。
- */
-
-fn is_tree_sha(value: &str) -> bool {
-    value.len() == 40 && value.chars().all(|c| c.is_ascii_hexdigit())
-}
-
-fn checkpoint_index_path(root: &Path, tag: &str) -> PathBuf {
-    root.join(".git").join(format!("orbit-{tag}-{}.idx", std::process::id()))
-}
-
-/// `GIT_INDEX_FILE` 指到临时 index 再跑 git，绝不碰真实暂存区。
-fn git_with_index(root: &Path, index: &Path, args: &[&str]) -> Option<String> {
-    let output = git_cmd()
-        .arg("--no-pager")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .env("GIT_INDEX_FILE", index)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .output()
-        .ok()?;
-    git_status_ok(&output.status, args).then(|| String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
-#[derive(Serialize)]
-pub struct CheckpointFileDiff {
-    pub path: String,
-    pub relative: String,
-    pub status: String,
-    pub original: String,
-    pub current: String,
-    pub binary: bool,
-    pub too_large: bool,
-}
-
-/// 捕获当前工作区为 tree 对象，返回 tree sha。
-#[tauri::command]
-pub async fn git_checkpoint_capture(cwd: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let root = expand_home(&cwd);
-        let index = checkpoint_index_path(&root, "checkpoint");
-        let _ = std::fs::remove_file(&index);
-        let added = git_with_index(&root, &index, &["add", "-A", "--"]).is_some();
-        let tree = git_with_index(&root, &index, &["write-tree"])
-            .map(|text| text.trim().to_string())
-            .filter(|text| !text.is_empty());
-        let _ = std::fs::remove_file(&index);
-        match (added, tree) {
-            (_, Some(tree)) if is_tree_sha(&tree) => Ok(tree),
-            _ => Err("检查点捕获失败（这里不是 git 仓库？）".into()),
-        }
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// 两个检查点 tree 之间的逐文件差异（文本内容直接带回，前端复用 unified diff）。
-#[tauri::command]
-pub async fn git_checkpoint_diff(cwd: String, from: String, to: String) -> Result<Vec<CheckpointFileDiff>, String> {
-    if !is_tree_sha(&from) || !is_tree_sha(&to) {
-        return Err("检查点 id 不合法".into());
-    }
-    tauri::async_runtime::spawn_blocking(move || {
-        let root = expand_home(&cwd);
-        let text = git_stdout(&root, &["diff-tree", "-r", "--name-status", "--no-renames", &from, &to])
-            .unwrap_or_default();
-        let mut files = Vec::new();
-        for line in text.lines().filter(|line| !line.trim().is_empty()) {
-            let mut fields = line.split('\t');
-            let (Some(status), Some(relative)) = (fields.next(), fields.next()) else { continue };
-            let original = if status == "A" { String::new() } else { blob_or_empty(&root, &format!("{from}:{relative}")) };
-            let current = if status == "D" { String::new() } else { blob_or_empty(&root, &format!("{to}:{relative}")) };
-            let binary = is_binary_bytes(original.as_bytes()) || is_binary_bytes(current.as_bytes());
-            let too_large = original.len() as u64 > DIFF_MAX_BYTES || current.len() as u64 > DIFF_MAX_BYTES;
-            let decode = |value: String| if binary || too_large { String::new() } else { value };
-            files.push(CheckpointFileDiff {
-                path: root.join(relative).to_string_lossy().replace('\\', "/"),
-                relative: relative.to_string(),
-                status: status.to_string(),
-                original: decode(original),
-                current: decode(current),
-                binary,
-                too_large,
-            });
-        }
-        Ok(files)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-/// 把工作区恢复到检查点状态：临时 index `read-tree` + `checkout-index -af`，
-/// 再删除检查点之后新建的文件。不碰真实暂存区。
-#[tauri::command]
-pub async fn git_checkpoint_restore(cwd: String, tree: String) -> Result<(), String> {
-    if !is_tree_sha(&tree) {
-        return Err("检查点 id 不合法".into());
-    }
-    tauri::async_runtime::spawn_blocking(move || {
-        let root = expand_home(&cwd);
-        let index = checkpoint_index_path(&root, "restore");
-        let _ = std::fs::remove_file(&index);
-        if git_with_index(&root, &index, &["read-tree", &tree]).is_none() {
-            let _ = std::fs::remove_file(&index);
-            return Err("检查点不存在".into());
-        }
-        if git_with_index(&root, &index, &["checkout-index", "-a", "-f", "--"]).is_none() {
-            let _ = std::fs::remove_file(&index);
-            return Err("恢复工作区失败".into());
-        }
-        // 检查点之后新建的文件（tree 里没有的）也要清掉，才算完整回到当时。
-        let added = git_stdout(&root, &["diff", "--name-only", "--diff-filter=A", &tree]).unwrap_or_default();
-        for relative in added.lines().filter(|line| !line.trim().is_empty()) {
-            let _ = std::fs::remove_file(root.join(relative.trim_start_matches('/')));
-        }
-        let _ = std::fs::remove_file(&index);
-        Ok(())
     })
     .await
     .map_err(|e| e.to_string())?

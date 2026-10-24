@@ -1,6 +1,7 @@
 import {emptyTelemetry,observe,type Telemetry} from './telemetry'
 import { create } from 'zustand'
-import { createContext, useCallback, useContext, useSyncExternalStore } from 'react'
+import { useStoreWithEqualityFn } from 'zustand/traditional'
+import { createContext, useContext } from 'react'
 import { emptyTranscript, reduceEvent, type Event, type Transcript, type RpcSessionState, type UiRequest } from './protocol'
 import { parseAgentSnapshot, type AgentSnapshot } from './agents'
 import type { RemoteTheme } from './remote-protocol'
@@ -50,11 +51,7 @@ export type WorkspaceStore = Pick<typeof workspaceStore, 'getState' | 'getInitia
 export const SessionScopeContext = createContext<WorkspaceStore | null>(null);
 
 function useStoreSelector<T>(store: WorkspaceStore, selector: (state: Workspace) => T): T {
-  return useSyncExternalStore(
-    useCallback((listener: () => void) => store.subscribe(listener), [store]),
-    useCallback(() => selector(store.getState()), [store, selector]),
-    useCallback(() => selector(store.getState()), [store, selector]),
-  );
+  return useStoreWithEqualityFn(store, selector, Object.is);
 }
 
 /** The store a component should read: its pane's connection when scoped. */

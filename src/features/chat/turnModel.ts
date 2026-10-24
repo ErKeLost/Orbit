@@ -15,7 +15,7 @@ import { withoutRuntimeImageNotes } from "../../lib/image-note";
  * Pure functions only, so the grouping can be unit-tested without React.
  */
 
-export type StepKind = "think" | "tool" | "note" | "image";
+type StepKind = "think" | "tool" | "note" | "image";
 
 export type TurnStep = {
   key: string;
@@ -56,7 +56,7 @@ export type ProjectedTurn = {
   last?: DisplayMessage;
 };
 
-export function contentParts(message: PiMessage): Part[] {
+function contentParts(message: PiMessage): Part[] {
   if (Array.isArray(message.content)) return message.content;
   return message.content ? [{ type: "text", text: message.content }] : [];
 }
@@ -77,7 +77,7 @@ export function toolName(part: Part, tools: Record<string, Tool>) {
   return part.name ?? tools[part.id ?? ""]?.name ?? "tool";
 }
 
-export function isImageTool(part: Part, tools: Record<string, Tool>) {
+function isImageTool(part: Part, tools: Record<string, Tool>) {
   const name = part.name ?? tools[part.id ?? ""]?.name;
   if (name) return name === IMAGE_TOOL_NAME;
   return (tools[part.id ?? ""]?.images?.length ?? 0) > 0;
@@ -325,7 +325,7 @@ export function phaseTitle(phase: Phase, tools: Record<string, Tool>, live: bool
   return workSummaryLine(phase.steps, tools, live);
 }
 
-export function formatElapsed(elapsedMs: number | null | undefined) {
+function formatElapsed(elapsedMs: number | null | undefined) {
   if (elapsedMs == null || !Number.isFinite(elapsedMs)) return null;
   const totalSec = Math.max(1, Math.round(elapsedMs / 1000));
   if (totalSec < 60) return `${totalSec}s`;

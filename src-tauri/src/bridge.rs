@@ -31,7 +31,7 @@ mod tests;
 
 pub(crate) struct Worker {
     pub(crate) child: Arc<Mutex<Child>>,
-    pub(crate) stdin: ChildStdin,
+    pub(crate) stdin: Arc<Mutex<ChildStdin>>,
     pub(crate) cwd: PathBuf,
 }
 #[derive(Default)]
@@ -76,15 +76,19 @@ impl Bridge {
         if !command.is_object() || command.get("type").and_then(Value::as_str).is_none() {
             return Err("RPC command requires a type".into());
         }
-        let mut slot = self.0.lock().map_err(|e| e.to_string())?;
-        let key = worker_key(&slot, project).ok_or("项目尚未连接")?;
-        let worker = slot.get_mut(&key).ok_or("项目尚未连接")?;
         let mut bytes = serde_json::to_vec(&command).map_err(|e| e.to_string())?;
         bytes.push(b'\n');
-        worker
-            .stdin
+        // The registry lock only resolves the connection. A slow/full stdin pipe
+        // must not block sends, lookups and shutdowns for every other worker.
+        let stdin = {
+            let mut slot = self.0.lock().map_err(|e| e.to_string())?;
+            let key = worker_key(&slot, project).ok_or("项目尚未连接")?;
+            slot.get_mut(&key).ok_or("项目尚未连接")?.stdin.clone()
+        };
+        let mut stdin = stdin.lock().map_err(|e| e.to_string())?;
+        stdin
             .write_all(&bytes)
-            .and_then(|_| worker.stdin.flush())
+            .and_then(|_| stdin.flush())
             .map_err(|e| e.to_string())
     }
 
@@ -118,13 +122,18 @@ impl Bridge {
     }
 
     pub fn stop_project(&self, project: &str) {
-        if let Ok(mut workers) = self.0.lock() {
-            if let Some(worker) = workers.remove(project) {
-                drop(worker.stdin);
-                if let Ok(mut child) = worker.child.lock() {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+        let worker = self
+            .0
+            .lock()
+            .ok()
+            .and_then(|mut workers| workers.remove(project));
+        // Do not hold the registry across process teardown: wait() can take
+        // arbitrarily long and other connections still need to make progress.
+        if let Some(worker) = worker {
+            drop(worker.stdin);
+            if let Ok(mut child) = worker.child.lock() {
+                let _ = child.kill();
+                let _ = child.wait();
             }
         }
     }

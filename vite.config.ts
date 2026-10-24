@@ -35,6 +35,10 @@ export default defineConfig({
     dedupe: ['react', 'react-dom'],
   },
   clearScreen: false,
+  // 高亮 Worker 要懒加载 shiki 的语法/主题：IIFE 的 Worker 无法分包，会把
+  // 全部语言内联成一个 10MB 的产物。ESM Worker 让每个语言仍是独立 chunk，
+  // 用到才取（所有 `new Worker` 调用点本来就带 `{ type: "module" }`）。
+  worker: { format: 'es' },
   // Second entry for the native Tauri splashscreen window.
   build: { rollupOptions: { input: { main: path.resolve(import.meta.dirname, 'index.html'), splashscreen: path.resolve(import.meta.dirname, 'splashscreen.html') } } },
   server: { port: Number(process.env.ORBIT_DEV_PORT ?? 5173), strictPort: true, host: '127.0.0.1', watch: { ignored: ['**/src-tauri/target/**', path.join(import.meta.dirname, 'work', '**')] } },

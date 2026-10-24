@@ -141,7 +141,7 @@ impl Drop for PtyHost {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pty_spawn(
     app: AppHandle,
     host: State<PtyHost>,
@@ -174,7 +174,7 @@ pub fn pty_spawn(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pty_write(host: State<PtyHost>, id: String, data: String) -> Result<(), String> {
     let live = host
         .get(&id)
@@ -186,7 +186,7 @@ pub fn pty_write(host: State<PtyHost>, id: String, data: String) -> Result<(), S
         .map_err(|e| format!("Failed to write to terminal: {e}"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pty_resize(host: State<PtyHost>, id: String, cols: u16, rows: u16) -> Result<(), String> {
     let live = host
         .get(&id)
@@ -239,7 +239,7 @@ pub fn pty_status(host: State<'_, PtyHost>, id: String) -> Result<PtyStatus, Str
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn pty_kill(host: State<PtyHost>, id: String) -> Result<(), String> {
     if let Some(live) = host.remove(&id) {
         terminate(live.pid);

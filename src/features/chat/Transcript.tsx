@@ -40,7 +40,6 @@ import {
   toolName,
   userImages,
   userText,
-  workSummaryLine,
   type Phase,
   type TurnStep,
 } from "./turnModel";
@@ -1021,5 +1020,3 @@ export function TranscriptSkeleton() {
     </div>
   );
 }
-
-export { workSummaryLine };

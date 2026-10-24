@@ -294,6 +294,12 @@ html:not(.theme-light) .shiki span {
   font-weight: var(--shiki-dark-font-weight) !important;
 }
 
+/* Diff rows paint their own token spans instead of shiki's `.shiki` markup, so
+ * they need the same swap. Both palettes arrive from one Worker pass. */
+html:not(.theme-light) .syntax-token {
+  color: var(--shiki-dark) !important;
+}
+
 .agent-markdown .mermaid {
   margin-block: 14px;
   overflow-x: auto;

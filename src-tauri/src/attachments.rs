@@ -5,7 +5,7 @@ use std::process::Command;
 
 /// Absolute paths of files currently on the clipboard (Finder ⌘C → composer ⌘V).
 /// Each platform reads its native pasteboard; an empty clipboard yields [].
-#[tauri::command]
+#[tauri::command(async)]
 pub fn clipboard_file_paths() -> Vec<String> {
     let (program, args) = if cfg!(target_os = "macos") {
         let script = "on run\n  set out to \"\"\n  try\n    set theItems to the clipboard as «class furl»\n    if class of theItems is list then\n      repeat with p in theItems\n        set out to out & POSIX path of p & linefeed\n      end repeat\n    else\n      set out to POSIX path of theItems & linefeed\n    end if\n  end try\n  return out\nend run";
@@ -90,7 +90,7 @@ fn mime_for_extension(extension: &str) -> Option<&'static str> {
 
 /// Read a dragged file as a base64 image attachment. Returns an error for
 /// non-image paths so the caller can attach them by path instead.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn read_file_attachment(path: String) -> Result<Value, String> {
     let name = std::path::Path::new(&path)
         .file_name()
@@ -109,7 +109,7 @@ pub fn read_file_attachment(path: String) -> Result<Value, String> {
 /// Write an image payload (base64, or a full `data:` URL) to a user-chosen
 /// path, so a generated image can be saved outside the media cache. Missing
 /// parent directories are created; the returned path is what was written.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_media_file(data: String, destination: String) -> Result<String, String> {
     let path = std::path::PathBuf::from(destination.trim());
     if path.file_name().is_none() {

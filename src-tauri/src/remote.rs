@@ -203,6 +203,20 @@ mod desktop {
                 work: Arc::new(tokio::sync::Notify::new()),
             }
         }
+
+        /// Avoid cloning and serializing Pi payloads when no phone attached to
+        /// this project can receive them. This is the common state while the
+        /// desktop Host is enabled but the phone is away.
+        fn has_subscriber(&self, project: &str) -> bool {
+            self.map.lock().is_ok_and(|clients| {
+                clients.values().any(|client| {
+                    client
+                        .projects
+                        .lock()
+                        .is_ok_and(|projects| projects.contains(project))
+                })
+            })
+        }
     }
 
     struct PiBroadcast {
@@ -348,6 +362,9 @@ mod desktop {
                 return;
             };
             let Some(host) = slot.as_ref() else { return };
+            if !host.clients.has_subscriber(project) {
+                return;
+            }
             let _ = host.events.try_send(PiBroadcast {
                 project: project.to_owned(),
                 payload: payload.clone(),
@@ -2446,6 +2463,25 @@ mod desktop {
             assert_eq!(host.theme(), RemoteTheme::Dark);
             host.stop();
             assert_eq!(host.theme(), RemoteTheme::Dark);
+        }
+
+        #[test]
+        fn project_subscription_gate_matches_only_the_attached_project() {
+            let (sender, _receiver) = tokio::sync::mpsc::channel(1);
+            let projects = Arc::new(Mutex::new(HashSet::new()));
+            let clients = Clients::new();
+            clients.map.lock().expect("map").insert(
+                Uuid::new_v4(),
+                Client {
+                    sender,
+                    projects: projects.clone(),
+                    screen: ScreenSubscription::new(Arc::new(crate::screen::ScreenBus::default())),
+                },
+            );
+            assert!(!clients.has_subscriber("/w/demo"));
+            projects.lock().expect("projects").insert("/w/demo".to_owned());
+            assert!(clients.has_subscriber("/w/demo"));
+            assert!(!clients.has_subscriber("/w/other"));
         }
 
         #[test]

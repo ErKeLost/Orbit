@@ -1,6 +1,6 @@
-import type { ResolvedTheme } from "../../../lib/theme";
 import type { UnifiedBlock, UnifiedLine } from "../../source-control/model/unifiedDiff";
 import { languageForFileName } from "../../../components/FileHighlighter";
+import { highlightToLines, type HighlightToken } from "../../../lib/highlight";
 
 type DiffFile = {
   path: string;
@@ -9,23 +9,13 @@ type DiffFile = {
   blocks: readonly UnifiedBlock[];
 };
 
-export type SyntaxToken = {
-  text: string;
-  color?: string;
-};
-
-/** Same bundle the chat code blocks and file preview already ship. */
-type ShikiModule = typeof import("shiki");
-let shikiPromise: Promise<ShikiModule> | null = null;
-function loadShiki(): Promise<ShikiModule> {
-  shikiPromise ??= import("shiki");
-  return shikiPromise;
-}
+/** 一段被上色的 diff 文字。`darkColor` 是 `--shiki-dark`，由 CSS 决定何时生效。 */
+export type SyntaxToken = HighlightToken;
 
 const MAX_DIFF_HIGHLIGHT_CHARS = 250_000;
 
-/** Result cache keyed by the diff model itself (blocks identity), per scheme. */
-const cache = new WeakMap<object, Map<ResolvedTheme, Map<UnifiedLine, SyntaxToken[]>>>();
+/** 结果按 diff 模型本身（blocks 身份）缓存，deep 相等的同一份差异只算一次。 */
+const cache = new WeakMap<object, HighlightToken[][]>();
 
 /** Reconstructs the "current side" (context + added lines) in order. */
 function currentSideLines(file: DiffFile): UnifiedLine[] {
@@ -39,55 +29,39 @@ function currentSideLines(file: DiffFile): UnifiedLine[] {
 }
 
 /**
- * Syntax tokens for every line of the working-tree/commit diff, straight from
- * shiki (the same engine the chat code blocks use). Falls back to no tokens on
- * unsupported languages or oversized diffs — rows render plain text then.
+ * 整个「当前侧」拼成一段连续源码再交给 shiki —— 只有连续文本才有正确的语法
+ * 状态（字符串、注释、模板字面量跨行）。tokenize 在 Worker 里做，两个调色板
+ * 一次产出，所以切明暗主题不再重新计算（旧实现按 scheme 分别缓存、切换即重跑）。
  */
 export async function highlightDiffFile(
   file: DiffFile,
-  scheme: ResolvedTheme,
 ): Promise<Map<UnifiedLine, SyntaxToken[]>> {
   const empty = new Map<UnifiedLine, SyntaxToken[]>();
   if (file.binary || file.tooLarge || file.blocks.length === 0) return empty;
 
-  const perScheme = cache.get(file.blocks);
-  const hit = perScheme?.get(scheme);
-  if (hit) return hit;
-
   const lines = currentSideLines(file);
-  const fullText = lines.map((line) => line.text).join("\n");
-  if (!fullText.trim() || fullText.length > MAX_DIFF_HIGHLIGHT_CHARS) return empty;
+  if (lines.length === 0) return empty;
+  const text = lines.map((line) => line.text).join("\n");
+  if (!text.trim() || text.length > MAX_DIFF_HIGHLIGHT_CHARS) return empty;
+
+  const tokenized =
+    cache.get(file.blocks) ??
+    (await highlightToLines(text, languageForFileName(file.path)));
+  if (!tokenized) return empty;
+  if (!cache.has(file.blocks)) cache.set(file.blocks, tokenized);
 
   const result = new Map<UnifiedLine, SyntaxToken[]>();
-  try {
-    const { codeToTokens } = await loadShiki();
-    const theme = scheme === "light" ? "vitesse-light" : "vitesse-dark";
-    const { tokens } = await codeToTokens(fullText, {
-      lang: languageForFileName(file.path) as never,
-      theme,
-    });
-    const count = Math.min(tokens.length, lines.length);
-    for (let index = 0; index < count; index += 1) {
-      const lineTokens = tokens[index];
-      if (!lineTokens?.length) continue;
-      result.set(
-        lines[index],
-        lineTokens.map((token) => ({
-          text: token.content,
-          ...(token.color ? { color: token.color } : {}),
-        })),
-      );
-    }
-  } catch {
-    return empty;
+  const count = Math.min(tokenized.length, lines.length);
+  for (let index = 0; index < count; index += 1) {
+    const lineTokens = tokenized[index];
+    if (!lineTokens?.length) continue;
+    result.set(lines[index], lineTokens);
   }
-
-  cache.set(file.blocks, (perScheme ?? new Map()).set(scheme, result));
   return result;
 }
 
 /** Plain-text passthrough kept for callers outside the diff view. */
-export function highlightSource(text: string, _language: unknown, _scheme: ResolvedTheme): SyntaxToken[][] {
+export function highlightSource(text: string): SyntaxToken[][] {
   if (!text) return [[]];
   return text.split("\n").map((line) => (line ? [{ text: line }] : []));
 }

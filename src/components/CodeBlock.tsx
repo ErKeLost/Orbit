@@ -12,6 +12,7 @@ import {
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { FileTypeIcon } from "../features/shell/FileTypeIcon";
 import { useShell } from "../features/shell/shellStore";
+import { highlightToHtml, peekHtml } from "../lib/highlight";
 import type { RenderOptions } from "beautiful-mermaid";
 
 /**
@@ -31,19 +32,6 @@ const useSettled = (value: string, delay = 180) => {
 
   return delay === 0 ? value : settled;
 };
-
-/** 同一个代码块会被反复挂载（切会话、重渲染），高亮结果按内容缓存。 */
-const HIGHLIGHT_CACHE_LIMIT = 240;
-const highlightCache = new Map<string, string>();
-const highlightKey = (code: string, language: string) => `${language}\u0000${code}`;
-
-function rememberHighlight(key: string, html: string) {
-  highlightCache.set(key, html);
-  if (highlightCache.size > HIGHLIGHT_CACHE_LIMIT) {
-    const oldest = highlightCache.keys().next().value;
-    if (oldest !== undefined) highlightCache.delete(oldest);
-  }
-}
 
 const MERMAID_OPTIONS: RenderOptions = {
   accent: "var(--color-content)",
@@ -198,6 +186,9 @@ const Mermaid = memo<{ code: string; settleDelay: number }>(({ code, settleDelay
   return <div className="mermaid" dangerouslySetInnerHTML={{ __html: svg }} />;
 });
 
+/** 只用来判断「当前渲染的 html 是不是这一版源码的」，缓存本身在 Worker 那一侧。 */
+const highlightKey = (code: string, language: string) => `${language}\u0000${code}`;
+
 const Highlighted = memo<{ code: string; language: string; settleDelay: number }>(
   ({ code, language, settleDelay }) => {
     const settled = useSettled(code, settleDelay);
@@ -205,10 +196,11 @@ const Highlighted = memo<{ code: string; language: string; settleDelay: number }
     const [visible, setVisible] = useState(() => typeof IntersectionObserver !== "function");
     const [highlighted, setHighlighted] = useState<{ key: string; html: string } | null>(null);
     const key = settled ? highlightKey(settled, language) : "";
-    const cached = key ? highlightCache.get(key) : undefined;
+    // 共享缓存命中时直接出成品：重开会话/切回标签不必先闪一次纯文本。
+    const cached = key ? peekHtml(settled, language) : null;
 
-    // 长会话里大部分代码块都在屏幕外：等它们接近视口再高亮，打开会话时不必
-    // 为几百个不可见的块跑一遍 Shiki/WASM。提前 1200px 预热，滚到的都是成品。
+    // 长会话里大部分代码块都在屏幕外：等它们接近视口再要颜色，打开会话时不必
+    // 为几百个不可见的块跑一遍 shiki。提前 1200px 预热，滚到的都是成品。
     useEffect(() => {
       const node = rootRef.current;
       if (!node || visible) return;
@@ -219,39 +211,24 @@ const Highlighted = memo<{ code: string; language: string; settleDelay: number }
       return () => observer.disconnect();
     }, [visible]);
 
-    const pending = Boolean(settled) && visible && cached === undefined && highlighted?.key !== key;
+    const pending = Boolean(settled) && visible && cached === null && highlighted?.key !== key;
     useEffect(() => {
       if (!pending || !key) return;
       let cancelled = false;
       let idle: number | undefined;
 
-      // Shiki 跑在 WASM 里，一帧就是几十毫秒。只在主线程空闲窗口里调度，
-      // 不让高亮和流式输出/滚动抢帧；超时 600ms 保证不可见的情况下也会补完。
-      const schedule = (run: () => void) => {
+      // tokenize 已经在 Worker 里，不占帧；但把一大段高亮 HTML 塞进 DOM 仍然要
+      // 解析，所以真正落地这一步放到空闲窗口，别插在流式提交的帧里。
+      void highlightToHtml(settled, language).then((html) => {
+        if (cancelled || html === null) return;
+        const apply = () => {
+          if (!cancelled) setHighlighted({ key, html });
+        };
         if (typeof window.requestIdleCallback === "function") {
-          idle = window.requestIdleCallback(run, { timeout: 600 });
-          return;
+          idle = window.requestIdleCallback(apply, { timeout: 600 });
+        } else {
+          idle = window.setTimeout(apply, 0);
         }
-        idle = window.setTimeout(run, 0);
-      };
-
-      schedule(() => {
-        void import("shiki")
-          .then(({ codeToHtml }) =>
-            codeToHtml(settled, {
-              lang: language,
-              themes: { dark: "vitesse-dark", light: "vitesse-light" },
-            }),
-          )
-          .then((result) => {
-            if (cancelled) return;
-            rememberHighlight(key, result);
-            setHighlighted({ key, html: result });
-          })
-          .catch(() => {
-            if (cancelled) return;
-            setHighlighted({ key, html: "" });
-          });
       });
 
       return () => {

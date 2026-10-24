@@ -28,10 +28,6 @@ const model: Model = { connections: new Map(), snapshots: new Map(), projectActi
 const fresh = (): Snap => ({ connection: "offline", transcript: { messages: [], running: false, compacting: false }, dialogs: [], state: null })
 const snap = (id: string) => model.snapshots.get(id) ?? fresh()
 const patch = (id: string, value: Partial<Snap>) => model.snapshots.set(id, { ...snap(id), ...value })
-const hasWork = (id: string) => {
-  const s = snap(id)
-  return s.transcript.running || s.transcript.compacting || s.transcript.messages.length > 0
-}
 let currentCwd = "/p"
 
 mock.module("../src/lib/rpc", () => ({
@@ -110,8 +106,6 @@ mock.module("../src/lib/rpc", () => ({
   workspaceConnectionIds: () => [...model.connections.keys()],
   report() {},
 }))
-
-mock.module("../src/lib/workspace-scope", () => ({ async openWorkspaceScope() {} }))
 
 const { useWorkspaceTabs } = await import("../src/features/shell/use-workspace-tabs")
 const { useShell, HOME_WORKSPACE_ID } = await import("../src/features/shell/shellStore")

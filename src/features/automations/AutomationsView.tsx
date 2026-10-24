@@ -39,7 +39,6 @@ import {
   Lock,
   Play,
   Plus,
-  RefreshCw,
   Search,
   Terminal,
   Trash,
@@ -531,5 +530,3 @@ export function AutomationsView() {
     </div>
   );
 }
-
-export { RefreshCw };
