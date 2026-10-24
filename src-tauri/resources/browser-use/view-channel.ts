@@ -109,19 +109,30 @@ export async function viewNavigate(url: string, tab?: string): Promise<void> {
 }
 
 /**
- * Ask the app for a browser tab.
+ * Ask the app for the agent's browser tab.
  *
- * A tab, not a rectangle: the pane owns where its page goes. The app generates
- * the tab id and returns it, so the run owns one named tab instead of driving
- * "whatever is in front" — which is how it used to navigate the page the user
- * was reading.
+ * A tab, not a rectangle: the pane owns where its page goes. Passing the reserved
+ * name `agent` asks for the column's shared agent tab — the app keeps one, so
+ * sequential runs navigate the same page (and keep its history) instead of
+ * adding a tab per run. The answer says whether that tab is shared: a second
+ * concurrent run is given a tab of its own and must close it when it is done.
  *
  * An older app that does not return a tab id answers with `null`; the caller
- * treats that as "ask for a tab and then use the active one", which is the
- * previous behaviour.
+ * treats that as "ask for a tab and then use the active one".
  */
-export async function viewOpen(url: string, tab?: string): Promise<{ tab: string } | null> {
-  return viewRequest<{ tab: string } | null>({ op: "open", url, ...(tab ? { tab } : {}) }, { timeoutMs: 5_000 })
+export async function viewOpen(url: string, tab?: string): Promise<{ tab: string; shared?: boolean } | null> {
+  return viewRequest<{ tab: string; shared?: boolean } | null>({ op: "open", url, ...(tab ? { tab } : {}) }, { timeoutMs: 5_000 })
+}
+
+/**
+ * Give the agent's tab back without closing it.
+ *
+ * The page, its scroll and its back/forward history stay exactly where the run
+ * left them, and the next run continues in this tab. Closing instead is what used
+ * to make every task end by taking its page away.
+ */
+export async function viewRelease(tab: string): Promise<void> {
+  await viewRequest({ op: "release", tab }, { timeoutMs: 3_000 })
 }
 
 /**

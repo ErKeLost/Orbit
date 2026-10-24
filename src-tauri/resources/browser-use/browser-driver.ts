@@ -32,6 +32,11 @@ import { CdpClient } from "./cdp.ts"
 /** The page observer, evaluated inside the tab. */
 const SNAPSHOT = readFileSync(new URL("./snapshot.js", import.meta.url), "utf8")
 
+/** Below this many controls, the accessibility outline is worth a second read of
+ * the page: it is what recovers shadow-root and role-only interfaces the element
+ * table cannot see. Above it, the table already answers the question. */
+const ARIA_MIN_ACTIONS = 12
+
 /**
  * Why a decision could not be delivered.
  *
@@ -519,13 +524,39 @@ export class BrowserDriver {
       if (typeof href === "string" && href && href !== "about:blank") break
       await new Promise(resolve => setTimeout(resolve, 50))
     }
-    // Step two: the document must be complete *and* have drawn controls — a
-    // single-page app paints its form after `load` has already fired.
+    // Step two: the document must be complete *and* have painted something — a
+    // single-page app paints its form after `load` has already fired, and a
+    // document page paints text and no controls at all. Waiting for a control
+    // spent the whole deadline on the latter.
     while (Date.now() < deadline) {
       const page = await this.observe().catch(() => null)
-      if (page && page.actions.some(action => action.kind !== "wait")) return
+      if (page && (page.actions.some(action => action.kind !== "wait") || page.text.trim().length > 0)) return
       await new Promise(resolve => setTimeout(resolve, 150))
     }
+  }
+
+  /**
+   * Start counting DOM mutations from the next input on.
+   *
+   * One observer per document, reused: attaching a fresh `MutationObserver` for
+   * every step would itself be work the page has to schedule. A page that was
+   * never observed has no cache yet, in which case there is nothing to watch and
+   * the settle falls back to its time bound.
+   */
+  private async watchMutations(): Promise<void> {
+    await this.send("Runtime.evaluate", {
+      expression: `(() => {
+        const c = window.__jevFast;
+        if (!c) return false;
+        if (!c.mutations) {
+          c.mutations = { seen: false, observer: new MutationObserver(() => { c.mutations.seen = true }) };
+          c.mutations.observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+        }
+        c.mutations.seen = false;
+        return true;
+      })()`,
+      returnByValue: true,
+    }).catch(() => undefined)
   }
 
   private async navigate(url: string): Promise<void> {
@@ -548,6 +579,7 @@ export class BrowserDriver {
         expression: `(action => new Promise(resolve => {
           const field = window.__jevFast?.nodes.get(action.node);
           const autocomplete = action.kind === 'fill' && field?.getAttribute('role') === 'combobox';
+          const started = performance.now();
           let frames = 0, stopped = false;
           const finish = () => { stopped = true; resolve() };
           // Autocomplete suggestions arrive from the network: the window has to
@@ -555,14 +587,21 @@ export class BrowserDriver {
           // it still ends the moment a visible option shows up. A field that
           // genuinely has no suggestions pays this, which is why it only
           // applies where the page itself declares a combobox.
-          setTimeout(finish, autocomplete ? 600 : 50);
+          setTimeout(finish, autocomplete ? 600 : 900);
           const ready = () => {
             if (stopped) return;
             const ids = (field?.getAttribute('aria-controls') || field?.getAttribute('aria-owns') || '')
               .split(/\\s+/).filter(Boolean);
             const roots = ids.length ? ids.map(id => document.getElementById(id)).filter(Boolean) : [document];
             const options = roots.flatMap(root => [...root.querySelectorAll('[role="option"]')]);
-            if (++frames >= 2 && (!autocomplete || options.some(e => {
+            // The DOM settling is the real completion signal. Reading 50 ms
+            // after a click caught the fetch it started, logged "no change", and
+            // spent a whole decision on a page that was about to update; now a
+            // mutation ends the wait the frame it lands, and the bound is what a
+            // page that genuinely does nothing costs.
+            const mutated = window.__jevFast?.mutations?.seen === true;
+            const settled = mutated || performance.now() - started >= 250;
+            if (++frames >= 2 && settled && (!autocomplete || options.some(e => {
               const r = e.getBoundingClientRect();
               return r.width && r.height && r.bottom > 0 && r.top < innerHeight &&
                 e.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
@@ -585,9 +624,12 @@ export class BrowserDriver {
         continue
       }
       // Two states are not a page yet: an uncommitted tab (`about:blank`) and a
-      // document whose controls have not been painted. Re-reading is cheap next
-      // to a decision made about a blank screen.
-      const ready = last.url !== "about:blank" && last.actions.some(action => action.kind !== "wait")
+      // document whose content has not been painted. Re-reading is cheap next to
+      // a decision made about a blank screen. Visible text counts as painted:
+      // a document page has no controls at all, and waiting 12 rounds for one
+      // was 1.8 s spent on every observation of it.
+      const ready = last.url !== "about:blank" &&
+        (last.actions.some(action => action.kind !== "wait") || last.text.trim().length > 0)
       if (ready || attempt === 11) return await this.withAria(last)
       await new Promise(resolve => setTimeout(resolve, 150))
     }
@@ -668,7 +710,7 @@ export class BrowserDriver {
   }
 
   /**
-   * Attach an accessibility outline to an observation.
+   * Attach an accessibility outline to an observation, where the element table is thin.
    *
    * The element table stays the contract — it is what the decision model picks
    * indices from, and it is the contract with the View path. This is *added*
@@ -676,8 +718,17 @@ export class BrowserDriver {
    * names and states survive even where `snapshot.js`'s fixed selector does not
    * recognise a control. It is bounded, best-effort, and never fatal: a failed
    * read simply leaves the observation without it.
+   *
+   * `Accessibility.getFullAXTree` serialises the whole tree — megabytes on an
+   * application page — and the outline keeps 400 lines of it, so a page whose
+   * element table is already populated gains little and pays a second, much more
+   * expensive read of the same page on every single observation. A page with
+   * almost nothing in its table (a form, a canvas shell, shadow-root UI) is
+   * exactly where the outline is the difference between blind and useful.
    */
   private async withAria(page: BrowserObservation): Promise<BrowserObservation> {
+    const controlling = page.actions.filter(action => action.kind !== "wait" && action.kind !== "scroll")
+    if (controlling.length >= ARIA_MIN_ACTIONS) return page
     const aria = await this.ariaOutline().catch(() => "")
     return aria ? { ...page, aria } : page
   }
@@ -732,7 +783,11 @@ export class BrowserDriver {
       const [pageKey, guard] = current as [unknown, unknown]
       return stable(pageKey) === stable(page.page_key) && stable(guard) === stable(page.guards[String(node)])
     }
-    return stable(await this.evaluate(`(() => { const state = ${SNAPSHOT}; return state?.marker ?? null; })()`)) === stable(page.marker)
+    // A terminal decision is about the page, not about any control, so the guard
+    // pass (one digest per control) is skipped: on a dense page it is the most
+    // expensive part of the observer and none of it is compared here.
+    const marker = await this.evaluate(`(() => { const c = window.__jevFast; if (c) c.skipGuards = true; try { return (${SNAPSHOT})?.marker ?? null } finally { if (c) c.skipGuards = false } })()`)
+    return stable(marker) === stable(page.marker)
   }
 
   /** Execute one observed target. Throws `StalePage` when nothing was delivered. */
@@ -745,6 +800,10 @@ export class BrowserDriver {
       await new Promise(resolve => setTimeout(resolve, 100))
       return
     }
+    // Installed before the input is delivered, so an update that lands while the
+    // action's own handlers are still running is not missed: `observe` ends its
+    // settle wait the moment one arrives instead of guessing a fixed delay.
+    await this.watchMutations()
     if (action.kind === "scroll") {
       // Upstream scrolls at a fixed point; the viewport center is the same idea
       // without a magic coordinate that a narrower page would miss.

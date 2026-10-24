@@ -8,7 +8,7 @@
 import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { Window } from "happy-dom"
-import { actionSpace, choose, runBrowserTask, type BrowserDriverLike } from "../src-tauri/resources/browser-use/browser-engine"
+import { actionSpace, choose, fitState, runBrowserTask, type BrowserDriverLike } from "../src-tauri/resources/browser-use/browser-engine"
 import { PageBusy, StalePage, fingerprint, sameLocation, stable } from "../src-tauri/resources/browser-use/browser-driver"
 import type { BrowserAction, BrowserObservation } from "../src-tauri/resources/browser-use/browser-driver"
 import type { BrowserDecision, TextSlot } from "../src-tauri/resources/browser-use/browser-contract"
@@ -721,3 +721,68 @@ describe("page observer budgets", () => {
   })
 })
 
+
+/**
+ * The observation budget is a choice about what a decision can lose. Page text
+ * used to be what went first — it was replaced with an empty string — so a long
+ * article reached the model as a blank page. The order below is the rule, not an
+ * implementation detail, so each test pins one rung by handing `fitState` exactly
+ * the size that rung produces (markers included, since they cost bytes too).
+ */
+describe("observation budget", () => {
+  const state = () => ({
+    page: { url: "https://example.test/", title: "A long page", text: "visible text ".repeat(40) },
+    aria: 'button "Submit"',
+    elements: [
+      { index: "1", label: "Submit", operations: ["CLICK", "TYPE_TEXT"], value: "Zurich", role: "button", options: [] },
+      { index: "2", label: "Far below the fold", operations: ["CLICK"], offscreen: true, value: "x", role: "link" },
+    ],
+  })
+  const fitTo = (mutate: (value: ReturnType<typeof state>) => void) => {
+    const value = state()
+    mutate(value)
+    return { value, size: JSON.stringify(value).length }
+  }
+
+  test("a state that fits is handed over untouched", () => {
+    const fitted = fitState(state(), 100_000)
+    expect(fitted.aria).toBe('button "Submit"')
+    expect(fitted.elements_compacted).toBeUndefined()
+    expect((fitted.page as { text: string }).text).toHaveLength(40 * "visible text ".length)
+  })
+
+  test("the AX outline goes before anything the decision picks from", () => {
+    const { size } = fitTo(value => {
+      delete (value as { aria?: string }).aria
+      ;(value as Record<string, unknown>).aria_omitted = true
+    })
+    const fitted = fitState(state(), size)
+    expect(fitted.aria).toBeUndefined()
+    expect(fitted.aria_omitted).toBe(true)
+    expect(fitted.elements_offscreen_dropped).toBeUndefined()
+    expect(fitted.elements_compacted).toBeUndefined()
+  })
+
+  test("controls that are off screen go before the per-element state does", () => {
+    const { size } = fitTo(value => {
+      delete (value as { aria?: string }).aria
+      value.elements = value.elements.filter(element => !("offscreen" in element))
+      Object.assign(value, { aria_omitted: true, elements_offscreen_dropped: true })
+    })
+    const fitted = fitState(state(), size)
+    expect(fitted.elements_offscreen_dropped).toBe(true)
+    expect((fitted.elements as { index: string }[]).map(element => element.index)).toEqual(["1"])
+    expect(fitted.elements_compacted).toBeUndefined()
+  })
+
+  test("the table is compacted before any page text is", () => {
+    const fitted = fitState(state(), 120)
+    // Values, roles and option lists are dropped: each element's own target
+    // options already carry them.
+    expect(fitted.elements_compacted).toBe(true)
+    expect((fitted.elements as Record<string, unknown>[])[0]).not.toHaveProperty("value")
+    expect((fitted.elements as Record<string, unknown>[])[0]).not.toHaveProperty("options")
+    // The one thing a decision cannot work without survives every rung.
+    expect((fitted.page as { text: string }).text).toBe(state().page.text)
+  })
+})

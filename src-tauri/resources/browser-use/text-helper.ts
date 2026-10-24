@@ -46,6 +46,11 @@ export type GeneratedText = { text: string; latencyMs: number }
 
 /** One in-flight/answered generation per identical helper input. */
 const cache = new Map<string, GeneratedText | null>()
+/**
+ * Generations still running, so a prefetch and the step that needs the value
+ * share one model process instead of spawning two and typing one of them.
+ */
+const inflight = new Map<string, Promise<GeneratedText | null>>()
 
 export function helperAvailable(): boolean {
   return Boolean(process.env.ORBIT_PI_CLI_PATH?.trim() && process.env.ORBIT_PI_NODE_PATH?.trim())
@@ -59,12 +64,38 @@ export function helperAvailable(): boolean {
 export async function generateFieldText(context: FieldTextContext, signal?: AbortSignal): Promise<GeneratedText | null> {
   const key = cacheKey(context)
   if (cache.has(key)) return cache.get(key) ?? null
-  const started = Date.now()
-  const answer = await runHelper(prompt(context), signal)
-  const parsed = parseText(answer)
-  const result = parsed ? { text: parsed, latencyMs: Date.now() - started } : null
-  cache.set(key, result)
-  return result
+  const running = inflight.get(key)
+  if (running) return running
+  const pending = (async () => {
+    const started = Date.now()
+    const answer = await runHelper(prompt(context), signal)
+    const parsed = parseText(answer)
+    const result = parsed ? { text: parsed, latencyMs: Date.now() - started } : null
+    cache.set(key, result)
+    return result
+  })()
+  inflight.set(key, pending)
+  // A failed generation is not cached: the next step reports why instead of
+  // reusing an error, and a value the model declined stays declined only for
+  // this run's cache, not forever.
+  void pending.finally(() => inflight.delete(key)).catch(() => undefined)
+  return pending
+}
+
+/**
+ * Start writing a value before the step that will need it.
+ *
+ * Fired when a click lands on something that is also a text field — the usual
+ * "focus the search box, then type into it" sequence. The generation then
+ * overlaps that click's own decision and observation instead of being the last
+ * thing before the input, which is where the whole 3–4 s used to go. A value
+ * that is never used costs nothing beyond the call itself, and a failure is
+ * dropped here because the real request still reports it.
+ */
+export function prefetchFieldText(context: FieldTextContext, signal?: AbortSignal): void {
+  const key = cacheKey(context)
+  if (cache.has(key) || inflight.has(key)) return
+  void generateFieldText(context, signal).catch(() => undefined)
 }
 
 /**
@@ -81,6 +112,7 @@ export function cachedText(context: FieldTextContext): string | null {
 /** Testing seam and the reason the cache exists: a stale retry reuses one answer. */
 export function clearTextCache(): void {
   cache.clear()
+  inflight.clear()
 }
 
 export function prompt(context: FieldTextContext): string {
@@ -96,7 +128,10 @@ ${JSON.stringify({
   },
   page: { title: context.page.title, text: context.page.text.slice(0, CONTEXT_TEXT_CHARS) },
   recent_actions: context.history.slice(-6).map(step => ({ action: step.label ?? step.operation, text: step.slotId ?? "" })),
-  prepared_values: context.slots.map(slot => ({ purpose: slot.description })),
+  // Slots with no value are not prepared values: they are dropped here as well as
+  // in the cache key, so the same field has one key no matter which call site
+  // built the context.
+  prepared_values: usableSlots(context).map(slot => ({ purpose: slot.description })),
 }, null, 1)}`
 }
 
@@ -159,6 +194,11 @@ function cacheKey(context: FieldTextContext): string {
     goal: context.goal,
     field: [context.field.label, context.field.role ?? "", context.field.current_value ?? context.field.value ?? ""],
     page: [context.page.url, context.page.title],
-    slots: context.slots.map(slot => slot.id),
+    slots: usableSlots(context).map(slot => slot.id),
   })
+}
+
+/** An empty slot is not a prepared value, and must not make a second cache key. */
+function usableSlots(context: FieldTextContext): TextSlot[] {
+  return context.slots.filter(slot => slot.value.length > 0)
 }

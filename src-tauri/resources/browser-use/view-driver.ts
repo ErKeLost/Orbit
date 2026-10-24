@@ -26,11 +26,13 @@
 
 import { readFileSync } from "node:fs"
 import { fingerprint, sameLocation, StalePage, stable, type BrowserAction, type BrowserObservation } from "./browser-driver.ts"
-import { viewClickAt, viewClose, viewEval, viewNavigate, viewOpen, viewStatus } from "./view-channel.ts"
+import { viewClickAt, viewClose, viewEval, viewNavigate, viewOpen, viewRelease, viewStatus } from "./view-channel.ts"
 
 /** The page observer, evaluated inside the view. */
 const SNAPSHOT = readFileSync(new URL("./snapshot.js", import.meta.url), "utf8")
 
+/** The reserved name of the column's shared agent tab (`browser_view.rs`). */
+const AGENT_TAB = "agent"
 const READY_DEADLINE_MS = 20_000
 const OPEN_DEADLINE_MS = 8_000
 
@@ -43,6 +45,11 @@ export class ViewDriver {
    * was already open). Only a tab this run created may be closed by it.
    */
   private ownsTab = false
+  /**
+   * Whether that tab is the column's shared agent tab. It outlives the run: the
+   * page, its scroll and its history stay, and the next run continues in it.
+   */
+  private shared = false
 
   /** The engine this driver reports in the run's metrics. */
   readonly engine = "view" as const
@@ -61,30 +68,40 @@ export class ViewDriver {
   private constructor(private url: string, private tab: string) {}
 
   /**
-   * Ask the app for a tab of this run's own, then drive only that tab.
+   * Ask the app for the column's agent tab, then drive only that tab.
    *
-   * The previous version attached to "the tab in front" (`viewStatus()` with no
-   * name) and then clicked through a *different* tab it had captured at open
-   * time — the channel defaulted to whoever the user was looking at. A run now
-   * names its tab in every request: it cannot read one page while clicking
-   * another, and it cannot navigate the page the user is reading.
+   * The tab is named in every request, so a run cannot read one page while
+   * clicking another, and cannot navigate the page the user is reading. It is the
+   * *same* tab from one run to the next (the app hands it out as long as no other
+   * run holds it), which is what keeps a page — and its back/forward history —
+   * across tasks instead of putting a tab in the strip for each one.
    */
   static async open(url: string | undefined, signal?: AbortSignal): Promise<ViewDriver> {
     const asked = url?.trim()
-    // No address means "start from the page the column is showing", which is the
-    // tool's documented default. The run still gets a tab of its own: the address
-    // is copied into it rather than the user's tab being driven, because
-    // `viewNavigate` on the active tab is exactly how a run used to navigate away
-    // the page the user was reading. A blank column with no address asked for
-    // stays blank, and the run reports that truthfully instead of guessing.
-    const current = asked ? undefined : await viewStatus().catch(() => null)
-    const inherited = current?.url && current.url !== "about:blank" ? current.url : ""
-    const target = asked || inherited || undefined
-    const opened = await viewOpen(target ?? "")
+    // A run drives the column's agent tab, not a tab of its own: that is what
+    // makes a second task continue on the page the first one left — navigated in
+    // place, with its history — instead of adding a tab and taking it away again.
+    // The app decides whether that tab is free; a concurrent run gets a private
+    // one and closes it on the way out, so two runs still cannot read or click
+    // each other's page.
+    const opened = await viewOpen(asked ?? "", AGENT_TAB)
     let tab = opened?.tab?.trim() ?? ""
-    // A tab id minted by the app is a tab this run owns; adopting the active tab
-    // (an older app, or mobile) is not, and must never be closed on the way out.
-    const ownsTab = Boolean(tab)
+    const shared = opened?.shared === true
+    // No address means "the page the column shows", which is the tool's documented
+    // default: whoever is in front if they have a page, otherwise the agent tab's
+    // own page (the column can be on a blank tab, and continuing where the last
+    // run stopped is the useful reading there). A run that is not asked to go
+    // anywhere should never leave a page behind just because it is not in front.
+    let target = asked || undefined
+    if (!target) {
+      const showing = await viewStatus().catch(() => null)
+      const here = tab ? await viewStatus(tab).catch(() => null) : null
+      const inherited = [showing?.url, here?.url].find(url => url && url !== "about:blank") ?? ""
+      target = inherited || undefined
+    }
+    // Only a tab this run minted itself may be closed by it; a shared tab is the
+    // column's and is released instead.
+    const ownsTab = Boolean(tab) && !shared
     if (tab) {
       // The app generated an id; wait for that exact tab to have a view.
       let ready = false
@@ -97,7 +114,12 @@ export class ViewDriver {
         }
         await sleep(200)
       }
-      if (!ready) throw new Error(`浏览器标签页 ${tab} 没有在应用里出现`)
+      if (!ready) {
+        // The claim must not outlive this attempt: the tab never appeared, so
+        // holding it would make the next run take a private tab for no reason.
+        if (shared) await viewRelease(tab).catch(() => undefined)
+        throw new Error(`浏览器标签页 ${tab} 没有在应用里出现`)
+      }
     } else {
       // An older app answers `open` without a tab id (and mobile has no views at
       // all). A tab was still requested; use the active one, which is the
@@ -115,6 +137,7 @@ export class ViewDriver {
     }
     const driver = new ViewDriver(target ?? "", tab)
     driver.ownsTab = ownsTab
+    driver.shared = shared
     // The app opens the tab at the requested address; a blank or wrong landing
     // gets the task's address. This goes through the tab we own, never through
     // "active", so a tab the user switched to is not what gets navigated.
@@ -151,7 +174,7 @@ export class ViewDriver {
     return viewEval<T>(script, { ...(this.tab ? { tab: this.tab } : {}), ...(timeoutMs ? { timeoutMs } : {}) })
   }
 
-  /** Wait until the document is complete and the page has drawn controls. */
+  /** Wait until the document is complete and the page has painted something. */
   private async settle(): Promise<void> {
     const deadline = Date.now() + READY_DEADLINE_MS
     while (Date.now() < deadline) {
@@ -170,7 +193,7 @@ export class ViewDriver {
         problem = error
         last = null
       }
-      if (last && last.actions.some(action => action.kind !== "wait")) {
+      if (last && (last.actions.some(action => action.kind !== "wait") || last.text.trim().length > 0)) {
         this.url = last.url
         return
       }
@@ -227,7 +250,7 @@ export class ViewDriver {
       return stable(current[0]) === stable(page.page_key) && stable(current[1]) === stable(page.guards[String(node)])
     }
     const marker = await this.send<unknown>(
-      `(() => { const state = ${SNAPSHOT}; return state?.marker ?? null; })()`,
+      `(() => { const c = window.__jevFast; if (c) c.skipGuards = true; try { return (${SNAPSHOT})?.marker ?? null } finally { if (c) c.skipGuards = false } })()`,
     ).catch(() => null)
     return stable(marker) === stable(page.marker)
   }
@@ -292,7 +315,16 @@ export class ViewDriver {
    */
   close(): void {
     this.closed = true
-    if (!this.ownsTab || !this.tab) return
+    if (!this.tab) return
+    if (this.shared) {
+      // The agent's tab outlives the run. Releasing it keeps the page (and the
+      // back/forward history) for the next run, which navigates this same tab
+      // instead of adding one — and a page the run opened for the user is still
+      // there to look at afterwards.
+      void viewRelease(this.tab).catch(() => undefined)
+      return
+    }
+    if (!this.ownsTab) return
     void viewClose(this.tab).catch(() => undefined)
   }
 }

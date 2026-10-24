@@ -43,6 +43,17 @@ const BLANK: &str = "about:blank";
 /// navigation handler cancels it, and the app opens a real tab.
 const NEW_TAB_SCHEME: &str = "orbit-tab";
 
+/// The reserved tab name a run uses to ask for the column's agent tab.
+///
+/// Not a tab id: the app decides which id backs it, so a handed-over page (the
+/// user's now) can retire one and the next run get a fresh one without the caller
+/// knowing anything changed.
+const AGENT_TAB: &str = "agent";
+
+/// How long a claim on the agent's tab counts as a live run. A run's own budget
+/// is capped at ten minutes, so anything older is a run that never released.
+const AGENT_CLAIM_TTL: Duration = Duration::from_secs(11 * 60);
+
 /// Installed into every page, before its own scripts: the shim above.
 const NEW_TAB_SHIM: &str = r#"
 (() => {
@@ -68,6 +79,26 @@ pub struct BrowserViewHost {
     /// The tab the user is looking at: what the agent's channel talks to when it
     /// does not name one.
     active: Mutex<String>,
+    /// The agent's own tab, which sequential runs share.
+    agent: Mutex<AgentTab>,
+}
+
+/// The one tab agent runs share.
+///
+/// A tab per run put a tab in the strip every time and took it away again, which
+/// is not what a browser does: the same page should stay up, be navigated in
+/// place, and keep its history. So a run asks for *this* tab and gets it as long
+/// as no other run is holding it. A second concurrent run is given a tab of its
+/// own — two runs must never read or click each other's page — and closes it on
+/// the way out.
+#[derive(Default)]
+struct AgentTab {
+    id: Option<String>,
+    /// When the tab was last handed to a run. The budget contract caps a run at
+    /// ten minutes, so an older claim belongs to a run that died without
+    /// releasing it, and the same tab is free again. No pid probing: the claim is
+    /// not a lock over a shared resource, it is a hint about liveness.
+    claimed_at: Option<Instant>,
 }
 
 struct Tab {
@@ -439,6 +470,9 @@ pub fn browser_view_close(app: AppHandle, host: tauri::State<'_, BrowserViewHost
         }
     }
     drop(tabs);
+    // A closed tab cannot be the agent's page either: the next run mints a fresh
+    // one instead of asking for a page that no longer exists.
+    forget_agent_tab(&host, &id);
     // The frontend owns the tab strip, so a view closed without telling it leaves
     // a tab with no page behind it. The agent's own tab — closed when its run ends
     // — is exactly that case, which is why this is announced rather than silent.
@@ -523,6 +557,10 @@ fn close_run_tab(app: AppHandle, host: tauri::State<'_, BrowserViewHost>, tab: S
         if let Ok(mut active) = host.active.lock() {
             *active = id.clone();
         }
+        // The page is the person's now, so it stops being the agent's tab: the
+        // next run gets one of its own instead of navigating this away from under
+        // whoever is typing into it.
+        forget_agent_tab(&host, &id);
         let _ = app.emit("browser:handoff", serde_json::json!({ "tab": id, "url": url }));
         return Ok(());
     }
@@ -572,6 +610,13 @@ pub fn browser_view_reconcile(
         if stale.contains(&*active) {
             *active = state.keys().next().cloned().unwrap_or_default();
         }
+    }
+    drop(state);
+    // A swept tab is not the agent's page any more: the next run must not be
+    // handed an id that no longer exists (it looked like a reused tab while the
+    // page behind it had been destroyed).
+    for tab in &stale {
+        forget_agent_tab(&host, tab);
     }
     Ok(stale.len())
 }
@@ -717,15 +762,29 @@ fn handle(app: &AppHandle, request: ViewRequest) -> Result<String, String> {
         // happened when this op took a rect).
         "open" => {
             let url = request.url.unwrap_or_default();
-            // A caller may name the tab it wants — the agent does, so it can
-            // address its own tab on every later op. When it does not, this side
-            // mints one and hands it back, so "the tab the app made" and "the tab
-            // the agent drives" never depend on guessing the active tab.
-            let tab = if request.tab.trim().is_empty() { new_tab_id() } else { request.tab.clone() };
-            app.emit("browser:open", serde_json::json!({ "url": url, "tab": tab }))
-                .map_err(|error| error.to_string())?;
-            Ok(serde_json::json!({ "tab": tab }).to_string())
+            let wanted = request.tab.trim();
+            // A run names the tab it wants. `agent` is the reserved name for the
+            // column's agent tab: the app keeps one and hands it to sequential
+            // runs, so the next run navigates the page the last one left instead
+            // of adding a tab. Any other name is taken literally (a caller that
+            // already knows which tab it wants, and the older behaviour).
+            let (tab, shared) = if wanted.is_empty() {
+                (new_tab_id(), false)
+            } else if wanted == AGENT_TAB {
+                claim_agent_tab(&host)
+            } else {
+                (wanted.to_string(), false)
+            };
+            app.emit(
+                "browser:open",
+                serde_json::json!({ "url": url, "tab": tab, "shared": shared }),
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(serde_json::json!({ "tab": tab, "shared": shared }).to_string())
         }
+        // A run giving its page back without destroying it: the next run finds
+        // the same tab, hence the same page and history. See `release_agent_tab`.
+        "release" => release_agent_tab(&host, &request.tab).map(|_| "null".to_string()),
         // A run taking its page back. Not always a close: see `close_run_tab`.
         "close" => close_run_tab(app.clone(), host, request.tab).map(|_| "null".to_string()),
         // A caller that already knows the page belongs to the person can say so
@@ -770,6 +829,56 @@ fn handle(app: &AppHandle, request: ViewRequest) -> Result<String, String> {
             trusted_click(app, rect, x, y)
         }
         other => Err(format!("未知操作 {other}")),
+    }
+}
+
+/// The tab a run should drive: the agent's own when it is free, a private one
+/// when another run still holds it.
+fn claim_agent_tab(host: &BrowserViewHost) -> (String, bool) {
+    let mut agent = match host.agent.lock() {
+        Ok(agent) => agent,
+        // A poisoned lock is a bug elsewhere, not a page: behave as if another run
+        // holds the tab, which is the harmless direction (a private tab).
+        Err(_) => return (new_tab_id(), false),
+    };
+    let now = Instant::now();
+    let held = agent
+        .claimed_at
+        .map(|at| now.duration_since(at) < AGENT_CLAIM_TTL)
+        .unwrap_or(false);
+    match agent.id.clone() {
+        Some(id) if !held => {
+            agent.claimed_at = Some(now);
+            (id, true)
+        }
+        Some(_) => (new_tab_id(), false),
+        None => {
+            let id = new_tab_id();
+            agent.id = Some(id.clone());
+            agent.claimed_at = Some(now);
+            (id, true)
+        }
+    }
+}
+
+/// Hand the page back without closing it, so the next run navigates it in place.
+fn release_agent_tab(host: &BrowserViewHost, tab: &str) -> Result<(), String> {
+    let id = resolve_tab_id(host, tab)?;
+    let mut agent = host.agent.lock().map_err(|error| error.to_string())?;
+    if agent.id.as_deref() == Some(id.as_str()) {
+        agent.claimed_at = None;
+    }
+    Ok(())
+}
+
+/// The tab is gone, or is the person's now: it is no longer the agent's page.
+fn forget_agent_tab(host: &BrowserViewHost, id: &str) {
+    let Ok(mut agent) = host.agent.lock() else {
+        return;
+    };
+    if agent.id.as_deref() == Some(id) {
+        agent.id = None;
+        agent.claimed_at = None;
     }
 }
 

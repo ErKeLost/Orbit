@@ -111,6 +111,9 @@ export type BrowserTaskResult = {
   decisions: number
   /** Visible page text at the end, bounded: evidence, not a transcript. */
   evidence: string
+  /** A PNG of the page as the run last saw it, when the engine could take one and
+   * the run stopped anywhere but `done`/`aborted`. The text cannot show an overlay. */
+  screenshotPath?: string
   metrics: BrowserTaskMetrics
   trace: BrowserTaskStep[]
   failure?: BrowserTaskFailure

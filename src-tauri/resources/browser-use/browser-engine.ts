@@ -21,6 +21,9 @@
  */
 
 import { choice, noul, type TypeSafeClient } from "@typesafe-ai/sdk"
+import { mkdir, readdir, unlink, writeFile } from "node:fs/promises"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import { createDecisionClient } from "../computer-use/decision-provider.ts"
 import { isRetryableJevError, loadApiKey, redactLocalSlots } from "../computer-use/jev.ts"
 import { BrowserDriver, PageBusy, StalePage, type BrowserAction, type BrowserObservation } from "./browser-driver.ts"
@@ -39,7 +42,7 @@ import {
   type TextSlot,
 } from "./browser-contract.ts"
 import { IRREVERSIBLE, NEXT_ACTION, TARGET, TEXT_SLOT } from "./questions.ts"
-import { cachedText, generateFieldText, type FieldTextContext, type GeneratedText } from "./text-helper.ts"
+import { cachedText, generateFieldText, prefetchFieldText, type FieldTextContext, type GeneratedText } from "./text-helper.ts"
 
 /** Operations the page can be driven with. `SCROLL_*`, `WAIT` and the two
  * terminal operations are not targets: they act on the page, not an element. */
@@ -61,6 +64,9 @@ const OPERATION_LABELS: Record<string, string> = {
  * itself and the fallback question takes over. */
 const MAX_PAIRED_TARGETS = 120
 const STATE_CHARS = 100_000
+/** How much page text survives an over-budget observation, kept as head + tail:
+ * the start names the page, the end is where the result usually is. */
+const TEXT_WINDOW_CHARS = 12_000
 const RISK_THRESHOLD = 0.6
 /**
  * Below this, a `DONE` is the model's weakest opinion rather than evidence that
@@ -231,13 +237,8 @@ export async function choose(
   // AX value. Redaction happens once, over the finished payload — the local
   // "this field already holds the value" checks below still read the raw page.
   let state = redactTree(rawState, slots)
-  // The offer set and the observation share one request budget. Page text is
-  // the least actionable part, so it is what yields first.
-  let stateChars = JSON.stringify(state).length
-  if (stateChars > STATE_CHARS) {
-    state.page = { url: page.url, title: page.title, text: "", text_omitted: true }
-    stateChars = JSON.stringify(state).length
-  }
+  state = fitState(state)
+  const stateChars = JSON.stringify(state).length
   if (stateChars > STATE_CHARS) throw new Error(`页面状态过大（${stateChars} 字符），无法安全地交给决策模型`)
 
 
@@ -396,6 +397,60 @@ export async function choose(
   }
 }
 
+/**
+ * Reduce one observation until it fits the request budget.
+ *
+ * The offer set and the observation share one budget, and what yields is decided
+ * by how much the decision loses without it, in that order:
+ *
+ * 1. the AX outline — a second view of the same page;
+ * 2. controls the page itself says are off screen — nothing can act on them until
+ *    a scroll anyway (and the tally of what was dropped stays in the state);
+ * 3. the element table's per-element state (value, role, checked, a select's
+ *    option list) — that element's own target options already carry it;
+ * 4. page text, and only its middle: the start names the page, the end is where a
+ *    result usually sits.
+ *
+ * Text used to be what went *first*: it was replaced with an empty string the
+ * moment the observation was over budget, so a long article or a result list
+ * reached the model as a blank page. A decision made on an empty page is the
+ * worst outcome here, so it is now the last thing to give.
+ *
+ * Exported because the order is a rule, not an implementation detail: the offline
+ * test pins it with a tiny limit instead of a 100 000-character fixture.
+ */
+export function fitState(state: Record<string, unknown>, limit = STATE_CHARS): Record<string, unknown> {
+  const size = () => JSON.stringify(state).length
+  if (size() <= limit) return state
+  if (typeof state.aria === "string") {
+    delete state.aria
+    state.aria_omitted = true
+    if (size() <= limit) return state
+  }
+  const elements = Array.isArray(state.elements) ? state.elements as ElementView[] : []
+  const kept = elements.filter(element => !element.offscreen)
+  if (kept.length !== elements.length) {
+    state.elements = kept
+    state.elements_offscreen_dropped = true
+    if (size() <= limit) return state
+  }
+  state.elements = (state.elements as ElementView[]).map(element => {
+    const { value: _value, role: _role, checked: _checked, selected: _selected, expanded: _expanded, options: _options, ...rest } = element
+    return rest
+  })
+  state.elements_compacted = true
+  if (size() <= limit) return state
+  const page = state.page as { text?: string; text_truncated?: boolean } | undefined
+  if (typeof page?.text === "string" && page.text.length > TEXT_WINDOW_CHARS) {
+    const text = page.text
+    const head = Math.floor(TEXT_WINDOW_CHARS * 0.65)
+    const tail = TEXT_WINDOW_CHARS - head
+    page.text = `${text.slice(0, head)}\n[…]\n${text.slice(-tail)}`
+    page.text_truncated = true
+  }
+  return state
+}
+
 let cachedClient: TypeSafeClient | undefined
 
 /**
@@ -499,6 +554,9 @@ export type BrowserDriverLike = {
   fresh(page: BrowserObservation, action?: BrowserAction): Promise<boolean>
   act(action: BrowserAction, page: BrowserObservation, text?: string): Promise<void>
   close(): void
+  /** A PNG of the viewport, when the engine can take one. Used for the evidence
+   * a stopped run leaves behind; never for deciding. */
+  screenshot?(): Promise<string>
   /** Which engine is actually driving. Recorded in the run's metrics so a silent
    * fall back to Chrome is visible in the result instead of inferred from logs. */
   readonly engine?: "view" | "chrome"
@@ -684,6 +742,18 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
         step.ms = Date.now() - stepStarted
         trace.push(step)
       }
+      // Overlap the one genuinely slow step in a fill with the click before it.
+      // A click on an element that is also a text field (focusing a search box)
+      // is followed by typing into it almost every time, so the value is written
+      // while this click's own decision and observation happen. Only in the real
+      // run: an injected generator is the caller's, and spending it on a guess
+      // would be spending their model quota.
+      if (!options.generate && action.kind === "click" && input.allowGeneratedText !== false && !decision.slotId) {
+        const fillable = page.actions.find(candidate => candidate.kind === "fill" && candidate.node === action.node)
+        const hasSlot = (input.textSlots ?? []).some(slot => slot.value.length > 0)
+        if (fillable && !hasSlot) prefetchFieldText(fieldContext(page, input.goal, trace, fillable, input.textSlots ?? []), signal)
+      }
+
       try {
         await time(metrics, "action", () => driver!.act(action, page!, text))
       } catch (error) {
@@ -747,9 +817,21 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
     } else {
       stop(aborted ? "aborted" : "error", detail, undefined, undefined, aborted ? "observe" : (page ? "observe" : "launch"))
     }
-  } finally {
-    driver?.close()
   }
+
+  // Every stop but `done` leaves the caller guessing about what the run was
+  // looking at: the element table in the trace says what it chose, not what was
+  // on screen (an overlay, a half-filled form, the captcha that ended it). One
+  // screenshot is the cheapest evidence there is, and it is taken while the page
+  // is still open. A run its user cancelled is not evidence they want.
+  let screenshotPath: string | undefined
+  // Read through a widened binding: `status` is only ever assigned inside the
+  // loop's closure, which the checker still sees as its initial value.
+  const stopped = status as BrowserTaskStatus
+  if (driver && page && stopped !== "done" && stopped !== "aborted") {
+    screenshotPath = await captureStopEvidence(driver).catch(() => undefined)
+  }
+  driver?.close()
 
   metrics.elapsedMs = Date.now() - started
   const evidence = page ? evidenceOf(page) : ""
@@ -763,6 +845,7 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
     evidence,
     metrics,
     trace,
+    ...(screenshotPath ? { screenshotPath } : {}),
     ...(failure ? { failure } : {}),
   }
 }
@@ -864,4 +947,33 @@ function evidenceOf(page: BrowserObservation): string {
   const text = page.text.replace(/\s*\n\s*/g, "\n").trim().slice(0, EVIDENCE_CHARS)
   const omitted = page.omitted_actions ? `\n[还有 ${page.omitted_actions} 个控件未显示]` : ""
   return `${header}\n${text}${omitted}`
+}
+
+/** How many stopped-run screenshots are kept on disk. */
+const SHOT_LIMIT = 20
+
+/**
+ * Write the page as the run last saw it.
+ *
+ * The text evidence says what the page said; it cannot show an overlay that
+ * swallows clicks, a sticky banner over the submit button, or the captcha that
+ * ended the run. A PNG answers those in one look, and it is the only artifact
+ * here a human can act on without reading a trace. Best effort: an engine with
+ * no screenshot (the column's own view) simply has none.
+ */
+async function captureStopEvidence(driver: BrowserDriverLike): Promise<string | undefined> {
+  if (!driver.screenshot) return undefined
+  const base64 = await driver.screenshot()
+  if (!base64) return undefined
+  const root = process.env.ORBIT_BROWSER_HOME?.trim() || join(homedir(), ".pi/agent/browser")
+  const dir = join(root, "shots")
+  await mkdir(dir, { recursive: true })
+  const path = join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}.png`)
+  await writeFile(path, Buffer.from(base64, "base64"))
+  // Evidence, not an archive: the newest few are enough to debug the last runs.
+  const files = (await readdir(dir)).filter(name => name.endsWith(".png")).sort()
+  for (const stale of files.slice(0, Math.max(0, files.length - SHOT_LIMIT))) {
+    await unlink(join(dir, stale)).catch(() => undefined)
+  }
+  return path
 }

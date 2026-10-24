@@ -143,5 +143,6 @@ export function formatResult(input: BrowserTaskInput, result: BrowserTaskResult)
     ? `\n失败分支=${result.failure.stage}${result.failure.branch ? `/${result.failure.branch}` : ""}：${result.failure.detail}${result.failure.hint ? `\n建议=${result.failure.hint}` : ""}`
     : ""
   const step = last ? `\n最近步骤=${OPERATION_LABELS[last.operation] ?? last.operation}${last.label ? `「${last.label}」` : ""}${last.verdict ? ` 页面=${last.verdict === "changed" ? "已变化" : "未变化"}` : ""}` : ""
-  return `[${result.status}] ${input.goal}\n页面=${result.title || "(无标题)"} ${result.url}；${outcome}${failure}\nactions=${result.steps} decisions=${result.decisions} ${timing}${step}\n--- 页面可见内容 ---\n${result.evidence}`
+  const shot = result.screenshotPath ? `\n截图=${result.screenshotPath}` : ""
+  return `[${result.status}] ${input.goal}\n页面=${result.title || "(无标题)"} ${result.url}；${outcome}${failure}\nactions=${result.steps} decisions=${result.decisions} ${timing}${step}${shot}\n--- 页面可见内容 ---\n${result.evidence}`
 }

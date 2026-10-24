@@ -8,7 +8,12 @@
      * controls the fixed selector misses (onclick handlers, positive tabindex, `cursor:pointer`
        boxes, and `label[for]` proxies for hidden inputs) are collected with a per-parent cap,
        and each channel has a reserved share of the table so the heuristic pass cannot be
-       squeezed out by a page whose fixed selector alone fills it (see the budgets below).
+       squeezed out by a page whose fixed selector alone fills it (see the budgets below);
+     * a control's guard carries the *digest* of its scope's text, not the text itself: the
+       guard is only ever compared for equality, and shipping it verbatim was the largest
+       part of the snapshot payload on a dense page;
+     * `skipGuards` on the cache lets a caller that only needs the page marker (a terminal
+       DONE/BLOCKED freshness check) read one observation without the per-control guard pass.
    The block comment is deliberate: this text is embedded inside another expression by the driver. */
 (() => {
   if (!document.body) return null;
@@ -116,13 +121,31 @@
     allFields().filter(safe)
       .map(e=>[identity(e),e.value,e.checked,e.selectedIndex,e.disabled,e.readOnly]),
     frameDocs.length];
+  // Equality is the only thing a guard is used for, so its text travels as a
+  // 53-bit digest plus the real length. A form or row scope used to ship up to
+  // 6000 characters per control — hundreds of kilobytes on a real page — and
+  // every observation paid for it twice.
+  const digest=(text,seed=0)=>{
+    let h1=0xdeadbeef^seed,h2=0x41c6ce57^seed;
+    for (let i=0;i<text.length;i++) {
+      const ch=text.charCodeAt(i);
+      h1=Math.imul(h1^ch,2654435761);
+      h2=Math.imul(h2^ch,1597334677);
+    }
+    h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);
+    h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909);
+    return 4294967296*(2097151&h2)+(h1>>>0);
+  };
   cache.guard=e=>{
     if (!e?.isConnected || !visible(e)) return null;
     const scope=e.closest('form,dialog,[role="dialog"],article,li,tr,[role="row"]') || e.parentElement;
+    // The length is part of the guard so text that grows past the 6000-character
+    // window still reads as a change; the digest covers what is inside it.
+    const scopeText=scope?.innerText;
     return [identity(e),role(e),name(e),e.value??null,e.checked??null,e.selectedIndex??null,
       e.readOnly??null,e.matches(':disabled'),e.getAttribute('aria-disabled'),
       e.getAttribute('aria-expanded'),e.getAttribute('aria-checked'),e.getAttribute('aria-selected'),
-      e.getAttribute('href'),scope?.innerText?.slice(0,6000)||''];
+      e.getAttribute('href'),scopeText?[scopeText.length,digest(scopeText.slice(0,6000))]:null];
   };
 
   // Whether a control may be offered at all. One definition, because the three
@@ -318,7 +341,11 @@
   actions.splice(TOTAL_CAP);
 
   const page_key=cache.pageKey(), guards={};
-  for (const a of actions) if (!(a.node in guards)) guards[a.node]=cache.guard(cache.nodes.get(a.node));
+  // One guard per control is the most expensive pass in here (visibility, an
+  // accessible name, and the scope's text for each). A caller that only needs
+  // the marker — the DONE/BLOCKED freshness check — skips all of it.
+  if (cache.skipGuards!==true)
+    for (const a of actions) if (!(a.node in guards)) guards[a.node]=cache.guard(cache.nodes.get(a.node));
   // Compare meaning and identity. Geometry is always resolved and hit-tested just before input.
   const semantics=actions.map(({rect,...action})=>action);
   const marker=[performance.timeOrigin,location.href,scrollX,scrollY,innerWidth,innerHeight,

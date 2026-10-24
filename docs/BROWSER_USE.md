@@ -23,17 +23,18 @@ Orbit has two Computer-Use-class tools and they are deliberately separate:
 这一栏现在走第二条：`Window::add_child`（Tauri 的 multi-webview，`unstable`）把一块真实的 web view 放进窗口，位置由这一栏的矩形决定（`browser_view.rs`）。**iframe 依然不行**（跨域拿不到 DOM、CSP 直接拒载），但「子 web view 是另一个内核、没有 CDP」这个代价现在由第三栏承担，而**不是**由 agent 的决策能力承担：
 
 - **第三栏（用户看的）**：WebKit 子视图，原生渲染。它没有 CDP，但可以被脚本驱动 —— `browser_view_eval` 在页面里执行脚本并取回 JSON（实测能读到 `document.title` 与 `location.href`），而且这个页面**不在任何 capability 里**，网页碰不到 app 的任何命令。
-- **agent（`browser_task`）**：默认驱动**第三栏里的一个属于本次运行的 tab**，回退才是 Orbit 自己启动的 Chrome + CDP。两条路都保留：视图是用户看得见的那块面板，而 CDP 给的是 `Input.*` 可信输入与无障碍大纲，视图给不了。
+- **agent（`browser_task`）**：默认驱动**第三栏里的 agent tab**（一个，跨 run 复用），回退才是 Orbit 自己启动的 Chrome + CDP。两条路都保留：视图是用户看得见的那块面板，而 CDP 给的是 `Input.*` 可信输入与无障碍大纲，视图给不了。
 
-> 两个引擎今天**都在用**，而且用哪个不再由配置决定、也不再是隐形的：`browser_task` 先向 app 要一个 tab（`op:"open"`，tab id 由 app 生成并返回，**每个 run 一个**，不再借用用户正在读的那个 tab），驱动它；app 不可达时才回退 Chrome。跑完的结果里带 `engine=view|chrome`，回退时还带上 `engineFallback`（视图为什么不可用），所以「跑在哪个浏览器上、为什么」都是可诊断的事实。
+> 两个引擎今天**都在用**，而且用哪个不再由配置决定、也不再是隐形的：`browser_task` 先向 app 要 tab（`op:"open"`，带保留名 `agent`），驱动它；app 不可达时才回退 Chrome。跑完的结果里带 `engine=view|chrome`，回退时还带上 `engineFallback`（视图为什么不可用），所以「跑在哪个浏览器上、为什么」都是可诊断的事实。
 >
 > 两者的取舍必须说清楚：视图里的输入是合成的（`dispatchEvent`），**只有点击走系统级鼠标**（`viewClickAt` → `trusted_click`，点击前重新校验窗口仍在最前台、且该点仍在页面矩形内，否则拒点）；判断 `event.isTrusted` 的页面（部分 Google 流程）会忽略脚本输入。Chrome 的 `Input.*` 始终是可信输入 —— 这正是它不可被删除的原因。
 
 ### tab 的归属与生命周期
 
-- **每个 run 一个 tab**：`view.sock` 的 `open` 由 app 生成 `browser:<id>`，写进 `browser:open` 事件并作为应答返回；此后这个 run 的每一次 `eval`/`navigate`/`go`/`reload`/`geometry`/`clickAt` 都**显式带这个 tab**。两个并发 run 因此不可能读到或点到对方的页面。没给地址时，地址从栏里当前页面继承到新 tab（仍然是自己的 tab，不会把用户正在读的页面导航走）。
-- **run 结束时关掉自己的 tab**：run 结束（成功或失败）会 `close` 它自己 mint 的那个 tab，app 同时发出 `browser:close`，前端据此移除标签项——否则每跑一次就多一个常驻标签。**已经被打开的 tab 永远不会被关**（那种情况 `ownsTab` 为 false）。一个 run 最终停留在哪个地址、页面上有什么文字，都在它的结果里，不依赖那个标签还开着。
-- **停在了只有人才能往下走的地方，tab 就不关**：登录墙、收银台需要账号或卡，run 永远过不去。这时 `close` 变成 **handoff**：视图留着、`active` 切到它、app 发 `browser:handoff`，前端把它从 run 的 tab 改成这一栏自己的（去掉 `agent`，标 `handoff`）——于是页面、滚动、已经加载好的登录框都还在，人可以接着输。判定两段：地址里的词（`login`/`account`/`pay`/`checkout`/`recharge`…，按**整词**匹配，`payload` 不算），以及页面里真的有没有密码框/一次性验证码/二维码/captcha（`eval`，1.5s 上限，run 的收尾不等页面）。调用方也可以直接发 `handoff` 操作，说自己知道这页是人的。
+- **一个 agent tab，跨 run 复用**：`view.sock` 的 `open` 收到保留名 `agent` 时，app 把**自己的那个 agent tab**（真正 id 是 `browser:<id>`，由 app 生成）交出去，写进 `browser:open` 事件并作为应答返回；此后这个 run 的每一次 `eval`/`navigate`/`go`/`reload`/`geometry`/`clickAt` 都**显式带这个 tab**。第二个 run 到来时**在同一个 tab 里导航**（前端那条 `browser:open` 按 path 复用已有标签项，不新增），所以页面、滚动和前进/后退历史都留着 —— 这也是「接着上一次的页面继续做」和「回退一步看看」能成立的原因。没给地址时导向栏里当前这个页面（栏是空白页时，沿用 agent tab 自己那个页面），所以「接着刚才那页继续」和「看我正在看的这页」是同一套规则。
+- **并发 run 才各自一个 tab**：agent tab 被一个活着的 run 持有时，第二个 run 拿到一个**私有 tab**（app 生成新 id），结束就 `close` 掉，app 发 `browser:close` 让前端移除标签项。两个 run 因此仍然不可能读到或点到对方的页面。占用是一份带时间戳的 claim：run 结束会 `release`，跑挂了没来得及 release 也不会永久占着（预算上限 10 分钟，超过 11 分钟的 claim 视为已死）。
+- **run 结束不再销毁页面，只 `release`**：agent tab 留着——页面、滚动、历史都在，人可以直接接着看/接着点，下一个 run 也在这里继续。**已经被打开的 tab 永远不会被关**（那种情况 `ownsTab` 为 false）。一个 run 最终停留在哪个地址、页面上有什么文字，仍然都在它的结果里，不依赖那个标签还开着。
+- **停在了只有人才能往下走的地方，tab 就交给用户**：登录墙、收银台需要账号或卡，run 永远过不去。这时 `close` 变成 **handoff**：视图留着、`active` 切到它、app 发 `browser:handoff`，前端把它从 run 的 tab 改成这一栏自己的（去掉 `agent`，标 `handoff`）——于是页面、滚动、已经加载好的登录框都还在，人可以接着输。判定两段：地址里的词（`login`/`account`/`pay`/`checkout`/`recharge`…，按**整词**匹配，`payload` 不算），以及页面里真的有没有密码框/一次性验证码/二维码/captcha（`eval`，1.5s 上限，run 的收尾不等页面）。调用方也可以直接发 `handoff` 操作，说自己知道这页是人的。交出去之后 app **把 agent tab 这个身份注销**：这页是人的了，下一个 run 会拿一个新的 agent tab，而不是把这页从正在输入的人脚下导航走。
 
   这条修正的是一个具体故障：run 在 `account.*/unified-login` 上停下、tab 被销毁，`browserActive` 回到 run 之前的那个 tab，于是「我帮你打开了国内控制台」看起来像「什么都没发生」。**只留一个 handoff tab**：新的接管页到来时旧的关掉——接管面不是日志，不能每跑一次多一个停在那儿的死胡同。
 - **视图的生死跟 tab 走，不跟「谁在前台」走**：切换标签页只是把视图 `hide()`（页面、滚动、登录态都留着），真正关闭标签页才由 `browser_view_reconcile` 把原生视图销毁 —— 前端启动时与标签集合每次变化时都会调用它，这也是刷新后孤儿视图的清理通道。副作用说明：前端刷新后 shell 状态是空的，启动那次 reconcile 会把包括**进行中 run** 的视图一起关掉（run 随后会在下一次 `eval` 上失败）——这是“刷新后不留孤儿视图”与“让进行中的 run 活过刷新”之间的取舍，选了前者。
@@ -139,6 +140,21 @@ JS 弹窗（`confirm`/`alert`）会**阻塞渲染进程**，开着的弹窗会�
 
 `readOnly` 运行根本不提供 `CLICK` / `TYPE_TEXT` / `SELECT`，只剩观察、滚动与两个终态；`DONE` 与 `gui_task` 一样有置信度下限（`DONE_CONFIDENCE_FLOOR`），低于它就只记一笔、下一轮仍可再提，**不会**把 `DONE` 从候选中摘掉。
 
+## 开销：四处原本白花的时间
+
+每一步的代价只应落在「读页面」和「问模型」上。以下四处曾把同样的事做了第二遍，现在都不做：
+
+- **guard 传摘要，不传文本**。新鲜度比较的是「这个控件和它所在的那一块还是不是刚才那样」，只做相等判断。所以 scope 的 `innerText` 在页内算成 53 位摘要 + 原长度再回传，而不是最多 6000 字符原样穿过通道 —— 250 个控件的页面每次观察曾为此传几百 KB，而每步要观察两次。语义没变：`innerText` 本来就是渲染后的文本，没渲染的不在范围内（这也是这条守卫一直以来的口径）。
+- **无障碍大纲按需取**。`Accessibility.getFullAXTree` 会把整棵树序列化回来（应用页面上是 MB 级），而大纲只保留 400 行。元素表已经有 12 个以上可操作控件的页面不再取它；表很薄的页面（表单、canvas、shadow DOM 应用）才是它的用武之地。
+- **终局判断不算 guard**。`DONE`/`BLOCKED` 的新鲜度只比整页 marker，于是那次观察带上 `skipGuards`：控件循环跳过，marker 照旧。
+- **动作之后等「有变化」，不等固定毫秒**。投递前在页里装一个 `MutationObserver`，观察时的收尾等待在第一个 DOM 变化的那一帧结束，250ms 是兜底而不是固定延迟。原来固定 50ms：点到就会发 fetch 的按钮被读成「页面没变化」，白花一整轮决策，还可能再点一次。
+
+配套的两处：上下文超预算时的降级顺序反过来了（先丢大纲，再丢视口外控件，再把元素表压成「编号 + 名字 + 支持的操作」（值、勾选、选项列表本来在各自的 target 里），最后才把正文截成头 + 尾的窗口）——正文不再被清空，一个长文档页不再以「整页空白」的样子交给模型；以及点到一个「也是输入框」的元素时提前把该字段的值写出来，让那次生成与点击自己的决策/观察重叠。
+
+## 停下来时留下一张图
+
+除 `done` 和被用户取消的运行外，收尾会在关闭标签页之前截一张视口 PNG 到 `~/.pi/agent/browser/shots/`（只留最近 20 张），结果里带 `screenshotPath`。文本证据说的是页面「写了什么」，说不出是什么挡住按钮、表单填到一半是什么样、卡在哪一步的验证码。视图引擎没有截图能力，这时字段就是空的 —— 如实为空，不假装。
+
 ## 第三栏（BrowserDock）
 
 - **默认开、一直在**：标题栏地球按钮可以收起；收起只是把子视图 `hide()`，页面和历史都留着，展开即回到原处。切到设置/收件箱这些整页界面时它也在右侧。
@@ -207,7 +223,7 @@ Chrome 用资料目录里的 `SingletonLock` 保证同一 profile 只有一个�
 | `src/features/settings/BrowserPage.tsx` | 设置 → 浏览器：来源列表、导入、上次导入结果 |
 | `src-tauri/src/browser.rs` | agent 的 Chrome（也是回退引擎）：发现/启动/复用/关闭、session.json + `flock` + target 归属、`--browser-*` 帮助入口、登录导入的 Rust 一半 |
 | `src-tauri/resources/browser-use/snapshot.js` | 页面观察器（上游为基底，MIT；本仓库加了 offscreen/covered/启发式控件三段附加通道） |
-| `src-tauri/resources/browser-use/browser-driver.ts` | CDP 驱动：观察/新鲜度/可信输入/无障碍大纲（`browser.py` 的移植） |
+| `src-tauri/resources/browser-use/browser-driver.ts` | CDP 驱动：观察/新鲜度/可信输入/无障碍大纲（按需，`browser.py` 的移植） |
 | `src-tauri/resources/browser-use/view-driver.ts` | 第三栏那个 tab 的驱动：同一套契约，走 `view.sock`；点击走系统鼠标，其余合成 |
 | `src-tauri/resources/browser-use/view-channel.ts` | `view.sock` 的前端封装（每个 op 都显式带 tab） |
 | `src-tauri/resources/browser-use/browser-contract.ts` | `browser_task` 的输入/输出/预算契约与 metrics（含 `engine`/`engineFallback`） |
