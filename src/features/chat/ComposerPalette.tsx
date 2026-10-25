@@ -4,6 +4,7 @@ import { MatchText } from "../../shared/ui/MatchText";
 import { Search } from "../../shared/ui/icons";
 import { FileTypeIcon } from "../shell/FileTypeIcon";
 import { mentionLabel, mentionTokenAt, rankMentionFiles, type MentionFile } from "./fileMentions";
+import { skillBadge } from "../../shared/lib/skillBadge";
 import { useComposerTokens } from "./composerTokens";
 
 export type PaletteRequest = { kind: "slash" | "mention"; query: string; start: number; end: number };
@@ -66,7 +67,8 @@ export function ComposerPalette({
           id: `/add-${command.name}`,
           pick: { text: `/${command.name} ` },
           title: `/${command.name}`,
-          note: SOURCE_LABEL[command.source] ?? command.source,
+          // 技能还分个人/项目：同一个「技能」标签会把两者说成同一件事。
+          note: command.source === "skill" ? skillBadge(command) : (SOURCE_LABEL[command.source] ?? command.source),
           description: command.description ?? "",
           file: null,
           positions: [],

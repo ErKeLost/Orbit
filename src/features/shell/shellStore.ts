@@ -37,6 +37,9 @@ import {
 
 export { CHAT_PANE_ID, HOME_WORKSPACE_ID, isHomeWorkspace, projectWorkspaceTabs, browserTabPaths, newHomeWorkspace, newWorkspaceTab } from "./shellModel";
 
+/** 右侧检视栏的分段（monocode 的右栏）：文件树 / 提交历史。 */
+export type InspectorTab = "explorer" | "history";
+
 export type { BrowserPipState, CollapsedRailMode, DockPosition, OpenFile, PaneState, SidebarTab, WorkspaceTab } from "./shellModel";
 
 /**
@@ -54,6 +57,9 @@ const SESSION_SIDEBAR_KEY = "orbit.shell.sessionSidebar";
 const SIDEBAR_TAB_KEY = "orbit.shell.sidebarTab";
 const PROJECT_RAIL_WIDTH_KEY = "orbit.shell.projectRailWidth";
 const SESSION_SIDEBAR_WIDTH_KEY = "orbit.shell.sessionSidebarWidth";
+const INSPECTOR_OPEN_KEY = "orbit.shell.inspector";
+const INSPECTOR_TAB_KEY = "orbit.shell.inspectorTab";
+const INSPECTOR_WIDTH_KEY = "orbit.shell.inspectorWidth";
 
 function readBool(key: string, fallback: boolean) {
   try {
@@ -136,6 +142,19 @@ type ShellState = {
   quickOpen: boolean;
   setQuickOpen: (open: boolean) => void;
   sidebarTab: SidebarTab;
+  /**
+   * 右侧检视栏。和浏览器列一样属于窗口而不是某个工作区：切标签、切 pane
+   * 都带着它留下，因为它看的是**这个项目**，不是某次会话。
+   */
+  inspectorOpen: boolean;
+  inspectorTab: InspectorTab;
+  inspectorWidth: number;
+  /** 右栏正在读的那份产物；非空时右栏让位给它（对话里的卡片点过来）。 */
+  inspectorArtifact: string | null;
+  setInspectorOpen: (open: boolean) => void;
+  setInspectorTab: (tab: InspectorTab) => void;
+  setInspectorWidth: (width: number) => void;
+  setInspectorArtifact: (id: string | null) => void;
   terminalPosition: DockPosition;
   terminalSize: number;
   terminalOpen: boolean;
@@ -292,6 +311,17 @@ export const useShell = create<ShellState>((set, get) => {
         return value === "files" || value === "changes" ? value : "changes";
       } catch { return "changes"; }
     })(),
+    inspectorOpen: readBool(INSPECTOR_OPEN_KEY, false),
+    inspectorTab: (() => {
+      try {
+        return localStorage.getItem(INSPECTOR_TAB_KEY) === "history" ? "history" : "explorer";
+      } catch { return "explorer"; }
+    })(),
+    setInspectorOpen: (open) => { write(INSPECTOR_OPEN_KEY, String(open)); set({ inspectorOpen: open }); },
+    setInspectorTab: (tab) => { write(INSPECTOR_TAB_KEY, tab); set({ inspectorTab: tab }); },
+    setInspectorWidth: (width) => { write(INSPECTOR_WIDTH_KEY, String(width)); set({ inspectorWidth: width }); },
+    inspectorArtifact: null,
+    setInspectorArtifact: (id) => set({ inspectorArtifact: id }),
     terminalPosition: (() => {
       try {
         const raw = localStorage.getItem("orbit.terminal.position");
@@ -353,6 +383,7 @@ export const useShell = create<ShellState>((set, get) => {
     setCollapsedRailMode: (mode) => { write("orbit.shell.collapsedRail", mode); set({ collapsedRailMode: mode }); },
     projectRailWidth: readNumber(PROJECT_RAIL_WIDTH_KEY, 240),
     sessionSidebarWidth: readNumber(SESSION_SIDEBAR_WIDTH_KEY, 272),
+    inspectorWidth: readNumber(INSPECTOR_WIDTH_KEY, 260),
     setProjectRailOpen: (open) => { write(PROJECT_RAIL_KEY, String(open)); set({ projectRailOpen: open }); },
     setSessionSidebarOpen: (open) => { write(SESSION_SIDEBAR_KEY, String(open)); set({ sessionSidebarOpen: open }); },
     setSidebarTab: (tab) => { write(SIDEBAR_TAB_KEY, tab); set({ sidebarTab: tab }); },

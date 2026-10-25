@@ -153,18 +153,21 @@ export function ResizeHandle({
   dragging,
   onPointerDown,
   onDoubleClick,
+  side = "right",
 }: {
   label: string;
   dragging: boolean;
   onPointerDown: (event: React.PointerEvent<HTMLElement>) => void;
   onDoubleClick?: () => void;
+  /** Which edge of the pane the grab strip sits on. */
+  side?: "left" | "right";
 }) {
   return (
     <div
       role="separator"
       aria-orientation="vertical"
       aria-label={label}
-      className={`absolute inset-y-0 -right-px z-10 w-1.5 cursor-col-resize touch-none ${
+      className={`absolute inset-y-0 ${side === "left" ? "-left-px" : "-right-px"} z-10 w-1.5 cursor-col-resize touch-none ${
         dragging ? "bg-content/15" : "hover:bg-content/10"
       }`}
       onPointerDown={onPointerDown}

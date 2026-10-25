@@ -22,21 +22,12 @@ import {
 } from "../../../shared/ui/icons";
 import {
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
 import { FileTypeIcon } from "../../files/ui/FileTypeIcon";
-import {
-  GitHistoryGraph,
-  GraphResizeSash,
-  GRAPH_PANEL_DEFAULT,
-  GRAPH_PANEL_MIN,
-  loadGraphPanelHeight,
-  saveGraphPanelHeight,
-} from "./GitHistoryGraph";
 import {
   gitCommit,
   gitDiscardAll,
@@ -55,7 +46,6 @@ import {
   type GitChangedFile,
   type GitDiffIndex,
   type GitFileDiffKind,
-  type GitHistoryCommit,
   type GitPr,
 } from "../../../platform/tauri/fs";
 import type { HarnessId } from "../../sessions/model/session";
@@ -109,7 +99,6 @@ function confirmNative(message: string, okLabel?: string): Promise<boolean> {
 
 let stagedOpen = true;
 let changesOpen = true;
-let graphOpen = true;
 let changesView: ChangesView = loadChangesView();
 /** Folders the user collapsed in tree view, keyed `<kind>:<dir>`. */
 const collapsedDirs = new Set<string>();
@@ -122,10 +111,8 @@ type Props = {
   textHarness?: HarnessId;
   selectedPath?: string;
   selectedKind?: GitFileDiffKind;
-  selectedSha?: string;
   onOpenFile: (path: string, kind: GitFileDiffKind, pin?: boolean) => void;
   onOpenAllChanges: (kind: GitFileDiffKind) => void;
-  onOpenCommit: (commit: GitHistoryCommit, pin?: boolean) => void;
 };
 
 export function GitChangesPanel({
@@ -134,22 +121,17 @@ export function GitChangesPanel({
   textHarness,
   selectedPath,
   selectedKind,
-  selectedSha,
   onOpenFile,
   onOpenAllChanges,
-  onOpenCommit,
 }: Props) {
   const { index, reload } = useDiffIndex(cwd, enabled);
   const files = index?.files ?? [];
-  const paneRef = useRef<HTMLDivElement>(null);
   const branchMenuRef = useRef<HTMLDivElement>(null);
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   // Shared across the header and the changed-files list so no two Git
   // mutations ever run against the same checkout at once.
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const [graphHeight, setGraphHeight] = useState(loadGraphPanelHeight);
-  const [graphExpanded, setGraphExpanded] = useState(graphOpen);
 
   useEffect(() => {
     if (!status) return;
@@ -188,16 +170,6 @@ export function GitChangesPanel({
     }
   };
 
-  useLayoutEffect(() => {
-    const pane = paneRef.current;
-    if (!pane || pane.clientHeight < GRAPH_PANEL_MIN + 160) return;
-    const max = pane.clientHeight - 160;
-    if (graphHeight > max) {
-      setGraphHeight(max);
-      saveGraphPanelHeight(max);
-    }
-  }, [graphHeight]);
-
   if (!cwd || cwd === "~") {
     return (
       <p className="px-3 py-2 text-[12px] text-content/50">没有项目文件夹</p>
@@ -206,7 +178,6 @@ export function GitChangesPanel({
 
   return (
     <div
-      ref={paneRef}
       className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
     >
       <header className="flex h-9 shrink-0 items-center gap-2 border-b border-stroke px-3">
@@ -305,40 +276,6 @@ export function GitChangesPanel({
           window.setTimeout(() => invalidateWatchedFiles(paths), 150);
         }}
       />
-      {graphExpanded ? (
-        <GraphResizeSash
-          height={graphHeight}
-          onHeightPaint={setGraphHeight}
-          onHeightCommit={(next) => {
-            setGraphHeight(next);
-            saveGraphPanelHeight(next);
-          }}
-          maxHeight={() => {
-            const pane = paneRef.current;
-            if (!pane) return GRAPH_PANEL_DEFAULT * 2;
-            return Math.max(GRAPH_PANEL_MIN, pane.clientHeight - 160);
-          }}
-        />
-      ) : null}
-      <div
-        className={`shrink-0 overflow-hidden border-t border-stroke ${
-          graphExpanded ? "min-h-0" : "h-7"
-        }`}
-        style={graphExpanded ? { height: graphHeight } : undefined}
-      >
-        <GitHistoryGraph
-          key={cwd}
-          cwd={cwd}
-          enabled={enabled}
-          expanded={graphExpanded}
-          selectedSha={selectedSha}
-          onToggleExpanded={() => {
-            graphOpen = !graphExpanded;
-            setGraphExpanded(graphOpen);
-          }}
-          onOpenCommit={onOpenCommit}
-        />
-      </div>
     </div>
   );
 }

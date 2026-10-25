@@ -105,9 +105,10 @@ export function CompactRail() {
     // 先退出当前全屏面板（搜索/设置等），否则侧栏被 chromeless 规则藏著，
     // 点了标签也看不到任何变化（monocode 的 onLeaveActive 行为）。
     useWorkspace.getState().set({ panel: "chat" });
+    // 文件 / 变更现在住在右栏的「代码」分段里。
     const shell = useShell.getState();
-    shell.setSessionSidebarOpen(true);
-    shell.setSidebarTab(next);
+    shell.setInspectorOpen(true);
+    shell.setInspectorTab(next === "files" ? "explorer" : "explorer");
   };
 
   const togglePanel = (id: "inbox" | "notes" | "automations" | "mobile-access") => {

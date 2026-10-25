@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Orbit</title>
+    <script>
+      try {
+        const saved = localStorage.getItem('pi-gui.theme');
+        const dark = saved === 'dark' || ((saved === 'system' || !saved) && matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.classList.toggle('dark', dark);
+      } catch {}
+    </script>
+    <style>
+      /* 透明无边框窗口：桌面上只浮这一行。 */
+      html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+      * { box-sizing: border-box; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/quick-composer/main.tsx"></script>
+  </body>
+</html>

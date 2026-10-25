@@ -5,6 +5,7 @@ import { useLockOverscroll } from "../shared/hooks/useLockOverscroll";
 const CommandsPanel = lazy(() => import("./panels/CommandsPanel").then((module) => ({ default: module.CommandsPanel })));
 const MobileAccessPanel = lazy(() => import("./panels/MobileAccessPanel").then((module) => ({ default: module.MobileAccessPanel })));
 const NotesPanel = lazy(() => import("./panels/NotesPanel").then((module) => ({ default: module.NotesPanel })));
+const ArtifactsPanel = lazy(() => import("./panels/ArtifactsPanel").then((module) => ({ default: module.ArtifactsPanel })));
 const PiToolsPage = lazy(() => import("../features/settings/pages/PiToolsPage").then((module) => ({ default: module.PiToolsPage })));
 const SessionsPage = lazy(() => import("../features/settings/pages/SessionsPage").then((module) => ({ default: module.SessionsPage })));
 const TreePanel = lazy(() => import("./panels/TreePanel").then((module) => ({ default: module.TreePanel })));
@@ -14,6 +15,7 @@ function panelComponent(panel: PanelName) {
   if (panel === "commands") return <CommandsPanel />;
   if (panel === "mobile-access") return <MobileAccessPanel />;
   if (panel === "notes") return <NotesPanel />;
+  if (panel === "artifacts") return <ArtifactsPanel />;
   if (panel === "pi-tools") return <PiToolsPage />;
   if (panel === "sessions") return <SessionsPage />;
   if (panel === "tree") return <TreePanel />;
@@ -27,7 +29,7 @@ export function Panel() {
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   // Notes is a two-pane surface with its own scrolling; it wants the full
   // bleed instead of the constrained settings column.
-  const fullBleed = panel === "notes";
+  const fullBleed = panel === "notes" || panel === "artifacts";
   return (
     <div ref={lockOverscroll} className={fullBleed ? "flex min-h-0 flex-1 flex-col" : "min-h-0 flex-1 overflow-y-auto overscroll-none"}>
       {fullBleed ? (

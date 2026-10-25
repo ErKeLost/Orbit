@@ -38,6 +38,7 @@ export const KEYBINDINGS: KeybindingRow[] = [
   { command: "Pane: Close Editors", default: `${MOD}+Shift+KeyW`, label: "关闭全部编辑器面板", when: "Always" },
   { command: "Pane: Split Right", default: mod("KeyD"), label: "向右分屏会话", when: "会话面板聚焦时" },
   { command: "Pane: Split Down", default: `${MOD}+Shift+KeyD`, label: "向下分屏会话", when: "会话面板聚焦时" },
+  { command: "Panel: Toggle Inspector", default: `${MOD}+Shift+KeyE`, label: "切换检视栏", when: "Always" },
   { command: "Terminal: Toggle", default: mod("KeyJ"), label: "展开 / 收起终端", when: "Always" },
   { command: "Voice: Toggle", default: `${MOD}+Shift+KeyM`, label: "语音输入 开始 / 结束", when: "首页或会话输入框" },
   { command: "Voice: Start", default: "", label: "开始语音输入", when: "首页或会话输入框" },

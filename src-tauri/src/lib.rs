@@ -42,7 +42,9 @@ mod speech;
 mod media;
 mod pty_term;
 mod search;
+mod artifacts;
 mod notes;
+mod quick_composer;
 mod automations;
 mod mobile_background;
 mod mobile_update;
@@ -190,6 +192,11 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build());
     builder
+        // 产物沙箱：`orbitartifact://localhost/<id>` 只服务 html 产物，
+        // 响应带 CSP（sandbox allow-scripts），页面在 opaque origin 里跑。
+        .register_uri_scheme_protocol(artifacts::HTML_SCHEME, |ctx, request| {
+            artifacts::serve_html(ctx.app_handle(), &request)
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -390,6 +397,14 @@ pub fn run() {
             pty_term::pty_kill_all,
             search::search_files,
             search::search_sessions,
+            quick_composer::quick_toggle,
+            quick_composer::quick_hide,
+            quick_composer::quick_send,
+            quick_composer::quick_scope,
+            artifacts::artifacts_list,
+            artifacts::artifacts_get,
+            artifacts::artifacts_upsert,
+            artifacts::artifacts_delete,
             notes::notes_list,
             notes::notes_get,
             notes::notes_upsert,

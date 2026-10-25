@@ -15,6 +15,14 @@ import { persistState } from "../../../lib/persistent";
 import { getRemoteHost, relaySettingsStatus, rememberRemoteHostEnabled, saveRelaySettings, startRemoteHost, stopRemoteHost, type RelaySettingsStatus, type RemoteHostInfo } from "../../../lib/remote-host";
 import { GLOBAL_SHORTCUT, NOTIFY_ON_COMPLETE_KEY, readAutostart, readGlobalShortcut, readKeepAwake, writeAutostart, writeGlobalShortcut, writeKeepAwake } from "../../../lib/desktop-integration";
 import { readStartupPanel, STARTUP_PANELS, writeStartupPanel } from "../../../lib/startup-panel";
+import {
+  muteOptionFor,
+  muteOptions,
+  muteProject,
+  muteRemainingLabel,
+  unmuteProject,
+  useMutedProjects,
+} from "../../../lib/notification-mute";
 import { checkMobileUpdate, mobileUpdateErrorMessage } from "../../../lib/mobile-update";
 import { backgroundConnectionStatus, restoreBackgroundConnection, setBackgroundConnection, type BackgroundConnectionStatus } from "../../../lib/background-connection";
 import { checkForDesktopUpdate, offerMobileUpdate } from "../../../components/UpdateChecker";
@@ -23,6 +31,8 @@ import { ImageEndpointDialog } from "../../../components/ImageEndpointDialog";
 import { usePrompt } from "../../../lib/prompt";
 import { Icon } from "../../../components/Icon";
 import "../../../styles/remote-access.css";
+
+const MUTE_OPTIONS = muteOptions().map(option => ({ value: option.value, label: option.label }));
 
 async function applySetting(command: RpcCommand) {
   await request(command);
@@ -288,6 +298,7 @@ function DesktopIntegrationSettings({ desktop }: { desktop: boolean }) {
   const [autostart, setAutostart] = useState(false);
   const [keepAwake, setKeepAwake] = useState(() => readKeepAwake());
   const [startupPanel, setStartupPanel] = useState<Panel>(() => readStartupPanel());
+  const cwd = useWorkspace(state => state.cwd);
   const [busy, setBusy] = useState(false);
   // The assertion is the macOS implementation of "do not sleep"; other desktops
   // keep their own power settings, and saying "on" there would be a lie.
@@ -323,6 +334,9 @@ function DesktopIntegrationSettings({ desktop }: { desktop: boolean }) {
     <SettingRow title="完成通知" description="任务跑完时发系统通知；Orbit 在前台时不打扰。">
       {desktop ? <Toggle label="完成通知" on={notify} onChange={checked => { setNotify(checked); localStorage.setItem(NOTIFY_ON_COMPLETE_KEY, String(checked)); }} /> : <span className="remote-settings-note">电脑端设置</span>}
     </SettingRow>
+    <SettingRow title="这个项目的通知" description={cwd ? `${cwd}\n只影响这个项目。静音会自己到期，回来自动恢复。` : "先打开一个项目。"}>
+      <ProjectMuteSelect cwd={cwd} desktop={desktop} />
+    </SettingRow>
     <SettingRow title="全局快捷键" description={`${GLOBAL_SHORTCUT.replace("CommandOrControl", "⌘/Ctrl")} 显示或隐藏 Orbit 窗口，Orbit 不在前台也有效。`}>
       {desktop ? <Toggle label="全局快捷键" on={shortcut} disabled={busy} onChange={checked => void apply(async () => { await writeGlobalShortcut(checked); setShortcut(checked); }, "全局快捷键")} /> : <span className="remote-settings-note">电脑端设置</span>}
     </SettingRow>
@@ -330,6 +344,32 @@ function DesktopIntegrationSettings({ desktop }: { desktop: boolean }) {
       {desktop ? <Toggle label="开机自启" on={autostart} disabled={busy} onChange={checked => void apply(async () => { await writeAutostart(checked); setAutostart(checked); }, "开机自启")} /> : <span className="remote-settings-note">电脑端设置</span>}
     </SettingRow>
   </>;
+}
+
+/**
+ * 一个项目的静音选择。「一直静音」和「今天」用同一个选择框，因为对用户来说
+ * 这是同一个问题的一次回答；右上角的剩余时间把「到什么时候」说清楚。
+ */
+function ProjectMuteSelect({ cwd, desktop }: { cwd: string; desktop: boolean }) {
+  const muted = useMutedProjects();
+  if (!cwd) return <span className="remote-settings-note">先打开一个项目</span>;
+  if (!desktop) return <span className="remote-settings-note">电脑端设置</span>;
+  const entry = muted[cwd];
+  const remaining = muteRemainingLabel(entry);
+  return (
+    <div className="flex items-center gap-2">
+      {remaining ? <span className="text-[11px] tabular-nums text-content/40">{remaining}</span> : null}
+      <Select
+        label="这个项目的通知"
+        value={muteOptionFor(entry)}
+        options={MUTE_OPTIONS}
+        onChange={value => {
+          if (value === "off") unmuteProject(cwd);
+          else muteProject(cwd, muteOptions().find(option => option.value === value)?.until ?? null);
+        }}
+      />
+    </div>
+  );
 }
 
 function ToolsSettings({ tools, running }: { tools: GuiTools; running: boolean }) {

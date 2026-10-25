@@ -5,11 +5,9 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { ChevronDown, ChevronRight, GitBranch, Search, X } from "../../../shared/ui/icons";
 import { useLockOverscroll } from "../../../shared/hooks/useLockOverscroll";
-import { suppressTextSelection } from "../../../shared/lib/drag";
 import { MatchText } from "../../../shared/ui/MatchText";
 import {
   gitHistory,
@@ -34,6 +32,8 @@ type Props = {
   cwd: string;
   enabled: boolean;
   expanded: boolean;
+  /** 右栏的 History 分段自己就是容器，不需要可折叠的「Graph」标题行。 */
+  headerless?: boolean;
   selectedSha?: string;
   onToggleExpanded: () => void;
   onOpenCommit: (commit: GitHistoryCommit, pin?: boolean) => void;
@@ -73,6 +73,7 @@ export function GitHistoryGraph({
   cwd,
   enabled,
   expanded,
+  headerless = false,
   selectedSha,
   onToggleExpanded,
   onOpenCommit,
@@ -121,6 +122,24 @@ export function GitHistoryGraph({
     }
   };
 
+  /**
+   * 从外面定位过来（顶栏的 commit chip、左栏打开的 commit 标签页）时，把那一行
+   * 带进视口。行高是常量，所以照下标算就够了，不用等 DOM 里画出那一行。
+   */
+  const scrolledTo = useRef<string | null>(null);
+  useEffect(() => {
+    if (!expanded || !selectedSha || scrolledTo.current === selectedSha) return;
+    scrolledTo.current = selectedSha;
+    const index = matches.findIndex((match) => match.commit.sha === selectedSha);
+    if (index < 0) return;
+    const scroller = listRef.current?.parentElement;
+    if (!scroller) return;
+    const top = index * GRAPH_ROW_PX;
+    if (top < scroller.scrollTop || top + GRAPH_ROW_PX > scroller.scrollTop + scroller.clientHeight) {
+      scroller.scrollTop = Math.max(0, top - Math.round(scroller.clientHeight / 3));
+    }
+  }, [expanded, selectedSha, matches]);
+
   const onKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -150,6 +169,7 @@ export function GitHistoryGraph({
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+      {headerless ? null : (
       <div className="flex h-7 shrink-0 items-center">
         <button
           type="button"
@@ -173,6 +193,7 @@ export function GitHistoryGraph({
           )}
         </button>
       </div>
+      )}
       {expanded && commits.length > 0 ? (
         <div className="flex h-8 shrink-0 items-center gap-1 border-b border-stroke/60 px-2">
           <div className="relative flex h-6 min-w-0 flex-1 items-center">
@@ -464,105 +485,4 @@ function sameHistory(
       )
     );
   });
-}
-
-export const GRAPH_PANEL_MIN = 120;
-export const GRAPH_PANEL_DEFAULT = 240;
-
-let graphPanelHeight = GRAPH_PANEL_DEFAULT;
-
-export function loadGraphPanelHeight(): number {
-  return graphPanelHeight;
-}
-
-export function saveGraphPanelHeight(height: number) {
-  graphPanelHeight = height;
-}
-
-export function GraphResizeSash({
-  height,
-  onHeightPaint,
-  onHeightCommit,
-  maxHeight,
-}: {
-  height: number;
-  onHeightPaint: (height: number) => void;
-  onHeightCommit: (height: number) => void;
-  maxHeight: () => number;
-}) {
-  const drag = useRef<{ start: number; size: number } | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const paintedRef = useRef(height);
-  paintedRef.current = height;
-  const paintRef = useRef(onHeightPaint);
-  paintRef.current = onHeightPaint;
-  const commitRef = useRef(onHeightCommit);
-  commitRef.current = onHeightCommit;
-  const maxRef = useRef(maxHeight);
-  maxRef.current = maxHeight;
-
-  const clamp = (value: number) =>
-    Math.min(maxRef.current(), Math.max(GRAPH_PANEL_MIN, Math.round(value)));
-
-  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const handle = event.currentTarget;
-    const pointerId = event.pointerId;
-    handle.setPointerCapture(pointerId);
-    drag.current = { start: event.clientY, size: paintedRef.current };
-    setDragging(true);
-    const restoreSelection = suppressTextSelection();
-    const previousCursor = document.body.style.cursor;
-    document.body.style.cursor = "row-resize";
-    document.documentElement.classList.add("is-resizing");
-
-    const onMove = (ev: PointerEvent) => {
-      if (ev.pointerId !== pointerId || !drag.current) return;
-      const next = clamp(drag.current.size - (ev.clientY - drag.current.start));
-      paintedRef.current = next;
-      paintRef.current(next);
-    };
-
-    const stop = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-      restoreSelection();
-      document.body.style.cursor = previousCursor;
-      document.documentElement.classList.remove("is-resizing");
-      setDragging(false);
-      drag.current = null;
-      try {
-        handle.releasePointerCapture(pointerId);
-      } catch {
-        /* already released */
-      }
-      commitRef.current(clamp(paintedRef.current));
-    };
-
-    const onUp = (ev: PointerEvent) => {
-      if (ev.pointerId !== pointerId) return;
-      stop();
-    };
-
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-  };
-
-  return (
-    <div
-      role="separator"
-      aria-orientation="horizontal"
-      aria-label="Resize graph"
-      aria-valuenow={height}
-      className={`z-10 h-1.5 shrink-0 cursor-row-resize touch-none ${
-        dragging ? "bg-content/15" : "hover:bg-content/10"
-      }`}
-      onPointerDown={onPointerDown}
-      onDoubleClick={() => commitRef.current(clamp(GRAPH_PANEL_DEFAULT))}
-    />
-  );
 }

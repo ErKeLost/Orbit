@@ -6,6 +6,7 @@ import { branchFromMessage, report } from "../../lib/rpc";
 import { useWorkspace } from "../../lib/store";
 import { Markdown } from "../../components/Markdown";
 import { CodeChange } from "../../components/LazyCodeChange";
+import { InlineArtifact } from "../artifacts/ui/InlineArtifact";
 import { GridReveal } from "../../shared/ui/GridReveal";
 import { ImageActionsMenu } from "../../components/chat/ImageActions";
 import { Shimmer } from "../../shared/ui/Shimmer";
@@ -272,6 +273,30 @@ function NoteRow({ step }: { step: TurnStep }) {
   );
 }
 
+/**
+ * 写产物的工具调用，直接用**卡片**呈现。
+ *
+ * 它是这一行的结果本身：一排「已保存到产物」的文字对读者没有意义，他要的是
+ * 点一下就能看见那页东西。失败的调用仍然走普通工具行——那时候可疑的是参数。
+ */
+function ArtifactToolRow({ part, tool }: { part: Part; tool: Tool }) {
+  const args = part.arguments as { id?: unknown; kind?: unknown; title?: unknown } | undefined;
+  const id = typeof tool.details?.id === "string" ? tool.details.id : typeof args?.id === "string" ? args.id : "";
+  if (!id) return null;
+  const kind = args?.kind === "html" ? "html" : "document";
+  const title =
+    typeof tool.details?.title === "string"
+      ? tool.details.title
+      : typeof args?.title === "string"
+        ? args.title
+        : id;
+  return (
+    <div className="flex min-w-0 flex-col py-1">
+      <InlineArtifact card={{ id, kind, title }} />
+    </div>
+  );
+}
+
 /** A tool call in Orbit's "<Verb> <file chip>" form; opens onto its result. */
 function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
   const [open, setOpen] = useState(false);
@@ -485,7 +510,13 @@ function StepRow({ step, tools }: { step: TurnStep; tools: Record<string, Tool> 
   if (step.kind === "note") return <NoteRow step={step} />;
   if (step.kind === "image" && step.part?.type === "toolCall") return <GeneratedImageStep part={step.part} tools={tools} />;
   if (step.kind === "image" && step.part) return <InlineImage part={step.part} />;
-  if (step.part) return <ToolRow part={step.part} tools={tools} />;
+  if (step.part) {
+    // 产物写完就是那张卡片；还在跑或者失败的时候仍然是一行工具调用。
+    const tool = tools[step.part.id ?? ""];
+    if (toolName(step.part, tools) === "write_artifact" && tool && !tool.running && !tool.isError)
+      return <ArtifactToolRow part={step.part} tool={tool} />;
+    return <ToolRow part={step.part} tools={tools} />;
+  }
   return null;
 }
 

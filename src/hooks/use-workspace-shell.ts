@@ -319,6 +319,12 @@ export function useWorkspaceShortcuts(
         void saveFileDraft(path).catch(report);
         return;
       }
+      if (pressed("Panel: Toggle Inspector", event)) {
+        // 右侧检视栏：文件 / 历史（monocode 新布局的右栏）。
+        event.preventDefault();
+        const shell = useShell.getState();
+        shell.setInspectorOpen(!shell.inspectorOpen);
+      }
       if (pressed("Terminal: Toggle", event)) {
         // Toggle the built-in terminal dock (Orbit's ⌘J).
         event.preventDefault();

@@ -39,12 +39,20 @@ export function withPendingModel<T extends { model?: { provider?: string; id?: s
 }
 const MAX_TOOL_PATCH_CHARS = 100_000
 function toolCodeDetails(toolName:string,value:unknown):Tool['details']|undefined {
-  if(!/(^|[_-])(edit|patch|apply)([_-]|$)|^(edit|patch|apply)/i.test(toolName))return undefined
   if(!value||typeof value!=='object'||Array.isArray(value))return undefined
   const record=value as Record<string,unknown>
   const details=record.details&&typeof record.details==='object'&&!Array.isArray(record.details)?record.details as Record<string,unknown>:record
-  const patch=details.patch
-  return typeof patch==='string'&&patch.length<=MAX_TOOL_PATCH_CHARS?{patch}:undefined
+  const kept:NonNullable<Tool['details']>={}
+  // 编辑类工具的 diff：只有它们有意义，别的工具没有 patch 就不占字段。
+  if(/(^|[_-])(edit|patch|apply)([_-]|$)|^(edit|patch|apply)/i.test(toolName)){
+    const patch=details.patch
+    if(typeof patch==='string'&&patch.length<=MAX_TOOL_PATCH_CHARS)kept.patch=patch
+  }
+  // 产物类工具回报的身份：卡片要凭 id 找到那一份，凭 kind 决定图标。
+  if(typeof details.id==='string')kept.id=details.id
+  if(typeof details.kind==='string')kept.kind=details.kind
+  if(typeof details.title==='string')kept.title=details.title
+  return Object.keys(kept).length?kept:undefined
 }
 export function formatTranscriptError(raw: string): string {
   const text = raw.trim()

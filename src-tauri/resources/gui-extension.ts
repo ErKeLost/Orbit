@@ -1145,6 +1145,57 @@ export default async function (pi: ExtensionAPI) {
     if(result.cancelled)ctx.ui.notify('扩展取消了分支切换','warning');
     if(result.editorText)ctx.ui.setEditorText(result.editorText);
   }});
+  // 产物：一份文档，或者一页能跑的 HTML。
+  //
+  // 它是**工具**，不是斜杠命令：用户说的是「做一页看板」，不是「请执行
+  // /gui-artifact 并传入 JSON」。手打 JSON 既不可发现也容易断在半截——这也正是
+  // 内容该由模型产出、由工具接收的原因。
+  //
+  // 落库在 app 侧（`artifacts_upsert`）：这里只把内容发布到 status，
+  // 同一个 id 再发一次就是更新，所以迭代同一页是安全的。
+  const publishArtifact=(value:{id?:string;kind?:'document'|'html';title?:string;body?:string})=>{
+    const kind=value.kind??'document'
+    const body=value.body??''
+    if(!body.trim())throw new Error('产物需要 body')
+    const id=(value.id??`artifact-${Date.now().toString(36)}`).replace(/[^A-Za-z0-9_-]/g,'-')
+    const title=value.title?.trim()||(kind==='html'?'未命名页面':'未命名文档')
+    return {id,kind,title,body}
+  }
+  pi.registerTool({
+    name:'write_artifact',
+    label:'写产物',
+    description:'把内容保存成一个产物：document（Markdown 文档）或 html（一页可直接渲染的页面）。保存后出现在应用的「产物」里，用户可以反复打开。',
+    promptSnippet:'保存文档或可渲染的 HTML 页面',
+    promptGuidelines:[
+      '用户要一份能保存、能反复打开的文档、报告、看板或可视化页面时，用 write_artifact，不要只把内容贴在回复里，也不要写成本地文件代替——本地文件用户要自己去找，产物在应用的「产物」里。',
+      'html 产物必须是完整的 HTML 文档；它跑在沙箱里，发不出网络请求，也不要用本地文件引用——样式和脚本都内联。',
+      '主题变量可以直接用：--background、--foreground、--muted、--surface、--border、--accent、--positive、--negative。',
+      '迭代同一页时复用同一个 id，这样用户看到的是更新而不是第二份。',
+    ],
+    defaultActive:true,
+    parameters:{
+      type:'object',
+      properties:{
+        kind:{type:'string',enum:['document','html'],description:'document 是 Markdown 文档；html 是一整页 HTML。'},
+        title:{type:'string',description:'给人看的标题，出现在列表和页头。'},
+        body:{type:'string',description:'内容本体。html 时是完整文档；document 时是 Markdown。'},
+        id:{type:'string',description:'可选。复用它可以更新已有的那一份。'},
+      },
+      required:['kind','title','body'],
+    },
+    async execute(_toolCallId:string,params:unknown,_signal:AbortSignal|undefined,_onUpdate:unknown,ctx:any){
+      const value=publishArtifact(params as {id?:string;kind?:'document'|'html';title?:string;body?:string})
+      // status 是通道：app 收到后落库并广播，不需要等结果，也不需要请求号。
+      ctx.ui.setStatus('gui-artifact',JSON.stringify(value))
+      return {content:[{type:'text' as const,text:`已保存${value.kind==='html'?'页面':'文档'}「${value.title}」，在应用的「产物」里。`}],details:{id:value.id,kind:value.kind,title:value.title}}
+    },
+  })
+  // 保底：斜杠命令仍然在，方便脚本化调用（参数就是上面的 JSON）。
+  pi.registerCommand('gui-artifact',{description:'GUI: save a document or an HTML page as an artifact',handler:async(args:string,ctx:ExtensionCommandContext)=>{
+    const value=publishArtifact(JSON.parse(args||'{}'))
+    ctx.ui.setStatus('gui-artifact',JSON.stringify(value))
+    ctx.ui.notify(`已保存产物：${value.title}`,'info')
+  }})
   pi.registerCommand('gui-label', {description:'GUI: label a session entry',handler:async (args: string,ctx: ExtensionCommandContext) => {const {id,label}=JSON.parse(args);ctx.setLabel(id,label||undefined);}});
   pi.registerCommand('gui-capabilities',{description:'GUI: report Pi 1.0 capabilities (MCP, codemode, tool search, media, virtual models)',handler:async(_args:string,ctx:ExtensionCommandContext)=>{publishCapabilities(ctx);publishMcp(ctx);publishMedia(ctx);ctx.ui.setStatus(VIRTUAL_MODEL_STATUS,JSON.stringify({virtualModels:virtualModelInventory(ctx)}))}})
   pi.registerCommand('gui-mcp',{description:'GUI: list, register, or remove MCP servers',handler:async(args:string,ctx:ExtensionCommandContext)=>{

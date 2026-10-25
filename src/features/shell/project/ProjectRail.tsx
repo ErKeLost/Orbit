@@ -1,14 +1,11 @@
-import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useWorkspace, type Panel } from "../../../lib/store";
 import type { Session } from "../../../lib/protocol";
 import {
-  derivedProjectColor,
   activeProjects,
   archivedProjects,
   mergeProjects,
-  projectColor,
   sortPinnedFirst,
   useProjects,
   type Project,
@@ -24,26 +21,16 @@ import { projectName as pathProjectName } from "../../../shared/lib/paths";
 import { Icon } from "../../../components/Icon";
 import { ProjectDirectoryPicker } from "./ProjectDirectoryPicker";
 import { installDesktopUpdate, useDesktopUpdate } from "../../../lib/desktop-update";
-import { useGitDiffStats } from "../../../lib/git";
-import { useAnimatedReorder } from "../../../shared/hooks/useAnimatedReorder";
 import { useDragResize } from "../../../shared/hooks/useDragResize";
 import { useLockOverscroll } from "../../../shared/hooks/useLockOverscroll";
-import { Popover } from "../../../shared/ui/Popover";
-import { Shimmer } from "../../../shared/ui/Shimmer";
-import { MenuItem } from "../../../shared/ui/controls";
 import { toast } from "../../../shared/ui/toast";
 import {
   Archive,
+  ChartBreakoutSquare,
   ChevronDown,
   Inbox as InboxIcon,
   ArrowDownCircle,
-  Folder,
-  FolderOpen,
-  FolderPlus,
   Loader,
-  MessageSquare,
-  MoreHorizontal,
-  Plus,
   Search,
   Settings,
   SmartPhone,
@@ -51,9 +38,10 @@ import {
   Zap,
   type IconComponent,
 } from "../../../shared/ui/icons";
-import { DevModeSlot, DiffStat, IS_MAC, MOD, ResizeHandle, TabVisitNav } from "../chrome";
+import { DevModeSlot, IS_MAC, MOD, ResizeHandle, TabVisitNav } from "../chrome";
 import { TerminalSpinner } from "../TerminalSpinner";
 import { ProjectContextMenu } from "./ProjectContextMenu";
+import { ProjectSwitcher } from "./ProjectSwitcher";
 import { useShell } from "../shellStore";
 import { ProjectEditorDialog } from "./ProjectEditorDialog";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -106,140 +94,6 @@ function RailSearch({ onClick, active }: { onClick?: () => void; active?: boolea
       <span className="min-w-0 flex-1 truncate text-sm font-medium leading-tight">搜索</span>
       <span aria-hidden className="shrink-0 text-[11px] text-content/40">{MOD}K</span>
     </button>
-  );
-}
-
-function SectionHeader({ label, onAdd, extraItem }: { label: string; onAdd?: () => void; extraItem?: { label: string; icon: ReactNode; onClick: () => void } }) {
-  const anchor = useRef<HTMLButtonElement>(null);
-  const [menu, setMenu] = useState(false);
-  return (
-    <div className="flex items-center gap-1 px-3 pb-1.5 pt-1">
-      <span className="min-w-0 flex-1 truncate px-1 text-xs leading-5 text-content/50">{label}</span>
-      {onAdd ? (
-        <>
-          <button
-            ref={anchor}
-            type="button"
-            title="打开项目"
-            aria-label="打开项目"
-            aria-haspopup="menu"
-            aria-expanded={menu}
-            onClick={() => setMenu((value) => !value)}
-            className="grid size-5 shrink-0 place-items-center rounded-md text-content/50 hover:bg-content/8 hover:text-content aria-expanded:bg-content/8 aria-expanded:text-content"
-          >
-            <Plus className="size-3.5" strokeWidth={1.75} />
-          </button>
-          {menu ? (
-            <Popover anchor={anchor} align="start" width={230} onDismiss={() => setMenu(false)} role="menu" aria-label="打开项目" className="p-1">
-              <MenuItem icon={<FolderPlus strokeWidth={1.75} />} onClick={() => { setMenu(false); onAdd(); }}>
-                打开文件夹…
-              </MenuItem>
-              {extraItem ? (
-                <MenuItem icon={extraItem.icon} onClick={() => { setMenu(false); extraItem.onClick(); }}>
-                  {extraItem.label}
-                </MenuItem>
-              ) : null}
-            </Popover>
-          ) : null}
-        </>
-      ) : null}
-    </div>
-  );
-}
-
-type SortableApi = ReturnType<typeof useAnimatedReorder>;
-
-function ProjectCard({
-  project,
-  selected,
-  busy,
-  statsEnabled,
-  canDrag,
-  sortable,
-  onSelect,
-  onOpenMenu,
-}: {
-  project: Project;
-  selected: boolean;
-  busy: boolean;
-  statsEnabled: boolean;
-  canDrag: boolean;
-  sortable: SortableApi;
-  onSelect: (path: string) => void;
-  onOpenMenu: (project: Project, x: number, y: number) => void;
-}) {
-  const stats = useGitDiffStats(project.path, statsEnabled).data;
-  const additions = stats?.additions ?? 0;
-  const deletions = stats?.deletions ?? 0;
-  const color = projectColor(project);
-  const labelClassName = "min-w-0 flex-1 truncate text-sm font-medium leading-tight";
-  return (
-    <div
-      ref={(el) => sortable.setItemRef(project.path, el)}
-      data-selected={selected || undefined}
-      className={`reorder-item project-reorder-item group relative flex h-8 cursor-default touch-none items-stretch rounded-md px-2 ${
-        selected ? "bg-selection-strong text-content" : "opacity-65 hover:opacity-100"
-      }`}
-      onPointerDown={(event) => {
-        if (event.button !== 0) return;
-        if ((event.target as HTMLElement | null)?.closest("[data-no-drag]")) return;
-        if (canDrag) sortable.onItemPointerDown(project.path, event);
-      }}
-      onClick={(event) => {
-        if ((event.target as HTMLElement | null)?.closest("[data-no-drag]")) return;
-        if (sortable.consumeClick()) return;
-        onSelect(project.path);
-      }}
-      onContextMenu={(event: ReactMouseEvent) => {
-        event.preventDefault();
-        onOpenMenu(project, event.clientX, event.clientY);
-      }}
-    >
-      <button
-        type="button"
-        title={`${project.name}\n${project.path}`}
-        aria-label={project.name}
-        aria-current={selected ? "true" : undefined}
-        className="flex min-w-0 flex-1 cursor-default items-center gap-2 text-left transition-[padding] duration-150 group-hover:pr-6 motion-reduce:transition-none"
-      >
-        {/* Logo 图片优先，否则文件夹图标（选中 = 打开态）；每个项目有稳定的派生色。 */}
-        {project.logoPath ? (
-          <img src={convertFileSrc(project.logoPath)} alt="" className="size-4 shrink-0 rounded object-cover" />
-        ) : (
-          <span className="shrink-0" style={{ color: color ?? derivedProjectColor(project.path) }}>
-            {selected ? (
-              <FolderOpen className="size-4 opacity-70" strokeWidth={1.75} aria-hidden />
-            ) : (
-              <Folder className="size-4 opacity-70" strokeWidth={1.75} aria-hidden />
-            )}
-          </span>
-        )}
-        {busy ? (
-          <Shimmer as="span" duration={1.4} className={labelClassName}>{project.name}</Shimmer>
-        ) : (
-          <span className={labelClassName}>{project.name}</span>
-        )}
-        {additions > 0 || deletions > 0 ? (
-          <span className="project-card-stats shrink-0 group-hover:hidden">
-            <DiffStat additions={additions} deletions={deletions} />
-          </span>
-        ) : null}
-      </button>
-      <button
-        type="button"
-        data-no-drag
-        title="项目选项"
-        aria-label="项目选项"
-        aria-haspopup="menu"
-        onClick={(event) => {
-          event.stopPropagation();
-          onOpenMenu(project, event.clientX, event.clientY);
-        }}
-        className="absolute right-1 top-1/2 hidden size-6 -translate-y-1/2 place-items-center rounded-md text-content/55 hover:bg-content/8 hover:text-content group-hover:grid"
-      >
-        <MoreHorizontal className="size-4" strokeWidth={1.75} />
-      </button>
-    </div>
   );
 }
 
@@ -307,6 +161,26 @@ function ArchivedFooter({ projects }: { projects: Project[] }) {
   );
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const AGE_GROUPS = ["今天", "昨天", "最近 7 天", "更早"] as const;
+type AgeGroup = (typeof AGE_GROUPS)[number];
+
+/**
+ * 一条会话的最近活动落在哪一段。
+ *
+ * 按**日历日**分界而不是「多少小时前」：凌晨两点看到的「今天」应该还是今天，
+ * 而不是一个跟着时钟滑动的窗口。这也是 monocode 侧栏的分法。
+ */
+function sessionAge(updatedAt: number, now: number): AgeGroup {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const startOfToday = start.getTime();
+  if (!Number.isFinite(updatedAt) || updatedAt < startOfToday - 6 * DAY_MS) return "更早";
+  if (updatedAt >= startOfToday) return "今天";
+  if (updatedAt >= startOfToday - DAY_MS) return "昨天";
+  return "最近 7 天";
+}
+
 /** 项目栏里的会话行：标题 + 所属项目，右侧是运行状态或相对时间。 */
 function RailSessionCard({
   session,
@@ -350,17 +224,20 @@ function RailSessionCard({
           onStartRename();
         }
       }}
-      className={`flex w-full cursor-default select-none items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-1 focus-visible:ring-accent/50 ${
-        active ? "bg-selection-strong text-content" : "opacity-70 hover:bg-content/5 hover:opacity-100"
+      className={`group flex h-7 w-full cursor-default select-none items-center gap-2 rounded-md px-1.5 text-left outline-none focus-visible:ring-1 focus-visible:ring-accent/50 ${
+        active ? "bg-selection-strong text-content" : "text-content/75 hover:bg-content/5 hover:text-content"
       }`}
     >
-      <Icon name={sessionGlyph(session.icon)} className="size-3.5 shrink-0 text-content/50" />
+      {/* 图标列定宽：标题的左沿必须是一条线，否则一列扫下去全是毛边。 */}
+      <span className="grid w-4 shrink-0 place-items-center">
+        <Icon name={sessionGlyph(session.icon)} className="size-3.5 text-content/45 group-hover:text-content/70" />
+      </span>
       <span className="flex min-w-0 flex-1 flex-col">
         {renaming && onRename && onCancelRename ? (
           <SessionTitleField value={title} onCommit={onRename} onCancel={onCancelRename} className="text-[12.5px]" />
         ) : (
           <span
-            className="truncate text-[12.5px] font-medium leading-tight"
+            className={`truncate text-[12.5px] leading-tight ${active ? "font-medium" : ""}`}
             onDoubleClick={(event) => {
               if (!onStartRename) return;
               event.preventDefault();
@@ -371,10 +248,13 @@ function RailSessionCard({
             {title}
           </span>
         )}
-        <span className="truncate text-[10.5px] leading-tight text-content/45">{projectLabel}</span>
       </span>
-      <span className="flex shrink-0 items-center text-[10.5px] tabular-nums text-content/40">
-        {running ? <TerminalSpinner className="inline-block w-3 select-none text-center text-[11px] leading-none text-accent" /> : sessionRelativeTime(session.modified)}
+      <span className="flex w-6 shrink-0 items-center justify-end text-[10px] tabular-nums text-content/30 group-hover:text-content/45">
+        {running ? (
+          <TerminalSpinner className="inline-block w-3 select-none text-center text-[11px] leading-none text-accent" />
+        ) : (
+          sessionRelativeTime(session.modified)
+        )}
       </span>
     </div>
   );
@@ -383,6 +263,7 @@ function RailSessionCard({
 const NAV: { id: Panel; label: string; icon: IconComponent }[] = [
   { id: "inbox", label: "收件箱", icon: InboxIcon },
   { id: "notes", label: "笔记", icon: File },
+  { id: "artifacts", label: "产物", icon: ChartBreakoutSquare },
   { id: "automations", label: "自动化", icon: Zap },
   // 「技能与命令」和「常用工具」从侧栏撤下；面板保留，仍可从设置里进。
   { id: "mobile-access", label: "移动端", icon: SmartPhone },
@@ -395,7 +276,7 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
   const homeDir = useWorkspace((state) => state.homeDir);
   const liveSessions = useWorkspace((state) => state.liveSessions);
   const currentSessionFile = useWorkspace((state) => state.state?.sessionFile);
-  const { projects, add, update, remove, reorder } = useProjects();
+  const { projects, add, update, remove } = useProjects();
   const width = useShell((state) => state.projectRailWidth);
   const setWidth = useShell((state) => state.setProjectRailWidth);
   const setProjectRailOpen = useShell((state) => state.setProjectRailOpen);
@@ -435,21 +316,21 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
     [cwd, projects, workspaceMode],
   );
   const hidden = useMemo(() => archivedProjects(projects), [projects]);
-  const projectIds = useMemo(() => visibleProjects.map((project) => project.path), [visibleProjects]);
-  const onReorderProjects = (ids: string[]) => reorder(ids);
-  const projectSortable = useAnimatedReorder(projectIds, onReorderProjects, "y");
-  const canDragProjects = visibleProjects.length > 1;
-  const runningProjects = useMemo(
-    () => new Set(liveSessions.filter((session) => session.running).map((session) => session.cwd)),
-    [liveSessions],
+  /** 侧栏标题认的项目：只有“在这个项目里工作”时才算，首页不属于任何项目。 */
+  const currentProject = useMemo(
+    () =>
+      workspaceMode === "project"
+        ? (visibleProjects.find((project) => project.path === cwd) ?? null)
+        : null,
+    [cwd, visibleProjects, workspaceMode],
   );
 
-  /** 会话区块的扫描范围：注册的项目 + 主目录（「不在文件夹里工作」的会话）。 */
-  const sessionRoots = useMemo(() => {
-    const roots = visibleProjects.map((project) => project.path);
-    if (homeDir && !roots.includes(homeDir)) roots.push(homeDir);
-    return roots;
-  }, [visibleProjects, homeDir]);
+  /**
+   * 会话区块只扫**当前**作用域：项目模式下是这个项目，主目录模式下是主目录。
+   * 别的项目的会话仍然活着（后台跑、被收养/休眠），只是不在这里列——要看它们，
+   * 从标题上的项目菜单切过去。
+   */
+  const sessionRoots = useMemo(() => (cwd ? [cwd] : []), [cwd]);
   const sessionGroups = useProjectSessionGroups(sessionRoots);
 
   /** 跨项目的最近会话（含还没落盘的活跃会话），新到旧；不设上限，列表随项目栏滚动。 */
@@ -484,6 +365,23 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
     entries.sort((a, b) => Date.parse(b.session.modified) - Date.parse(a.session.modified));
     return entries;
   }, [sessionGroups, liveSessions]);
+
+  /**
+   * 会话按最近活动分组。29 条排成一列、每条都一样重，读起来就是一堵墙；
+   * 分成四段之后，每一段自己就有了边界，找东西靠位置而不是靠逐行读。
+   */
+  const sessionAgeSections = useMemo(() => {
+    const now = Date.now();
+    const buckets = new Map<AgeGroup, typeof railSessions>(
+      AGE_GROUPS.map((label) => [label, [] as typeof railSessions]),
+    );
+    for (const entry of railSessions) {
+      buckets.get(sessionAge(Date.parse(entry.session.modified), now))!.push(entry);
+    }
+    return AGE_GROUPS.map((label) => ({ label, items: buckets.get(label)! })).filter(
+      (group) => group.items.length > 0,
+    );
+  }, [railSessions]);
 
   /** 会话所属项目的展示名；主目录不是注册项目，单独给它名字。 */
   const projectLabel = (path: string) => {
@@ -592,6 +490,27 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
       ) : (
         <>
           <div className="flex shrink-0 flex-col gap-px px-2 pb-2 pt-0.5">
+            {/* 侧栏标题：项目名 + 分支，切换下沉成菜单里的子级。
+                和下面的搜索/导航同宽同高，图标左沿对齐，中间空出一行呼吸。 */}
+            <div className="flex shrink-0 items-center pb-1.5">
+              <ProjectSwitcher
+                current={currentProject}
+                projects={visibleProjects}
+                pending={Boolean(cwd) && busyProject === cwd}
+                onSelectProject={(path) => void chooseProject(path)}
+                onAddProject={
+                  runtimeTarget === "mobile"
+                    ? () => setPicker(true)
+                    : desktopRuntime()
+                      ? () => void addProjects().catch(report)
+                      : undefined
+                }
+                onOpenHome={homeDir ? () => void chooseHome() : undefined}
+                onOpenProjectMenu={(project, x, y) => setMenu({ project, x, y })}
+                onOpenSettings={() => useWorkspace.getState().set({ panel: "settings" })}
+                settingsShortcut={`${MOD},`}
+              />
+            </div>
             <RailSearch onClick={onSearch} />
             <div className="mt-0.5" />
             {NAV.map((item) => (
@@ -606,46 +525,6 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
           </div>
 
           <div ref={lockOverscroll} className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-none pb-2">
-            <div className="mb-2 shrink-0">
-              <SectionHeader
-                label="项目"
-                extraItem={
-                  homeDir
-                    ? {
-                        label: "不在文件夹里工作",
-                        icon: <MessageSquare strokeWidth={1.75} />,
-                        onClick: () => void chooseHome(),
-                      }
-                    : undefined
-                }
-                onAdd={
-                  runtimeTarget === "mobile"
-                    ? () => setPicker(true)
-                    : desktopRuntime()
-                      ? () => void addProjects().catch(report)
-                      : undefined
-                }
-              />
-              {visibleProjects.length === 0 ? (
-                <p className="px-4 pb-1 text-[11px] leading-tight text-content/40">还没有项目</p>
-              ) : null}
-              <div className="flex flex-col gap-px px-2">
-                {visibleProjects.map((project) => (
-                  <ProjectCard
-                    key={project.path}
-                    project={project}
-                    selected={workspaceMode === "project" && project.path === cwd}
-                    busy={busyProject === project.path || runningProjects.has(project.path)}
-                    statsEnabled={visible}
-                    canDrag={canDragProjects}
-                    sortable={projectSortable}
-                    onSelect={(path) => void chooseProject(path)}
-                    onOpenMenu={(target, x, y) => setMenu({ project: target, x, y })}
-                  />
-                ))}
-              </div>
-            </div>
-
             {railSessions.length > 0 ? (
               <div className="mb-2 shrink-0">
                 <button
@@ -668,21 +547,32 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
                   </span>
                 </button>
                 {sessionsOpen ? (
-                  <div className="flex flex-col gap-px px-2">
-                    {railSessions.map(({ session, project }) => (
-                      <RailSessionCard
-                        key={session.path}
-                        session={session}
-                        projectLabel={projectLabel(project)}
-                        active={session.path === currentSessionFile}
-                        running={Boolean(liveSessions.find((live) => live.path === session.path)?.running)}
-                        renaming={renamingPath === session.path}
-                        onSelect={() => void openSession(session).catch(report)}
-                        onContextMenu={(event) => openSessionMenu(session, event)}
-                        onStartRename={() => setRenamingPath(session.path)}
-                        onCancelRename={() => setRenamingPath("")}
-                        onRename={(name) => commitRailRename(session, name)}
-                      />
+                  <div className="flex flex-col pb-1">
+                    {sessionAgeSections.map((group) => (
+                      <section key={group.label} aria-label={group.label}>
+                        {/* 分组标题：11px、40% 灰，只做分隔不做主角。 */}
+                        <h3 className="flex items-center gap-2 px-3 pb-1 pt-2 text-[10.5px] font-medium tracking-wide text-content/35">
+                          <span className="min-w-0 truncate">{group.label}</span>
+                          <span className="shrink-0 tabular-nums text-content/25">{group.items.length}</span>
+                        </h3>
+                        <div className="flex flex-col gap-px px-2">
+                          {group.items.map(({ session, project }) => (
+                            <RailSessionCard
+                              key={session.path}
+                              session={session}
+                              projectLabel={projectLabel(project)}
+                              active={session.path === currentSessionFile}
+                              running={Boolean(liveSessions.find((live) => live.path === session.path)?.running)}
+                              renaming={renamingPath === session.path}
+                              onSelect={() => void openSession(session).catch(report)}
+                              onContextMenu={(event) => openSessionMenu(session, event)}
+                              onStartRename={() => setRenamingPath(session.path)}
+                              onCancelRename={() => setRenamingPath("")}
+                              onRename={(name) => commitRailRename(session, name)}
+                            />
+                          ))}
+                        </div>
+                      </section>
                     ))}
                   </div>
                 ) : null}

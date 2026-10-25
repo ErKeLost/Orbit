@@ -8,7 +8,7 @@ export type DisplayMessageGroup = { id: string; items: DisplayMessage[]; indexes
 export type ToolUsage = { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost?: { total?: number } }
 export type ToolImage = { data?: string; file?: string; session?: string; at?: number; ordinal?: number; mimeType: string }
 export type ToolImageInfo = { model?: string; size?: string; paths?: string[] }
-export type Tool = { name: string; args?: Record<string, Json>; result?: unknown; details?: { patch: string }; images?: ToolImage[]; image?: ToolImageInfo; running: boolean; isError?: boolean; usage?: ToolUsage; durationMs?: number }
+export type Tool = { name: string; args?: Record<string, Json>; result?: unknown; details?: { patch?: string; /** 产物类工具回报的身份：id/kind/title。 */ id?: string; kind?: string; title?: string }; images?: ToolImage[]; image?: ToolImageInfo; running: boolean; isError?: boolean; usage?: ToolUsage; durationMs?: number }
 export type Event = { type: string; message?: PiMessage; toolCallId?: string; toolName?: string; args?: Record<string, Json>; result?: unknown; partialResult?: unknown; isError?: boolean; details?: unknown; errorMessage?: string; assistantMessageEvent?: { type: string; contentIndex: number; delta?: string; content?: string; id?: string; toolName?: string; toolCall?: Part }; steering?: string[]; followUp?: string[]; [key: string]: unknown }
 /**
  * ``submitted`` 是「已经提交、但 Pi 还没宣告这一轮开始」的等待位。回车到

@@ -32,6 +32,7 @@ export function GitFileDiffView({ cwd, path, kind }: { cwd: string; path: string
     return {
       id: relative,
       path: relative,
+      cwd,
       label: relative,
       binary: file.binary,
       tooLarge: file.tooLarge,
@@ -43,7 +44,7 @@ export function GitFileDiffView({ cwd, path, kind }: { cwd: string; path: string
       deletions: built?.deletions ?? 0,
       blocks: built?.blocks ?? [],
     };
-  }, [file, relative]);
+  }, [cwd, file, relative]);
 
   if (query.isPending) {
     return (

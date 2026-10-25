@@ -1,11 +1,12 @@
 import { useCallback, useMemo, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from "react";
 import { useWorkspace } from "../../../lib/store";
 import { useTitleTabDrop } from "../paneDrop";
-import { Globe, Loader, PanelLeft, Plus, Settings, Terminal, X } from "../../../shared/ui/icons";
+import { Globe, Loader, PanelLeft, PanelRightToggle, Plus, Settings, Terminal, X } from "../../../shared/ui/icons";
 import { IS_MAC, MOD, TitleIconButton } from "../chrome";
 import { useWorkspaceTabs } from "../use-workspace-tabs";
 import { projectWorkspaceTabs, useShell, type WorkspaceTab } from "../shellStore";
 import { currentShortcut, shortcutLabel } from "../../../lib/keybindings";
+import { useWorkspaceDiff } from "./useWorkspaceDiff";
 import { compactTitle } from "../../../lib/session-visual";
 import { connectionSnapshot, firstUserTitle, subscribeSnapshot } from "../../../lib/rpc";
 import type { Snapshot } from "../../../lib/rpc";
@@ -138,6 +139,10 @@ function WorkspaceTabItem({
  */
 export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
   const terminalOpen = useShell((state) => state.terminalOpen);
+  const inspectorOpen = useShell((state) => state.inspectorOpen);
+  // The working tree has changes; dots the inspector toggle (monocode's
+  // `rightPanelDot`, which reads the same number as the Changes panel).
+  const changesDot = (useWorkspaceDiff()?.files.length ?? 0) > 0;
   const browserOpen = useShell((state) => state.browserOpen);
 
   // The hidden home workspace is not a tab: it only appears as the 首页 once
@@ -180,10 +185,7 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
           <div className="flex shrink-0 items-center px-1.5">
             <TitleIconButton
               label={`切换侧栏 (${MOD}B)`}
-              onClick={() => {
-                useShell.getState().setProjectRailOpen(true);
-                useShell.getState().setSessionSidebarOpen(true);
-              }}
+              onClick={() => useShell.getState().setProjectRailOpen(true)}
             >
               <PanelLeft className="size-3.5" strokeWidth={1.75} />
             </TitleIconButton>
@@ -224,6 +226,26 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
         </button>
       </div>
       <div className="flex shrink-0 items-center gap-0.5 px-2" data-tauri-drag-region="false">
+        <TitleIconButton
+          label={
+            inspectorOpen
+              ? changesDot
+                ? "收起检视栏 (⌘⇧E，有未提交变更)"
+                : "收起检视栏 (⌘⇧E)"
+              : changesDot
+                ? "打开文件 / 历史检视栏 (⌘⇧E，有未提交变更)"
+                : "打开文件 / 历史检视栏 (⌘⇧E)"
+          }
+          active={inspectorOpen}
+          onClick={() => useShell.getState().setInspectorOpen(!inspectorOpen)}
+        >
+          <span className="relative grid">
+            <PanelRightToggle className="size-3.5" strokeWidth={1.75} />
+            {changesDot ? (
+              <span aria-hidden className="absolute -top-[2px] -right-[2px] size-1.5 rounded-full bg-accent" />
+            ) : null}
+          </span>
+        </TitleIconButton>
         <TitleIconButton
           label={terminalOpen ? "收起终端 (⌘J)" : "打开终端 (⌘J)"}
           active={terminalOpen}

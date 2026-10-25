@@ -68,6 +68,7 @@ export function CommitDiffView({ cwd, sha }: Props) {
       return {
         id: file.relative,
         path: file.path,
+        cwd,
         label: file.relative,
         binary: loaded?.binary,
         tooLarge: loaded?.tooLarge,
@@ -84,7 +85,7 @@ export function CommitDiffView({ cwd, sha }: Props) {
         blocks: unified?.blocks ?? [],
       };
     });
-  }, [diffs, files]);
+  }, [cwd, diffs, files]);
 
   const totals = useMemo(
     () =>

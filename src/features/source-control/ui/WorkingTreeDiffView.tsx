@@ -106,6 +106,7 @@ export function WorkingTreeDiffView({ cwd, focusPath, focusKind }: Props) {
       return {
         id: entry.id,
         path: file.path,
+        cwd,
         label: workingTreeDiffEntryLabel(entry),
         binary: loaded?.binary,
         tooLarge: loaded?.tooLarge,
@@ -126,7 +127,7 @@ export function WorkingTreeDiffView({ cwd, focusPath, focusKind }: Props) {
         canDiscard: kind === "unstaged",
       };
     });
-  }, [diffs, entries, files]);
+  }, [cwd, diffs, entries, files]);
 
   const totals = useMemo(
     () =>

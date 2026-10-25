@@ -1,4 +1,3 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
@@ -8,13 +7,15 @@ import { setDraftFor, useDrafts } from "../../../lib/drafts";
 import { saveFileDraft } from "../../../lib/file-save";
 import { useWorkspace } from "../../../lib/store";
 import { toast } from "../../../shared/ui/toast";
-import { formatBytes, mediaKind, readMediaFile, useMediaMeta, type MediaKind } from "../../../lib/media";
-import { base64ToBytes, planMediaPreview } from "../../../lib/media-preview";
+import { formatBytes, mediaKind, type MediaKind } from "../../../lib/media";
+import { AudioAssetView } from "../../files/ui/AudioAssetView";
+import { ImageAssetView } from "../../files/ui/ImageAssetView";
+import { useMediaSrc } from "../../files/ui/media-source";
 import { Markdown } from "../../../components/Markdown";
 import { splitMarkdownFrontmatter } from "../../../shared/lib/markdownFrontmatter";
 import { mdxToMarkdown } from "../../../shared/lib/mdxLite";
 import { MarkdownViewShell, useMarkdownMode } from "../../chat/MarkdownModeToggle";
-import { ChevronDown, ChevronRight, ImagePlus, Loader, Pause, Play } from "../../../shared/ui/icons";
+import { ChevronDown, ChevronRight, ImagePlus, Loader } from "../../../shared/ui/icons";
 import { useLockOverscroll } from "../../../shared/hooks/useLockOverscroll";
 import { SurfaceTabs } from "../tabs/SurfaceTabs";
 import { useActiveWorkspace, useShell } from "../shellStore";
@@ -97,157 +98,41 @@ function MediaNotice({ message, path }: { message: string; path: string }) {
   );
 }
 
-function formatAudioTime(seconds: number) {
-  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
-}
-
-/** A compact player that keeps the file preview in Orbit's visual language. */
-function AudioPlayer({ src, name, mime, size }: { src: string; name: string; mime?: string; size?: number }) {
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [playing, setPlaying] = useState(false);
-  const [time, setTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setPlaying(false);
-    setTime(0);
-    setDuration(0);
-    setError(null);
-  }, [src]);
-
-  const toggle = async () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (audio.paused) {
-      try {
-        await audio.play();
-        setPlaying(true);
-      } catch {
-        setError("音频无法播放，请检查文件格式或编码");
-      }
-    } else {
-      audio.pause();
-      setPlaying(false);
-    }
-  };
-
-  return (
-    <div className="flex w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-content/10 bg-content/[0.045] shadow-[0_18px_60px_color-mix(in_srgb,var(--color-content)_8%,transparent)]">
-      <audio
-        ref={audioRef}
-        src={src}
-        preload="metadata"
-        onLoadedMetadata={(event) => setDuration(event.currentTarget.duration)}
-        onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
-        onPlay={() => setPlaying(true)}
-        onPause={() => setPlaying(false)}
-        onEnded={() => { setPlaying(false); setTime(0); }}
-        onError={() => setError("音频无法加载，请检查文件格式或文件是否完整")}
-        className="hidden"
+export function MediaView({ file, kind, remote }: { file: { path: string; name: string }; kind: MediaKind; remote: boolean }) {
+  // 桌面走 asset 协议、手机走配对 socket 的分流在 `useMediaSrc` 里，文件预览
+  // 和图片 diff 共用同一份。
+  const { src, meta, notice, fetching } = useMediaSrc(file.path, kind, remote);
+  // 图片走自己的查看器：棋盘格底纹 + 页脚元信息 + 锚点缩放，和 diff 里的
+  // 图片预览同一个组件。audio / video / pdf 仍然用下面这套居中卡片。
+  if (kind === "audio") {
+    return (
+      <AudioAssetView
+        src={notice ? null : src}
+        name={file.name}
+        bytes={meta?.size}
+        format={meta?.mime}
       />
-      <div className="flex items-center gap-4 px-5 py-5">
-        <div className="relative grid size-16 shrink-0 place-items-center overflow-hidden rounded-xl bg-gradient-to-br from-accent/80 via-accent/35 to-content/10 text-content shadow-inner">
-          <span className="absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_30%_20%,white_0,transparent_55%)]" />
-          <span className="relative text-3xl font-serif leading-none">♪</span>
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-[14px] font-medium text-content" title={name}>{name}</p>
-          <p className="mt-1 truncate font-mono text-[11px] text-content/40">{[mime?.split("/").at(-1)?.toUpperCase(), size == null ? null : formatBytes(size)].filter(Boolean).join(" · ")}</p>
-          <div className="mt-4 flex items-center gap-2">
-            <span className="w-9 shrink-0 text-right font-mono text-[10px] tabular-nums text-content/45">{formatAudioTime(time)}</span>
-            <input
-              type="range"
-              min={0}
-              max={duration || 0}
-              step={0.01}
-              value={Math.min(time, duration || 0)}
-              aria-label="音频进度"
-              onChange={(event) => {
-                const next = Number(event.target.value);
-                if (audioRef.current) audioRef.current.currentTime = next;
-                setTime(next);
-              }}
-              className="audio-progress h-1.5 min-w-0 flex-1 accent-[var(--color-accent)]"
-            />
-            <span className="w-9 shrink-0 font-mono text-[10px] tabular-nums text-content/45">{formatAudioTime(duration)}</span>
-          </div>
-        </div>
-        <button type="button" onClick={() => void toggle()} aria-label={playing ? "暂停音频" : "播放音频"} className="grid size-10 shrink-0 place-items-center rounded-full bg-content text-background-base transition-transform hover:scale-105 active:scale-95">
-          {playing ? <Pause className="size-4" strokeWidth={2} /> : <Play className="size-4 translate-x-px" strokeWidth={2} />}
-        </button>
-      </div>
-      {error ? <p className="border-t border-content/10 px-5 py-2.5 text-[11px] text-red-300">{error}</p> : null}
-    </div>
-  );
-}
-
-/**
- * One object URL per payload, revoked when it is replaced or the view goes away.
- *
- * The bytes arrive as base64 because the wire has no binary frame small enough
- * to be worth one; a `Blob` is what `<img>`/`<video>`/`<embed>` can actually
- * point at. An object URL pins its bytes for as long as the document lives, and
- * a phone has nowhere to put them, so the revocation is not optional.
- */
-function useMediaObjectUrl(payload: { mime: string; data: string } | undefined): string | null {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (payload === undefined) return;
-    const next = URL.createObjectURL(new Blob([base64ToBytes(payload.data)], { type: payload.mime }));
-    setUrl(next);
-    return () => URL.revokeObjectURL(next);
-  }, [payload]);
-  return url;
-}
-
-function MediaView({ file, kind, remote }: { file: { path: string; name: string }; kind: MediaKind; remote: boolean }) {
-  const meta = useMediaMeta(file.path, kind);
-  // The asset protocol is "this webview reads this machine's disk", so it is the
-  // whole answer on the desktop and no answer at all on a phone; the phone takes
-  // the bytes over the pairing socket instead. See `lib/media-preview.ts`.
-  const plan = planMediaPreview({ remote, kind, size: meta.data?.size ?? null });
-  const bytes = useQuery({
-    queryKey: ["media-bytes", file.path],
-    queryFn: () => readMediaFile(file.path),
-    enabled: plan.mode === "socket",
-    staleTime: 30_000,
-  });
-  // Unconditional, like every hook here: `plan` moves from `socket` to
-  // `blocked` when `media_meta` answers, so a hook call that followed it would
-  // change the hook order between renders.
-  const objectUrl = useMediaObjectUrl(bytes.data);
-  const src = plan.mode === "asset" ? convertFileSrc(file.path) : objectUrl;
-  const notice =
-    plan.mode === "blocked" ? plan.message
-    : bytes.isError ? String(bytes.error)
-    : null;
+    );
+  }
+  if (kind === "image") {
+    return (
+      <ImageAssetView
+        src={notice ? null : src}
+        name={file.name}
+        bytes={meta?.size}
+        format={meta?.mime}
+        remoteUnavailable={notice}
+      />
+    );
+  }
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-auto bg-content/2 p-6">
       {notice !== null ? (
         <MediaNotice message={notice} path={file.path} />
       ) : src == null ? (
         <Loader className="size-5 animate-spin text-content/30" />
-      ) : kind === "image" ? (
-        <button
-          type="button"
-          title="点击放大"
-          onClick={(event) => {
-            const img = event.currentTarget.querySelector("img");
-            event.currentTarget.classList.toggle("p-0");
-            img?.classList.toggle("max-h-full");
-            img?.classList.toggle("max-h-[85vh]");
-          }}
-          className="cursor-zoom-in rounded-xl bg-content/4 p-2"
-        >
-          <img src={src} alt={file.name} draggable={false} className="max-h-[60vh] max-w-full rounded-lg object-contain" />
-        </button>
-      ) : kind === "audio" ? (
-        <AudioPlayer src={src} name={file.name} mime={meta.data?.mime} size={meta.data?.size} />
       ) : kind === "video" ? (
-        <VideoPlayer src={src} path={file.path} mimeType={meta.data?.mime} />
+        <VideoPlayer src={src} path={file.path} mimeType={meta?.mime} />
       ) : (
         <object data={src} type="application/pdf" className="h-full w-full rounded-xl border border-content/10">
           <p className="p-4 text-[13px] text-content/50">此浏览器无法内嵌预览 PDF。</p>
@@ -255,7 +140,7 @@ function MediaView({ file, kind, remote }: { file: { path: string; name: string 
       )}
       <p className="shrink-0 font-mono text-[11px] text-content/40">
         {file.name}
-        {meta.data ? ` · ${meta.data.mime} · ${formatBytes(meta.data.size)}` : meta.isFetching ? " · 读取中…" : ""}
+        {meta ? ` · ${meta.mime} · ${formatBytes(meta.size)}` : fetching ? " · 读取中…" : ""}
       </p>
     </div>
   );

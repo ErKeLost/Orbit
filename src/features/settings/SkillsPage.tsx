@@ -5,17 +5,12 @@ import { request } from "../../lib/rpc";
 import { SecondaryButton, Toggle } from "../../shared/ui/controls";
 import { toast } from "../../shared/ui/toast";
 import { Copy, Eye, Loader, RefreshCw, Search, Terminal } from "../../shared/ui/icons";
+import { skillBadge as badge } from "../../shared/lib/skillBadge";
 import { useShell } from "../shell/shellStore";
 
 const HIDDEN_KEY = "orbit.skillsHidden.v1";
 
 type Command = { name: string; description?: string; source: string; sourceInfo?: { path?: string; origin?: string } };
-
-function badge(command: Command): string {
-  if (command.source === "extension") return "扩展";
-  if (command.source === "skill") return (command.sourceInfo?.path ?? "").includes("/.pi/agent/") ? "个人" : "项目";
-  return "模板";
-}
 
 /** Orbit's Skills page: count + filter + refresh + add, then one card of rows. */
 export function SkillsPage() {

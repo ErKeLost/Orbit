@@ -19,6 +19,10 @@ import {
   useState,
 } from "react";
 import { FileTypeIcon } from "../../files/ui/FileTypeIcon";
+import { AudioAssetPreview } from "../../files/ui/AudioAssetView";
+import { ImageAssetPreview } from "../../files/ui/ImageAssetView";
+import { mediaKind } from "../../../lib/media";
+import { useWorkspace } from "../../../lib/store";
 import { useLockOverscroll } from "../../../shared/hooks/useLockOverscroll";
 import { formatInteger } from "../../../shared/lib/numbers";
 import { basename } from "../../../platform/tauri/fs";
@@ -49,6 +53,8 @@ export type UnifiedDiffFileModel = {
   id: string;
   path: string;
   label: string;
+  /** 这个 checkout 的根；二进制资源要拿它拼出磁盘路径才能显示。 */
+  cwd?: string;
   binary?: boolean;
   tooLarge?: boolean;
   emptyMessage?: string;
@@ -522,7 +528,7 @@ function FileBody({
   onReveal: (foldId: string, direction: "up" | "down" | "all") => void;
   onStageHunk?: (id: string, pos: number) => void;
 }) {
-  if (file.binary) return <EmptyBody>二进制文件有改动</EmptyBody>;
+  if (file.binary) return <BinaryBody file={file} />;
   if (file.tooLarge) return <EmptyBody>差异过大，无法显示</EmptyBody>;
   if (file.emptyMessage) return <EmptyBody>{file.emptyMessage}</EmptyBody>;
   if (file.blocks.length === 0) return <EmptyBody>没有文本差异</EmptyBody>;
@@ -541,6 +547,34 @@ function FileBody({
       onStageHunk={onStageHunk}
     />
   );
+}
+
+/**
+ * 二进制的正文。图片不是「有改动」而是**能看见的东西**：直接按资源显示，
+ * 和 monocode 的资源预览一样（居中、可点开、下面一行 路径 · 类型 · 大小）。
+ * 拿不到磁盘路径时（远程工作副本、或文件已不在）才退回一句说明。
+ */
+function BinaryBody({ file }: { file: UnifiedDiffFileModel }) {
+  const remote = useWorkspace((state) => state.runtimeTarget === "mobile");
+  const kind = mediaKind(file.path);
+  const path = kind ? assetPath(file) : null;
+  if (!kind || !path) return <EmptyBody>二进制文件有改动</EmptyBody>;
+  // 图片走 monocode 那个资源查看器（棋盘格 + 页脚 + 锚点缩放）；音频/视频/PDF
+  // 还没有对应的正文视图，仍然给一句说明。
+  if (kind === "image")
+    return <ImageAssetPreview path={path} name={basename(file.path)} remote={remote} />;
+  if (kind === "audio")
+    return <AudioAssetPreview path={path} name={basename(file.path)} remote={remote} />;
+  return <EmptyBody>二进制文件有改动</EmptyBody>;
+}
+
+/** 仓库相对路径拼成磁盘路径；已经是绝对路径的原样返回。 */
+function assetPath(file: UnifiedDiffFileModel): string | null {
+  if (!/^([a-zA-Z]:)?[\\/]/.test(file.path)) {
+    if (!file.cwd) return null;
+    return `${file.cwd.replace(/[\\/]+$/, "")}/${file.path}`;
+  }
+  return file.path;
 }
 
 function VirtualRows({

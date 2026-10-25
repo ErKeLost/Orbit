@@ -14,6 +14,14 @@ import { persistState } from "./persistent"
 
 /** Global hotkey that shows or hides the main window. */
 export const GLOBAL_SHORTCUT = "CommandOrControl+Shift+O"
+
+/**
+ * Global hotkey for the quick composer (monocod 的 ⌘⇧Space)。
+ *
+ * 和上面那个是两个独立的注册：一个是「把 Orbit 拿到面前」，一个是「说一句话」，
+ * 后者不该先把整个应用亮出来。
+ */
+export const QUICK_COMPOSER_SHORTCUT = "CommandOrControl+Shift+Space"
 export const NOTIFY_ON_COMPLETE_KEY = "pi-gui.notifyOnComplete"
 
 /**
@@ -82,6 +90,22 @@ export async function writeGlobalShortcut(enabled: boolean): Promise<void> {
     const window = getCurrentWindow()
     void window.isVisible().then(visible => visible ? window.hide() : window.show().then(() => window.setFocus()))
   })
+}
+
+/** 注册唤起 quick composer 的全局快捷键；返回注销函数。 */
+export async function installQuickComposerShortcut(): Promise<() => void> {
+  if (!isTauri()) return () => {}
+  try {
+    if (await isRegistered(QUICK_COMPOSER_SHORTCUT)) await unregister(QUICK_COMPOSER_SHORTCUT)
+    await register(QUICK_COMPOSER_SHORTCUT, event => {
+      if (event.state !== "Pressed") return
+      void invoke("quick_toggle")
+    })
+  } catch {
+    // 被别的应用占了就安静放弃：这个功能是便利，不是必需。
+    return () => {}
+  }
+  return () => void unregister(QUICK_COMPOSER_SHORTCUT).catch(() => {})
 }
 
 /** Notify that a run finished. Silent while Orbit already has focus. */

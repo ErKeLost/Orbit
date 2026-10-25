@@ -9,10 +9,13 @@ import { RemotePairingScreen } from "./components/remote/RemotePairingScreen";
 import { ScreenOverlay } from "./components/screen/ScreenOverlay";
 import { Panel } from "./components/Panels";
 import { flushForegroundEvents } from "./lib/rpc";
+import { useArtifactIntake } from "./features/artifacts/useArtifactIntake";
+import { useQuickSend } from "./features/quick-composer/useQuickSend";
+import { installQuickComposerShortcut } from "./lib/desktop-integration";
+import { InspectorPanel } from "./features/shell/inspector/InspectorPanel";
 import { ProjectRail } from "./features/shell/project/ProjectRail";
 import { CompactRail } from "./features/shell/rail/CompactRail";
 import { QuickOpen } from "./features/search/QuickOpen";
-import { SessionSidebar } from "./features/shell/sessions/SessionSidebar";
 import { TitleBar } from "./features/shell/tabs/TitleBar";
 import { FileView } from "./features/shell/files/FileView";
 import { MobileShell } from "./features/shell/rail/MobileShell";
@@ -48,13 +51,12 @@ function useMobileLayout(forced: boolean) {
   return forced || matches;
 }
 
-function WorkArea({ withSessions }: { withSessions: boolean }) {
+function WorkArea() {
   const panel = useWorkspace((state) => state.panel);
 
   const cwd = useWorkspace((state) => state.cwd);
   const connectionId = useWorkspace((state) => state.connectionId);
   const projectRailOpen = useShell((state) => state.projectRailOpen);
-  const sessionSidebarOpen = useShell((state) => state.sessionSidebarOpen);
   const layout = useActiveWorkspace((workspace) => workspace.layout);
   const panes = useActiveWorkspace((workspace) => workspace.panes);
   const focusPane = useShell((state) => state.focusPane);
@@ -216,10 +218,7 @@ function WorkArea({ withSessions }: { withSessions: boolean }) {
         {/* 红绿灯归属：展开栏开着→展开栏头部让位；侧栏真的画出来→侧栏头部让位；
             侧栏没画（关掉了、或首页/没有项目）→ 标题栏自己让位，不能被 tab 盖住。 */}
         <TitleBar
-          railsHidden={
-            !projectRailOpen &&
-            (!withSessions || !sessionSidebarOpen || panel === "mobile-access" || panel === "notes")
-          }
+          railsHidden={!projectRailOpen}
         />
         <MetricsSync />
         {/* 终端属于工作区，不属于某一个会话面板：关掉聊天面板时 shell 必须继续跑，
@@ -335,12 +334,9 @@ export default function App() {
   // 壳层的连接/scope 同步只挂一次：所有组件共享同一个会话控制器。
   useWorkspaceTabsEffects();
   const projectRailOpen = useShell((state) => state.projectRailOpen);
-  const sessionSidebarOpen = useShell((state) => state.sessionSidebarOpen);
-  const panel = useWorkspace((state) => state.panel);
   const cwd = useWorkspace((state) => state.cwd);
   const homeDir = useWorkspace((state) => state.homeDir);
   const workspaceMode = useWorkspace((state) => state.workspaceMode);
-  const chromeless = panel === "settings" || panel === "inbox" || panel === "search" || panel === "automations" || panel === "mobile-access" || panel === "notes";
   // Without a project folder the session column has nothing to list (home mode
   // and the empty state both render only "没有项目文件夹"), so the shell shows
   // only the rail and the new-session surface.
@@ -355,10 +351,22 @@ export default function App() {
   const mobile = useMobileLayout(bootstrap.runtimeTarget === "mobile");
   useWorkspaceShortcuts(online, (value) => {
     const shell = useShell.getState();
-    const next = typeof value === "function" ? value(shell.sessionSidebarOpen) : value;
-    shell.setSessionSidebarOpen(next);
+    const next = typeof value === "function" ? value(shell.projectRailOpen) : value;
+    shell.setProjectRailOpen(next);
   });
   useDesktopNotifications();
+  // agent 写下的产物从 status 通道接过来落库；挂一次就够。
+  useArtifactIntake();
+  // Quick composer 发出去的文字在这里落地（当前会话 / 后台标签页）。
+  useQuickSend();
+  // 唤起小窗的全局快捷键：主窗口活着就一直在（小窗自己起不了快捷键）。
+  useEffect(() => {
+    let release: (() => void) | undefined;
+    void installQuickComposerShortcut().then((off) => {
+      release = off;
+    });
+    return () => release?.();
+  }, []);
   // The browser column's own startup (orphaned views, `browser:open`) belongs to
   // the browser feature, not to this root.
   useBrowserViews();
@@ -394,10 +402,9 @@ export default function App() {
         ) : collapsedRailMode === "compact" ? (
           <CompactRail />
         ) : null}
-        {withSessions ? (
-          <SessionSidebar visible={sessionSidebarOpen && !chromeless} railVisible={projectRailOpen} onSearch={openSearch} />
-        ) : null}
-        <WorkArea withSessions={withSessions} />
+        <WorkArea />
+        {/* 检视栏是窗口的一列，和浏览器列同侧：文件与历史属于这个项目，不属于某次会话。 */}
+        <InspectorPanel visible={withSessions} online={online} />
         {/* 浏览器列是窗口的一列，不是任何工作区/面板里的一格：切标签、切面板、
             关面板都带着它的页面一起留下。手机端没有这一栏。 */}
         <BrowserDock />
