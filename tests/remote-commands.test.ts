@@ -123,6 +123,17 @@ const EXCLUDED: Record<string, string> = {
   save_speech_config: "writes the desktop's speech.json",
   save_speech_api_key: "writes the desktop's auth.json",
   transcribe_audio: "desktop voice input; the phone has no mic permission plumbing yet",
+  // 产物存在桌面端的 app_data 目录里，手机既没有那块盘也没有它的一份副本。
+  // 手机要读产物是**应该做**的事，但那要在 Host 上开一条读通道，是另一件事。
+  artifacts_list: "reads the desktop's app_data; the phone has no copy of that store",
+  artifacts_get: "reads the desktop's app_data; the phone has no copy of that store",
+  artifacts_upsert: "writes the desktop's app_data; the phone has no copy of that store",
+  artifacts_delete: "writes the desktop's app_data; the phone has no copy of that store",
+  // quick composer 是一个桌面窗口（全局快捷键 + 无边框小窗），手机上不存在这个形状。
+  quick_toggle: "shows a desktop-only window; the phone has no global shortcut",
+  quick_hide: "hides a desktop-only window",
+  quick_send: "delivers into the desktop's main window",
+  quick_scope: "tells the desktop-only window where the main window is",
 }
 
 describe("remote command boundary", () => {

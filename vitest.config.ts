@@ -15,6 +15,7 @@ export default defineConfig({
       "src/lib/**/*.test.ts",
       "src/features/shell/**/*.test.tsx",
       "src/features/artifacts/**/*.test.tsx",
+      "src/components/**/*.test.tsx",
     ],
     environment: "happy-dom",
   },

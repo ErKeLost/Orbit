@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../lib/native";
 import { listen } from "@tauri-apps/api/event";
 
 /** 主窗口广播过来的当前范围（`quick_composer.rs` 的 `QUICK_SCOPE_EVENT`）。 */

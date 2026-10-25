@@ -1,4 +1,5 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "../../lib/native";
 
 /** 新增一类产物时，渲染器和存储要一起扩；这个 union 就是那份清单。 */
 export type ArtifactKind = "document" | "html";
