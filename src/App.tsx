@@ -212,9 +212,13 @@ function WorkArea() {
   // `hidden` 收起来但不卸载，终端 PTY、浏览器页、编辑器状态都不会因为“去设置看一下”
   // 而重启。收起时 `BrowserTab` 会把原生子视图 hide（它不属于页面布局，不主动藏就会
   // 浮在设置界面上面）。
+  // 但「移动端 / 笔记 / 产物 / 命令」这类侧栏页面就画在这个工作区里（`Panel`），所以
+  // 只有那四个整页 overlay 才把整块 `hidden`——否则挂在这里的 `Panel` 会跟着一起
+  // 藏掉，只剩一片黑。
+  const overlayPanel = panel === "settings" || panel === "inbox" || panel === "search" || panel === "automations";
   return (
     <>
-      <section className={panel === "chat" ? "flex min-h-0 min-w-0 flex-1 flex-col" : "hidden"}>
+      <section className={overlayPanel ? "hidden" : "flex min-h-0 min-w-0 flex-1 flex-col"}>
         {/* 红绿灯归属：展开栏开着→展开栏头部让位；侧栏真的画出来→侧栏头部让位；
             侧栏没画（关掉了、或首页/没有项目）→ 标题栏自己让位，不能被 tab 盖住。 */}
         <TitleBar

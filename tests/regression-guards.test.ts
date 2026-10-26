@@ -179,6 +179,19 @@ describe("panel switches keep the work area alive", () => {
     expect(workArea).toMatch(/className=\{panel === "chat" \? "relative min-h-0 min-w-0 flex-1" : "hidden"\}/)
   })
 
+  test("rail panels are painted in the visible work area, not inside a hidden one", () => {
+    // 移动端 / 笔记 / 产物 / 命令 are all `Panel`, mounted inside the chat
+    // section. When that whole section was `hidden` for every panel except chat,
+    // those pages rendered into a hidden box: the column beside the rail stayed
+    // black while the panel was "open".
+    const app = readFileSync("src/App.tsx", "utf8")
+    const workArea = app.slice(app.indexOf("function WorkArea("), app.indexOf("export default function App("))
+    expect(workArea).toContain('const overlayPanel = panel === "settings" || panel === "inbox" || panel === "search" || panel === "automations"')
+    expect(workArea).toContain('className={overlayPanel ? "hidden" : "flex min-h-0 min-w-0 flex-1 flex-col"}')
+    const panelAt = workArea.indexOf("{panel === \"chat\" ? null : <Panel />}")
+    expect(panelAt).toBeGreaterThan(workArea.indexOf("<section className={overlayPanel"))
+  })
+
   test("a zero-sized browser stage hides the native view instead of leaving it floating", () => {
     // The OS view is a sibling of the document, not part of layout: when the grid
     // is hidden nobody reports a rectangle, and an un-hidden view stays drawn on
