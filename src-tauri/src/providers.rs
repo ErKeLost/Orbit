@@ -513,6 +513,7 @@ async fn normalized_model_catalog(
     api_key: &str,
     api: &str,
     auth_header: bool,
+    context_window: Option<u64>,
 ) -> Result<Value, String> {
     let raw = fetch_model_catalog(base_url, models_url, api_key, api, auth_header).await?;
     let dev = modelsdev_catalog().await;
@@ -525,12 +526,14 @@ async fn normalized_model_catalog(
             continue;
         };
         let mut meta = normalize_provider_model(item);
+        let context = meta.context_window.filter(|value| *value > 0).or(context_window).unwrap_or(128000);
         if let Some(entry) = dev
             .as_ref()
             .and_then(|dev| modelsdev_lookup(dev, provider, base_url, id))
         {
             merge_meta(&mut meta, normalize_modelsdev_model(entry));
         }
+        meta.context_window = Some(context);
         let mut entry = meta.to_json();
         entry["id"] = Value::from(id);
         entry["raw"] = item.clone();
@@ -597,6 +600,38 @@ fn pi_model_from_meta(entry: &Value) -> Option<Value> {
         model["cost"] = Value::Object(cost);
     }
     Some(model)
+}
+
+/// Fill missing model capabilities without overriding explicit server metadata.
+fn apply_provider_defaults(model: &mut Value, defaults: &Value) {
+    if model.get("contextWindow").is_none() {
+        model["contextWindow"] = json!(defaults["contextWindow"].as_u64().unwrap_or(128000));
+    }
+    // Effort levels are per model: a provider can serve models with very
+    // different ladders, so nothing is inferred from the provider alone.
+    let Some(levels) = model
+        .get("id")
+        .and_then(Value::as_str)
+        .and_then(|id| defaults["modelEfforts"].get(id))
+        .and_then(|entry| entry.get("levels"))
+        .and_then(Value::as_array)
+        .filter(|levels| !levels.is_empty())
+    else {
+        return;
+    };
+    // Explicit configuration is authoritative. Null disables every unselected
+    // level; omitting keys would let Pi fall back to inferred defaults.
+    let mut map = json!({"off":null,"minimal":null,"low":null,"medium":null,"high":null,"xhigh":null,"max":null});
+    if let Some(existing) = model.get("thinkingLevelMap").and_then(Value::as_object) {
+        for (key, value) in existing {
+            map[key] = value.clone();
+        }
+    }
+    for level in levels.iter().filter_map(Value::as_str) {
+        map[level] = json!(level);
+    }
+    model["reasoning"] = json!(true);
+    model["thinkingLevelMap"] = map;
 }
 
 fn provider_store_path(dir: &std::path::Path) -> PathBuf {
@@ -704,6 +739,8 @@ pub async fn list_provider_models(provider: String) -> Result<Value, String> {
         .and_then(Value::as_bool)
         .unwrap_or(true);
     let models_url = provider_config.get("modelsUrl").and_then(Value::as_str);
+    let store = load_provider_store(&dir)?;
+    let context_window = store["providers"][&provider]["contextWindow"].as_u64();
     normalized_model_catalog(
         &provider,
         base_url,
@@ -711,6 +748,7 @@ pub async fn list_provider_models(provider: String) -> Result<Value, String> {
         &stored_api_key(&auth, &provider).unwrap_or_default(),
         api,
         auth_header,
+        context_window,
     )
     .await
 }
@@ -743,6 +781,8 @@ pub async fn list_provider_profiles() -> Result<Value, String> {
             "modelsUrl": saved.get("modelsUrl").and_then(Value::as_str).or_else(|| config.get("modelsUrl").and_then(Value::as_str)),
             "api": saved.get("api").and_then(Value::as_str).or_else(|| config.get("api").and_then(Value::as_str)),
             "authHeader": saved.get("authHeader").and_then(Value::as_bool).or_else(|| config.get("authHeader").and_then(Value::as_bool)),
+            "contextWindow": saved.get("contextWindow"),
+            "modelEfforts": saved.get("modelEfforts"),
             "isDefault": default_provider == Some(id.as_str()),
             "defaultModel": if default_provider == Some(id.as_str()) { default_model } else { saved.get("defaultModel").and_then(Value::as_str) },
             "models": config.get("models").cloned().unwrap_or_else(|| Value::Array(Vec::new())),
@@ -761,6 +801,7 @@ pub async fn probe_provider_models(
     api_key: Option<String>,
     auth_header: bool,
     models_url: Option<String>,
+    context_window: Option<u64>,
 ) -> Result<Value, String> {
     if !valid_provider_id(&provider) {
         return Err("Provider ID 只能包含字母、数字、-、_、.".into());
@@ -781,11 +822,16 @@ pub async fn probe_provider_models(
         &key,
         &api,
         auth_header,
+        context_window.filter(|value| *value > 0),
     )
     .await
 }
 
 #[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the Tauri command mirrors the provider form field by field"
+)]
 pub async fn save_provider(
     provider: String,
     name: Option<String>,
@@ -794,7 +840,35 @@ pub async fn save_provider(
     api: String,
     api_key: Option<String>,
     auth_header: bool,
+    context_window: Option<u64>,
+    default_effort: Option<String>,
+    model_efforts: Option<Value>,
 ) -> Result<Value, String> {
+    if context_window == Some(0) {
+        return Err("上下文长度必须大于 0".into());
+    }
+    let model_efforts = model_efforts.unwrap_or_else(|| json!({}));
+    if !model_efforts.is_object() && !model_efforts.is_null() {
+        return Err("模型 Effort 配置格式不正确".into());
+    }
+    if let Some(models) = model_efforts.as_object() {
+        for (id, entry) in models {
+            let levels = entry
+                .get("levels")
+                .and_then(Value::as_array)
+                .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+                .unwrap_or_default();
+            if levels.iter().any(|level| !matches!(*level, "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max")) {
+                return Err(format!("{id} 包含不支持的 Effort 档位"));
+            }
+            if let Some(level) = entry.get("default").and_then(Value::as_str) {
+                if !levels.contains(&level) {
+                    return Err(format!("{id} 的默认 Effort 不在其支持档位中"));
+                }
+            }
+        }
+    }
+    let _ = default_effort;
     if !valid_provider_id(&provider) {
         return Err("Provider ID 只能包含字母、数字、-、_、.".into());
     }
@@ -866,6 +940,8 @@ pub async fn save_provider(
         .map(|value| value.trim().trim_end_matches('/'))
         .filter(|value| !value.is_empty());
     let mut entry = json!({"name":name,"baseUrl":base_url.trim_end_matches('/'),"modelsUrl":normalized_models_url,"api":api,"authHeader":auth_header});
+    entry["contextWindow"] = json!(context_window);
+    entry["modelEfforts"] = model_efforts;
     if let Some(key) = api_key
         .as_ref()
         .filter(|value| !value.trim().is_empty())
@@ -950,9 +1026,12 @@ pub async fn sync_provider_models(provider: String) -> Result<Value, String> {
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let store = load_provider_store(&dir)?;
+    let defaults = &store["providers"][&provider];
     let models = remote
         .iter()
         .filter_map(pi_model_from_meta)
+        .map(|mut model| { apply_provider_defaults(&mut model, defaults); model })
         .collect::<Vec<_>>();
     if models.is_empty() {
         return Err("模型目录没有可同步的模型".into());
@@ -997,7 +1076,10 @@ fn set_default_model_in(
         .iter()
         .any(|model| model.get("id").and_then(Value::as_str) == Some(model_id.as_str()));
     if !exists {
-        model_list.push(json!({"id": model_id, "input": ["text"]}));
+        let store = load_provider_store(dir)?;
+        let mut model = json!({"id": model_id, "input": ["text"]});
+        apply_provider_defaults(&mut model, &store["providers"][&provider]);
+        model_list.push(model);
         fs::write(
             &models_path,
             serde_json::to_string_pretty(&models).map_err(|e| e.to_string())? + "\n",
@@ -1118,6 +1200,29 @@ mod custom_model_cost_tests {
 #[cfg(test)]
 mod metadata_tests {
     use super::*;
+
+    #[test]
+    fn effort_levels_are_configured_per_model() {
+        let defaults = json!({
+            "contextWindow": 200000,
+            "modelEfforts": {
+                "sol": {"levels": ["low", "xhigh"], "default": "xhigh"},
+                "plain": {"levels": []}
+            }
+        });
+        let mut configured = json!({"id": "sol"});
+        apply_provider_defaults(&mut configured, &defaults);
+        assert_eq!(configured["contextWindow"], json!(200000));
+        assert_eq!(configured["thinkingLevelMap"]["low"], json!("low"));
+        assert_eq!(configured["thinkingLevelMap"]["xhigh"], json!("xhigh"));
+        assert!(configured["thinkingLevelMap"]["high"].is_null());
+
+        // A model with no configured list keeps whatever it declared itself.
+        let mut untouched = json!({"id": "other"});
+        apply_provider_defaults(&mut untouched, &defaults);
+        assert!(untouched.get("thinkingLevelMap").is_none());
+        assert_eq!(untouched["contextWindow"], json!(200000));
+    }
 
     fn dev_catalog() -> Value {
         json!({

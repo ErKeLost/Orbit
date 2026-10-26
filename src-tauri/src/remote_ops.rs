@@ -640,6 +640,7 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
                 opt::<String>(&args, "apiKey")?,
                 flag(&args, "authHeader")?,
                 opt::<String>(&args, "modelsUrl")?,
+                opt::<u64>(&args, "contextWindow")?,
             )
             .await?,
         ),
@@ -652,6 +653,9 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
                 text(&args, "api")?,
                 opt::<String>(&args, "apiKey")?,
                 flag(&args, "authHeader")?,
+                opt::<u64>(&args, "contextWindow")?,
+                opt::<String>(&args, "defaultEffort")?,
+                opt::<serde_json::Value>(&args, "modelEfforts")?,
             )
             .await?,
         ),
