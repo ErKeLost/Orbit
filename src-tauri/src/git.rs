@@ -735,7 +735,7 @@ struct StatusEntry {
 /// Parse the NUL-separated porcelain-v2 stream. Ordinary entries have six
 /// metadata fields after XY; unmerged entries have eight. Paths are the final
 /// field and may contain spaces, so splitting the whole record is not allowed.
-fn status_record<'a>(record: &'a str, metadata: usize) -> Option<(&'a str, &'a str)> {
+fn status_record(record: &str, metadata: usize) -> Option<(&str, &str)> {
     let mut fields = record.splitn(metadata + 3, ' ');
     fields.next()?;
     let xy = fields.next()?;
