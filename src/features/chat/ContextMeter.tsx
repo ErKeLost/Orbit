@@ -17,6 +17,9 @@ const STROKE = 2;
 const RADIUS = (SIZE - STROKE) / 2;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+// 触发线不能四舍五入成「1M」：1M 窗口的线是 1,032,192（窗口 - 16K 预留），
+// 印成 1M 会让人以为「压到满窗口才动」，而卡片上一行刚好写着 98.4%。
+const precise = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 });
 
 function ringClass(ratio: number) {
   if (ratio >= 0.9) return "text-red-400";
@@ -122,16 +125,34 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
   // 一条 1M 窗口的会话在 98% 也可能还没压缩 —— 这根刻度就是那条线。
   const compactionRuntime = runtime?.compaction;
   const threshold = compactionThreshold(usage, compactionRuntime);
+  // 压缩事件的结果只在 telemetry 里留一份：失败的那次不会在 transcript 上留痕，
+  // 所以卡片得自己说出来，否则用户只看到「越线了但什么都没发生」。
+  const compactionEvent = useWorkspace((state) => state.telemetry.compaction);
 
   const ratio = usage ? Math.min(1, Math.max(0, usage.used / usage.window)) : compacting ? 0.25 : null;
   if (ratio === null) return null;
+  // 环只能画到 100%，但百分比是账不是图：超过窗口就该写 103%，
+  // 否则「满了却不动」看上去像显示坏了。
+  const usedRatio = usage && usage.window > 0 ? Math.max(0, usage.used / usage.window) : ratio;
   // The ring, the headline and the bar share one scale: calm is neutral, 75%
   // turns amber, 90% turns red — the same thresholds everywhere.
-  const levelClass = ratio >= 0.9 ? "text-red-400" : ratio >= 0.75 ? "text-amber-400" : "text-content";
-  const headline = compacting ? "Compacting context" : `${Math.round(ratio * 100)}% context used`;
+  const levelClass = usedRatio >= 0.9 ? "text-red-400" : usedRatio >= 0.75 ? "text-amber-400" : "text-content";
+  const headline = compacting ? "Compacting context" : `${Math.round(usedRatio * 100)}% context used`;
   const classified = CONTEXT_SOURCE_KEYS.reduce((total, key) => total + buckets[key], 0);
   const rows = CONTEXT_SOURCE_KEYS.filter((key) => buckets[key] > 0);
   const hasBreakdown = usage != null && !compacting && classified > 0;
+  // 越过触发线之后卡片要有一句话：是在等这一轮结束、是在压、还是上次压失败了。
+  const overLine = usage != null && threshold != null && usage.used >= threshold.tokens;
+  const compactionError = compactionEvent?.status === "error" ? compactionEvent.error ?? "未返回原因" : null;
+  const statusNote = (() => {
+    if (!usage || compacting) return null;
+    if (compactionRuntime?.enabled === false) return usedRatio >= 0.9 ? "自动压缩已关闭：需要手动压缩" : null;
+    if (!overLine) return null;
+    if (compactionError) return `上次压缩失败：${compactionError}`;
+    const where = usage.used > usage.window ? "已超出窗口" : "已越过压缩线";
+    return running ? `${where}：本轮工具执行完就会压缩` : `${where}：下一次回复结束后压缩`;
+  })();
+  const statusNoteClass = `line-clamp-2 text-[10.5px] leading-4 ${compactionError ? "text-red-400" : "text-content/40"}`;
 
   return (
     <div ref={root} className="relative shrink-0" onMouseEnter={keepOpen} onMouseLeave={scheduleClose}>
@@ -179,7 +200,7 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
                     <span className={`font-mono text-[26px] font-semibold leading-none tracking-tight ${levelClass}`}>{compact.format(usage.used)}</span>
                     <span className="text-[10.5px] leading-4 text-content/40">/ {compact.format(usage.window)} tokens</span>
                   </div>
-                  <span className={`shrink-0 font-mono text-[13px] tabular-nums ${levelClass}`}>{percentLabel(ratio)}</span>
+                  <span className={`shrink-0 font-mono text-[13px] tabular-nums ${levelClass}`}>{percentLabel(usedRatio)}</span>
                 </div>
 
                 <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-content/10" aria-hidden>
@@ -205,9 +226,10 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
                 {threshold != null ? (
                   <div className="flex items-center justify-between text-[10.5px] leading-4 text-content/40">
                     <span>Compacts at {percentLabel(threshold.ratio)}</span>
-                    <span className="tabular-nums">{compact.format(threshold.tokens)} tokens</span>
+                    <span className="tabular-nums">{precise.format(threshold.tokens)} tokens</span>
                   </div>
                 ) : null}
+                {statusNote ? <div className={statusNoteClass} title={statusNote}>{statusNote}</div> : null}
 
                 <div>
                   {used > 0 ? (
