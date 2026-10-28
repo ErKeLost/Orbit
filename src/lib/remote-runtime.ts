@@ -67,17 +67,40 @@ function errorMessage(error: unknown): string {
 }
 
 /**
+ * The failure in the few characters a phone has room for.
+ *
+ * The full text reads like "Orbit Host 认证握手超时", which is accurate and
+ * unreadable twice over next to a route name in a 10px line. The order of the
+ * checks is the order of specificity: a handshake timeout is a handshake
+ * problem, not merely a timeout.
+ */
+function shortReason(message: string): string {
+  if (/握手/.test(message)) return "握手失败"
+  if (/身份|协议|另一台/.test(message)) return "不是这台电脑"
+  if (/令牌|认证/.test(message)) return "认证失败"
+  if (/超时/.test(message)) return "超时"
+  if (/关闭|断开/.test(message)) return "连接被关闭"
+  // "无法连接 Orbit Host" is the socket failing to open. After a route name
+  // it must not repeat the sentence's own verb.
+  if (/无法连接|连不上/.test(message)) return "没响应"
+  return message.length > 14 ? `${message.slice(0, 14)}…` : message
+}
+
+/**
  * What to tell the user when every route refused.
  *
  * "All promises were rejected" is the message of the AggregateError itself, not
  * of any attempt, so it says nothing about whether the phone is on the wrong
  * Wi-Fi, the Host is off, or the relay never registered. Naming each route and
  * its own failure is the whole point of trying them in parallel.
+ *
+ * The hint after ` · ` is the second line on the pairing screen, so it stays a
+ * complete sentence: the screen splits on that separator to style it apart.
  */
 export function remoteFailureMessage(subject: string, targets: readonly RemoteEndpoint[], reasons: ReadonlyMap<RemoteEndpoint, string>): string {
-  const parts = targets.map(endpoint => `${remoteRouteLabel(endpoint)}（${reasons.get(endpoint) ?? "未响应"}）`)
+  const parts = targets.map(endpoint => `${remoteRouteLabel(endpoint)}（${shortReason(reasons.get(endpoint) ?? "未响应")}）`)
   const relayFailed = targets.some(endpoint => endpoint.mode === "relay" && reasons.has(endpoint))
-  const hint = relayFailed ? " · 电脑端「移动访问」是否已开启、中转服务器是否已连上？" : ""
+  const hint = relayFailed ? " · 电脑端「移动访问」是否已开启、中转服务器是否在线？" : ""
   return `${subject}：${parts.join("；")}${hint}`
 }
 
@@ -227,7 +250,7 @@ class StableRemoteRuntime {
       })))
     } catch {
       this.closeCandidates()
-      throw new Error(remoteFailureMessage("连不上 Orbit Host", targets, reasons))
+      throw new Error(remoteFailureMessage("连不上电脑", targets, reasons))
     }
     // Losing the route would mean acting on a connection nobody can name, which
     // is a bug here rather than a page condition.
@@ -584,7 +607,7 @@ export async function screenRemoteChannel(handlers: RemoteClientHandlers): Promi
     winner = await Promise.any(attempts)
     return winner
   } catch {
-    throw new Error(remoteFailureMessage("屏幕通道连不上 Orbit Host", endpoints, reasons))
+    throw new Error(remoteFailureMessage("屏幕通道连不上电脑", endpoints, reasons))
   } finally {
     for (const attempt of attempts) {
       void attempt.then(candidate => {

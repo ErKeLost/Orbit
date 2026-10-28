@@ -455,6 +455,19 @@
 /* tailwind red-400, same red the app surfaces use */
 .remote-pairing-error { color: #f87171; }
 
+/*
+ * Two ranks inside one alert: the route that failed, then what to check.
+ * `overflow-wrap` is what keeps a bare hostname such as
+ * `orbit-pi.duckdns.org` from pushing the block wider than the input above it.
+ */
+.remote-pairing-error-body { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.remote-pairing-error-body strong { font-weight: 500; overflow-wrap: anywhere; }
+.remote-pairing-error-body small {
+  color: color-mix(in srgb, #f87171 62%, var(--pairing-muted));
+  font-size: 0.94em;
+  overflow-wrap: anywhere;
+}
+
 .remote-pairing-error svg,
 .remote-pairing-security svg { width: 13px; height: 13px; flex: none; margin-top: 1px; }
 
@@ -562,7 +575,9 @@
   .remote-pairing-form > label { font-size: 11px; }
   .remote-pairing-input-shell [data-slot="input"] { height: 42px; padding-right: 42px; border-radius: 11px; font-size: 11px; }
   .remote-pairing-input-shell [data-slot="button"] { right: 4px; width: 34px; height: 34px; }
-  .remote-pairing-error { max-height: 32px; overflow: hidden; font-size: 10px; line-height: 1.45; }
+  .remote-pairing-error { max-height: none; font-size: 10px; line-height: 1.45; }
+  /* Two lines is all the first rank may take; the hint underneath is never cut. */
+  .remote-pairing-error-body strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
   .remote-pairing-connect { min-height: 42px !important; height: 42px !important; margin-top: 3px !important; border-radius: 11px !important; font-size: 13px !important; }
   .remote-pairing-security { margin-top: 9px; font-size: 10px; line-height: 1.4; }
 }
