@@ -67,7 +67,7 @@ export function RailAction({ label, icon: Icon, onClick, active = false, shortcu
       onClick={onClick}
       disabled={!onClick}
       aria-label={ariaLabel ?? label}
-      className={`relative flex h-8 w-full items-center gap-2 rounded-md px-2 text-left ${
+      className={`rail-row relative flex h-8 w-full items-center gap-2 rounded-md px-2 text-left ${
         active ? "bg-selection text-content" : "text-content/50 hover:bg-content/10 hover:text-content"
       } disabled:cursor-default disabled:opacity-40`}
     >
@@ -86,13 +86,13 @@ function RailSearch({ onClick, active }: { onClick?: () => void; active?: boolea
       onClick={onClick}
       disabled={!onClick}
       aria-label={`搜索 (${MOD}K)`}
-      className={`relative flex h-8 w-full items-center gap-2 rounded-md border border-content/8 px-1.5 text-left ${
+      className={`rail-row rail-search-row relative flex h-8 w-full items-center gap-2 rounded-md border border-content/8 px-1.5 text-left ${
         active ? "bg-selection text-content" : "text-content/50 hover:bg-content/10 hover:text-content"
       } disabled:cursor-default disabled:opacity-40`}
     >
       <Search className="size-4 shrink-0 opacity-70" strokeWidth={1.75} />
       <span className="min-w-0 flex-1 truncate text-sm font-medium leading-tight">搜索</span>
-      <span aria-hidden className="shrink-0 text-[11px] text-content/40">{MOD}K</span>
+      <span aria-hidden className="rail-shortcut shrink-0 text-[11px] text-content/40">{MOD}K</span>
     </button>
   );
 }
@@ -260,7 +260,7 @@ function RailSessionCard({
   );
 }
 
-const NAV: { id: Panel; label: string; icon: IconComponent }[] = [
+export const NAV: { id: Panel; label: string; icon: IconComponent }[] = [
   { id: "inbox", label: "收件箱", icon: InboxIcon },
   { id: "notes", label: "笔记", icon: File },
   { id: "artifacts", label: "产物", icon: ChartBreakoutSquare },
@@ -513,15 +513,19 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
             </div>
             <RailSearch onClick={onSearch} />
             <div className="mt-0.5" />
-            {NAV.map((item) => (
-              <RailAction
-                key={item.id}
-                label={item.label}
-                icon={item.icon}
-                active={panel === item.id}
-                onClick={() => useWorkspace.getState().set({ panel: panel === item.id ? "chat" : item.id })}
-              />
-            ))}
+            {NAV
+              // 「移动端」是电脑上的 Host 页面（开关 + 二维码），手机点进去只能看自己的配对页，
+              // 所以在手机上不占一行。
+              .filter((item) => !(runtimeTarget === "mobile" && item.id === "mobile-access"))
+              .map((item) => (
+                <RailAction
+                  key={item.id}
+                  label={item.label}
+                  icon={item.icon}
+                  active={panel === item.id}
+                  onClick={() => useWorkspace.getState().set({ panel: panel === item.id ? "chat" : item.id })}
+                />
+              ))}
           </div>
 
           <div ref={lockOverscroll} className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-none pb-2">

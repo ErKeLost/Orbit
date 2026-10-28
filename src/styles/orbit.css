@@ -398,6 +398,71 @@ html.theme-light {
     padding-top: var(--safe-top);
   }
 
+  /*
+   * 手机上的侧栏不是「更窄的桌面侧栏」，它得能用拇指点。
+   *
+   * 桌面那套 32px 行高、13px 标题、`Ctrl+K` 提示是为指针写的：32px 在鼠标上
+   * 刚好，在手指上就是误触。抽屉是 portal 到 body 的，不在 `.mobile-shell`
+   * 里，所以两处作用域都要写。
+   */
+  .mobile-shell .rail-row,
+  .mobile-drawer .rail-row {
+    height: 44px;
+    padding-inline: 10px;
+    border-radius: 10px;
+    font-size: 14.5px;
+  }
+
+  .mobile-shell .rail-row > span,
+  .mobile-drawer .rail-row > span {
+    font-size: 14.5px;
+    font-weight: 550;
+    line-height: 1.2;
+  }
+
+  .mobile-shell .rail-row svg,
+  .mobile-drawer .rail-row svg {
+    width: 18px;
+    height: 18px;
+    opacity: 0.85;
+  }
+
+  /* 手机上永远没有键盘：快捷键提示只会让人找键盘。 */
+  .mobile-shell .rail-shortcut,
+  .mobile-drawer .rail-shortcut {
+    display: none;
+  }
+
+  /* 会话卡片：两行文字，行高按拇指走，内边距比桌面宽一档。 */
+  .mobile-shell [data-session-card],
+  .mobile-drawer [data-session-card] {
+    min-height: 56px;
+    padding: 9px 11px;
+    border-radius: 11px;
+  }
+
+  .mobile-shell [data-session-card] .line-clamp-1,
+  .mobile-drawer [data-session-card] .line-clamp-1 {
+    font-size: 14.5px;
+    line-height: 1.3;
+  }
+
+  /* 抽屉顶部的「会话 / 项目」切换：28px 的标签在拇指下太窄。 */
+  .mobile-drawer [role="tablist"] > button {
+    height: 34px;
+    font-size: 13px;
+  }
+
+  /* 会话页自带一行「工作区」标题和 macOS 拖拽区——抽屉已经有自己的头了。 */
+  .mobile-drawer .body-glass > div[data-tauri-drag-region] {
+    display: none;
+  }
+
+  /* 抽屉底部的列表不能贴着 Home 指示条。 */
+  .mobile-drawer [data-session-list] {
+    padding-bottom: calc(20px + var(--safe-bottom));
+  }
+
   .mobile-shell [data-composer-box] {
     border-radius: 14px;
   }

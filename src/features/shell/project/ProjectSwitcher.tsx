@@ -243,7 +243,7 @@ export function ProjectSwitcher({
           event.preventDefault();
           setOpen(true);
         }}
-        className="flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-[13px] font-semibold leading-tight hover:bg-content/8 focus-visible:bg-content/8 aria-expanded:bg-content/8"
+        className="rail-row rail-project-row flex h-8 w-full min-w-0 items-center gap-2 rounded-md px-2 text-left text-[13px] font-semibold leading-tight hover:bg-content/8 focus-visible:bg-content/8 aria-expanded:bg-content/8"
       >
         {current ? (
           <ProjectMark project={current} />

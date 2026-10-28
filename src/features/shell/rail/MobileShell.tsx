@@ -9,7 +9,7 @@ import { SettingsView } from "../../settings/SettingsView";
 import { SettingsNav } from "../../settings/SettingsNav";
 import { Panel } from "../../../components/Panels";
 import { FileView } from "../files/FileView";
-import { ProjectRail } from "../project/ProjectRail";
+import { MobileProjectList } from "./MobileProjectList";
 import { SessionSidebar } from "../sessions/SessionSidebar";
 import { TitleIconButton } from "../chrome";
 import { useActiveWorkspace, useShell } from "../shellStore";
@@ -176,7 +176,9 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
                   ) : drawerTab === "sessions" ? (
                     <SessionSidebar visible railVisible onSearch={onSearch} />
                   ) : (
-                    <ProjectRail visible onSearch={onSearch} />
+                    // 「项目」页就是项目：一行一个，点一下切过去。抽屉里不需要
+                    // 第二份会话列表。
+                    <MobileProjectList onNavigate={() => setDrawer(false)} />
                   )}
                 </div>
                 {panel !== "settings" ? (

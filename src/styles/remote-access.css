@@ -533,9 +533,13 @@
 @media (max-width: 520px) {
   .remote-pairing-screen {
     place-items: start center;
+    /* 竖屏够高时整块居中，不够高时从顶部开始滚动 —— `safe` 就是这两件事的分界。 */
+    align-content: safe center;
     height: 100dvh;
     min-height: 0;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: max(20px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
   }
 
@@ -551,7 +555,7 @@
   .remote-pairing-brand img { width: min(30vw, 15dvh, 128px); height: auto; }
 
   .remote-pairing-heading h1 { font-size: clamp(23px, 4dvh, 30px); }
-  .remote-pairing-heading > span { margin-top: 6px; font-size: 12px; line-height: 1.45; }
+  .remote-pairing-heading > span { margin-top: 6px; font-size: 12.5px; line-height: 1.5; }
 
   .remote-pairing-scan-card {
     grid-template-columns: 46px minmax(0, 1fr) 17px;
@@ -566,20 +570,23 @@
   .remote-pairing-scan-icon svg { width: 25px; height: 25px; }
   .remote-pairing-scan-card > span:nth-child(2) { gap: 2px; }
   .remote-pairing-scan-card strong { font-size: 15px; line-height: 1.25; }
-  .remote-pairing-scan-card small { font-size: 10.5px; }
+  .remote-pairing-scan-card small { font-size: 11px; }
   .remote-pairing-scan-card > svg { width: 18px; height: 18px; }
 
   .remote-pairing-divider { gap: 10px; margin: clamp(10px, 1.6dvh, 14px) 0 8px; font-size: 11px; }
 
-  .remote-pairing-form { gap: 6px; }
-  .remote-pairing-form > label { font-size: 11px; }
-  .remote-pairing-input-shell [data-slot="input"] { height: 42px; padding-right: 42px; border-radius: 11px; font-size: 11px; }
-  .remote-pairing-input-shell [data-slot="button"] { right: 4px; width: 34px; height: 34px; }
-  .remote-pairing-error { max-height: none; font-size: 10px; line-height: 1.45; }
+  .remote-pairing-form { gap: 8px; }
+  .remote-pairing-form > label { font-size: 12px; }
+  /* 配对链接是一串要在拇指下读完的字符：11px 的等宽字在手机上只是噪点。 */
+  .remote-pairing-input-shell [data-slot="input"] { height: 46px; padding-right: 44px; border-radius: 12px; font-size: 12.5px; }
+  .remote-pairing-input-shell [data-slot="button"] { right: 4px; width: 38px; height: 38px; }
+  .remote-pairing-error { max-height: none; font-size: 11px; line-height: 1.5; }
   /* Two lines is all the first rank may take; the hint underneath is never cut. */
+  .remote-pairing-error-body { gap: 3px; }
   .remote-pairing-error-body strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-  .remote-pairing-connect { min-height: 42px !important; height: 42px !important; margin-top: 3px !important; border-radius: 11px !important; font-size: 13px !important; }
-  .remote-pairing-security { margin-top: 9px; font-size: 10px; line-height: 1.4; }
+  .remote-pairing-error-body small { font-size: 10.5px; line-height: 1.45; }
+  .remote-pairing-connect { min-height: 46px !important; height: 46px !important; margin-top: 4px !important; border-radius: 12px !important; font-size: 14.5px !important; }
+  .remote-pairing-security { margin-top: 10px; font-size: 10.5px; line-height: 1.45; }
 }
 
 /* Native scanning hands the whole surface to the camera; hide the page. */
