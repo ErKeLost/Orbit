@@ -17,7 +17,7 @@ import {
   type RemoteRequest,
   type RemoteScreenInput,
 } from "./remote-protocol"
-import { isBetterRoute, rankRemoteEndpoints, remoteRouteKey } from "./remote-route"
+import { isBetterRoute, rankRemoteEndpoints, remoteRouteKey, remoteRouteKind, type RemoteRouteKind } from "./remote-route"
 import { probeRemoteHostIdentity } from "./remote-identity"
 
 const PAIRING_KEY = "orbit.remote.pairing.v1"
@@ -38,6 +38,48 @@ export function forgetPairing(): void {
 const ROUTE_PREFLIGHT_MS = 60_000
 /** How long to wait after a drop before trying the other routes. */
 const ROUTE_FAILOVER_MS = 1_500
+
+const ROUTE_LABEL: Record<RemoteRouteKind, string> = {
+  loopback: "本机",
+  lan: "局域网",
+  tailnet: "Tailscale",
+  vpn: "VPN",
+  public: "公网",
+  relay: "中转",
+}
+
+/** One route, named the way the user thinks about it. */
+function remoteRouteLabel(endpoint: RemoteEndpoint): string {
+  const kind = ROUTE_LABEL[remoteRouteKind(endpoint)]
+  if (endpoint.mode === "relay") {
+    try {
+      return `${kind} ${new URL(endpoint.relayUrl).host}`
+    } catch {
+      return kind
+    }
+  }
+  return `${kind} ${endpoint.host}:${endpoint.port}`
+}
+
+function errorMessage(error: unknown): string {
+  const message = (error instanceof Error ? error.message : String(error)).trim()
+  return message.replace(/^Orbit (Host|Relay) /, "") || "未知错误"
+}
+
+/**
+ * What to tell the user when every route refused.
+ *
+ * "All promises were rejected" is the message of the AggregateError itself, not
+ * of any attempt, so it says nothing about whether the phone is on the wrong
+ * Wi-Fi, the Host is off, or the relay never registered. Naming each route and
+ * its own failure is the whole point of trying them in parallel.
+ */
+export function remoteFailureMessage(subject: string, targets: readonly RemoteEndpoint[], reasons: ReadonlyMap<RemoteEndpoint, string>): string {
+  const parts = targets.map(endpoint => `${remoteRouteLabel(endpoint)}（${reasons.get(endpoint) ?? "未响应"}）`)
+  const relayFailed = targets.some(endpoint => endpoint.mode === "relay" && reasons.has(endpoint))
+  const hint = relayFailed ? " · 电脑端「移动访问」是否已开启、中转服务器是否已连上？" : ""
+  return `${subject}：${parts.join("；")}${hint}`
+}
 
 /** Fired when the connection moved to a different route (LAN ⇄ relay). */
 const routeListeners = new Set<(endpoint: RemoteEndpoint) => void>()
@@ -172,12 +214,20 @@ class StableRemoteRuntime {
    * Throws when every route fails, having closed all of them.
    */
   private async attempt(targets: readonly RemoteEndpoint[]): Promise<{ client: OrbitRemoteClient; endpoint: RemoteEndpoint }> {
+    // Every route's own reason is kept: `Promise.any` rejects with an
+    // AggregateError whose message is the useless "All promises were rejected",
+    // and that string used to be what the pairing screen showed. Which route
+    // failed and why is the only thing the user can act on.
+    const reasons = new Map<RemoteEndpoint, string>()
     let winner: OrbitRemoteClient
     try {
-      winner = await Promise.any(targets.map(endpoint => this.connectCandidate(endpoint)))
-    } catch (error) {
+      winner = await Promise.any(targets.map(endpoint => this.connectCandidate(endpoint).catch((error: unknown) => {
+        reasons.set(endpoint, errorMessage(error))
+        throw error
+      })))
+    } catch {
       this.closeCandidates()
-      throw error instanceof Error ? error : new Error(String(error))
+      throw new Error(remoteFailureMessage("连不上 Orbit Host", targets, reasons))
     }
     // Losing the route would mean acting on a connection nobody can name, which
     // is a bug here rather than a page condition.
@@ -512,14 +562,20 @@ export async function screenRemoteChannel(handlers: RemoteClientHandlers): Promi
   // The probe makes a wrong address fail in ~2 s instead of at the connect
   // timeout, which is what lets the ranking matter at all.
   const endpoints = rankRemoteEndpoints(parsePairingEndpoints(uri.trim()))
+  const reasons = new Map<RemoteEndpoint, string>()
   const attempts = endpoints.map(async endpoint => {
-    if (endpoint.mode === "direct") await probeRemoteHostIdentity(endpoint)
-    const candidate = new OrbitRemoteClient(handlers)
     try {
-      await candidate.connect(endpoint)
-      return candidate
+      if (endpoint.mode === "direct") await probeRemoteHostIdentity(endpoint)
+      const candidate = new OrbitRemoteClient(handlers)
+      try {
+        await candidate.connect(endpoint)
+        return candidate
+      } catch (error) {
+        candidate.close()
+        throw error
+      }
     } catch (error) {
-      candidate.close()
+      reasons.set(endpoint, errorMessage(error))
       throw error
     }
   })
@@ -528,7 +584,7 @@ export async function screenRemoteChannel(handlers: RemoteClientHandlers): Promi
     winner = await Promise.any(attempts)
     return winner
   } catch {
-    throw new Error("无法为屏幕通道连接 Orbit Host")
+    throw new Error(remoteFailureMessage("屏幕通道连不上 Orbit Host", endpoints, reasons))
   } finally {
     for (const attempt of attempts) {
       void attempt.then(candidate => {
