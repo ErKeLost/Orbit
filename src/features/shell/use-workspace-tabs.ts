@@ -5,12 +5,14 @@ import { normalizeProjectPath } from "../../lib/projects";
 import {
   cachedTranscript,
   changeSession,
+  connect,
   closeWorkspaceConnection,
   connectionCwd,
   connectionOwningSession,
   connectionSnapshot,
   focusWorkspaceConnection,
   hasWorkspaceConnection,
+  mobileRuntime,
   openWorkspaceConnection,
   patchConnectionSnapshot,
   primeConnectionSnapshot,
@@ -204,6 +206,14 @@ async function showHomeScope(path: string, mode: WorkspaceMode) {
   }
   setDesktopScope(path, mode);
   await show(HOME_WORKSPACE_ID);
+  // 手机自己没有工作区进程：首页那条连接得由电脑端开。
+  //
+  // 桌面端这里故意什么都不起（`runShow` 在空首页上早退），因为「打开一个项目」
+  // 在电脑上不等于「现在就起一条 pi」。但手机没有这个懒加载的余地：它切到这个
+  // 项目之后，会话列表、发消息、终端全都走那条连接，没人替它开就永远是空的 ——
+  // 表现就是点了项目没反应。`connect()` 在移动端会先 resolve、再让电脑端
+  // `project.open`、最后 attach 并把范围写进投影。
+  if (mobileRuntime()) await connect(path, mode);
 }
 
 /**
