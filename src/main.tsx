@@ -19,6 +19,15 @@ installPerfLog()
 // 与这层 HTML 启动画面都立即可见，App chunk 的下载/求值与首帧并行。
 const appLoaded = import('./App')
 
+// 语音页是最重的一个 lazy chunk（three.js + R3F）。等首屏闲下来再把它拉下来，
+// 否则第一次点侧栏「语音」会先看到一块空白，chunk 到了才是球——那就是"闪一下"。
+const prefetchVoice = () => {
+  void import('./features/voice/ui/VoicePage').catch(() => undefined)
+}
+// 固定延迟而不是 requestIdleCallback：dev 下第一次加载 three 会触发 Vite 重新预构建，
+// 和首屏抢带宽只会让页面再闪一次。两秒后拉，谁也不碍谁。
+window.setTimeout(prefetchVoice, 2500)
+
 function dismissBootSplash() {
   const splash = document.getElementById('boot-splash')
   if (!splash || splash.dataset.dismissed === '1') return

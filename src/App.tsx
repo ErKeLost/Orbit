@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { MetricsSync } from "./lib/metrics";
 import { useWorkspace } from "./lib/store";
@@ -8,6 +8,8 @@ import { useDesktopNotifications } from "./hooks/use-desktop-integration";
 import { RemotePairingScreen } from "./components/remote/RemotePairingScreen";
 import { ScreenOverlay } from "./components/screen/ScreenOverlay";
 import { Panel } from "./components/Panels";
+
+const VoicePage = lazy(() => import("./features/voice/ui/VoicePage").then((module) => ({ default: module.VoicePage })));
 import { flushForegroundEvents } from "./lib/rpc";
 import { useArtifactIntake } from "./features/artifacts/useArtifactIntake";
 import { useQuickSend } from "./features/quick-composer/useQuickSend";
@@ -322,6 +324,28 @@ function WorkArea() {
               )}
             </div>
             {panel === "chat" ? null : <Panel />}
+            {/*
+              语音页常驻：它里面是 three.js 的 WebGL 画布，每次挂载都要重建 context、
+              重编译着色器、重传纹理——在 WKWebView 上这一步就是"进去闪一下、再重画一遍"。
+              所以它挂在会话面这一层，只靠 CSS 隐藏，切走切回都不重建。
+            */}
+            {/*
+              隐藏用 opacity + absolute，不用 `hidden`/`display:none`：display:none 会把
+              画布量成 0×0，切回来时 ResizeObserver 再触发一次 resize，画面就会"闪一下
+              再重画"。保持占位尺寸，切回去只是把透明度打开。
+            */}
+            <div
+              className={
+                panel === "voice"
+                  ? "relative flex min-h-0 min-w-0 flex-1 flex-col"
+                  : "pointer-events-none absolute inset-0 -z-10 opacity-0"
+              }
+              aria-hidden={panel !== "voice"}
+            >
+              <Suspense fallback={<div className="min-h-0 flex-1" />}>
+                <VoicePage />
+              </Suspense>
+            </div>
           </div>
           {terminalPosition === "bottom" || terminalPosition === "right" ? terminalDock : null}
         </div>

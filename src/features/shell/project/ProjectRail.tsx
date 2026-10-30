@@ -36,6 +36,7 @@ import {
   SmartPhone,
   File,
   Zap,
+  Voice,
   type IconComponent,
 } from "../../../shared/ui/icons";
 import { DevModeSlot, IS_MAC, MOD, ResizeHandle, TabVisitNav } from "../chrome";
@@ -264,6 +265,9 @@ export const NAV: { id: Panel; label: string; icon: IconComponent }[] = [
   { id: "inbox", label: "收件箱", icon: InboxIcon },
   { id: "notes", label: "笔记", icon: File },
   { id: "artifacts", label: "产物", icon: ChartBreakoutSquare },
+  // 语音 Agent 是一个独立页面，不是会话里的一个按钮：它的输入是嘴、输出是扬声器，
+  // 放进 composer 就只能退化成“语音输入法”，那正是它要避开的东西。
+  { id: "voice", label: "语音", icon: Voice },
   { id: "automations", label: "自动化", icon: Zap },
   // 「技能与命令」和「常用工具」从侧栏撤下；面板保留，仍可从设置里进。
   { id: "mobile-access", label: "移动端", icon: SmartPhone },

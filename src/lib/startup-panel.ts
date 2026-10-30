@@ -23,6 +23,7 @@ export const STARTUP_PANELS: { id: Panel; label: string }[] = [
   { id: "chat", label: "会话" },
   { id: "inbox", label: "收件箱" },
   { id: "notes", label: "笔记" },
+  { id: "voice", label: "语音" },
   { id: "automations", label: "自动化" },
   { id: "search", label: "搜索" },
 ]

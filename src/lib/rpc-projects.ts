@@ -1,3 +1,4 @@
+import { Channel } from "@tauri-apps/api/core";
 import { invoke } from "./native";
 import { useWorkspace } from "./store";
 import { runRemoteHostOperation } from "./remote-runtime";
@@ -163,3 +164,41 @@ export async function saveSpeechConfig(patch:Partial<SpeechConfig>):Promise<Spee
 export async function saveSpeechApiKey(provider:string|undefined,apiKey:string|null):Promise<{provider:string;hasCredential:boolean}> { if(!workspaceBackend()) throw new Error('语音识别密钥请在电脑端设置'); return invoke('save_speech_api_key',{provider:provider??null,apiKey}) }
 /** 录音 base64 → 文字。传输方式由 speech.json 决定（火山语音 / OpenAI 兼容端点）。 */
 export async function transcribeAudio(audioBase64:string,mimeType:string):Promise<{text:string;transport:string;noSpeech?:boolean}> { if(!workspaceBackend()) throw new Error('语音输入请在电脑端使用'); return invoke<{text:string;transport:string;noSpeech?:boolean}>('transcribe_audio',{audioBase64,mimeType}) }
+
+/**
+ * 语音 Agent（Rime）—— 与上面那套 composer 听写**互不相干**：那边是一次性的
+ * 「录音变文字」，这边是一整个「听一句 → 交给 Pi → 把回答说出来」的环。
+ * 配置在 rime.json，密钥在 auth.json 的 `rime` 条目下。
+ */
+export type RimeConfig = {
+  model:string
+  speaker:string
+  lang:string
+  sttLang:string
+  configured:boolean
+  hasCredential:boolean
+  models?:string[]
+  langs?:string[]
+  sttLangs?:string[]
+}
+export async function rimeConfig():Promise<RimeConfig> { if(!workspaceBackend()) throw new Error('语音 Agent 请在电脑端使用'); return invoke<RimeConfig>('rime_config') }
+export async function saveRimeConfig(patch:Partial<RimeConfig>):Promise<RimeConfig> { if(!workspaceBackend()) throw new Error('语音 Agent 请在电脑端使用'); return invoke<RimeConfig>('save_rime_config',{config:patch}) }
+export async function saveRimeApiKey(apiKey:string|null):Promise<{hasCredential:boolean}> { if(!workspaceBackend()) throw new Error('语音 Agent 密钥请在电脑端设置'); return invoke('save_rime_api_key',{apiKey}) }
+/** 一句 → 一段 mp3（base64）。按句调用，不做流式：句子本来就短。 */
+export async function rimeTts(text:string,speaker?:string,format?:string):Promise<{audio:string;mimeType:string;sampleRate?:number;model:string;speaker:string;lang:string}> { return invoke('rime_tts',{text,...speaker?{speaker}:{},...format?{format}:{}}) }
+/** 流式转写：说话时就把音频推进去，静音结束时只剩一个 end。 */
+export async function rimeSttOpen():Promise<{id:string;language:string}> { return invoke('rime_stt_open') }
+export async function rimeSttPush(id:string,audioBase64:string):Promise<void> { return invoke('rime_stt_push',{id,audioBase64}) }
+export async function rimeSttFinish(id:string):Promise<{text:string;noSpeech:boolean}> { return invoke('rime_stt_finish',{id}) }
+export async function rimeSttAbort(id:string):Promise<void> { return invoke('rime_stt_abort',{id}) }
+/** 流式朗读：文本边送、音频边回。`onAudio` 收到的是 base64 的 PCM16。 */
+export async function rimeTtsStream(onAudio:(base64:string)=>void):Promise<{id:string;sampleRate:number}> {
+  const channel = new Channel<{audio?:string;done?:boolean;error?:string;notice?:string}>()
+  channel.onmessage = (event) => { if (event.audio) onAudio(event.audio) }
+  return invoke('rime_tts_stream', { onAudio: channel })
+}
+export async function rimeTtsSend(id:string,text:string):Promise<void> { return invoke('rime_tts_send',{id,text}) }
+export async function rimeTtsFinish(id:string):Promise<void> { return invoke('rime_tts_finish',{id}) }
+export async function rimeTtsCancel(id:string):Promise<void> { return invoke('rime_tts_cancel',{id}) }
+/** 一句 PCM16 16k 单声道录音 → 文字。一条连接一句话。 */
+export async function rimeStt(audioBase64:string):Promise<{text:string;noSpeech:boolean;language:string}> { return invoke('rime_stt',{audioBase64}) }

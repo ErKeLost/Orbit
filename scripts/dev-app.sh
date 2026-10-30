@@ -1,54 +1,73 @@
-#!/bin/bash
-# 以独立 .app 的身份启动 dev 二进制。
+#!/usr/bin/env bash
+# 把 debug 版 Orbit 装进一个真的 .app，再 `open` 它。
 #
-# 为什么存在：`tauri dev` 跑的是裸二进制（target/debug/orbit），麦克风权限（TCC）
-# 检查的是「责任进程」的 Info.plist。当这个二进制由别的 GUI 应用（比如生产版
-# Orbit，或我这个 agent 的会话）代启时，责任进程是对方——它没有
-# NSMicrophoneUsageDescription，第一次 getUserMedia 就被 macOS 直接 SIGABRT。
-# 包一层 bundle 再 `open`，LaunchServices 把它当成独立应用，权限框才会正常弹，
-# 允许一次以后一直有效。
+# 为什么需要这一步：`tauri dev` 直接跑 `target/debug/orbit` 这个裸二进制。麦克风这类
+# 隐私接口由 TCC 管，TCC 只看**真实 app bundle** 里的 Info.plist；裸二进制没有 bundle，
+# 于是第一次 getUserMedia 就被系统 SIGABRT 掉（崩溃报告里是 `Namespace TCC`），
+# JS 层连 catch 的机会都没有。把 plist 用 `__TEXT,__info_plist` 链进二进制也**不足以**
+# 骗过 TCC —— 试过，还是崩。
 #
-# 用法：先有 vite 在跑（bun run dev / tauri:dev 都行），然后：
-#   scripts/dev-app.sh          # 构建 bundle 并启动
+# 所以这里做一个最小 bundle：Info.plist 写用途声明，Resources 指回 target/debug/resources
+# （Tauri 用 BaseDirectory::Resource 找 Pi runtime，那套路径不变），二进制是同一份 debug 构建，
+# devUrl 仍然是 http://localhost:5173，所以前端照旧走 vite 的 HMR。
 set -euo pipefail
-root="$(cd "$(dirname "$0")/.." && pwd)"
-bin="$root/src-tauri/target/debug/orbit"
-app="$root/src-tauri/target/debug/ODev.app"
 
-[ -x "$bin" ] || { echo "没有 dev 二进制：先跑一次 bun run tauri:dev（或 cargo build）" >&2; exit 1; }
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BIN="$ROOT/src-tauri/target/debug/orbit"
+RES="$ROOT/src-tauri/target/debug/resources"
+APP="$ROOT/src-tauri/target/debug/Orbit Dev.app"
 
-mkdir -p "$app/Contents/MacOS"
-# 硬链接而不是复制：120MB 的二进制不用拷第二份，而且 cargo 重编后旧链接仍指向
-# 旧 inode，重跑本脚本即刷新。
-ln -f "$bin" "$app/Contents/MacOS/orbit"
-# tauri dev 的资源目录按 exe 同级的 resources/ 解析；bundle 里补一条相对路径。
-ln -sfn ../../../../resources "$app/Contents/MacOS/resources"
-ln -sfn ../../../resources "$app/Contents/Resources"
+if [[ ! -x "$BIN" ]]; then
+  echo "没有找到 $BIN，先跑一次 cargo build（或 bun run tauri:dev）" >&2
+  exit 1
+fi
 
-if [ ! -f "$app/Contents/Info.plist" ]; then
-cat > "$app/Contents/Info.plist" <<'PLIST'
+mkdir -p "$APP/Contents/MacOS"
+
+# 用途声明与 src-tauri/Info.plist 保持一致：打包版里 Tauri 会把那份合并进来，
+# 这里手写一份是为了让 dev 也走同一条 TCC 判定。
+cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-  <dict>
-    <key>CFBundleName</key>
-    <string>Orbit Dev</string>
-    <key>CFBundleDisplayName</key>
-    <string>Orbit Dev</string>
-    <key>CFBundleIdentifier</key>
-    <string>ai.pi.gui.dev</string>
-    <key>CFBundleExecutable</key>
-    <string>orbit</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>Orbit 需要访问麦克风，把你说的话转写成文字填入输入框。录音仅用于语音转写。</string>
-  </dict>
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>zh_CN</string>
+  <key>CFBundleExecutable</key>
+  <string>orbit</string>
+  <key>CFBundleIdentifier</key>
+  <string>ai.pi.gui</string>
+  <key>CFBundleName</key>
+  <string>Orbit Dev</string>
+  <key>CFBundleDisplayName</key>
+  <string>Orbit Dev</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>1.0.18</string>
+  <key>CFBundleVersion</key>
+  <string>1.0.18</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>11.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Orbit 需要访问麦克风，用于语音 Agent 的对话与语音转写。录音仅用于识别与合成。</string>
+</dict>
 </plist>
 PLIST
-fi
 
-open "$app"
-echo "已启动 $app（麦克风权限首次会弹框，点允许）"
+cp -f "$BIN" "$APP/Contents/MacOS/orbit"
+# Tauri 的 resource base 是 `Contents/Resources`，而代码里取的是 `<base>/resources`，
+# 所以里面要有一个叫 resources 的链接，指回 target/debug/resources（Pi runtime、
+# node_modules、gui-extension 都在那儿）。直接链接 Contents/Resources 会多套一层。
+# 上一版可能把 Contents/Resources 本身做成了链接（rm -rf 只拆链接，不跟进目标目录）。
+rm -rf "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/Resources"
+ln -sfn "$RES" "$APP/Contents/Resources/resources"
+
+# ad-hoc 签名，让 TCC 有一条稳定的身份记录（每次重编都会变，所以会重新问一次权限）。
+codesign --force --sign - "$APP" >/dev/null 2>&1 || true
+
+open -n "$APP"
+echo "已启动 $(basename "$APP")（devUrl: http://localhost:5173）"

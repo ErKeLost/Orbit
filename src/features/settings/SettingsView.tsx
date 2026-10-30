@@ -21,6 +21,7 @@ const PiToolsPage = lazy(() => import("./pages/PiToolsPage").then((m) => ({ defa
 const ProviderSettings = lazy(() => import("../../components/ProviderSettings").then((m) => ({ default: m.ProviderSettings })));
 const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage").then((m) => ({ default: m.IntegrationsPage })));
 const ComputerUsePage = lazy(() => import("./pages/ComputerUsePage").then((m) => ({ default: m.ComputerUsePage })));
+const VoiceSettingsPage = lazy(() => import("../voice/ui/VoiceSettingsPage").then((m) => ({ default: m.VoiceSettingsPage })));
 
 function DesktopOnly({ what }: { what: string }) {
   return (
@@ -104,6 +105,7 @@ export function SettingsView() {
   else if (page === "integrations") content = desktop ? <IntegrationsPage /> : <DesktopOnly what="第三方接入" />;
   else if (page === "computer-use") content = desktop ? <ComputerUsePage /> : <DesktopOnly what="电脑操作" />;
   else if (page === "browser") content = desktop ? <BrowserPage /> : <DesktopOnly what="浏览器" />;
+  else if (page === "voice") content = desktop ? <VoiceSettingsPage /> : <DesktopOnly what="语音 Agent" />;
   else if (page === "screen") content = <ScreenSettingsPage />;
   else if (page === "pi-tools") content = <PiToolsPage />;
   else content = <GeneralSettingsPage />;

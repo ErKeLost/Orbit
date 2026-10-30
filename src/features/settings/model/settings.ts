@@ -33,6 +33,12 @@ export const SETTINGS_INDEX: SettingIndexEntry[] = [
   { id: "mobile-access", section: "general", label: "移动端访问", keywords: "手机 配对 host remote" },
   { id: "relay", section: "general", label: "公网中转配置", keywords: "阿里云 relay 外网 5G 中转" },
   { id: "host", section: "general", label: "Host 运行", keywords: "电脑 host 开启" },
+  // 语音 Agent
+  { id: "voice-key", section: "voice", label: "Rime API Key", keywords: "rime 语音 key 密钥 tts stt token" },
+  { id: "voice-model", section: "voice", label: "语音模型", keywords: "rime coda mist v3 音质 延迟 tts" },
+  { id: "voice-speaker", section: "voice", label: "音色", keywords: "speaker astra luna 声音 tts" },
+  { id: "voice-lang", section: "voice", label: "合成语言", keywords: "lang language 中文 英文 tts" },
+  { id: "voice-stt-lang", section: "voice", label: "转写语言", keywords: "stt asr 识别 转写 语言" },
   // 第三方接入
   { id: "image-endpoint", section: "integrations", label: "图片端点", keywords: "火山方舟 base url provider 端点" },
   { id: "image-default-model", section: "integrations", label: "默认出图模型", keywords: "模型 切换 seedream generate_image image model" },

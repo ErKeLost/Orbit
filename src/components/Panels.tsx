@@ -27,13 +27,18 @@ function panelComponent(panel: PanelName) {
 export function Panel() {
   const panel = useWorkspace((state) => state.panel);
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
+  // 语音页常驻在 App 层，不归 Panel 管。这里必须**整块返回 null**（而不是渲染一个空
+  // 的 flex-1 容器）：否则它会和语音页平分高度，球就被挤到下半区去。
+  if (panel === "voice") return null;
   // Notes is a two-pane surface with its own scrolling; it wants the full
   // bleed instead of the constrained settings column.
   const fullBleed = panel === "notes" || panel === "artifacts";
   return (
     <div ref={lockOverscroll} className={fullBleed ? "flex min-h-0 flex-1 flex-col" : "min-h-0 flex-1 overflow-y-auto overscroll-none"}>
       {fullBleed ? (
-        <Suspense fallback={null}>{panelComponent(panel)}</Suspense>
+        // 整页面板是 lazy chunk：fallback 必须是块占位，不能是 null——null 会让这块
+        // 在 chunk 到达前塌成背景色，切页面时看起来像"闪了一下黑"。
+        <Suspense fallback={<div className="min-h-0 flex-1" />}>{panelComponent(panel)}</Suspense>
       ) : (
         <section className="panel-surface">
           <Suspense fallback={null}>{panelComponent(panel)}</Suspense>

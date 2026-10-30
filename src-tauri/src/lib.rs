@@ -39,6 +39,7 @@ mod gitlab;
 mod image_config;
 mod web_search;
 mod speech;
+mod rime;
 mod media;
 mod pty_term;
 mod search;
@@ -387,6 +388,19 @@ pub fn run() {
             speech::save_speech_config,
             speech::save_speech_api_key,
             speech::transcribe_audio,
+            rime::rime_config,
+            rime::save_rime_config,
+            rime::save_rime_api_key,
+            rime::rime_tts,
+            rime::rime_stt,
+            rime::rime_stt_open,
+            rime::rime_stt_push,
+            rime::rime_stt_finish,
+            rime::rime_stt_abort,
+            rime::rime_tts_stream,
+            rime::rime_tts_send,
+            rime::rime_tts_finish,
+            rime::rime_tts_cancel,
             media::media_meta,
             media::read_media_file,
             pty_term::pty_spawn,

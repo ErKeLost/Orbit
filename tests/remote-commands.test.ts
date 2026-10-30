@@ -123,6 +123,21 @@ const EXCLUDED: Record<string, string> = {
   save_speech_config: "writes the desktop's speech.json",
   save_speech_api_key: "writes the desktop's auth.json",
   transcribe_audio: "desktop voice input; the phone has no mic permission plumbing yet",
+  // 语音 Agent 的一整个环（麦克风采集 → 扬声器播放）都发生在桌面的 WebView 里，
+  // 电话端既没有这条采集/播放通路，也不该拿桌面机器人的耳朵去听手机上的房间。
+  rime_config: "reads the desktop's rime.json; the phone has no agent dir",
+  save_rime_config: "writes the desktop's rime.json",
+  save_rime_api_key: "writes the desktop's auth.json",
+  rime_tts: "speaks through the desktop's speakers",
+  rime_stt: "listens through the desktop's microphone",
+  rime_stt_open: "opens a desktop speech stream; the phone has no capture path",
+  rime_stt_push: "feeds desktop-captured audio into that stream",
+  rime_stt_finish: "closes a desktop speech stream",
+  rime_stt_abort: "drops a desktop speech stream",
+  rime_tts_stream: "synthesizes through the desktop's speaker pipeline",
+  rime_tts_send: "feeds text into a desktop speech stream",
+  rime_tts_finish: "closes a desktop speech stream",
+  rime_tts_cancel: "cancels a desktop speech stream",
   // 产物存在桌面端的 app_data 目录里，手机既没有那块盘也没有它的一份副本。
   // 手机要读产物是**应该做**的事，但那要在 Host 上开一条读通道，是另一件事。
   artifacts_list: "reads the desktop's app_data; the phone has no copy of that store",

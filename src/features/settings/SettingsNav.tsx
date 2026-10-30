@@ -12,6 +12,7 @@ import {
   Palette,
   Sparkles,
   SlidersHorizontal,
+  Voice,
   Wrench,
   type IconComponent,
 } from "../../shared/ui/icons";
@@ -34,6 +35,7 @@ export const SETTINGS_GROUPS: { id: string; label: string; sections: SettingsSec
     label: "智能体",
     sections: [
       { id: "chat", label: "对话", description: "上下文压缩、队列、重试与历史图片上限。", icon: MessageSquare },
+      { id: "voice", label: "语音", description: "语音 Agent 的 Rime 模型、音色、语言与 API Key。", icon: Voice, desktopOnly: true },
       { id: "providers", label: "Providers", description: "Pi 的模型端点、API Key 与模型目录。", icon: Bot, desktopOnly: true },
       { id: "integrations", label: "第三方接入", description: "生成能力与 Web Search 的端点、开关和凭据。", icon: Wrench, desktopOnly: true },
       { id: "computer-use", label: "操作电脑", description: "让 Pi 用自然语言点选本机界面所用的决策模型。", icon: CursorMagicSelection, desktopOnly: true },
