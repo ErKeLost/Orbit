@@ -101,6 +101,19 @@ function LogItem({ item }: { item: VoiceLogItem }) {
   );
 }
 
+/**
+ * 只留**最后一段**对话：我说的最后一句 + 它之后的所有回复。
+ *
+ * 语音页不是聊天记录页：屏幕上永远是“这一轮在说什么”，上面那些轮次已经说完、也听过
+ * 了。留着它们的唯一效果，是把当前这一轮顶出视口、在顶上切掉半行字。
+ */
+function lastExchange(log: VoiceLogItem[]): VoiceLogItem[] {
+  for (let index = log.length - 1; index >= 0; index -= 1) {
+    if (log[index]!.kind === "user") return log.slice(index);
+  }
+  return log;
+}
+
 export function VoicePage() {
   const voice = useVoiceAgent();
   const orbColors = useOrbColors();
@@ -154,19 +167,19 @@ export function VoicePage() {
   );
 
   return (
-    <div className="voice-log relative flex min-h-0 flex-1 flex-col bg-background-base">
+    <div className="voice-log relative flex min-h-0 flex-1 flex-col justify-center bg-background-base">
       {/*
         通话中球要缩到顶部：它还在，只是不再占满一屏——下面那块地要让给对话。
         缩尺寸而不是换组件，是因为重建 WebGL 上下文就是"进去闪一下"的来源。
 
-        未开始时也不居中：球往上提约一成屏高，视觉重心落在上部，下面的按钮行不再
-        和球一起挤在正中。
+        整块（球 + 对话 + 控制行）在页面里垂直居中：它是一体的，顶部对齐会显得
+        下半屏空着。
       */}
       <div
         className={
           active
-            ? "relative flex shrink-0 flex-col items-center gap-2 pb-1 pt-12"
-            : "relative flex min-h-0 flex-1 flex-col items-center justify-start gap-8 pt-[15vh]"
+            ? "relative flex shrink-0 flex-col items-center gap-2 pb-1"
+            : "relative flex shrink-0 flex-col items-center gap-8"
         }
       >
         {active ? null : (
@@ -195,13 +208,12 @@ export function VoicePage() {
         /* 开始之后：这块就是消息列表，不再切页面。 */
         <div className="relative flex flex-col">
           {/*
-            固定四行高：一行 ≈ py-2 + leading-6 = 40px，四行 160 + 上下内边距 ≈ 188px。
-            列表不跟着消息数量长高，布局就不会一抽一抽。
+            高度只由内容决定，最多 188px（四行）。
 
-            滚动按「一次追加 = 两条消息」整块跳（见 `Conversation` 的 instant），而
-            滚动条由 `.voice-log` 在 `styles/orbit.css` 里藏掉——滚动照旧可用。
+            列表里只渲染最后一段对话，所以正常情况下根本不会滚；回复长到超过 188px 时
+            在框内滚动，滚动条由 `.voice-log` 在 `styles/orbit.css` 里藏掉。
           */}
-          <Conversation className="voice-log h-[188px] min-h-0 w-full flex-none">
+          <Conversation className="voice-log max-h-[188px] min-h-0 w-full flex-none">
             <ConversationContent className="mx-auto flex w-full max-w-3xl flex-col px-4 pb-2">
               {voice.log.length === 0 ? (
                 <ConversationEmptyState
@@ -209,7 +221,7 @@ export function VoicePage() {
                   description="说一句，它就接过去；它干活的时候会告诉你进度，卡住了会喊你。"
                 />
               ) : (
-                voice.log.map((item) => <LogItem key={item.id} item={item} />)
+                lastExchange(voice.log).map((item) => <LogItem key={item.id} item={item} />)
               )}
             </ConversationContent>
             <ConversationScrollButton />
