@@ -1,14 +1,16 @@
 /**
- * 语音页面：**一颗球**。
+ * 语音页面：**一颗球 + 一条对话**。
  *
- * 没有标题栏、没有底栏、没有说明文字——页面本身就是那颗云球。点它开始，再点就是打断；
- * 有对话之后它缩到右下角继续当控制键，消息往上滚。
+ * 没开始的时候整页就是那颗球，点它开始；开始之后球缩到顶部继续当控制键，下面那块
+ * 位置直接变成消息列表——不再切到另一个页面去。列表用 ElevenLabs UI 的
+ * `conversation` / `message` / `response`（见 `components/ui/` 里那三个文件的注释），
+ * 只有这一页用。
  *
  * 状态球用 orb-ui 的受控模式（`state` + `signal`），视觉和交互刻意分开：
  * cloud 主题在 `idle` 下会缩成一个纯色点（"挂断"语义），所以页面未开始时也按
  * `listening` 画（那时音量恒为 0，云是静止的），而点击行为由外层按钮自己决定。
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Orb, type AgentState } from "@/components/ui/orb";
 import { PrimaryButton, SecondaryButton } from "@/shared/ui/controls";
 import { useVoiceAgent, type VoiceState, type VoiceLogItem } from "../hooks/useVoiceAgent";
@@ -16,6 +18,14 @@ import { useOrbColors } from "../hooks/useOrbColors";
 import { LiveWaveform } from "@/components/ui/live-waveform";
 import { MicSelector } from "@/components/ui/mic-selector";
 import { OrbBoundary } from "./OrbBoundary";
+import {
+  Conversation,
+  ConversationContent,
+  ConversationEmptyState,
+  ConversationScrollButton,
+} from "@/components/ui/conversation";
+import { Message, MessageAvatar, MessageContent } from "@/components/ui/message";
+import { Response } from "@/components/ui/response";
 
 /** hook 的状态 → ElevenLabs Orb 的状态。它只认这四种（null 就是闲置）。 */
 const AGENT_STATE: Record<VoiceState, AgentState> = {
@@ -34,18 +44,42 @@ const STATE_LABEL: Record<VoiceState, string> = {
   speaking: "在说",
 };
 
-function Bubble({ item }: { item: VoiceLogItem }) {
+/**
+ * 消息里的「它」。故意不是另一颗 `Orb`：每颗球都是一个独立的 WebGL 上下文，
+ * 消息一多就等于开了十几个 canvas。这里只要一个便宜的静态标记。
+ */
+function AgentAvatar() {
+  return (
+    <MessageAvatar className="ring-1 ring-stroke/60">
+      <div
+        aria-hidden
+        className="size-full"
+        style={{
+          background:
+            "radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--color-accent) 85%, white), color-mix(in srgb, var(--color-accent) 45%, black) 70%)",
+        }}
+      />
+    </MessageAvatar>
+  );
+}
+
+function LogItem({ item }: { item: VoiceLogItem }) {
   if (item.kind === "system") {
-    return <p className="self-center text-center text-[11px] leading-relaxed text-content/35">{item.text}</p>;
-  }
-  if (item.kind === "user") {
     return (
-      <div className="max-w-[min(100%,34rem)] self-end">
-        <div className="w-fit rounded-xl bg-content/10 px-3 py-1.5 text-[13px] leading-5 text-content">{item.text}</div>
+      <div className="flex w-full justify-center py-1">
+        <p className="max-w-[min(100%,34rem)] text-center text-[11px] leading-relaxed text-content/35">{item.text}</p>
       </div>
     );
   }
-  return <p className="max-w-[min(100%,40rem)] self-start text-[13px] leading-6 text-content/90">{item.text}</p>;
+  const from = item.kind === "user" ? "user" : "assistant";
+  return (
+    <Message from={from}>
+      <MessageContent>
+        <Response>{item.text}</Response>
+      </MessageContent>
+      {from === "assistant" ? <AgentAvatar /> : null}
+    </Message>
+  );
 }
 
 export function VoicePage() {
@@ -53,20 +87,13 @@ export function VoicePage() {
   const orbColors = useOrbColors();
   const { state } = voice;
   const active = state !== "off";
-  const scroller = useRef<HTMLDivElement>(null);
   // 首帧之后才点亮球：Three 的 canvas 是同步挂载的，直接显示会有一帧突兀的跳变。
   const [revealed, setRevealed] = useState(false);
   useEffect(() => {
     const frame = requestAnimationFrame(() => setRevealed(true));
     return () => cancelAnimationFrame(frame);
   }, []);
-  const empty = voice.log.length === 0;
   const agentState = AGENT_STATE[state];
-
-  useEffect(() => {
-    const element = scroller.current;
-    if (element) element.scrollTop = element.scrollHeight;
-  }, [voice.log]);
 
   /** 一颗球一个动作：没开始 → 开始；在说 → 打断；其余 → 结束。 */
   const activate = () => {
@@ -109,27 +136,70 @@ export function VoicePage() {
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col bg-background-base">
-      {empty ? (
-        <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center gap-8">
-          {/* 环境光：把 accent 铺在球后面，光球才不像贴纸上的一颗球 */}
+      {/*
+        通话中球要缩到顶部：它还在，只是不再占满一屏——下面那块地要让给对话。
+        缩尺寸而不是换组件，是因为重建 WebGL 上下文就是"进去闪一下"的来源。
+      */}
+      <div
+        className={
+          active
+            ? "relative flex shrink-0 flex-col items-center gap-2 pb-1 pt-6"
+            : "relative flex min-h-0 flex-1 flex-col items-center justify-center gap-8"
+        }
+      >
+        {active ? null : (
           <div
             aria-hidden
             className="pointer-events-none absolute left-1/2 top-1/2 size-[420px] -translate-x-1/2 -translate-y-[62%] rounded-full opacity-40 blur-3xl"
             style={{ background: "radial-gradient(circle, color-mix(in srgb, var(--color-accent) 38%, transparent), transparent 68%)" }}
           />
-          <div className="relative">{orb(244)}</div>
-          <div className="relative w-64">
-            <LiveWaveform
-              active={active && state !== "thinking"}
-              mode="static"
-              height={40}
-              barWidth={3}
-              barGap={2}
-              sensitivity={1.4}
-              barColor="var(--color-accent)"
-            />
+        )}
+        <div className="relative">{orb(active ? 112 : 244)}</div>
+        <div className={active ? "relative w-40" : "relative w-64"}>
+          <LiveWaveform
+            active={active && state !== "thinking"}
+            mode="static"
+            height={active ? 22 : 40}
+            barWidth={active ? 2 : 3}
+            barGap={2}
+            sensitivity={1.4}
+            barColor="var(--color-accent)"
+          />
+        </div>
+        {active ? <p className="text-[11px] text-content/35">{STATE_LABEL[state]}</p> : null}
+      </div>
+
+      {active ? (
+        /* 开始之后：这块就是消息列表，不再切页面。 */
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <Conversation className="min-h-0">
+            <ConversationContent className="mx-auto flex w-full max-w-3xl flex-col px-4 pb-2">
+              {voice.log.length === 0 ? (
+                <ConversationEmptyState
+                  title="在听你说"
+                  description="说一句，它就接过去；它干活的时候会告诉你进度，卡住了会喊你。"
+                />
+              ) : (
+                voice.log.map((item) => <LogItem key={item.id} item={item} />)
+              )}
+            </ConversationContent>
+            <ConversationScrollButton />
+          </Conversation>
+          <div className="flex shrink-0 items-center justify-center gap-2 pb-5 pt-1">
+            {state === "speaking" ? (
+              <SecondaryButton className="rounded-full px-4" onClick={voice.interrupt}>
+                打断
+              </SecondaryButton>
+            ) : (
+              <SecondaryButton className="rounded-full px-4" danger onClick={voice.stop}>
+                结束对话
+              </SecondaryButton>
+            )}
+            <MicSelector disabled={voice.starting} onValueChange={voice.setDeviceId} />
           </div>
-          <div className="relative flex items-center gap-2">
+        </div>
+      ) : (
+        <div className="relative flex items-center justify-center gap-2 pb-12">
           {voice.starting ? (
             <PrimaryButton className="rounded-full px-4" disabled>
               正在启动…
@@ -141,42 +211,12 @@ export function VoicePage() {
               </PrimaryButton>
               <p className="text-[12px] text-content/40">先在左上角选一个项目</p>
             </div>
-          ) : state === "off" ? (
+          ) : (
             <PrimaryButton className="rounded-full px-4" onClick={() => void voice.start()}>
               开始对话
             </PrimaryButton>
-          ) : state === "speaking" ? (
-            <SecondaryButton className="relative rounded-full px-4" onClick={voice.interrupt}>
-              打断
-            </SecondaryButton>
-          ) : (
-            <SecondaryButton className="rounded-full px-4" danger onClick={voice.stop}>
-              结束对话
-            </SecondaryButton>
           )}
-            <MicSelector disabled={voice.starting} onValueChange={voice.setDeviceId} />
-          </div>
-        </div>
-      ) : (
-        <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto overscroll-none">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-5 pb-28 pt-8">
-            {voice.log.map((item) => <Bubble key={item.id} item={item} />)}
-          </div>
-        </div>
-      )}
-
-      {/* 有对话之后球浮在右下角，仍然是唯一的控制键。 */}
-      {empty ? null : (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-end gap-2 px-6 pb-6">
-          {state === "speaking" ? (
-            <SecondaryButton className="pointer-events-auto" onClick={voice.interrupt}>
-              打断
-            </SecondaryButton>
-          ) : null}
-          <SecondaryButton className="pointer-events-auto" danger onClick={voice.stop}>
-            结束
-          </SecondaryButton>
-          <div className="pointer-events-auto drop-shadow-[0_10px_28px_rgba(0,0,0,0.55)]">{orb(56)}</div>
+          <MicSelector disabled={voice.starting} onValueChange={voice.setDeviceId} />
         </div>
       )}
     </div>

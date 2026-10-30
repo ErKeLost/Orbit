@@ -83,6 +83,7 @@
     "shadcn": "^4.21.0",
     "shiki": "4.4.3",
     "three": "^0.186.1",
+    "use-stick-to-bottom": "^1.1.6",
     "vega": "^6.4.0",
     "vega-embed": "^7.3.0",
     "vega-lite": "^6.5.0",
