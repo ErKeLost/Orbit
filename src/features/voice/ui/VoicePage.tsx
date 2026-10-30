@@ -24,7 +24,7 @@ import {
   ConversationEmptyState,
   ConversationScrollButton,
 } from "@/components/ui/conversation";
-import { Message, MessageAvatar, MessageContent } from "@/components/ui/message";
+import { Message, MessageContent } from "@/components/ui/message";
 import { Response } from "@/components/ui/response";
 
 /** hook 的状态 → ElevenLabs Orb 的状态。它只认这四种（null 就是闲置）。 */
@@ -45,24 +45,11 @@ const STATE_LABEL: Record<VoiceState, string> = {
 };
 
 /**
- * 消息里的「它」。故意不是另一颗 `Orb`：每颗球都是一个独立的 WebGL 上下文，
- * 消息一多就等于开了十几个 canvas。这里只要一个便宜的静态标记。
+ * 一条消息。
+ *
+ * 它说的话**不带头像**：这一页只有它一个说话人，左边那颗小球在每条消息旁边重复四遍
+ * 只会把视线从字上拉走。头像只有一种情况有意义——对话里有别人（现在没有）。
  */
-function AgentAvatar() {
-  return (
-    <MessageAvatar className="ring-1 ring-stroke/60">
-      <div
-        aria-hidden
-        className="size-full"
-        style={{
-          background:
-            "radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--color-accent) 85%, white), color-mix(in srgb, var(--color-accent) 45%, black) 70%)",
-        }}
-      />
-    </MessageAvatar>
-  );
-}
-
 function LogItem({ item }: { item: VoiceLogItem }) {
   if (item.kind === "system") {
     return (
@@ -71,13 +58,11 @@ function LogItem({ item }: { item: VoiceLogItem }) {
       </div>
     );
   }
-  const from = item.kind === "user" ? "user" : "assistant";
   return (
-    <Message from={from}>
+    <Message from={item.kind === "user" ? "user" : "assistant"}>
       <MessageContent>
         <Response>{item.text}</Response>
       </MessageContent>
-      {from === "assistant" ? <AgentAvatar /> : null}
     </Message>
   );
 }
@@ -135,7 +120,7 @@ export function VoicePage() {
   );
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col bg-background-base">
+    <div className="voice-log relative flex min-h-0 flex-1 flex-col bg-background-base">
       {/*
         通话中球要缩到顶部：它还在，只是不再占满一屏——下面那块地要让给对话。
         缩尺寸而不是换组件，是因为重建 WebGL 上下文就是"进去闪一下"的来源。
@@ -177,9 +162,12 @@ export function VoicePage() {
         <div className="relative flex flex-col">
           {/*
             固定四行高：一行 ≈ py-2 + leading-6 = 40px，四行 160 + 上下内边距 ≈ 188px。
-            列表不跟着消息数量长高，布局就不会一抽一抽；滚动条隐藏但滚动保留。
+            列表不跟着消息数量长高，布局就不会一抽一抽。
+
+            滚动按「一次追加 = 两条消息」整块跳（见 `Conversation` 的 instant），而
+            滚动条由 `.voice-log` 在 `styles/orbit.css` 里藏掉——滚动照旧可用。
           */}
-          <Conversation className="h-[188px] min-h-0 w-full flex-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <Conversation className="voice-log h-[188px] min-h-0 w-full flex-none">
             <ConversationContent className="mx-auto flex w-full max-w-3xl flex-col px-4 pb-2">
               {voice.log.length === 0 ? (
                 <ConversationEmptyState

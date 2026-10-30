@@ -21,8 +21,11 @@ export type ConversationProps = ComponentProps<typeof StickToBottom>
 export const Conversation = ({ className, ...props }: ConversationProps) => (
   <StickToBottom
     className={cn("relative flex-1 overflow-y-auto overscroll-none", className)}
-    initial="smooth"
-    resize="smooth"
+    // `instant` 而不是 `smooth`：新消息进来时视口应该**整块跳**一格（一次追加通常就是
+    // 「你一句 + 它一句」两条的高度），而不是滑过去。语音页看的是对话不丢字，滑动的
+    // 那 300ms 只会让人以为消息在动。
+    initial="instant"
+    resize="instant"
     role="log"
     {...props}
   />

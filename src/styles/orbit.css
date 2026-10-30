@@ -1510,3 +1510,22 @@ html.theme-light [data-composer-box] {
   );
 }
 
+
+/*
+ * 语音页的对话列表：滚动条一律不显示（滚动本身照旧）。
+ *
+ * 写在这里而不是用 Tailwind 的 `[&::-webkit-scrollbar]:hidden`：那条 arbitrary
+ * variant 依赖 `::-webkit-scrollbar` 伪元素被正确编译，而 WKWebView 上
+ * `scrollbar-width` 又还不认——两条路都试过才发现只有显式 CSS 稳。
+ */
+.voice-log,
+.voice-log * {
+  scrollbar-width: none;
+}
+
+.voice-log::-webkit-scrollbar,
+.voice-log *::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
