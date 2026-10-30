@@ -12,7 +12,8 @@
  */
 import { useEffect, useState } from "react";
 import { Orb, type AgentState } from "@/components/ui/orb";
-import { PrimaryButton, SecondaryButton } from "@/shared/ui/controls";
+import { PrimaryButton } from "@/shared/ui/controls";
+import { CallEnd, Pause } from "@/shared/ui/icons";
 import { useVoiceAgent, type VoiceState, type VoiceLogItem } from "../hooks/useVoiceAgent";
 import { useOrbColors } from "../hooks/useOrbColors";
 import { LiveWaveform } from "@/components/ui/live-waveform";
@@ -45,7 +46,40 @@ const STATE_LABEL: Record<VoiceState, string> = {
 };
 
 /**
- * 一条消息。
+ * 通话控制：一个圆形图标键。
+ *
+ * 「结束对话」写成一排字会抢走球和对话的注意力——挂断在语音里是个一眼能认的动作，
+ * 用图标就够了，文字放进 title / aria-label。
+ */
+function CallControl({
+  label,
+  danger,
+  onClick,
+  children,
+}: {
+  label: string;
+  danger?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className={`grid size-9 place-items-center rounded-full border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${
+        danger
+          ? "border-red-400/25 bg-red-400/10 text-red-400 hover:bg-red-400/20"
+          : "border-stroke bg-content/5 text-content/60 hover:bg-content/10 hover:text-content"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** 一条消息。
  *
  * 它说的话**不带头像**：这一页只有它一个说话人，左边那颗小球在每条消息旁边重复四遍
  * 只会把视线从字上拉走。头像只有一种情况有意义——对话里有别人（现在没有）。
@@ -131,8 +165,8 @@ export function VoicePage() {
       <div
         className={
           active
-            ? "relative flex shrink-0 flex-col items-center gap-2 pb-1 pt-5"
-            : "relative flex min-h-0 flex-1 flex-col items-center justify-start gap-8 pt-[12vh]"
+            ? "relative flex shrink-0 flex-col items-center gap-2 pb-1 pt-12"
+            : "relative flex min-h-0 flex-1 flex-col items-center justify-start gap-8 pt-[15vh]"
         }
       >
         {active ? null : (
@@ -180,15 +214,15 @@ export function VoicePage() {
             </ConversationContent>
             <ConversationScrollButton />
           </Conversation>
-          <div className="flex shrink-0 items-center justify-center gap-2 pb-5 pt-1">
+          <div className="flex shrink-0 items-center justify-center gap-3 pb-5 pt-1">
             {state === "speaking" ? (
-              <SecondaryButton className="rounded-full px-4" onClick={voice.interrupt}>
-                打断
-              </SecondaryButton>
+              <CallControl label="打断" onClick={voice.interrupt}>
+                <Pause className="size-4" />
+              </CallControl>
             ) : (
-              <SecondaryButton className="rounded-full px-4" danger onClick={voice.stop}>
-                结束对话
-              </SecondaryButton>
+              <CallControl label="结束对话" danger onClick={voice.stop}>
+                <CallEnd className="size-4" />
+              </CallControl>
             )}
             <MicSelector disabled={voice.starting} onValueChange={voice.setDeviceId} />
           </div>

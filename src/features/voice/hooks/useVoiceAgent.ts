@@ -17,7 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspace } from "@/lib/store";
 import { toast } from "@/shared/ui/toast";
 import { sendPrompt } from "@/lib/rpc";
-import { answerDialog } from "@/lib/rpc-session";
+import { answerDialog, changeSession } from "@/lib/rpc-session";
 import {
   rimeSttAbort,
   rimeSttFinish,
@@ -126,6 +126,15 @@ export function useVoiceAgent() {
   const announcedDialogsRef = useRef<string[]>([]);
   /** 没配 Rime 密钥时不念旁白（`rime_tts_stream` 会直接报错）。 */
   const configuredRef = useRef(false);
+
+  // ---- 预热 ----
+  /**
+   * 「开始对话」时那次会话切换的承诺。
+   *
+   * 麦克风比它先开（点完到能收音之间不能再夹着一次会话切换），所以用户有可能在
+   * 切换还没完成时就说完第一句。发 prompt 之前等它一下，比报错或者发进旧会话都强。
+   */
+  const sessionReadyRef = useRef<Promise<void>>(Promise.resolve());
 
   // ---- 轮次 ----
   const armedRef = useRef(false);
@@ -499,19 +508,30 @@ export function useVoiceAgent() {
           // 先把 ref 清掉：finish 抛错时这句话已经废了，不能留给下一句。
           sttStreamRef.current = null;
           flushChunks(true);
-          await pushChainRef.current;
-          const result = await rimeSttFinish(streamId);
-          text = result.text.trim();
+          try {
+            await pushChainRef.current;
+            const result = await rimeSttFinish(streamId);
+            text = result.text.trim();
+          } catch {
+            // 预热的那条连接可能在用户开口前就被服务端关掉了；音频还在手里，退回
+            // 一次性接口，不要把这句话丢了。
+            text = await rimeSttFinishFallback(utterance);
+          }
         } else {
           const result = await rimeSttFinishFallback(utterance);
           text = result;
         }
+        // 下一句的 WebSocket 现在就建：握手藏在「它在想」和「它在说」的时间里，
+        // 而不是等用户开口后再去握手（那就是第一句要等好久的原因）。
+        openStt();
         // 只有标点的转写（咳嗽、椅子响）当成没听清：不然会发出一个 "!" 给模型。
         if (!/[\p{L}\p{N}]/u.test(text)) {
           push("system", "没听清，再说一次。");
           syncState("ready");
           return;
         }
+        // 会话切换（新会话）还在跑时先等它：麦克风比它先开，第一句可能已经说完了。
+        await sessionReadyRef.current.catch(() => undefined);
         push("user", text);
 
         /**
@@ -570,7 +590,7 @@ export function useVoiceAgent() {
         syncState("ready");
       }
     },
-    [armTurn, fail, flushChunks, narrate, push, startSpeech, syncState],
+    [armTurn, fail, flushChunks, narrate, openStt, push, startSpeech, syncState],
   );
 
   /** 没有任何 STT 流时的兜底：把整段录音丢给一次性接口。 */
@@ -598,10 +618,35 @@ export function useVoiceAgent() {
     agentLogIdRef.current = null;
     stopPlayback();
     syncState("listening");
+    // 插话之后下一句马上要转写：现在就把新连接建好。
+    openStt();
     push("system", "你插话了，它停下听你说。");
-  }, [abortStt, cancelSpeech, push, stopPlayback, syncState]);
+  }, [abortStt, cancelSpeech, openStt, push, stopPlayback, syncState]);
 
   // ---------------------------------------------------------------- 生命周期
+
+  /**
+   * 每次开麦 = 一段新对话。
+   *
+   * 不新开的话，上一通电话的工具调用、上下文、甚至挂着的弹窗会原封不动跟进来：
+   * 第一句「你好」会被当成对刚才那件活插话（steer），而不是开一场新对话。
+   *
+   * 代价要说清楚：新会话看不到你在聊天页上正在跑的那一轮。真要盯着它干活（oncall），
+   * 应该切回那条会话再开麦。
+   */
+  const beginNewSession = useCallback(async () => {
+    const before = useWorkspace.getState().panel;
+    await changeSession({ type: "new_session" });
+    // `changeSession` 默认把人送回会话页（打字场景的口径）；语音页要留在原地。
+    if (useWorkspace.getState().panel !== before) useWorkspace.getState().set({ panel: before });
+    setLog([]);
+    toolSeenRef.current.clear();
+    announcedDialogsRef.current = [];
+    narrationRef.current.clear();
+    armedRef.current = false;
+    agentLogIdRef.current = null;
+    skipIdRef.current = null;
+  }, []);
 
   const start = useCallback(async () => {
     if (startingRef.current) return;
@@ -631,12 +676,48 @@ export function useVoiceAgent() {
       if (graph) await graph.context.resume().catch(() => undefined);
       syncState("ready");
     } catch (cause) {
-      fail(`无法打开麦克风：${cause instanceof Error ? cause.message : String(cause)}`);
-    } finally {
       startingRef.current = false;
       setStarting(false);
+      fail(`无法打开麦克风：${cause instanceof Error ? cause.message : String(cause)}`);
+      return;
     }
-  }, [analyserGraph, fail, handleBargeIn, handleChunk, handleSpeechStart, handleUtterance, online, syncState]);
+
+    /*
+     * 顺序很关键：麦克风先开，再换新会话。
+     *
+     * 反过来（先切会话再开麦）的话，点完「开始对话」到能收音之间要白等一次会话
+     * 切换；而 STT 那条 WebSocket 要 ~1 秒握手——两件事都压在用户开口之前，就是
+     * 「第一句要等好久」的来源。现在它们都在后台跑，用户一开口就能直接推音频。
+     */
+    openStt();
+    sessionReadyRef.current = beginNewSession();
+    try {
+      await sessionReadyRef.current;
+    } catch (cause) {
+      fail(cause instanceof Error ? cause.message : String(cause));
+      micRef.current?.stop();
+      micRef.current = null;
+      syncState("off");
+      startingRef.current = false;
+      setStarting(false);
+      return;
+    }
+    // 切换期间那条连接可能已经断了，就绪后再确认一次。
+    openStt();
+    startingRef.current = false;
+    setStarting(false);
+  }, [
+    analyserGraph,
+    beginNewSession,
+    fail,
+    handleBargeIn,
+    handleChunk,
+    handleSpeechStart,
+    handleUtterance,
+    online,
+    openStt,
+    syncState,
+  ]);
 
   const stop = useCallback(() => {
     if (watchdogRef.current !== null) {
