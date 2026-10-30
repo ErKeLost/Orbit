@@ -139,18 +139,21 @@ export function VoicePage() {
       {/*
         通话中球要缩到顶部：它还在，只是不再占满一屏——下面那块地要让给对话。
         缩尺寸而不是换组件，是因为重建 WebGL 上下文就是"进去闪一下"的来源。
+
+        未开始时也不居中：球往上提约一成屏高，视觉重心落在上部，下面的按钮行不再
+        和球一起挤在正中。
       */}
       <div
         className={
           active
-            ? "relative flex shrink-0 flex-col items-center gap-2 pb-1 pt-6"
-            : "relative flex min-h-0 flex-1 flex-col items-center justify-center gap-8"
+            ? "relative flex shrink-0 flex-col items-center gap-2 pb-1 pt-5"
+            : "relative flex min-h-0 flex-1 flex-col items-center justify-start gap-8 pt-[12vh]"
         }
       >
         {active ? null : (
           <div
             aria-hidden
-            className="pointer-events-none absolute left-1/2 top-1/2 size-[420px] -translate-x-1/2 -translate-y-[62%] rounded-full opacity-40 blur-3xl"
+            className="pointer-events-none absolute left-1/2 top-[42%] size-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full opacity-40 blur-3xl"
             style={{ background: "radial-gradient(circle, color-mix(in srgb, var(--color-accent) 38%, transparent), transparent 68%)" }}
           />
         )}
@@ -171,8 +174,12 @@ export function VoicePage() {
 
       {active ? (
         /* 开始之后：这块就是消息列表，不再切页面。 */
-        <div className="relative flex min-h-0 flex-1 flex-col">
-          <Conversation className="min-h-0">
+        <div className="relative flex flex-col">
+          {/*
+            固定四行高：一行 ≈ py-2 + leading-6 = 40px，四行 160 + 上下内边距 ≈ 188px。
+            列表不跟着消息数量长高，布局就不会一抽一抽；滚动条隐藏但滚动保留。
+          */}
+          <Conversation className="h-[188px] min-h-0 w-full flex-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <ConversationContent className="mx-auto flex w-full max-w-3xl flex-col px-4 pb-2">
               {voice.log.length === 0 ? (
                 <ConversationEmptyState
