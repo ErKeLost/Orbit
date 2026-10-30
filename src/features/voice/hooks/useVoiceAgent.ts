@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWorkspace } from "@/lib/store";
 import { toast } from "@/shared/ui/toast";
 import { sendPrompt } from "@/lib/rpc";
+import { answerDialog } from "@/lib/rpc-session";
 import {
   rimeSttAbort,
   rimeSttFinish,
@@ -31,6 +32,15 @@ import {
 import { MicCapture, pcmToBase64, type Utterance } from "../model/micCapture";
 import { speakable } from "../model/speechText";
 import { messageText } from "../model/messageText";
+import {
+  NARRATION,
+  NarrationQueue,
+  dialogPhrase,
+  replyToDialog,
+  toolEndPhrase,
+  toolStartPhrase,
+  type NarrationPriority,
+} from "../model/narration";
 import { useVoiceConfig } from "./useVoiceConfig";
 
 export type VoiceState = "off" | "ready" | "listening" | "thinking" | "speaking";
@@ -66,6 +76,10 @@ export function useVoiceAgent() {
   const online = connection === "online";
   const { config, error: configError, saveKey, updateConfig } = useVoiceConfig();
 
+  useEffect(() => {
+    configuredRef.current = Boolean(config?.hasCredential);
+  }, [config]);
+
   const [state, setState] = useState<VoiceState>("off");
   /** 打开麦克风 + 建 AudioContext 的这一两秒，页面要立刻有反馈。 */
   const [starting, setStarting] = useState(false);
@@ -74,6 +88,7 @@ export function useVoiceAgent() {
   /** 正在播的那段音频的实测音量，给 orb 的 output 用。 */
   const [outputLevel, setOutputLevel] = useState(0);
   const [log, setLog] = useState<VoiceLogItem[]>([]);
+  const dialogs = useWorkspace((state) => state.dialogs);
 
   const stateRef = useRef<VoiceState>("off");
   const micRef = useRef<MicCapture | null>(null);
@@ -100,6 +115,17 @@ export function useVoiceAgent() {
   const sttStreamRef = useRef<string | null>(null);
   const pendingRef = useRef<Int16Array[]>([]);
   const pushChainRef = useRef<Promise<unknown>>(Promise.resolve());
+
+  // ---- 旁白 ----
+  /** 待播的旁白，深度 1。 */
+  const narrationRef = useRef(new NarrationQueue());
+  const narrationTimerRef = useRef<number | null>(null);
+  /** 这张表只为一件事存在：工具从 running 落到 not running 的那一瞬能被看见。 */
+  const toolSeenRef = useRef(new Map<string, boolean>());
+  /** 已经念过的弹窗 id：同一个确认框只喊你一次。 */
+  const announcedDialogsRef = useRef<string[]>([]);
+  /** 没配 Rime 密钥时不念旁白（`rime_tts_stream` 会直接报错）。 */
+  const configuredRef = useRef(false);
 
   // ---- 轮次 ----
   const armedRef = useRef(false);
@@ -317,6 +343,64 @@ export function useVoiceAgent() {
     [fail, live, schedulePcm, syncState],
   );
 
+  // ---------------------------------------------------------------- 旁白
+
+  /**
+   * 旁白和模型的话共用同一条 TTS 流。
+   *
+   * 这是延迟的关键：流在发 prompt 的那一刻就已经建好了（握手 ~1 秒藏在模型生成首字
+   * 的时间里），所以工具开跑时这里只多一次 IPC —— 不再走 `rimeTts` 那种「一句一个
+   * 完整 HTTP 往返」的路。
+   */
+  const speakNarration = useCallback(
+    (text: string) => {
+      const clean = speakable(text);
+      if (!clean) return;
+      void startSpeech().then(() => feedSpeech(clean));
+      push("system", clean);
+    },
+    [feedSpeech, push, startSpeech],
+  );
+
+  const flushNarrationRef = useRef<() => void>(() => {});
+  /**
+   * 队列深度是 1（见 `NarrationQueue`）：这里只负责「到点就把那一句送出去」。
+   * 时间用 `performance.now()`，和音频时间轴同一个钟。
+   */
+  const flushNarration = useCallback(() => {
+    if (narrationTimerRef.current !== null) {
+      window.clearTimeout(narrationTimerRef.current);
+      narrationTimerRef.current = null;
+    }
+    if (!live()) {
+      narrationRef.current.clear();
+      return;
+    }
+    const item = narrationRef.current.take(performance.now());
+    if (item) speakNarration(item.text);
+    const wait = narrationRef.current.waitMs(performance.now());
+    if (wait !== null) narrationTimerRef.current = window.setTimeout(() => flushNarrationRef.current(), Math.max(16, wait));
+  }, [live, speakNarration]);
+
+  useEffect(() => {
+    flushNarrationRef.current = flushNarration;
+  }, [flushNarration]);
+
+  /** 一条旁白进来：过时的直接顶掉，然后按间隔播。 */
+  const narrate = useCallback(
+    (item: { text: string | null; priority: NarrationPriority } | null) => {
+      if (!item?.text) return;
+      if (!live()) return;
+      // 没配密钥时一个字也不该念：否则每条工具事件都在弹同一个错。
+      if (!configuredRef.current) return;
+      // 模型正在说这一轮的话，就别抢：只有「它卡住了」这一档能插进去。
+      if (item.priority > NARRATION.high && sentCharsRef.current > 0 && useWorkspace.getState().transcript.running) return;
+      narrationRef.current.push({ text: item.text, priority: item.priority });
+      flushNarrationRef.current();
+    },
+    [live],
+  );
+
   // ---------------------------------------------------------------- 垫话
 
   const clearFillerTimer = useCallback(() => {
@@ -386,6 +470,24 @@ export function useVoiceAgent() {
     return current.running || current.submitted;
   };
 
+  /**
+   * 「这一轮从现在开始归我们念」。
+   *
+   * 提 prompt 和回弹窗两条路都要做同一件事：把上一轮的 assistant 消息 id 记下来
+   * （不念旧内容）、清空已送字数、重置垫话计数。写成一份，两边不会走斜。
+   */
+  const armTurn = useCallback(() => {
+    const previous = [...useWorkspace.getState().transcript.messages]
+      .reverse()
+      .find((item) => item.message.role === "assistant");
+    skipIdRef.current = previous?.id ?? null;
+    armedRef.current = true;
+    sentCharsRef.current = 0;
+    agentLogIdRef.current = null;
+    clearFillerTimer();
+    fillerCountRef.current = 0;
+  }, [clearFillerTimer]);
+
   const handleUtterance = useCallback(
     async (utterance: Utterance) => {
       if (stateRef.current === "off") return;
@@ -411,15 +513,32 @@ export function useVoiceAgent() {
           return;
         }
         push("user", text);
-        const previous = [...useWorkspace.getState().transcript.messages]
-          .reverse()
-          .find((item) => item.message.role === "assistant");
-        skipIdRef.current = previous?.id ?? null;
-        armedRef.current = true;
-        sentCharsRef.current = 0;
-        agentLogIdRef.current = null;
-        clearFillerTimer();
-        fillerCountRef.current = 0;
+
+        /**
+         * 有弹窗挡着 pi 的主循环：这句话是**对它拍板**，不是新任务。
+         *
+         * 走确定性映射直接回 `extension_ui_response`（一次 IPC），不经过模型：
+         * 弹窗正在阻塞这一轮，再发 prompt 只会排在它后面。匹配不上就追问一句，
+         * 不猜——猜错一次的代价是它跑了个你并不想跑的命令。
+         */
+        const waiting = useWorkspace.getState().dialogs[0];
+        if (waiting) {
+          const answer = replyToDialog(text, waiting);
+          if (!answer) {
+            narrate({ text: "Sorry, I did not catch that. Yes or no?", priority: NARRATION.high });
+            syncState("ready");
+            return;
+          }
+          armTurn();
+          // 回完弹窗，它接着往下跑的那段话要念；对话里的“上一条 assistant”不参与这段判定。
+          skipIdRef.current = null;
+          await answerDialog(waiting, answer);
+          // 这一轮的出字仍然要念，所以朗读流在这里就打开。
+          void startSpeech();
+          return;
+        }
+
+        armTurn();
 
         /**
          * 上一轮还在跑的时候必须带 `streamingBehavior`，否则 Pi 直接回
@@ -451,7 +570,7 @@ export function useVoiceAgent() {
         syncState("ready");
       }
     },
-    [clearFillerTimer, fail, flushChunks, push, startSpeech, syncState],
+    [armTurn, fail, flushChunks, narrate, push, startSpeech, syncState],
   );
 
   /** 没有任何 STT 流时的兜底：把整段录音丢给一次性接口。 */
@@ -525,6 +644,11 @@ export function useVoiceAgent() {
       watchdogRef.current = null;
     }
     clearFillerTimer();
+    if (narrationTimerRef.current !== null) {
+      window.clearTimeout(narrationTimerRef.current);
+      narrationTimerRef.current = null;
+    }
+    narrationRef.current.clear();
     cancelSpeech();
     abortStt();
     micRef.current?.stop();
@@ -591,6 +715,49 @@ export function useVoiceAgent() {
     if (transcript.running || transcript.submitted) return;
     finishSpeech();
   }, [transcript, finishSpeech]);
+
+  /**
+   * 工具 → 旁白。
+   *
+   * 只看 `running` 的**跳变**，不看状态本身：连接时就已存在的历史工具不该冒一句
+   * 「Reading App.tsx」。表只存 `id → 上一帧是否在跑`，一场长会话里也只占几十字节。
+   *
+   * 这条 effect 每帧都会被 store 的合批提交触发，所以内部只有一个 Object.entries 循环，
+   * 没有任何数组排序或字符串处理——不做，它就会成为首字延迟的一部分。
+   */
+  useEffect(() => {
+    if (stateRef.current === "off") return;
+    const seen = toolSeenRef.current;
+    for (const id in transcript.tools) {
+      const tool = transcript.tools[id]!;
+      const wasRunning = seen.get(id);
+      if (wasRunning === undefined) {
+        seen.set(id, tool.running);
+        if (!tool.running) continue;
+        narrate({ text: toolStartPhrase(tool.name, tool.args), priority: NARRATION.low });
+        continue;
+      }
+      if (wasRunning && !tool.running) {
+        seen.set(id, false);
+        narrate(toolEndPhrase(tool.name, tool.args, { durationMs: tool.durationMs, isError: tool.isError }));
+      }
+    }
+    if (seen.size > 200) for (const key of [...seen.keys()].slice(0, seen.size - 200)) seen.delete(key);
+  }, [transcript.tools, narrate]);
+
+  /**
+   * 弹窗 → 旁白（最高优先级）。
+   *
+   * oncall 最怕的不是报错，是 `confirm` 弹窗把 pi 卡在那里，而电话里一片安静——
+   * 用户会以为它还在跑，实际上它在等一句「行」。
+   */
+  useEffect(() => {
+    const dialog = dialogs[0];
+    if (!dialog) return;
+    if (announcedDialogsRef.current.includes(dialog.id)) return;
+    announcedDialogsRef.current = [...announcedDialogsRef.current.slice(-15), dialog.id];
+    narrate({ text: dialogPhrase(dialog), priority: NARRATION.critical });
+  }, [dialogs, narrate]);
 
   // 音轨空了就把话筒交还。
   useEffect(() => {
