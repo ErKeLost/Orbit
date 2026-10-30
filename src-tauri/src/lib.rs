@@ -39,6 +39,10 @@ mod gitlab;
 mod image_config;
 mod web_search;
 mod speech;
+// 语音 Agent 的 STT/TTS 都建立在 tungstenite + openssl 上，那两个 crate 是桌面专属依赖
+// （见 Cargo.toml 的 `cfg(not(any(android, ios)))` 段）。这里跟着一起门控，否则 Android
+// 目标会在 `cargo check --target aarch64-linux-android` 上找不到 crate。
+#[cfg(desktop)]
 mod rime;
 mod media;
 mod pty_term;
@@ -388,18 +392,31 @@ pub fn run() {
             speech::save_speech_config,
             speech::save_speech_api_key,
             speech::transcribe_audio,
+            #[cfg(desktop)]
             rime::rime_config,
+            #[cfg(desktop)]
             rime::save_rime_config,
+            #[cfg(desktop)]
             rime::save_rime_api_key,
+            #[cfg(desktop)]
             rime::rime_tts,
+            #[cfg(desktop)]
             rime::rime_stt,
+            #[cfg(desktop)]
             rime::rime_stt_open,
+            #[cfg(desktop)]
             rime::rime_stt_push,
+            #[cfg(desktop)]
             rime::rime_stt_finish,
+            #[cfg(desktop)]
             rime::rime_stt_abort,
+            #[cfg(desktop)]
             rime::rime_tts_stream,
+            #[cfg(desktop)]
             rime::rime_tts_send,
+            #[cfg(desktop)]
             rime::rime_tts_finish,
+            #[cfg(desktop)]
             rime::rime_tts_cancel,
             media::media_meta,
             media::read_media_file,
