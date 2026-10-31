@@ -6,11 +6,8 @@ import { toast } from "../../shared/ui/toast"
 /**
  * Orbit's Browser section: how the browser the agent drives gets signed in.
  *
- * The browser is a real Chrome with its own profile, so a fresh install is
- * signed out everywhere. Rather than making the user sign in again site by site,
- * this copies an existing profile's session material in. It is a copy, not a
- * link: the source browser keeps its own profile untouched, and Orbit never
- * writes into it.
+ * The panel's native WebView has its own cookie store. Import copies supported
+ * cookies from a source snapshot; it does not copy or link the entire profile.
  */
 export function BrowserPage() {
   const [sources, setSources] = useState<ImportSource[] | null>(null)

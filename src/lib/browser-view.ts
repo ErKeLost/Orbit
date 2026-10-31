@@ -44,6 +44,10 @@ export function browserViewStop(tab: string): Promise<void> {
   return invoke<void>("browser_view_stop", { tab })
 }
 
+export function browserViewSetAudioMuted(tab: string, muted: boolean): Promise<void> {
+  return invoke<void>("browser_view_set_audio_muted", { tab, muted })
+}
+
 export function browserViewClose(tab: string): Promise<void> {
   return invoke<void>("browser_view_close", { tab })
 }
@@ -68,6 +72,6 @@ export function browserViewReconcile(tabs: string[]): Promise<number> {
  * all come from the same poll, and every extra round trip is one the poll pays
  * for every tab, every second and a half.
  */
-export function browserViewPage(tab: string): Promise<{ title: string; url: string; loading: boolean }> {
-  return invoke<{ title: string; url: string; loading: boolean }>("browser_view_page", { tab })
+export function browserViewPage(tab: string): Promise<{ title: string; url: string; loading: boolean; audioMuted?: boolean }> {
+  return invoke<{ title: string; url: string; loading: boolean; audioMuted?: boolean }>("browser_view_page", { tab })
 }

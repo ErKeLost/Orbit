@@ -12,6 +12,13 @@ export function assertSpokenScript(text: string) {
     if (!/\p{Script_Extensions=Latin}/u.test(letter)) throw new Error("The voice reply contains text outside the selected Rime language.")
   }
 }
+/** Publish complete sentences so a language correction can never strand half a sentence in TTS. */
+export function spokenSentencePrefix(text: string, final = false): string {
+  if (final || spokenBudgetExceeded(text)) return conciseReply(text)
+  const boundaries = [...text.matchAll(/[.!?](?:["'”’)]*)(?=\s)/gu)]
+  const last = boundaries.at(-1)
+  return last ? text.slice(0, last.index + last[0].length) : ""
+}
 export function conciseReply(text: string): string {
   const words = text.trim().split(/\s+/u).slice(0, MAX_SPOKEN_WORDS)
   while (words.join(" ").length > MAX_SPOKEN_CHARS - 1) words.pop()

@@ -227,6 +227,7 @@ type ShellState = {
   openFile: (path: string, options?: { pin?: boolean; pane?: string; diff?: "staged" | "unstaged"; isDir?: boolean; changes?: true; commit?: { sha: string; shortSha: string; subject: string }; name?: string }) => void;
   /** Open a browser tab (a real web view) in a pane, and return its tab path. */
   openBrowser: (url: string, options?: { path?: string }) => string;
+  closeBrowserTabs: (path: string, mode: "current" | "others" | "right" | "all") => void;
   /**
    * Open an http(s) link from inside the app.
    *
@@ -237,7 +238,7 @@ type ShellState = {
    */
   openLink: (url: string) => string;
   /** The page a browser tab is showing, as the tab strip's label and the page itself report it. */
-  updateBrowser: (path: string, patch: { url?: string; title?: string }) => void;
+  updateBrowser: (path: string, patch: { url?: string; title?: string; audioMuted?: boolean }) => void;
   /**
    * Take a run's tab over, page and all (`browser:handoff`).
    *
@@ -621,6 +622,25 @@ export const useShell = create<ShellState>((set, get) => {
       return path;
     },
 
+    closeBrowserTabs: (path, mode) => {
+      const state = get();
+      const index = state.browserTabs.findIndex(tab => tab.path === path);
+      if (index < 0) return;
+      const rest = state.browserTabs.filter((tab, position) => {
+        if (mode === "all") return false;
+        if (mode === "others") return tab.path === path;
+        if (mode === "right") return position <= index;
+        return tab.path !== path;
+      });
+      const retained = new Set(rest.map(tab => tab.path));
+      set({
+        browserTabs: rest,
+        browserActive: state.browserActive && retained.has(state.browserActive) ? state.browserActive : (rest[Math.min(index, rest.length - 1)]?.path ?? null),
+        browserOpen: rest.length > 0 && state.browserOpen,
+        browserPip: state.browserPip && retained.has(state.browserPip.tab) ? state.browserPip : null,
+      });
+    },
+
     openLink: (url) => {
       // The user's own page, if the window has one: a link navigates it and
       // brings it forward, instead of leaving a stale page per click behind. A
@@ -669,7 +689,7 @@ export const useShell = create<ShellState>((set, get) => {
       const tab = tabs.find((item) => item.path === path);
       if (!tab) return;
       const next = { ...tab, ...patch };
-      if (next.url === tab.url && next.title === tab.title) return;
+      if (next.url === tab.url && next.title === tab.title && next.audioMuted === tab.audioMuted) return;
       set({ browserTabs: tabs.map((item) => (item.path === path ? next : item)) });
     },
 
@@ -688,17 +708,7 @@ export const useShell = create<ShellState>((set, get) => {
       // window's. `browser_view_reconcile` sees the shorter tab list and destroys
       // the native view (`use-browser-views.ts`).
       if (isBrowserPath(path)) {
-        const tabs = get().browserTabs;
-        if (!tabs.some((tab) => tab.path === path)) return;
-        const rest = tabs.filter((tab) => tab.path !== path);
-        set({
-          browserTabs: rest,
-          browserActive: get().browserActive === path ? (rest.at(-1)?.path ?? null) : get().browserActive,
-          // An empty browser column is nothing to look at: with its last page
-          // gone the column goes too (there is nothing left to lose).
-          browserOpen: rest.length === 0 ? false : get().browserOpen,
-          browserPip: get().browserPip?.tab === path ? null : get().browserPip,
-        });
+        get().closeBrowserTabs(path, "current");
         return;
       }
       const workspace = get().workspaces[activeIndex(get())];

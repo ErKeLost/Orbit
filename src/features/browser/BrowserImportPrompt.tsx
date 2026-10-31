@@ -21,7 +21,8 @@ import { Select } from "../../shared/ui/controls"
  * dismissal would be indistinguishable from the button being broken, which is
  * the shape this feature already failed in once.
  */
-const DISMISS_KEY = "orbit.browserImport.dismissed"
+// Re-offer once after fixing the dev/production cookie-store mismatch.
+const DISMISS_KEY = "orbit.browserImport.dismissed.v2"
 
 /** Where an import has got to, as the backend reports it. */
 type Progress = { done: number; total: number }
@@ -34,7 +35,7 @@ function dismissedBefore(): boolean {
   }
 }
 
-export function BrowserImportPrompt() {
+export function BrowserImportPrompt({ requested = false, onClose }: { requested?: boolean; onClose?: () => void }) {
   const desktop = useWorkspace((state) => state.runtimeTarget === "desktop")
   const [dismissed, setDismissed] = useState(dismissedBefore)
   const [offer, setOffer] = useState<ImportSource | null>(null)
@@ -52,28 +53,35 @@ export function BrowserImportPrompt() {
   }, [])
 
   useEffect(() => {
-    if (!desktop || dismissed) return
+    if (!desktop || (dismissed && !requested) || busy) return
+    let cancelled = false
     void (async () => {
       try {
         // Nothing to offer once something has been imported. The backend records
         // it, so an import answers for every panel at once — which a dismissal
         // does not, being about the asking rather than the session.
-        if (await browserImportState()) { setOffer(null); return }
+        const imported = await browserImportState()
+        if (cancelled) return
+        if (imported && !requested) { setOffer(null); return }
         const sources = await browserImportSources()
+        if (cancelled) return
         setSources(sources)
         // Offered for any profile that exists, not only one whose cookie count
         // could be measured. The count is a measurement the backend is allowed to
         // fail at, and treating "unknown" as "nothing to import" is how this
         // offer went missing without a word the first time round.
-        const best = [...sources].sort((left, right) => (right.cookies ?? -1) - (left.cookies ?? -1))[0]
-        if (best) setOffer(best)
+        const best = sources.find(source => source.browser === imported?.browser && source.profile === imported.profile)
+          ?? [...sources].sort((left, right) => (right.cookies ?? -1) - (left.cookies ?? -1))[0]
+        setOffer(best ?? null)
+        if (!best && requested) setFailure("没有检测到可导入的浏览器资料，请先在来源浏览器登录后重试")
       } catch (error) {
         // A failed attempt to *ask* is the one outcome the user can act on, so it
         // is never swallowed.
-        setFailure(error instanceof Error ? error.message : String(error))
+        if (!cancelled) setFailure(error instanceof Error ? error.message : String(error))
       }
     })()
-  }, [desktop, dismissed, revision])
+    return () => { cancelled = true }
+  }, [desktop, dismissed, revision, requested, busy])
 
   const stopAsking = () => {
     setDismissed(true)
@@ -84,6 +92,7 @@ export function BrowserImportPrompt() {
       // Storage unavailable: the dismissal holds for this panel at least.
     }
     persistState(DISMISS_KEY, "1")
+    onClose?.()
   }
 
   const run = async () => {
@@ -103,7 +112,7 @@ export function BrowserImportPrompt() {
     return (
       <div className="browser-banner" role="alert">
         <span className="min-w-0 flex-1 truncate" title={failure}>导入登录失败：{failure}</span>
-        <button type="button" className="browser-banner-action" onClick={() => { setFailure(null); setOffer(null) }}>知道了</button>
+        <button type="button" className="browser-banner-action" onClick={() => { setFailure(null); setOffer(null); onClose?.() }}>知道了</button>
       </div>
     )
   }
@@ -111,7 +120,7 @@ export function BrowserImportPrompt() {
     return (
       <div className="browser-banner" role="status">
         <span className="min-w-0 flex-1 truncate">{done}</span>
-        <button type="button" className="browser-banner-action" onClick={() => setDone(null)}>知道了</button>
+        <button type="button" className="browser-banner-action" onClick={() => { setDone(null); onClose?.() }}>知道了</button>
       </div>
     )
   }

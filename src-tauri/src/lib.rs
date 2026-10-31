@@ -300,6 +300,7 @@ pub fn run() {
             browser_view::browser_view_go,
             browser_view::browser_view_reload,
             browser_view::browser_view_stop,
+            browser_view::browser_view_set_audio_muted,
             browser_view::browser_view_eval,
             browser_view::browser_view_status,
             browser_view::browser_view_page,

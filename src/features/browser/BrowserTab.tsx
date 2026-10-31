@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { AppWindow, ArrowLeft, ArrowRight, Globe, RefreshCw, X } from "../../shared/ui/icons"
+import { AppWindow, ArrowLeft, ArrowRight, Globe, RefreshCw, Settings, X } from "../../shared/ui/icons"
 import { reportBrowserFailure, normalizeAddress } from "../../lib/browser"
 import {
   browserViewActivate,
@@ -40,6 +40,7 @@ export function BrowserTab({ path, url, title, active = true, agent = false }: {
   const floating = useShell((state) => state.browserPip?.tab === path)
   const toggleBrowserPip = useShell((state) => state.toggleBrowserPip)
   const [loading, setLoading] = useState(false)
+  const [importRequested, setImportRequested] = useState(false)
   const [profileRevision, setProfileRevision] = useState(0)
   const { busy: importing, revision: importRevision } = useBrowserImportStatus()
   useEffect(() => {
@@ -204,7 +205,7 @@ export function BrowserTab({ path, url, title, active = true, agent = false }: {
       if (page) setFailure(null)
       if (!page) return
       setLoading(page.loading)
-      if (page.title || page.url) updateBrowser(path, { ...(page.title ? { title: page.title } : {}), ...(page.url ? { url: page.url } : {}) })
+      if (page.title || page.url) updateBrowser(path, { ...(page.title ? { title: page.title } : {}), ...(page.url ? { url: page.url } : {}), ...(page.audioMuted !== undefined ? { audioMuted: page.audioMuted } : {}) })
     }
     void read()
     const timer = window.setInterval(() => void read(), 1_500)
@@ -291,6 +292,13 @@ export function BrowserTab({ path, url, title, active = true, agent = false }: {
           </div>
         </form>
         <TabIcon
+          label="导入浏览器登录"
+          disabled={importing}
+          onClick={() => setImportRequested(value => !value)}
+        >
+          <Settings className="size-3.5" strokeWidth={1.75} />
+        </TabIcon>
+        <TabIcon
           label={floating ? "收回浏览器列" : "画中画"}
           disabled={!live}
           onClick={() => toggleBrowserPip(path)}
@@ -311,7 +319,7 @@ export function BrowserTab({ path, url, title, active = true, agent = false }: {
       {/* Same reason as the banner above: the panel is where a login is needed,
           and a toast at the bottom right is covered by the page's native view. */}
       {/* 所有标签页都常驻（页面不属于 pane），所以导入提示只由前台那个画一次。 */}
-      {active ? <BrowserImportPrompt /> : null}
+      {active ? <BrowserImportPrompt requested={importRequested} onClose={() => setImportRequested(false)} /> : null}
       <div ref={stage} role="application" aria-label="浏览器页面" className="browser-stage relative min-h-0 min-w-0 flex-1 overflow-hidden outline-none">
         {!live ? <BrowserStart /> : null}
         {/* 页面在浮的时候，这里是空的：那一页画在窗口上层，别处的画中画卡片里。 */}

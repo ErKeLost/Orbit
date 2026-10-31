@@ -2,6 +2,7 @@ import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent }
 import { Globe, Plus, X } from "../../shared/ui/icons";
 import { useShell } from "../shell/shellStore";
 import { BrowserTab } from "./BrowserTab";
+import { reportMenuFailure, showBrowserTabMenu } from "./browser-tab-menu";
 
 /**
  * The browser column — Orbit's third column.
@@ -123,7 +124,19 @@ export function BrowserDock() {
           {tabs.map((tab) => {
             const selected = shown?.path === tab.path;
             return (
-              <div key={tab.path} className="group relative flex h-full w-44 min-w-24 shrink items-center">
+              <div key={tab.path} className="group relative flex h-full w-44 min-w-24 shrink items-center"
+                onContextMenu={event => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void showBrowserTabMenu(tab.path, event.clientX, event.clientY).catch(reportMenuFailure);
+                }}
+                onAuxClick={event => {
+                  if (event.button !== 1) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  close(tab.path);
+                }}
+              >
                 <button
                   type="button"
                   role="tab"
@@ -135,6 +148,7 @@ export function BrowserDock() {
                   }`}
                 >
                   <Globe className="size-3.5 shrink-0" strokeWidth={1.75} />
+                  {tab.audioMuted ? <span aria-label="标签页已静音" title="标签页已静音" className="text-[10px]">静音</span> : null}
                   <span className="min-w-0 flex-1 truncate">{tabName(tab.url, tab.title)}</span>
                   {tab.path === floatingTab ? (
                     <span

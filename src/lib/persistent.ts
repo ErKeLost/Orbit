@@ -51,6 +51,7 @@ const DURABLE_KEYS = [
   // "Don't ask again" for the browser-login import. A dismissal the user asked
   // for must not come back because the WebView's storage was cleared.
   "orbit.browserImport.dismissed",
+  "orbit.browserImport.dismissed.v2",
   "pi-gui.sidebarOpen",
   "pi-gui.sidebarOpen.narrow",
   // Whether the phone should hold its pairing connection while the app is in

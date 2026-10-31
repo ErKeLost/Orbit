@@ -100,6 +100,7 @@ const EXCLUDED: Record<string, string> = {
   browser_view_go: "drives the desktop window's own child web view",
   browser_view_reload: "drives the desktop window's own child web view",
   browser_view_stop: "drives the desktop window's own child web view",
+  browser_view_set_audio_muted: "mutes audio from the desktop window's own native browser tab",
   browser_view_eval: "runs a script inside the desktop window's child web view",
   browser_view_status: "reports the desktop window's own child web view",
   browser_view_activate: "says which desktop browser tab is in front",

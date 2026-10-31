@@ -87,6 +87,7 @@ pub struct BrowserViewHost {
 }
 
 struct Tab {
+    audio_muted: bool,
     partition: Option<String>,
     view: Webview,
     /// The address we asked for. Deliberately *not* read back from the view:
@@ -304,6 +305,7 @@ pub fn browser_view_sync(
         tabs.insert(
             tab.clone(),
             Tab {
+                audio_muted: false,
                 partition,
                 view,
                 url: target.to_string(),
@@ -419,6 +421,38 @@ pub fn browser_view_reload(_app: AppHandle, host: tauri::State<'_, BrowserViewHo
 pub fn browser_view_stop(_app: AppHandle, host: tauri::State<'_, BrowserViewHost>, tab: String) -> Result<(), String> {
     let view = with_tab(&host, &tab, |state| state.view.clone())?;
     view.eval("window.stop()").map_err(|error| error.to_string())
+}
+
+/// Mute the whole native page, including cross-origin frames and WebAudio.
+/// Mutating <video>.muted would miss both and be undone by the site's player.
+#[tauri::command(async)]
+pub fn browser_view_set_audio_muted(host: tauri::State<'_, BrowserViewHost>, tab: String, muted: bool) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let view = with_tab(&host, &tab, |state| state.view.clone())?;
+        let (tx, rx) = mpsc::channel();
+        view.with_webview(move |platform| {
+            use objc2::{msg_send, sel, runtime::AnyObject};
+            let result = unsafe {
+                let page = &*(platform.inner() as *mut AnyObject);
+                let supported: bool = msg_send![page, respondsToSelector: sel!(_setPageMuted:)];
+                if supported {
+                    // Preserve camera/screen capture flags; bit 0 is audio only.
+                    let state: usize = msg_send![page, _mediaMutedState];
+                    let next = if muted { state | 1 } else { state & !1 };
+                    let _: () = msg_send![page, _setPageMuted: next];
+                    Ok(())
+                } else { Err("当前 WebKit 不支持标签页静音".to_string()) }
+            };
+            let _ = tx.send(result);
+        }).map_err(|e| e.to_string())?;
+        rx.recv_timeout(Duration::from_secs(5)).map_err(|e| e.to_string())??;
+        let id = resolve_tab_id(&host, &tab)?;
+        if let Some(state) = host.tabs.lock().map_err(|e| e.to_string())?.get_mut(&id) { state.audio_muted = muted; }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = (host, tab, muted); Err("当前平台尚不支持标签页静音".into()) }
 }
 
 /// Run a script in a tab's page and return its result as JSON.
@@ -566,11 +600,12 @@ pub struct BrowserPage {
     pub title: String,
     pub url: String,
     pub loading: bool,
+    pub audio_muted: bool,
 }
 
 #[tauri::command(async)]
 pub fn browser_view_page(app: AppHandle, host: tauri::State<'_, BrowserViewHost>, tab: String) -> Result<BrowserPage, String> {
-    let (view, loading) = with_tab(&host, &tab, |state| (state.view.clone(), state.loading))?;
+    let (view, loading, audio_muted) = with_tab(&host, &tab, |state| (state.view.clone(), state.loading, state.audio_muted))?;
     let raw = eval_in(
         &app,
         view,
@@ -589,6 +624,7 @@ pub fn browser_view_page(app: AppHandle, host: tauri::State<'_, BrowserViewHost>
         title: page.get("title").and_then(serde_json::Value::as_str).unwrap_or_default().to_string(),
         url: page.get("url").and_then(serde_json::Value::as_str).unwrap_or_default().to_string(),
         loading,
+        audio_muted,
     })
 }
 

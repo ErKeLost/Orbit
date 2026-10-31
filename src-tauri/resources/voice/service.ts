@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 import { createDecisionClient } from "../computer-use/decision-provider.ts"
 import { loadApiKey } from "../computer-use/jev.ts"
 import { VOICE_STATUS, type VoiceRouteInput, type VoiceDecision, type VoiceServiceEvent } from "./contract.ts"
-import { assertSpokenScript, spokenBudgetExceeded, spokenReplyPrefix, voiceLanguage } from "./policy.ts"
+import { assertSpokenScript, spokenBudgetExceeded, spokenSentencePrefix, voiceLanguage } from "./policy.ts"
 import { configureVoiceSession, registerSessionProfile } from "./session-profile.ts"
 import { routingQuestions, decisionFromAnswers } from "./router.ts"
 
@@ -69,32 +69,43 @@ export function registerVoiceService(pi: ExtensionAPI) {
 async function answer(ctx: ExtensionCommandContext, value: { text?: string; context?: unknown; history?: unknown; language?: string }, signal: AbortSignal, publish: (event: Omit<VoiceServiceEvent, "id">) => void) {
   if (!ctx.model || !value.text || value.text.length > 8000) throw new Error("先选择对话模型，再开始语音问答")
   const language = voiceLanguage(value.language)
-  const generation = new AbortController()
-  const stream = ctx.modelRegistry.streamSimple(ctx.model, { systemPrompt: `${SYSTEM}\nSpoken language: ${language}.`, messages: [{ role: "user", content: JSON.stringify({ question: value.text, task: value.context, conversation: value.history }), timestamp: Date.now() }] }, { signal: AbortSignal.any([signal, generation.signal]), maxTokens: 180, reasoning: "minimal", cacheRetention: "short" })
   const confirmation = (value.context as { event?: unknown } | undefined)?.event === "confirmation"
-  let response = "", emitted = "", last = 0
-  const flush = (final = false) => {
-    const next = spokenReplyPrefix(response, final)
-    const delta = next.slice(emitted.length)
-    if (delta) { publish({ type: "delta", text: delta }); emitted = next; last = performance.now() }
-  }
-  try {
-    for await (const event of stream) {
-      if (signal.aborted) return
-      if (event.type === "text_delta") {
-        assertSpokenScript(response + event.delta)
-        response += event.delta
-        if (!confirmation && (!emitted || performance.now() - last >= 35)) flush()
-        if (spokenBudgetExceeded(response)) {
-          if (confirmation) throw new Error("Please review this confirmation in the task session; it is too long for a complete spoken explanation.")
-          flush(true); publish({ type: "done" }); return emitted
-        }
-      }
-      if (event.type === "error") throw new Error(event.error.errorMessage || "Voice response generation failed")
+  let emitted = ""
+  // A task title is evidence, not a TTS language choice. Correct a leaked script
+  // once with the same conversation model; Rime remains the only audio provider.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const generation = new AbortController()
+    const prefix = emitted
+    const correction = attempt === 0 ? "" : `\nThe previous draft copied an unsupported script. Render every name in ${language === "es" ? "Spanish" : "English"} or Latin transliteration. Already spoken: ${JSON.stringify(prefix)}. Continue after that prefix without repeating it. If nothing was spoken, give the complete answer. Preserve the supplied facts and uncertainty; do not perform or retry any task.`
+    const stream = ctx.modelRegistry.streamSimple(ctx.model, { systemPrompt: `${SYSTEM}\nSpoken language: ${language}.${correction}`, messages: [{ role: "user", content: JSON.stringify({ question: value.text, task: value.context, conversation: value.history }), timestamp: Date.now() }] }, { signal: AbortSignal.any([signal, generation.signal]), maxTokens: 180, reasoning: "minimal", cacheRetention: "short" })
+    let response = prefix ? `${prefix} ` : ""
+    let invalidScript = false
+    const flush = (final = false) => {
+      const next = spokenSentencePrefix(response, final)
+      const delta = next.slice(emitted.length)
+      if (delta) { publish({ type: "delta", text: delta }); emitted = next }
     }
-    flush(true)
-    if (!emitted.trim()) throw new Error("The voice response was empty")
-    publish({ type: "done" })
-    return emitted
-  } finally { generation.abort() }
+    try {
+      for await (const event of stream) {
+        if (signal.aborted) return
+        if (event.type === "text_delta") {
+          try { assertSpokenScript(response + event.delta) } catch { invalidScript = true; break }
+          response += event.delta
+          if (!confirmation) flush()
+          if (spokenBudgetExceeded(response)) {
+            if (confirmation) throw new Error("Please review this confirmation in the task session; it is too long for a complete spoken explanation.")
+            flush(true); publish({ type: "done" }); return emitted
+          }
+        }
+        if (event.type === "error") throw new Error(event.error.errorMessage || "Voice response generation failed")
+      }
+      if (signal.aborted) return
+      if (invalidScript) continue
+      flush(true)
+      if (!emitted.trim()) throw new Error("The voice response was empty")
+      publish({ type: "done" })
+      return emitted
+    } finally { generation.abort() }
+  }
+  throw new Error("Could not phrase this reply in the selected Rime language. Please ask again.")
 }

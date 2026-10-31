@@ -52,6 +52,7 @@ export type BrowserTabInfo = {
   path: string;
   url: string;
   title?: string;
+  audioMuted?: boolean;
   /** A run currently has exclusive operation rights for this tab. */
   agent?: true;
   /**

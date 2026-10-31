@@ -882,6 +882,9 @@ pub struct ImportReport {
     pub skipped_domains: Vec<String>,
     #[serde(default)]
     pub partition: Option<String>,
+    /// WebKit's real namespace differs between a CLI dev binary and a bundled app.
+    #[serde(default)]
+    pub store_identity: Option<String>,
 }
 
 /// The one browser an import can come from: the one Orbit actually launches,
@@ -952,7 +955,18 @@ fn profile_in_use(profile: &Path) -> bool {
 }
 
 fn import_report_path() -> Result<PathBuf, String> {
-    Ok(browser_dir()?.join("import.json"))
+    Ok(browser_dir()?.join("imports").join(format!("{}.json", source_partition("store", &cookie_store_identity()))))
+}
+
+fn cookie_store_identity() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(identifier) = objc2_foundation::NSBundle::mainBundle().bundleIdentifier() { return identifier.to_string(); }
+        // Unbundled WKWebViews use the process name instead of a bundle id.
+        std::env::current_exe().ok().and_then(|path| path.file_name().map(|name| name.to_string_lossy().into_owned())).unwrap_or_default()
+    }
+    #[cfg(not(target_os = "macos"))]
+    { "orbit-webview-profiles".to_string() }
 }
 
 fn now_seconds() -> u64 {
@@ -1010,7 +1024,7 @@ pub async fn browser_import_session(app: tauri::AppHandle, browser: String, prof
         let _ = view.close();
         result
     }).await.map_err(|e| e.to_string())??;
-    let report = ImportReport { browser, profile, cookies: cookies as u64, device_bound: false, imported_at: now_seconds(), synced: true, version: 3, skipped: skipped as u64, skipped_domains, partition: Some(partition) };
+    let report = ImportReport { browser, profile, cookies: cookies as u64, device_bound: false, imported_at: now_seconds(), synced: true, version: 4, skipped: skipped as u64, skipped_domains, partition: Some(partition), store_identity: Some(cookie_store_identity()) };
     let path = import_report_path()?;
     let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(path.parent().ok_or("导入记录目录不存在")?).map_err(|e| e.to_string())?;
@@ -1023,8 +1037,25 @@ pub async fn browser_import_session(app: tauri::AppHandle, browser: String, prof
 /// The last import, or `None` when nothing has ever been imported. This is what
 /// decides whether the first-run prompt is still owed.
 #[tauri::command(async)]
-pub fn browser_import_state() -> Result<Option<ImportReport>, String> {
-    let Ok(text) = std::fs::read_to_string(import_report_path()?) else {
+pub fn browser_import_state(app: tauri::AppHandle) -> Result<Option<ImportReport>, String> {
+    let Some(report) = read_import_report()? else { return Ok(None); };
+    // The shared report is not proof that this app's native cookie store was
+    // populated. Legacy records cannot identify it, so offer a fresh import.
+    if !report_matches_store(&report, &cookie_store_identity()) { return Ok(None); }
+    let view = crate::browser_view::profile_cookie_view(&app, report.partition.as_deref().ok_or("导入记录缺少浏览器资料标识")?)?;
+    let cookies = view.cookies().map_err(|e| format!("无法验证浏览器登录存储：{e}"));
+    #[cfg(desktop)]
+    let _ = view.close();
+    Ok(if cookies?.is_empty() { None } else { Some(report) })
+}
+
+fn report_matches_store(report: &ImportReport, identity: &str) -> bool {
+    report.version >= 4 && report.store_identity.as_deref() == Some(identity)
+}
+
+fn read_import_report() -> Result<Option<ImportReport>, String> {
+    let legacy = browser_dir()?.join("import.json");
+    let Ok(text) = std::fs::read_to_string(import_report_path()?).or_else(|_| std::fs::read_to_string(legacy)) else {
         return Ok(None);
     };
     // A report without `synced` came from the version that wrote one after the
@@ -1033,7 +1064,7 @@ pub fn browser_import_state() -> Result<Option<ImportReport>, String> {
     Ok(serde_json::from_str::<ImportReport>(&text).ok().filter(|report| report.synced && report.version >= 3 && report.cookies > 0 && report.partition.is_some()))
 }
 
-static ACTIVE_PARTITION: std::sync::LazyLock<std::sync::RwLock<Option<String>>> = std::sync::LazyLock::new(|| std::sync::RwLock::new(browser_import_state().ok().flatten().and_then(|report| report.partition)));
+static ACTIVE_PARTITION: std::sync::LazyLock<std::sync::RwLock<Option<String>>> = std::sync::LazyLock::new(|| std::sync::RwLock::new(read_import_report().ok().flatten().and_then(|report| report.partition)));
 pub(crate) fn active_partition() -> Option<String> { ACTIVE_PARTITION.read().ok().and_then(|value| value.clone()) }
 fn source_partition(browser: &str, profile: &str) -> String {
     // Stable FNV-1a identity; source names are metadata, never secret material.
@@ -1322,6 +1353,18 @@ mod tests {
         assert_eq!(webkit_cookie(&row).unwrap().domain(), Some("example.com"));
         assert_eq!(webkit_domain(".a.com"), "..a.com");
         assert_eq!(webkit_domain("a.com"), "a.com");
+    }
+
+    #[test]
+    fn a_development_import_cannot_suppress_the_production_offer() {
+        let legacy = serde_json::json!({"browser":"Chrome","profile":"Default","cookies":3000,"deviceBound":false,"importedAt":1,"synced":true,"version":3,"partition":"98f7388fda4ff680a58b9f0273fe5bed"});
+        let mut report: ImportReport = serde_json::from_value(legacy).unwrap();
+        assert!(!report_matches_store(&report, "ai.pi.gui"));
+        report.version = 4;
+        report.store_identity = Some("orbit".into());
+        assert!(report_matches_store(&report, "orbit"));
+        assert!(!report_matches_store(&report, "ai.pi.gui"));
+        assert_ne!(source_partition("store", "orbit"), source_partition("store", "ai.pi.gui"));
     }
 
     #[test]
