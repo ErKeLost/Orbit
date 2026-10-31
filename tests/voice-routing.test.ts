@@ -49,7 +49,7 @@ describe("Jev responsibility boundaries", () => {
   })
   test("supplying a missing location continues retrieval without becoming an approval", () => {
     const continuation = {...input,text:"北京",pendingRequest:{text:"查天气预报",question:"查哪个城市？",attempts:1}}
-    const result = decisionFromAnswers({...answers("execute"),workKind:{choice:"lookup",confidence:0.99},mutation:{noul:0.05},continuesRequest:{noul:0.99},confirmationAnswer:{choice:"confirm",confidence:0.99}},continuation,"fixture",1)
+    const result = decisionFromAnswers({...answers("execute"),workKind:{choice:"lookup",confidence:0.99},mutation:{noul:0.05},requestRelation:{choice:"clarification_reply",confidence:0.99},confirmationAnswer:{choice:"confirm",confidence:0.99}},continuation,"fixture",1)
     expect(result).toMatchObject({intent:"lookup",continuesRequest:true})
     expect(result.confirmationResponse).toBeUndefined()
   })
@@ -77,7 +77,7 @@ describe("Jev responsibility boundaries", () => {
     expect(decisionFromAnswers({ ...answers("respond"), observation: { choice: "conversation", confidence: 0.99 }, delivery: { choice: "redirect", confidence: 0.99 } }, input, "fixture", 1).intent).toBe("general_question")
   })
   test("a grounded reply to Pi's question preserves the original retrieval request", () => {
-    const context = { ...input, text: "北京", focusedTask: { sessionFile: "/a", state: "completed", goal: "查天气", latestReply: "哪个城市？", activeTools: [] } }
+    const context = { ...input, text: "北京", focusedTask: { sessionFile: "/a", state: "settled", goal: "查天气", latestReply: "哪个城市？", activeTools: [] } }
     const reply = { ...answers("execute"), effect: { choice: "execute", confidence: 0.4 }, workKind: { choice: "lookup", confidence: 0.99 }, continuesTask: { noul: 0.98 } }
     expect(decisionFromAnswers(reply, context, "fixture", 1).intent).toBe("lookup")
     expect(decisionFromAnswers(reply, input, "fixture", 1).intent).toBe("clarify")
@@ -106,6 +106,12 @@ describe("task evidence", () => {
     const source = { connectionId: "a", sessionFile: "/a", sequence: 4, observedAt: 100, event: { type: "tool_execution_update", partialResult: { content: [{ type: "text", text: "Verified search results" }] } } }
     expect(eventFact(source)?.text).toBe("Verified search results")
     expect(eventFact({ ...source, event: { type: "message_update", assistantMessageEvent: { type: "thinking_delta", contentIndex: 0, delta: "private" } } })).toBeNull()
+  })
+  test("a settled turn is not proof of task completion", () => {
+    const view=taskView(snapshot({transcript:{...emptyTranscript(),messages:[{id:"u",message:{role:"user",content:"Weather."}},{id:"a",message:{role:"assistant",content:"Which city?"}}] as never}}))
+    expect(view.state).toBe("settled")
+    expect(view.latestReply).toBe("Which city?")
+    expect(progressReply(view,"en")).not.toMatch(/completed|finished/u)
   })
   test("a new request cannot inherit a previous round's result or clarification", () => {
     const view = taskView(snapshot({ transcript: { ...emptyTranscript(), messages: [

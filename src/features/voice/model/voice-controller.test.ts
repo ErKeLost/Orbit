@@ -155,7 +155,7 @@ describe("voice call and session isolation", () => {
       const result = decision("dispatch_task",target); return {...result,decision:{...result.decision,continuesRequest:true}}
     })
     await voice.submitText("打开百度")
-    expect(fixture.execute.mock.calls[0]![3]).toContain("Current reply: 打开百度"); voice.stop()
+    expect(fixture.execute.mock.calls[0]![3]).toContain('"currentRequest":"打开百度"'); voice.stop()
   })
   test("Pi completion speaks the actual result and unrelated sessions stay quiet", async () => {
     const voice = new VoiceController(); await voice.start(); const target = voice.getSnapshot().focusId
@@ -259,7 +259,7 @@ describe("voice call and session isolation", () => {
     fixture.route.mockImplementationOnce(async (_target: string,_input:unknown,_signal:AbortSignal,onEvent:(event:unknown)=>void)=>{onEvent({type:"delta",text:"完成。"});return {type:"done"}})
     fixture.events.get(target)!({connectionId:target,sessionFile:"/new-voice",sequence:11,observedAt:100,event:{type:"agent_settled"}})
     await settle()
-    expect(fixture.append).toHaveBeenCalledExactlyOnceWith("This turn has finished. Please review the result in the task session.")
+    expect(fixture.append).toHaveBeenCalledExactlyOnceWith("There is a new reply in the task session. Please review it there.")
     expect(voice.getSnapshot().log.every(item=>!/[完成]/u.test(item.text))).toBe(true)
     voice.stop()
   })
@@ -288,6 +288,32 @@ describe("voice call and session isolation", () => {
     fixture.events.get(target)!({connectionId:target,sessionFile:"/new-voice",sequence:21,observedAt:100,event:{type:"extension_ui_request",method:"confirm"}})
     await settle();fixture.snapshots.set(target,snapshot("/new-voice"));finish();await settle()
     expect(fixture.append).not.toHaveBeenCalled();voice.stop()
+  })
+
+  test("the original location reaches Pi even if Jev does not mark the clarification as a continuation", async () => {
+    const voice=new VoiceController();await voice.start();const target=voice.getSnapshot().focusId
+    fixture.route.mockImplementationOnce(async()=>({...decision("clarify",target),decision:{...decision("clarify",target).decision,clarificationReason:"unclear_request"}}))
+    fixture.route.mockImplementationOnce(async(_target:string,_input:unknown,_signal:AbortSignal,onEvent:(value:unknown)=>void)=>{onEvent({type:"delta",text:"Do you mean the weather?"});return {type:"done"}})
+    await voice.submitText("Help me check beijing Wiser")
+    fixture.route.mockImplementationOnce(async()=>({...decision("lookup",target),decision:{...decision("lookup",target).decision,continuesRequest:false}}))
+    await voice.submitText("Weather.")
+    const sent=fixture.execute.mock.calls[0]![3]
+    expect(sent).toContain('"currentRequest":"Weather."')
+    expect(sent).toContain("Help me check beijing Wiser")
+    expect(sent).toContain("Do you mean the weather?")
+    voice.stop()
+  })
+  test("a brief clarification from the voice executor is relayed directly without a completion paraphrase", async () => {
+    const voice=new VoiceController();await voice.start();const target=voice.getSnapshot().focusId
+    const waiting=snapshot("/new-voice")
+    waiting.transcript.messages=[{id:"u",message:{role:"user",content:"Weather."}},{id:"a",message:{role:"assistant",content:"Which city should I check the weather for?"}}] as never
+    fixture.snapshots.set(target,waiting)
+    fixture.events.get(target)!({connectionId:target,sessionFile:"/new-voice",sequence:30,observedAt:100,event:{type:"agent_settled"}})
+    await settle()
+    expect(voice.getSnapshot().log.at(-1)?.text).toBe("Which city should I check the weather for?")
+    expect(fixture.route).not.toHaveBeenCalled()
+    expect(fixture.append).toHaveBeenCalledExactlyOnceWith("Which city should I check the weather for?")
+    voice.stop()
   })
 
 })

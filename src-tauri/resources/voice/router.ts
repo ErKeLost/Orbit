@@ -46,7 +46,10 @@ export function routingQuestions(input: VoiceRouteInput) {
     }),
     compound: noul("Does this request have multiple independent actionable or answerable parts? A clarification answer or reaffirmation of unchanged execution is not an extra action."),
     voiceControl: choice("Does the CURRENT utterance explicitly request a change to voice playback or the call? This is not a hypothetical. Respect negation; continuing a task is independent of stopping sound.", { stop_speech: "Explicitly stop current speech but keep listening", end_call: "Explicitly end the call", none: "Neither voice action is explicitly requested" }),
-    ...(input.pendingRequest ? { continuesRequest: noul("Does current text complete, correct or explicitly authorize the caller's specific pendingRequest? Supplying the subject or scope requested by its question is a continuation. A new unrelated request or casual acknowledgement is not. Judge semantically, not by keywords.") } : {}),
+    ...(input.pendingRequest ? { requestRelation: choice({
+      request: input.pendingRequest.text, question: input.pendingRequest.question, reply: input.text,
+      instruction: "How does this reply relate to the question just asked? Choose clarification_reply when it selects a meaning offered in the question, corrects a recognition mistake, or supplies a missing subject, place, date, value or scope. It need not repeat the original request. Contextual interpretation does not by itself authorize a tool action.",
+    }, { clarification_reply: "Answer or correct the pending question, continuing the caller's unresolved request", new_request: "Replace the pending request with an independent new request", other: "Social conversation, acknowledgement, rejection or unrelated discussion that does not answer the question" }) } : {}),
     ...(input.focusedTask?.goal && input.focusedTask.latestReply ? { continuesTask: noul("Does current text supply a detail asked for in focusedTask.latestReply that is needed to fulfill the caller's own focusedTask.goal? This continues the caller's original work or retrieval. A new unrelated topic, casual acknowledgement or additional work proposed only by the assistant is not such a continuation.") } : {}),
     ...(confirmation ? { confirmationAnswer: choice({ question: confirmation.question, method: confirmation.method ?? "confirm", instruction: "This exact question has already been spoken to the caller. Interpret their current utterance as an answer to it unless they change topic. Short natural answers in the caller's language are valid. Respect negation and the question's actual meaning; ordinary task clarification is not this tool interaction." }, answers) } : {}),
   }
@@ -61,6 +64,7 @@ export function decisionFromAnswers(answers: Record<string, Answer>, input: Voic
   const invalidWork = effect === "execute" && (!delivery || !["additional", "redirect", "deferred", "unchanged"].includes(delivery) || !workKind || !["action", "lookup"].includes(workKind))
   const unchanged = effect === "execute" && delivery === "unchanged" && (answers.delivery?.confidence ?? 0) >= 0.8
   const continuing = effect === "execute" && !!input.focusedTask?.goal && !!input.focusedTask.latestReply && (answers.continuesTask?.noul ?? 0) >= 0.85
+  const continuingPending = effect === "execute" && !!input.pendingRequest && answers.requestRelation?.choice === "clarification_reply" && (answers.requestRelation.confidence ?? 0) >= 0.7
   const intent: VoiceDecision["intent"] = unchanged ? "watch_task" : effect === "execute" ? delivery === "redirect" ? "steer_task" : delivery === "deferred" ? "queue_task" : workKind === "lookup" ? "lookup" : "dispatch_task"
     : effect === "respond" ? observation === "watch" || (answers.notify?.noul ?? 0) >= 0.65 ? "watch_task" : observation === "analysis" ? "analyze_session" : observation === "progress" ? "query_progress" : "general_question"
     : effect === "voice_control" ? "control_voice" : effect === "task_control" ? "control_task" : effect === "focus" ? "change_focus"
@@ -73,14 +77,15 @@ export function decisionFromAnswers(answers: Record<string, Answer>, input: Voic
   // High confidence that scope is unchanged may only remove execution. It
   // cannot authorize a write even when the primary head calls it a task.
   const confidence = unchanged ? answers.delivery!.confidence!
+    : continuingPending && workKind === "lookup" ? Math.max(answers.effect?.confidence ?? 0, answers.requestRelation!.confidence!)
     : continuing && delivery !== "redirect" && delivery !== "deferred" ? Math.max(answers.effect?.confidence ?? 0, answers.continuesTask!.noul!)
     : effect === "voice_control" && answers.voiceControl?.choice === "stop_speech" && (answers.voiceControl.confidence ?? 0) >= 0.85 ? Math.max(answers.effect?.confidence ?? 0, answers.voiceControl.confidence!)
     : answers.effect?.confidence ?? 0
   return validatedDecision({
     intent: invalidWork ? "clarify" : intent, ...(invalidWork ? { clarificationReason: "invalid_decision" as const } : {}), target: answers.target?.choice ?? "none", confidence, targetConfidence: answers.target?.confidence ?? 0,
-    mutation: answers.mutation?.noul ?? 0, actionability: answers.actionability?.noul ?? 0, compound: answers.compound?.noul ?? 0,
+    mutation: answers.mutation?.noul ?? 0, actionability: continuingPending && workKind === "lookup" ? Math.max(answers.actionability?.noul ?? 0, answers.requestRelation!.confidence!) : answers.actionability?.noul ?? 0, compound: answers.compound?.noul ?? 0,
     ...(effect === "execute" ? { deliveryConfidence: answers.delivery?.confidence ?? 0 } : {}),
-    continuesRequest: (answers.continuesRequest?.noul ?? 0) >= 0.8,
+    continuesRequest: continuingPending,
     voiceControl: (answers.voiceControl?.confidence ?? 0) >= 0.75 ? answers.voiceControl?.choice as VoiceDecision["voiceControl"] : "none",
     ...(effect === "execute" && (workKind === "lookup" || workKind === "action") ? { workKind } : {}),
     ...(confirmationResponse ? { confirmationResponse } : {}), model, latencyMs,

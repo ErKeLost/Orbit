@@ -34,10 +34,14 @@ add("不要挂断，我只是让你别念了", "control_voice", running)
 add("结束语音通话，任务继续", "control_voice", running)
 add("先不要打开浏览器", ["clarify", "general_question", "chat"], idle)
 add("可以", ["clarify", "general_question", "chat"], idle)
-add("北京", "lookup", { ...idle, focusedTask: { sessionFile: "/eval/voice", state: "completed", goal: "查天气预报", latestReply: "你想查询哪个城市？", activeTools: [] } })
+add("北京", "lookup", { ...idle, focusedTask: { sessionFile: "/eval/voice", state: "settled", goal: "查天气预报", latestReply: "你想查询哪个城市？", activeTools: [] } })
 const confirmation = { ...running, confirmation: { id: "confirm", method: "confirm" as const, question: "确认提交这份表单吗？", announced: true } }
 add("可以", "reply_confirmation", confirmation)
 add("不要提交", "reply_confirmation", confirmation)
+
+
+add("Weather.", "lookup", {...idle, history:[{role:"user",text:"Help me check beijing Wiser"},{role:"assistant",text:"What specifically would you like checked about Beijing Wiser—such as its weather, a company listing, or something in the current session?"}],pendingRequest:{text:"Help me check beijing Wiser",question:"What specifically would you like checked about Beijing Wiser—such as its weather, a company listing, or something in the current session?",attempts:1}})
+add("Hi!", ["general_question", "chat"])
 
 const repeats = Math.min(10, Math.max(1, Number(process.argv[2]) || 1))
 const results: { text: string; expected: VoiceIntent[]; intent?: VoiceIntent; pass: boolean; ms?: number; reason?: string; error?: string }[] = []

@@ -3,7 +3,7 @@ import { messageText } from "./messageText"
 
 export type TaskFact = { sequence: number; at: number; type: string; text: string }
 export type TaskView = {
-  sessionFile: string; title: string; state: "idle" | "running" | "waiting_input" | "failed" | "completed" | "cancelled"
+  sessionFile: string; title: string; state: "idle" | "running" | "waiting_input" | "failed" | "settled" | "cancelled"
   goal: string; activeTools: string[]; completedTools: number; latestReply: string; error: string | null
   facts: TaskFact[]; observedAt: number; throughEventId: number; confirmation?: { id: string; question: string }
 }
@@ -40,7 +40,7 @@ export function taskView(snapshot: Snapshot, facts: TaskFact[] = []): TaskView {
   const question = confirmation ? ("message" in confirmation ? String(confirmation.message ?? "") : "title" in confirmation ? confirmation.title : "") : ""
   return {
     sessionFile: snapshot.state?.sessionFile ?? "", title: snapshot.state?.sessionName ?? compact(lastUser ? messageText(lastUser.message) : "", 60),
-    state: confirmation ? "waiting_input" : transcript.running || transcript.submitted ? "running" : transcript.error ? "failed" : transcript.aborted ? "cancelled" : lastReply ? "completed" : "idle",
+    state: confirmation ? "waiting_input" : transcript.running || transcript.submitted ? "running" : transcript.error ? "failed" : transcript.aborted ? "cancelled" : lastReply ? "settled" : "idle",
     goal: lastUser ? compact(messageText(lastUser.message), 1000) : "", activeTools: tools.filter(tool => tool.running).map(tool => tool.name), completedTools: tools.filter(tool => !tool.running).length,
     latestReply: lastReply ? compact(messageText(lastReply.message), 1800) : "", error: transcript.error,
     facts: facts.slice(-12), observedAt: facts.at(-1)?.at ?? Date.now(), throughEventId: facts.at(-1)?.sequence ?? 0,
@@ -54,7 +54,7 @@ export function progressReply(view: TaskView, language: "en" | "es") {
     failed: ["The task failed. Please review the details in the task session.", "La tarea ha fallado. Revisa los detalles en la sesión."],
     cancelled: ["The task has stopped.", "La tarea se ha detenido."],
     running: ["It is still running.", "La tarea sigue en curso."],
-    completed: ["This turn has finished. Please review the result in the task session.", "La tarea ha terminado. Revisa el resultado en la sesión."],
+    settled: ["There is a new reply in the task session. Please review it there.", "Hay una nueva respuesta en la sesión de la tarea. Revísala allí."],
     idle: ["There is no task running in this session.", "No hay ninguna tarea en curso en esta sesión."],
   }
   return messages[view.state][language === "es" ? 1 : 0]!
