@@ -22,7 +22,7 @@ export type Workspace = {
 const initialMultiAgentMode=()=>typeof localStorage!=='undefined'&&localStorage.getItem('pi-gui.multiAgentEnabled')==='true'
 const initialComputerUseMode=()=>typeof localStorage!=='undefined'&&localStorage.getItem('pi-gui.computerUseEnabled')==='true'
 // Browser Use 默认开启：它只驱动自己那个 Chrome，不碰用户的桌面；关掉后扩展里的
-// /gui-browser-use-mode 才不会把 browser_task 放回工具集。
+// /gui-browser-use-mode 才不会把 browser_* 工具放回工具集。
 const initialBrowserUseMode=()=>typeof localStorage!=='undefined'&&localStorage.getItem('pi-gui.browserUseEnabled')!=='false'
 export const workspaceStore=create<Workspace>((set)=>({
   telemetry:emptyTelemetry(),inspector:false,transcript:emptyTranscript(),state:null,connection:'offline',runtimeTarget:'unknown',runtimePlatform:'',remoteTheme:null,remoteMachineName:'',cwd:'',connectionId:'',homeDir:'',workspaceMode:'project',piVersion:'',panel:'chat',settingsPage:'general',error:null,draft:'',dialogs:[],notices:[],statuses:{},widgets:{},liveSessions:[],agents:null,multiAgentEnabled:initialMultiAgentMode(),computerUseEnabled:initialComputerUseMode(),browserUseEnabled:initialBrowserUseMode(),screenPip:false,screenExpanded:false,

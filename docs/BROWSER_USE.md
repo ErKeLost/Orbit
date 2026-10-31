@@ -1,251 +1,65 @@
 # Browser Use
 
-Orbit has two Computer-Use-class tools and they are deliberately separate:
+更新于 2026-10-31。
 
-| 工具 | 目标 | 观察方式 |
-| --- | --- | --- |
-| `gui_task` | 桌面应用 | macOS 辅助功能树（AX），Rust worker 驱动 |
-| `browser_task` | 网页 | 真实 Chromium 的 DOM 快照，CDP 驱动 |
+Orbit 的网页任务由当前 Pi session 的模型直接完成。浏览器工具不启动 Jev、不调用另一个决策模型、不根据置信度判断任务完成，也不生成独立字段值。语音发起的任务和普通 Pi 任务使用同一工具链；语音路由、Rime 和原生桌面 `gui_task` 独立于这次迁移。
 
-它们各自有开关、各自的决策循环，共用同一个 Jev 后端配置。选哪个由调用方按目标决定：网页用 `browser_task`，原生应用用 `gui_task`，其余工作用普通工具。
+## 执行链路
 
-## 第三栏：真实内核渲染（不是把画面投过来）
+用户目标 → Pi 的对话上下文与模型 → `browser_*` 工具 → BrowserService → 本机 Unix socket → Tauri BrowserViewHost → session 所属的 WebView。
 
-「面板里放一个浏览器」有两条完全不同的路，必须分清：
+Pi 负责规划、读取页面、选目标、恢复和确认结果。BrowserService 负责串行执行、取消、参数检查和短期操作租约。Rust 宿主持有页面身份和 session 归属。右侧面板与画中画展示同一个页面。
 
-| | 帧流（screencast） | 子 web view（现在这一栏） |
-| --- | --- | --- |
-| 画面 | 另一个进程渲染 → 编码 → 传 → 解码 → 画进 canvas：**是图** | 引擎直接画进这个窗口：**就是浏览器** |
-| 文字 | 受编码/缩放影响，2× 也带 JPEG 振铃 | 和 app 自己的文字一样清晰 |
-| 交互 | 指针/键盘要一条条回注，没有输入法、没有本地选中 | 原生滚动、选中、链接、输入法，鼠标键盘直接用 |
-| 引擎 | Chrome（Blink） | macOS 上是 WebKit（WKWebView） |
+这一职责划分参考本地 T3 Code 的 `apps/server/src/mcp/toolkits/preview/tools.ts`、`PreviewAutomationBroker.ts` 和桌面 BrowserHost。T3 桌面 Chromium/CDP 与 Orbit 的 Tauri/WKWebView 不同，不能直接复制 Electron 的实现并声称获得相同兼容性。
 
-这一栏现在走第二条：`Window::add_child`（Tauri 的 multi-webview，`unstable`）把一块真实的 web view 放进窗口，位置由这一栏的矩形决定（`browser_view.rs`）。**iframe 依然不行**（跨域拿不到 DOM、CSP 直接拒载），但「子 web view 是另一个内核、没有 CDP」这个代价现在由第三栏承担，而**不是**由 agent 的决策能力承担：
+## 工具
 
-- **第三栏（用户看的）**：WebKit 子视图，原生渲染。它没有 CDP，但可以被脚本驱动 —— `browser_view_eval` 在页面里执行脚本并取回 JSON（实测能读到 `document.title` 与 `location.href`），而且这个页面**不在任何 capability 里**，网页碰不到 app 的任何命令。
-- **agent（`browser_task`）**：默认驱动**第三栏里的 agent tab**（一个，跨 run 复用），回退才是 Orbit 自己启动的 Chrome + CDP。两条路都保留：视图是用户看得见的那块面板，而 CDP 给的是 `Input.*` 可信输入与无障碍大纲，视图给不了。
-
-> 两个引擎今天**都在用**，而且用哪个不再由配置决定、也不再是隐形的：`browser_task` 先向 app 要 tab（`op:"open"`，带保留名 `agent`），驱动它；app 不可达时才回退 Chrome。跑完的结果里带 `engine=view|chrome`，回退时还带上 `engineFallback`（视图为什么不可用），所以「跑在哪个浏览器上、为什么」都是可诊断的事实。
->
-> 两者的取舍必须说清楚：视图里的输入是合成的（`dispatchEvent`），**只有点击走系统级鼠标**（`viewClickAt` → `trusted_click`，点击前重新校验窗口仍在最前台、且该点仍在页面矩形内，否则拒点）；判断 `event.isTrusted` 的页面（部分 Google 流程）会忽略脚本输入。Chrome 的 `Input.*` 始终是可信输入 —— 这正是它不可被删除的原因。
-
-### tab 的归属与生命周期
-
-- **一个 agent tab，跨 run 复用**：`view.sock` 的 `open` 收到保留名 `agent` 时，app 把**自己的那个 agent tab**（真正 id 是 `browser:<id>`，由 app 生成）交出去，写进 `browser:open` 事件并作为应答返回；此后这个 run 的每一次 `eval`/`navigate`/`go`/`reload`/`geometry`/`clickAt` 都**显式带这个 tab**。第二个 run 到来时**在同一个 tab 里导航**（前端那条 `browser:open` 按 path 复用已有标签项，不新增），所以页面、滚动和前进/后退历史都留着 —— 这也是「接着上一次的页面继续做」和「回退一步看看」能成立的原因。没给地址时导向栏里当前这个页面（栏是空白页时，沿用 agent tab 自己那个页面），所以「接着刚才那页继续」和「看我正在看的这页」是同一套规则。
-- **并发 run 才各自一个 tab**：agent tab 被一个活着的 run 持有时，第二个 run 拿到一个**私有 tab**（app 生成新 id），结束就 `close` 掉，app 发 `browser:close` 让前端移除标签项。两个 run 因此仍然不可能读到或点到对方的页面。占用是一份带时间戳的 claim：run 结束会 `release`，跑挂了没来得及 release 也不会永久占着（预算上限 10 分钟，超过 11 分钟的 claim 视为已死）。
-- **run 结束不再销毁页面，只 `release`**：agent tab 留着——页面、滚动、历史都在，人可以直接接着看/接着点，下一个 run 也在这里继续。**已经被打开的 tab 永远不会被关**（那种情况 `ownsTab` 为 false）。一个 run 最终停留在哪个地址、页面上有什么文字，仍然都在它的结果里，不依赖那个标签还开着。
-- **停在了只有人才能往下走的地方，tab 就交给用户**：登录墙、收银台需要账号或卡，run 永远过不去。这时 `close` 变成 **handoff**：视图留着、`active` 切到它、app 发 `browser:handoff`，前端把它从 run 的 tab 改成这一栏自己的（去掉 `agent`，标 `handoff`）——于是页面、滚动、已经加载好的登录框都还在，人可以接着输。判定两段：地址里的词（`login`/`account`/`pay`/`checkout`/`recharge`…，按**整词**匹配，`payload` 不算），以及页面里真的有没有密码框/一次性验证码/二维码/captcha（`eval`，1.5s 上限，run 的收尾不等页面）。调用方也可以直接发 `handoff` 操作，说自己知道这页是人的。交出去之后 app **把 agent tab 这个身份注销**：这页是人的了，下一个 run 会拿一个新的 agent tab，而不是把这页从正在输入的人脚下导航走。
-
-  这条修正的是一个具体故障：run 在 `account.*/unified-login` 上停下、tab 被销毁，`browserActive` 回到 run 之前的那个 tab，于是「我帮你打开了国内控制台」看起来像「什么都没发生」。**只留一个 handoff tab**：新的接管页到来时旧的关掉——接管面不是日志，不能每跑一次多一个停在那儿的死胡同。
-- **视图的生死跟 tab 走，不跟「谁在前台」走**：切换标签页只是把视图 `hide()`（页面、滚动、登录态都留着），真正关闭标签页才由 `browser_view_reconcile` 把原生视图销毁 —— 前端启动时与标签集合每次变化时都会调用它，这也是刷新后孤儿视图的清理通道。副作用说明：前端刷新后 shell 状态是空的，启动那次 reconcile 会把包括**进行中 run** 的视图一起关掉（run 随后会在下一次 `eval` 上失败）——这是“刷新后不留孤儿视图”与“让进行中的 run 活过刷新”之间的取舍，选了前者。
-
-```text
-agent：Pi ──browser_task──► 扩展里的循环（jev-ultrafast 的移植）
-                              │  observe / act
-            ┌─────────────────┴──────────────────┐
-            ▼                                    ▼
-  view.sock（0600，app 内部）              CDP（loopback ws，回退）
-  窗口里的 WKWebView（本次 run 自己的 tab）   Orbit 拥有的 Chrome（headless）
-            ▲                                    ▲
-  Rust（browser_view.rs）：建/摆/隐藏/销毁 + eval/clickAt   Rust（browser.rs）
-
-用户：第三栏 ──► 同一个子视图；切标签只 hide，关标签才销毁
-```
-
-## 谁在驾驶
-
-`browser_task` 只接受一个完整目标、可选起始地址、可选本地 `textSlots`、`readOnly` 和预算。它不接受步骤、选择器、坐标或「什么算完成」。
-
-每一轮：
-
-1. **观察**：向页面注入 `snapshot.js`（browser-use/jev-ultrafast 的页面观察器，原样保留，MIT），一次读回可见控件表（元素编号、role、当前值、以及每个操作各自的目标列表）与可见文本。
-2. **决策**：一次 Jev 请求，问的是
-   - `operation`：`CLICK` / `TYPE_TEXT` / `SELECT` / `SCROLL_DOWN` / `SCROLL_UP` / `WAIT` / `DONE` / `BLOCKED` 里选一个（只提供当前页面确实支持的那些）；
-   - 每个操作的 `<operation>_target`：该操作的最佳目标（推测式并发，只有被选中操作的那一份会被采用）；
-   - `irreversible`：这一步是否难以撤销（noul）。
-3. **执行**：把目标编号换回**它观察到的那个真实节点**，在输入前再校验一次（仍然连着、未禁用、可见、在视口内、`elementFromPoint` 没有被遮挡），然后经 `Input.*` 投递。
-
-模型输出永远不会变成选择器、坐标、脚本或命令。下拉框的每个可选值本身就是独立目标（`3:2` = 元素 3 的第二个选项），所以「选第 4 个选项」不需要模型引用任何值。
-
-## 值从哪来：先本地槽，再由运行自己的模型写
-
-上游用一个小的 OpenAI 兼容模型现场生成字段值（`TEXT_VALUE`）。Orbit 用**用户已经配好的模型**做同一件事：一次 `--print --no-session --no-extensions --no-skills --no-tools` 的 Pi 一次性提问，返回值必须是一个只有 `text` 键的 JSON（`text-helper.ts`）。所以「搜索 X」这样的目标不需要先准备 X。
-
-优先级：
-
-1. **调用方准备好的 `textSlots`**（精确字符串，调用方自己选的），
-2. **运行自己的模型**：读目标、字段含义与页面可见文本，只为这一个字段写一个值，
-3. 两者都没有 → `needs_text`，指名是哪个字段。
-
-硬规则：
-
-- 只接受 `{"text": "…"}`。多一个键、不是字符串、超过 2000 字符、或夹带整段解释，一律拒收。
-- **绝不编造个人信息**：邮箱、电话、地址、账号、密码只能来自目标或页面，说不出就返回 `{"text": null}` → 运行以 `needs_text` 停下，让调用方补上。
-- 字段已经持有「这次运行会写入的那个值」时，这个 fill 目标**不再提供**：决定论地防住「同一个输入反复输入、页面一直等着被提交」的循环。
-- `allowGeneratedText: false` 时完全不生成，只认槽位。
-- 决策模型**只看到槽位的用途**；槽位的值也永远不会被送进 helper 的提示里。
-
-配对方式沿用上游给下拉框编号的思路：文本字段的候选目标写成 `元素:槽位`（`19:query` = 把调用方准备的那个值填进元素 19）。这样一个决策同时定下「哪个字段」和「填哪条值」——分开问是问不出来的，因为单独的问题看不到该步骤要写哪个字段（实测 Jev 在那样的问法下答成了 missing）。
-
-字段需要值而槽位里没有 → 立刻以 `needs_text` 停下，并指名是哪个字段；**不会**编造值。
-
-## 新鲜度：两道校验，一次命中测试
-
-- 决策作废的条件不是「页面变了」，而是「这个决策针对的东西变了」。点击/选择目标比较的是目标本身 + 它所在的 form/dialog/row 文本 + 文档与表单字段状态；`DONE`/`BLOCKED` 比较整页。
-- 输入前再校验一次，并做 `elementFromPoint` 命中测试：**没有文字的遮罩不会改变语义状态，但仍然必须挡住点击**。
-- 决策过期（`StalePage`）意味着**什么都没交付**，于是重新观察、重新决策，不计数、不重放。已经交付的动作永不重试。
-- 动作**先记账再观察结果**：事后读页面失败（导航、渲染进程崩溃）不能抹掉已经发生的事。
-- **用户也在这一页里**：第三栏是用户能点的真浏览器。视图驱动在页面里装一个只数 `isTrusted` 输入的计数器（自己派发的事件不算），观测时记下，投递前比对；变了就以 `taken-over` 拒绝并重新观察 —— 和「页面自己动了」是同一类错误，但建议不同：这种情况要等，不是重试。
-
-
-### 拒绝要说清楚为什么，页面报错要进观测
-
-被拒的三类情况分开报，因为下一步动作完全不同：
-
-- **`covered`**：写明是谁挡的（「目标被「Cookie 横幅」遮住了」），而不是笼统的「目标已变化」；
-- **`navigating`**：页面正在导航，等它稳下来再看；
-- **`PageBusy`**：整页一直读不出可决策的状态。**什么都没决定、什么都没交付**，所以不计数、不重试动作，只等一会儿重读，连续三次才以 `blocked` 停下。
-
-页面自己说的错也进观测：`console.error/warn`、未捕获异常、4xx/5xx 响应、失败的请求（`net::ERR_ABORTED` 之外的）。这些只投递一次，不重复占用下一轮的预算 —— 它们是「我点了但没反应」唯一能拿到的证据。
-
-JS 弹窗（`confirm`/`alert`）会**阻塞渲染进程**，开着的弹窗会让下一次 `Runtime.evaluate` 一直挂着，看起来像整个运行卡死。Host 侧自动取消它，并在下一份观测的页面文本前留一行「【页面弹窗】…（已自动取消）」。
-
-### 画成点点的值不进上下文
-
-`type=password` 本来就被排除在控件表之外，但**验证码、卡号那类普通文本框**常常用 `-webkit-text-security` 把值画成点。页面已经决定这个值不该被读，所以：
-
-- 字段仍然可操作（模型可能就是要往里输入），
-- 但它的 `value` 永远只以 `••••••••` 出现，带上 `masked: true`，
-- 真实值留在内部字段 `raw` 里，只用于「这个字段是否已经持有要输入的值」这一处比较 —— 否则遮罩会让同一个值被反复重输。
-
-### 同源 iframe 里的控件也在观测里
-
-支付、登录表单常常嵌在 `<iframe>` 里，而 `document.querySelectorAll` 只看主文档 —— 这类页面因此像是空的。现在递归同源 frame（深度 ≤ 2、独立预算 60 条）：
-
-- 元素带 `frame: true` / 元素视图里 `in_frame: true`，
-- `rect` 换算成**顶层像素**（投递就是顶层坐标），
-- 遮挡检测在元素自己的 document 里做（从顶层看，frame 里的一切都等于那个 frame 本身，那不是遮挡），
-- 输入前的复核同样按 frame 链换算，命中测试落在最外层 frame 上就算「没被遮住」。
-
-跨域 frame 拿不到 `contentDocument`，因此**看不见**；这是浏览器的边界，不是漏做。
-
-## 不可撤销的步骤
-
-每轮附带一条 `irreversible` 判断。当它 ≥ 0.6 且这一步不是 `wait` 时：
-
-- 有交互界面 → 弹确认，用户同意后继续；
-- 没有 → 以 `needs_review` 停下，不执行。
-
-- **观察里带上「能不能点」的事实**：每个候选都标了 `offscreen`（在视口外：先滚动，别硬点）与 `covered`（被别的东西挡住，并尽量写明是谁挡的），后者不再等到投递时才以失败的形式出现。
-
-`readOnly` 运行根本不提供 `CLICK` / `TYPE_TEXT` / `SELECT`，只剩观察、滚动与两个终态；`DONE` 与 `gui_task` 一样有置信度下限（`DONE_CONFIDENCE_FLOOR`），低于它就只记一笔、下一轮仍可再提，**不会**把 `DONE` 从候选中摘掉。
-
-## 开销：四处原本白花的时间
-
-每一步的代价只应落在「读页面」和「问模型」上。以下四处曾把同样的事做了第二遍，现在都不做：
-
-- **guard 传摘要，不传文本**。新鲜度比较的是「这个控件和它所在的那一块还是不是刚才那样」，只做相等判断。所以 scope 的 `innerText` 在页内算成 53 位摘要 + 原长度再回传，而不是最多 6000 字符原样穿过通道 —— 250 个控件的页面每次观察曾为此传几百 KB，而每步要观察两次。语义没变：`innerText` 本来就是渲染后的文本，没渲染的不在范围内（这也是这条守卫一直以来的口径）。
-- **无障碍大纲按需取**。`Accessibility.getFullAXTree` 会把整棵树序列化回来（应用页面上是 MB 级），而大纲只保留 400 行。元素表已经有 12 个以上可操作控件的页面不再取它；表很薄的页面（表单、canvas、shadow DOM 应用）才是它的用武之地。
-- **终局判断不算 guard**。`DONE`/`BLOCKED` 的新鲜度只比整页 marker，于是那次观察带上 `skipGuards`：控件循环跳过，marker 照旧。
-- **动作之后等「有变化」，不等固定毫秒**。投递前在页里装一个 `MutationObserver`，观察时的收尾等待在第一个 DOM 变化的那一帧结束，250ms 是兜底而不是固定延迟。原来固定 50ms：点到就会发 fetch 的按钮被读成「页面没变化」，白花一整轮决策，还可能再点一次。
-
-配套的两处：上下文超预算时的降级顺序反过来了（先丢大纲，再丢视口外控件，再把元素表压成「编号 + 名字 + 支持的操作」（值、勾选、选项列表本来在各自的 target 里），最后才把正文截成头 + 尾的窗口）——正文不再被清空，一个长文档页不再以「整页空白」的样子交给模型；以及点到一个「也是输入框」的元素时提前把该字段的值写出来，让那次生成与点击自己的决策/观察重叠。
-
-## 停下来时留下一张图
-
-除 `done` 和被用户取消的运行外，收尾会在关闭标签页之前截一张视口 PNG 到 `~/.pi/agent/browser/shots/`（只留最近 20 张），结果里带 `screenshotPath`。文本证据说的是页面「写了什么」，说不出是什么挡住按钮、表单填到一半是什么样、卡在哪一步的验证码。视图引擎没有截图能力，这时字段就是空的 —— 如实为空，不假装。
-
-## 第三栏（BrowserDock）
-
-- **默认开、一直在**：标题栏地球按钮可以收起；收起只是把子视图 `hide()`，页面和历史都留着，展开即回到原处。切到设置/收件箱这些整页界面时它也在右侧。
-- **是个真的 dock**：拖边框调大小、双击边框复位、菜单里可移到 top/bottom/left/right 四边、另有「清空这一栏（回到空白页）」。
-- **工具栏**：后退 / 前进 / 重新加载（加载中变停止）/ 地址栏 / 位置菜单 / 收起。地址栏是 omnibox：带 scheme 的原样用；`localhost`、IP、`host:port`、含点的都自动补 `https://`；**不含点的词（含中文）当搜索词**，走 `SEARCH_TEMPLATE`（默认百度，一个常量就能换）。
-- **摆放**：子视图不是 React 的一部分，所以它的矩形由这一栏在每次布局变化后上报（挂载、拖拽、换边、窗口缩放、打开），窗口缩放与 `ResizeObserver` 都会触发；`[view] rect=…` 会写进桌面日志 —— 这正是核验「点击落在哪里」「按钮有没有被盖住」的手段。
-- **收起不销毁**：`hide()` 保留页面与历史；清空（菜单里）才回到空白页。
-- **输入法、选中、拖拽、右键**都由系统提供 —— 这一栏就是一个 web view，中间没有层。
-- **加载状态**来自引擎自己的 `on_page_load`，不是猜的，所以「重新加载」能在加载中变成「停止」。
-
-## 一次启动失败是怎么变成「永远启动不了」的（已修）
-
-Chrome 用资料目录里的 `SingletonLock` 保证同一 profile 只有一个实例。它是软链接，名字里带持有者 pid（`host-pid`）：
-
-- **持有者已死** → 启动被拒（exit 21，`Failed to create SingletonLock: File exists`），而且没有任何地方说明原因。
-- **持有者还活着但我们不知道它**（launcher 被 kill、session.json 被删、`browser_close` 只删了文件没杀掉进程）→ 同样拒启，而且 `--browser-close` 也找不到它（它原本只看 session.json）。
-
-现在两处都补上了：启动前 `clear_orphan` —— 从 `SingletonLock` 取 pid，再用 `ps` 确认该进程的命令行里确实带着**我们的** profile 路径（用户自己的 Chrome 永远不会用它），然后 SIGTERM/SIGKILL 并清掉 lock/socket/cookie；持有者已死则直接清文件。`browser_close` 在没有 session.json 时做同样的事，所以它现在真的意味着「让浏览器消失」。原始报错都留在 `chrome.log` 里。
-
-## 会话文件与启动
-
-### 第三栏的视图
-
-- 标签固定为 `browser-view`，**不在任何 capability 里**：网页读不到 app 的命令，唯一的通道是 app → 页面（`browser_view_eval`，实测能读回 `document.title` / `location.href`）。
-- 起步于 `about:blank` 且隐藏，由这一栏上报矩形后才 `show()`；`requested=""` 时不上报 URL（空栏就是空栏）。
-- macOS 上是 WKWebView：UA 是 Safari 的，不是 Chrome 的。按 Safari 行为渲染，是选「原生渲染」必然的代价。
-
-### agent 的浏览器（Chrome）
-
-- `~/.pi/agent/browser/session.json`：`{port, targetId, url, pid, executable, startedAt, browserVersion, browserWs, userAgent, targetOwnerPid}`。Rust 写，扩展读；两边都靠它定位同一个 tab。写入是原子的（临时文件名带 pid 与纳秒），读到损坏内容按「没有会话」处理，并且这些临界区由一个 `session.lock`（`flock`）串起来 —— `--browser-ensure` 是独立进程，没有这把锁时两个进程会同时启动、互相关掉对方的 tab。
-- **tab 的归属也是持久事实**：`targetOwnerPid` 记下谁建的这个 target（helper 进程记的是它的父进程，也就是发起 run 的那个 Pi 进程）。换地址时只关**自己的**或者**持有者已死**的 target，绝不关另一个活着的 run 的 tab。
-- `~/.pi/agent/browser/profile/`：专用 Chrome 资料目录（首次运行是干净的，登录信息只属于这一栏）。
-- `~/.pi/agent/browser/chrome.log`：内核自己的 stderr —— 被拒绝的调试连接、渲染进程崩溃、资料目录被别的实例占用，都只在这里出现。
-- `ORBIT_BROWSER_HOME` 整体挪走浏览器目录（测试与沙箱用；`scripts/check-browser-guards.ts` 就靠它，绝不碰用户自己的资料目录）。
-- `ORBIT_BROWSER_BINARY` 指定内核；否则依次找 Chrome / Chromium / Brave / Edge / Vivaldi。
-- `ORBIT_BROWSER_SCALE` 决定内核栅格化倍率（默认 2 = 屏幕像素级）；`ORBIT_BROWSER_ALLOW_ORIGINS` 追加允许连调试口的来源。
-- 启动标记只写在 Rust 一处（`browser.rs::launch_args`）。扩展不复制这份参数表，而是执行 `Orbit --browser-ensure [--url <url>]`（`main.rs` 在 Tauri 起来之前就退出），因此**栏和 agent 不可能对「浏览器怎么跑」产生分歧**。
-
-## 边界（可信地不做什么）
-
-页面观察器支持常见 HTML/ARIA 控件；以下仍未支持，遇到时应以 `blocked`/`error` 如实报告，而不是绕过去：
-
-- shadow root、frame/iframe 内容（`document.querySelectorAll` 不穿透）；
-- canvas / WebGL 应用、文件上传、下载、嵌套滚动、任意键盘组件、拖拽；
-- 输入法（IME）与原生右键菜单；
-- `DONE` 永远只是「模型认为页面满足了目标」，不是独立验证。真正的验证是页面上可见的内容 —— 工具结果会带上页面自己的可见文本，调用方必须自己看。
-
-其它已知取舍：
-
-- **只有一个受管 tab**。新地址会开新 tab 并关掉旧的。
-- **headless 可被识别**：UA 已修正，但站点仍可能有其它探测手段；被挡住时用 `ORBIT_BROWSER_HEADFUL=1`，或让用户先在第三栏里手动登录。
-- **不绕过任何登录墙、付费墙、验证码或权限提示**：观察器读到什么就是什么，指令里明确要求遇到时选 `BLOCKED`。
-- **桌面端功能**：手机没有这一栏（它的「屏幕」通道给的是桌面像素，不是浏览器的 DOM），因此 `browser_open` / `browser_status` / `browser_close` 在远端命令边界里是显式排除项。
-- **图片与 Box 尚未接入**：Jev 1.14 的 Box 问题（图片里某个目标的位置，归一化四边）正好可以补上 canvas / 难以读取的 iframe —— 驱动里已经保留了 `screenshot()`，但决策循环不使用截图，接入前不动。
-
-## 文件
-
-| 文件 | 职责 |
+| 工具 | 用途 |
 | --- | --- |
-| `src-tauri/src/browser_view.rs` | **第三栏的引擎视图**：创建/摆放/隐藏/销毁子 web view、tab id、导航、在页面里执行脚本并取回 JSON、可信点击 `clickAt`、加载状态、`view.sock` 通道、孤儿视图 reconcile |
-| `src/lib/browser-view.ts` | 上面那些命令的前端封装 + 地址栏的 omnibox 规则 |
-| `src/features/browser/BrowserTab.tsx` | 一个浏览器标签页的界面本体：工具栏、地址栏、横幅、舞台矩形上报（切走时 hide） |
-| `src/features/browser/use-browser-views.ts` | 浏览器功能的 app 级接线：启动 reconcile、`browser:open` 开标签（用 app 给的 tab id）、`browser:close` 关标签、标签集合变化时再 reconcile |
-| `src/features/browser/BrowserImportPrompt.tsx` | 首启/需要登录时的导入横幅（在面板内部，否则被原生视图盖住） |
-| `src/lib/browser-import.ts` | 导入的前端封装：列来源、执行导入、导入后重载已打开的页面 |
-| `src/features/settings/BrowserPage.tsx` | 设置 → 浏览器：来源列表、导入、上次导入结果 |
-| `src-tauri/src/browser.rs` | agent 的 Chrome（也是回退引擎）：发现/启动/复用/关闭、session.json + `flock` + target 归属、`--browser-*` 帮助入口、登录导入的 Rust 一半 |
-| `src-tauri/resources/browser-use/snapshot.js` | 页面观察器（上游为基底，MIT；本仓库加了 offscreen/covered/启发式控件三段附加通道） |
-| `src-tauri/resources/browser-use/browser-driver.ts` | CDP 驱动：观察/新鲜度/可信输入/无障碍大纲（按需，`browser.py` 的移植） |
-| `src-tauri/resources/browser-use/view-driver.ts` | 第三栏那个 tab 的驱动：同一套契约，走 `view.sock`；点击走系统鼠标，其余合成 |
-| `src-tauri/resources/browser-use/view-channel.ts` | `view.sock` 的前端封装（每个 op 都显式带 tab） |
-| `src-tauri/resources/browser-use/browser-contract.ts` | `browser_task` 的输入/输出/预算契约与 metrics（含 `engine`/`engineFallback`） |
-| `src-tauri/resources/browser-use/browser-engine.ts` | 循环：候选表、Jev 请求、预算、文本槽、风险门 |
-| `src-tauri/resources/browser-use/browser-task.ts` | 工具注册与结果格式化 |
-| `src-tauri/resources/browser-use/mode.ts` | `browser_task` 的激活与系统提示（默认开） |
-| `src-tauri/resources/browser-use/cdp.ts` | 最小 CDP 客户端 |
-| `src-tauri/resources/browser-use/questions.ts` | 决策问题的规则文本 |
-| `src-tauri/resources/browser-use/text-helper.ts` | 用用户自己的模型为单个字段写值（上游 `TEXT_VALUE` 的移植） |
+| browser_status | 列出当前 session 的页面和 currentTabId；不会创建页面 |
+| browser_open | 打开面板，默认复用当前 session 的页面；reuseExistingTab=false 创建另一页 |
+| browser_navigate | 在指定 tabId 内导航到已知或观察到的 URL |
+| browser_snapshot | 读取可见文本、语义控件和 ref、href、值、下拉选项、iframe 与媒体状态 |
+| browser_click | 点击一个观察到的目标；macOS 走原生鼠标，失败不会再补脚本点击 |
+| browser_type | 输入准确的原文，默认替换，clear=false 追加；检测网站是否还原了输入 |
+| browser_press | 键盘事件；Enter 支持表单提交 |
+| browser_hover | 页面事件悬停；需要后续检查是否生效 |
+| browser_select | 按值或文本选择原生 select；自定义菜单使用点击 |
+| browser_scroll | 滚动页面或观察到的容器 |
+| browser_evaluate | 求值 JavaScript 表达式，支持 Promise，返回 value，最大 64 KB |
+| browser_wait_for | 按目标、可见文本、URL 的组合条件等待，最多 10 秒 |
 
-## 验证
+没有 `browser_task`、textSlots 或独立决策预算。旧 browser_task 的消息记录仍按电脑工具展示。
 
-```sh
-bun test tests/browser-use.test.ts        # 离线契约：候选表、指纹、循环规则（无需浏览器/模型）
-bun run check:browser-guards              # 真实 Chrome + 本地 fixture，无模型调用
-```
+## 页面身份和生命周期
 
-`tests/browser-use.test.ts` 覆盖：元素编号与下拉框目标编码、几何变化不影响指纹、**动作先记账后观察**、过期决策不执行也不计数、缺少槽位时 `needs_text` 而不是编造、连续三步无变化即停、不可撤销步骤必须有确认、预算即停止线、以及 read-only 不提供任何改动操作。
+- 宿主以 Pi sessionId 维护页面目录；Pi 执行器重启后可恢复当前页面。不同 session 的页面不自动相互接管。
+- 每次读写固定 tabId 和 owner；同一 session 的工具按序执行。指定页面忙或已关闭时返回错误，不创建替代页面。
+- 普通快照与读写不会反复触发面板打开。明确 browser_open 会显示面板；原生点击需要目标可见时才显示目标页面。
+- 导航跨站复用同一 tabId，只有显式要求另开一页才创建。每次工具执行结束只释放控制权，保留页面、滚动、播放和登录态。
+- 取消后不再投递后续动作，异常也执行租约清理。全局物理鼠标串行，点击前重新检查页面可见性、主窗口位置和焦点。
+- refs 在导航或新快照后失效；节点被替换或目标语义/值变化也失效。不再因页面其他区域的时钟或横幅变化重复调用模型。
 
-`scripts/check-browser-guards.ts` 移植自上游 `scripts/check_guards.py`（MIT），**41 项**，包含：移动后的控件仍在原决策的目标上被点击；9 种真实变化（可见上下文、无障碍名、字段值、勾选状态、禁用、只读、隐藏、节点替换、下拉选项）必须让决策作废；无文字遮罩不改语义状态但必须挡住点击；密码值不暴露；禁用控件不出现；原生下拉真的选中；输入后等待异步候选；视口外的控件被保留并标 `offscreen`、被遮挡的控件在观察阶段就标 `covered`（含遮挡者）、`label[for]` 关联到隐藏控件时以 label 作为代理目标、Chrome 路径额外带一份有界的无障碍大纲。实测中还确认了一处上游注释与行为不符：**同 scope 内「视口外」的文本仍然在守卫范围内**，因此它的变化会作废决策（代价是多一次决策，不是错点一次）；没有渲染的文本才不在范围内。脚本在缺少 Chrome 或未构建 Orbit 时自行 skip。
+## 验证与边界
 
-实测（2026-10-15，Chrome 155，Jev 1.14，macOS arm64）：
+动作已送达不等于目标完成。Pi 必须根据后续快照或 evaluate 的结果判断。例如视频播放需要确认目标视频、paused=false、未 ended，且 currentTime 随时间增长；仅看到播放按钮或节目标题不能报告成功。广告、预览和会员限制必须如实说明。
 
-- Wikipedia 任务「找到并打开哥德尔不完备定理条目」：**5.0 秒**（含 Chrome 冷启动）、5 次 Jev 调用、2 次动作；在同一页面上重跑同一目标：**1.06 秒 / 1 次 Jev 调用 / 0 次动作**。
-- **不准备任何值的任务**（`allowGeneratedText` 默认开）：起点 `Special:Search`，目标「用搜索框找到并打开关于不完备定理的条目」→ 运行自己的模型写出查询 → CLICK Search → 落在 `Gödel's_incompleteness_theorems`，**10.7 秒 / 5 次 Jev 调用 / 1 次生成值**（其中约 3–4 秒是那一次生成值的模型进程），`done` 且 Jev 判定目标达成。
+页面内容作为不可信证据。点击、输入和 evaluate 都可能改变网站状态，沿用当前 Pi 的用户授权语义；遇到验证码、登录或付费边界应报告具体阻碍。
+
+当前原生引擎仍有边界：跨域 iframe 只报告地址及不可访问；键盘/悬停/文本输入主要为 DOM 事件，无法保证所有网站接受；没有迁移 T3 的 Playwright/CDP、截图工具、录制与独立 PiP 窗口。原生点击需要显示目标页面。Profile 切换/导入目前仍采用既有应用流程，未在本次更换中承诺 T3 的 profile 生命周期完全一致。
+
+Unix socket 权限为 0600，不经外网。不自动回退到另一个 Chrome 或另一套登录态。
+
+## 文件与检查
+
+- `src-tauri/resources/browser-use/mode.ts`：工具开关与主 agent 指令。
+- `tools.ts`：工具 schema、注册和 sessionId 绑定。
+- `browser-service.ts`：页面目录、执行队列、租约、取消、异步求值。
+- `page-runtime.ts`：页面快照与动作；无网络、模型或站点专用规则。
+- `view-channel.ts`：本地 IPC 传输。
+- `src-tauri/src/browser_view.rs`、`browser_leases.rs`：页面宿主与归属。
+- `bun run check`、`bun run test:unit`、`bun run test:ui`：静态和离线回归。
+- `bun run check:browser-guards`：运行中的 Orbit 原生 WebView 上验证本地页面、完整查询、Enter、href 导航、节点变化拒绝、媒体状态与点击。需要桌面进程；不可达时显式报告 SKIP。
+- `bun run test:pi`：隔离发行资源下的 Pi 扩展加载和工具开关检查。
+
+旧 Jev 浏览器循环、文本生成辅助器及 Chrome 兼容路径已从发行资源删除。历史设计和旧评估结果可从 Git 历史查看，不能作为新工具链的性能结果。

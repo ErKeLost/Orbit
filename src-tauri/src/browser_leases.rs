@@ -30,6 +30,41 @@ impl BrowserLeases {
         self.recent.insert(scope.to_string(), selected_key);
         tab
     }
+    /// Exact targeting never allocates a different tab when the target is busy.
+    /// This identity lives in the host, so restarting Pi does not lose its pages.
+    pub(crate) fn acquire(&mut self, scope: &str, tab: &str, owner: &str, now: Instant) -> Result<(), String> {
+        if owner.is_empty() { return Err("浏览器操作需要 owner".into()); }
+        let prefix = format!("{scope}\n");
+        let (key, lease) = self.entries.iter_mut().find(|(key, lease)| key.starts_with(&prefix) && lease.tab == tab)
+            .ok_or("此页面不属于当前 session，请先使用 browser_open")?;
+        if lease.owner.as_deref().is_some_and(|current| current != owner) && now.duration_since(lease.claimed_at) < Duration::from_secs(11 * 60) {
+            return Err("此页面正在被另一项操作使用，请稍后重试".into());
+        }
+        lease.owner = Some(owner.into());
+        lease.claimed_at = now;
+        self.recent.insert(scope.into(), key.clone());
+        Ok(())
+    }
+    pub(crate) fn tabs(&self, scope: &str) -> Vec<String> {
+        let prefix = format!("{scope}\n");
+        let mut tabs: Vec<_> = self.entries.iter().filter(|(key, _)| key.starts_with(&prefix)).map(|(_, lease)| lease.tab.clone()).collect();
+        tabs.sort();
+        tabs
+    }
+    pub(crate) fn current(&self, scope: &str) -> Option<String> {
+        self.recent.get(scope).and_then(|key| self.entries.get(key)).map(|lease| lease.tab.clone())
+    }
+    pub(crate) fn release_owner(&mut self, scope: &str, owner: &str) -> Vec<String> {
+        let prefix = format!("{scope}\n");
+        let mut released = Vec::new();
+        for (key, lease) in &mut self.entries {
+            if key.starts_with(&prefix) && lease.owner.as_deref() == Some(owner) {
+                lease.owner = None;
+                released.push(lease.tab.clone());
+            }
+        }
+        released
+    }
     pub(crate) fn owns(&self, tab: &str, owner: &str) -> bool {
         !owner.is_empty() && self.entries.values().any(|lease| lease.tab == tab && lease.owner.as_deref() == Some(owner))
     }
@@ -46,6 +81,21 @@ impl BrowserLeases {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn explicit_targets_recover_after_release_and_cross_origin_navigation() {
+        let mut leases = BrowserLeases::default(); let now = Instant::now();
+        leases.claim("a", Some("https://one.test"), None, "first", now, || "tab-1".into());
+        leases.release("tab-1", "first");
+        assert!(leases.acquire("a", "tab-1", "second", now).is_ok());
+        assert_eq!(leases.tabs("a"), vec!["tab-1"]);
+        assert_eq!(leases.current("a").as_deref(), Some("tab-1"));
+        assert!(leases.acquire("b", "tab-1", "stranger", now).is_err());
+        assert!(leases.acquire("a", "tab-1", "competing", now).is_err());
+        assert!(leases.owns("tab-1", "second"));
+        leases.forget("tab-1");
+        assert!(leases.current("a").is_none());
+        assert!(leases.acquire("a", "tab-1", "late", now).is_err());
+    }
     #[test]
     fn sequential_work_reuses_its_page_without_following_active_tab() {
         let mut leases = BrowserLeases::default(); let now = Instant::now();

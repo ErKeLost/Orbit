@@ -13,6 +13,7 @@ cpSync(resolve(root,'src-tauri/resources/pi-runtime'),resolve(resources,'pi-runt
 cpSync(resolve(root,'src-tauri/resources/subagents'),resolve(resources,'subagents'),{recursive:true})
 cpSync(resolve(root,'src-tauri/resources/computer-use'),resolve(resources,'computer-use'),{recursive:true})
 cpSync(resolve(root,'src-tauri/resources/browser-use'),resolve(resources,'browser-use'),{recursive:true})
+cpSync(resolve(root,'src-tauri/resources/voice'),resolve(resources,'voice'),{recursive:true})
 cpSync(resolve(root,'src-tauri/resources/node_modules'),resolve(resources,'node_modules'),{recursive:true})
 cpSync(resolve(root,'src-tauri/resources/node-runtime'),resolve(resources,'node-runtime'),{recursive:true})
 cpSync(resolve(root,'src-tauri/resources/gui-extension.ts'),resolve(resources,'gui-extension.ts'))
@@ -31,7 +32,7 @@ const collaborationTools=['spawn_agent','send_message','followup_task','wait_age
 // Mode-owned tools (computer-use / browser-use) are deliberately outside the
 // generic tool list: each has its own gating command, and Browser Use is on by
 // default. `/gui-tools-set` therefore leaves whichever are active in place.
-const modeOwnedTools=['gui_task','browser_task']
+const modeOwnedTools=['gui_task',...(await import('../src-tauri/resources/browser-use/tools.ts')).BROWSER_TOOL_NAMES]
 // The release runtime must start the codemode sandbox from its own artifacts:
 // the isolated copy has no project node_modules to fall back on.
 const codemode=spawnSync(process.execPath,[resolve(root,'scripts/check-codemode.mjs'),resolve(resources,'pi-runtime')],{cwd,stdio:'pipe'})
@@ -65,6 +66,14 @@ try{
  const models=await req({type:'get_available_models'});assert(models.models.some(m=>m.provider===state.model.provider&&m.id===state.model.id));results.push('current model returned by Pi model catalog')
  const levels=await req({type:'get_available_thinking_levels'});assert(levels.levels.includes(state.thinkingLevel));results.push('current thinking level returned by Pi capability API')
  await req({type:'prompt',message:'/gui-tools'});assert(toolState.tools.length>0);results.push('GUI extension: tool inventory')
+ assert(!toolState.tools.some(tool=>tool.name==='browser_task'),'Jev browser_task is no longer registered')
+ const browserTools=modeOwnedTools.filter(name=>name.startsWith('browser_'))
+ assert(browserTools.every(name=>toolState.active.includes(name)),'direct browser tools active by default')
+ await req({type:'prompt',message:'/gui-browser-use-mode {"enabled":false}'})
+ assert(browserTools.every(name=>!toolState.active.includes(name)),'direct browser tools disabled together')
+ await req({type:'prompt',message:'/gui-browser-use-mode {"enabled":true}'})
+ assert(browserTools.every(name=>toolState.active.includes(name)),'direct browser tools enabled together')
+ results.push('direct browser tools: no nested Jev task, session default and mode gating')
  await req({type:'prompt',message:'/gui-tools-set ["read"]'});assert(toolState.active.includes('read'));assert(toolState.active.every(name=>name==='read'||modeOwnedTools.includes(name)),'generic tool selection leaves only "read" plus mode-owned tools: '+toolState.active);results.push('GUI extension: active tools update')
  await req({type:'prompt',message:'/gui-agent-mode {"enabled":true}'});assert(collaborationTools.every(name=>toolState.active.includes(name)));results.push('GUI extension: multi-agent tools enabled')
  await req({type:'prompt',message:'/gui-agent-mode {"enabled":false}'});assert(collaborationTools.every(name=>!toolState.active.includes(name)));results.push('GUI extension: multi-agent tools disabled')

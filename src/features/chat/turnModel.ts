@@ -85,8 +85,7 @@ function isImageTool(part: Part, tools: Record<string, Tool>) {
 
 export function workCategory(name: string): WorkCategory {
   const kind = toolKind(name);
-  // 电脑/浏览器工具自己就叫 `*_task`（`browser_task`、`gui_task`）：那是把活派给
-  // 工具，不是派给子 agent，所以 `toolKind` 先认领的归它。
+  // browser_*、gui_task 和历史 browser_task 都按浏览器/电脑工具展示。
   if (kind === "computer") return "computer";
   // 委派工具才叫子 agent：`spawn_agent` / `wait_agent` / `delegate`，或某家 harness
   // 里光秃秃的 `task`——但 `xxx_task` 永远不是。

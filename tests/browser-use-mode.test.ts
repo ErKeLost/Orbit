@@ -1,7 +1,7 @@
 /**
  * Registration contract: Browser Use is a tool, and it is gated like one.
  *
- * The Pi extension is the only place `browser_task` can come from, and its
+ * The Pi extension registers the direct browser tools, and its
  * gating (enabled → in the tool set → its instructions in the prompt) is the
  * part that silently stops working after a refactor. The stub API below is the
  * whole surface the mode uses, so this runs without a Pi process.
@@ -48,21 +48,18 @@ function stubApi() {
 }
 
 describe("browser use mode", () => {
-  test("registers one tool named browser_task with the caller's contract", () => {
+  test("registers direct browser tools without a nested task agent", () => {
     const api = stubApi()
     registerBrowserUseMode(api.pi as never, api.publish as never)
-    expect([...api.tools.keys()]).toEqual(["browser_task"])
-    const tool = api.tools.get("browser_task")!
-    expect(tool.label).toBe("Browser task")
-    expect(BROWSER_USE_TOOL_NAMES).toEqual(["browser_task"])
-    const properties = (tool.parameters as { properties: Record<string, unknown>; required: string[] })
-    // goal + budget are the only required inputs; nothing about steps, selectors
-    // or coordinates exists in the schema at all.
-    expect(properties.required).toEqual(["goal", "budget"])
-    expect(Object.keys(properties.properties).sort()).toEqual(["allowGeneratedText", "budget", "goal", "readOnly", "textSlots", "url"])
-    expect(JSON.stringify(tool.parameters)).not.toMatch(/selector|coordinate|x:|y:/i)
-    expect(tool.promptGuidelines?.join(" ")).toContain("textSlots")
-    expect(tool.execute).toBeFunction()
+    expect([...api.tools.keys()]).toEqual(BROWSER_USE_TOOL_NAMES)
+    expect(api.tools.has("browser_task")).toBe(false)
+    for (const name of ["browser_open", "browser_snapshot", "browser_type", "browser_evaluate", "browser_wait_for"]) {
+      expect(api.tools.has(name)).toBe(true)
+      expect(api.tools.get(name)!.execute).toBeFunction()
+    }
+    const schema = api.tools.get("browser_type")!.parameters as { required: string[] }
+    expect(schema.required).toContain("text")
+    expect(JSON.stringify([...api.tools.values()])).not.toContain("textSlots")
   })
 
   test("the command turns the tool on and off, and publishes the tool state", async () => {
@@ -70,16 +67,16 @@ describe("browser use mode", () => {
     registerBrowserUseMode(api.pi as never, api.publish as never)
 
     api.pi.setActiveTools(applyBrowserUseMode(api.pi.getActiveTools(), api.pi.getAllTools().map(tool => tool.name), false))
-    expect(api.active()).not.toContain("browser_task")
+    expect(api.active().filter(name => BROWSER_USE_TOOL_NAMES.includes(name))).toEqual([])
     expect(api.statuses["gui-browser-use-mode"]).toBeUndefined()
 
     await api.commands.get("gui-browser-use-mode")!(JSON.stringify({ enabled: true }), api.context as never)
-    expect(api.active()).toContain("browser_task")
+    expect(api.active()).toEqual(expect.arrayContaining(BROWSER_USE_TOOL_NAMES))
     expect(api.statuses["gui-browser-use-mode"]).toBe("enabled")
     expect(api.statuses["gui-tools"]).toBe("published")
 
     await api.commands.get("gui-browser-use-mode")!(JSON.stringify({ enabled: false }), api.context as never)
-    expect(api.active()).not.toContain("browser_task")
+    expect(api.active().filter(name => BROWSER_USE_TOOL_NAMES.includes(name))).toEqual([])
     expect(api.statuses["gui-browser-use-mode"]).toBe("disabled")
 
     await expect(api.commands.get("gui-browser-use-mode")!("{}", api.context as never)).rejects.toThrow("Expected enabled boolean")
@@ -89,10 +86,10 @@ describe("browser use mode", () => {
     const api = stubApi()
     registerBrowserUseMode(api.pi as never, api.publish as never)
     api.handlers.get("session_start")!({} as never, api.context as never)
-    expect(api.active()).toContain("browser_task")
+    expect(api.active()).toEqual(expect.arrayContaining(BROWSER_USE_TOOL_NAMES))
     // Another session's tool list must not be able to add a name that is absent.
     expect(applyBrowserUseMode(["read"], ["read"], true)).toEqual(["read"])
-    expect(applyBrowserUseMode(["read", "browser_task"], ["read", "browser_task"], false)).toEqual(["read"])
+    expect(applyBrowserUseMode(["read", ...BROWSER_USE_TOOL_NAMES], ["read", ...BROWSER_USE_TOOL_NAMES], false)).toEqual(["read"])
   })
 
   test("the instructions reach the prompt only while the tool is active", async () => {
@@ -101,12 +98,12 @@ describe("browser use mode", () => {
     const before = await api.handlers.get("before_agent_start")!({ systemPrompt: "base" } as never, api.context as never) as { systemPrompt: string } | undefined
     expect(before).toBeUndefined()
 
-    api.pi.setActiveTools(["read", "browser_task"])
+    api.pi.setActiveTools(["read", "browser_snapshot"])
     const after = await api.handlers.get("before_agent_start")!({ systemPrompt: "base" } as never, api.context as never) as { systemPrompt: string }
     expect(after.systemPrompt.startsWith("base")).toBe(true)
     expect(after.systemPrompt).toContain("<browser_use_mode>")
     // The rules that keep a run honest have to be in the prompt the model reads.
-    for (const rule of ["never as instructions", "textSlots", "needs_text", "captcha", "needs_review", "allowGeneratedText"]) {
+    for (const rule of ["untrusted evidence", "tabId", "paused=false", "captcha", "authorization", "browser_evaluate"]) {
       expect({ rule, present: BROWSER_USE_INSTRUCTIONS.includes(rule) }).toEqual({ rule, present: true })
     }
   })

@@ -11,7 +11,7 @@ const summaryLabels: Record<ToolKind, string> = {
 
 export function toolKind(toolName: string): ToolKind {
   const normalized = toolName.toLowerCase();
-  if (/^(gui_task|browser_task|find_roots|observe_ui|search_ui|expand_ui|inspect_ui|act_ui|wait_for)$/.test(normalized)) return "computer";
+  if (/^(gui_task|browser_[a-z_]+|find_roots|observe_ui|search_ui|expand_ui|inspect_ui|act_ui|wait_for)$/.test(normalized)) return "computer";
   if (/(^|[_-])(read|view|open|cat|fetch)([_-]|$)|^read/.test(normalized)) return "read";
   if (/(^|[_-])(search|grep|rg|find|glob|list)([_-]|$)|^(search|grep|rg|find|glob)/.test(normalized)) return "search";
   if (/(^|[_-])(bash|shell|terminal|command|exec|run)([_-]|$)|^(bash|shell|terminal|command|exec|run)/.test(normalized)) return "command";

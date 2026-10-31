@@ -1,87 +1,109 @@
 import { describe, expect, test } from "bun:test"
-import { Window } from "happy-dom"
-import { viewActionScript, viewClickPointScript } from "../src-tauri/resources/browser-use/view-driver"
-import type { BrowserAction } from "../src-tauri/resources/browser-use/browser-driver"
+import { browserFixture } from "./browser-fixture"
 
-function page(html: string) {
-  const window = new Window({url:"https://example.test"})
-  const document=window.document
-  document.body.innerHTML=html
-  const element=document.body.firstElementChild! as unknown as HTMLElement
-  element.style.opacity="1"
-  Object.defineProperty(document,"execCommand",{value:()=>false,configurable:true})
-  element.getBoundingClientRect=()=>({x:10,y:20,width:100,height:30,top:20,left:10,right:110,bottom:50,toJSON(){}})
-  element.scrollIntoView=()=>{}
-  Object.defineProperty(document,"elementFromPoint",{value:()=>element,configurable:true})
-  ;(window as unknown as {__jevFast:unknown}).__jevFast={nodes:new Map([[1,element]])}
-  const evaluate=(script:string)=>new Function("window","document",`return (${script})`)(window,document)
-  const run=(text:string)=>{
-    const action:BrowserAction={id:"e1",kind:"fill",node:1,label:"Editor"}
-    return new Function("window","document","getComputedStyle","innerWidth","innerHeight","HTMLTextAreaElement","HTMLInputElement","Event","MouseEvent",`return (${viewActionScript(action,text)})`)(window,document,window.getComputedStyle.bind(window),800,600,window.HTMLTextAreaElement,window.HTMLInputElement,window.Event,window.MouseEvent) as {ok:boolean;reason?:string}
-  }
-  return {window,document,element,run,evaluate}
-}
-
-describe("browser view field input",()=>{
-  test("contenteditable receives the requested text and an input event",()=>{
-    const {window,element,run}=page('<div contenteditable="true">old text</div>')
-    let events=0;element.addEventListener("input",()=>events++)
-    expect(run("new text")).toMatchObject({ok:true})
-    expect(element.textContent).toBe("new text")
-    expect(events).toBe(1);window.close()
+describe("direct browser page operations", () => {
+  test("typing preserves the whole literal search value", () => {
+    const f = browserFixture('<form><label>Search<input></label></form>')
+    try {
+      const input = f.document.querySelector("input")!
+      f.hit(input)
+      const { ref } = f.snapshot().elements.find(e => e.name === "Search")!
+      f.run("type", { ref, text: "现在就出发 完整查询" })
+      expect(input.value).toBe("现在就出发 完整查询")
+    } finally { f.close() }
   })
-  test("a controlled input that restores its value cannot report success",()=>{
-    const {window,element,run}=page('<input value="original">')
-    element.addEventListener("input",()=>{(element as HTMLInputElement).value="original"})
-    expect(run("new text")).toMatchObject({ok:false,reason:"fill-unconfirmed"})
-    expect((element as HTMLInputElement).value).toBe("original");window.close()
+  test("typing and pressing Enter can reuse the same ref", () => {
+    const f = browserFixture('<form><input aria-label="Query"></form>')
+    try {
+      let submitted = 0
+      f.document.querySelector("form")!.addEventListener("submit", event => { event.preventDefault(); submitted++ })
+      const ref = f.snapshot().elements[0]!.ref
+      f.run("type", { ref, text: "现在就出发" })
+      f.run("press", { ref, key: "Enter" })
+      expect(f.document.querySelector("input")!.value).toBe("现在就出发")
+      expect(submitted).toBe(1)
+    } finally { f.close() }
   })
-  test("a normal textarea preserves the full multiline value",()=>{
-    const {window,element,run}=page('<textarea>old</textarea>')
-    expect(run("first\nsecond")).toMatchObject({ok:true})
-    expect((element as HTMLTextAreaElement).value).toBe("first\nsecond");window.close()
+  test("textarea and rich text preserve multiline text and append", () => {
+    for (const html of ['<textarea>old</textarea>', '<div contenteditable="true">old</div>']) {
+      const f = browserFixture(html)
+      try {
+        const ref = f.snapshot().elements[0]!.ref
+        f.run("type", { ref, text: "first\nsecond" })
+        f.run("type", { ref, text: "\nthird", clear: false })
+        const element = f.document.body.firstElementChild!
+        expect(element.tagName === "TEXTAREA" ? (element as unknown as HTMLTextAreaElement).value : element.textContent).toBe("first\nsecond\nthird")
+      } finally { f.close() }
+    }
   })
-  test("a same-origin iframe field is hit-tested and filled in its own document",()=>{
-    const {window,document,element:frame,run}=page('<iframe></iframe>')
-    const inner=(frame as HTMLIFrameElement).contentDocument!
-    inner.body.innerHTML='<input value="old">'
-    const input=inner.querySelector('input')!
-    input.style.opacity='1';input.scrollIntoView=()=>{}
-    input.getBoundingClientRect=()=>({x:5,y:6,width:40,height:20,top:6,left:5,right:45,bottom:26,toJSON(){}})
-    Object.defineProperty(inner,'elementFromPoint',{value:()=>input,configurable:true})
-    Object.defineProperty(inner,'execCommand',{value:()=>false,configurable:true})
-    ;(window as unknown as {__jevFast:unknown}).__jevFast={nodes:new Map([[1,input]])}
-    expect(run('inside the frame')).toMatchObject({ok:true})
-    expect(input.value).toBe('inside the frame')
-    expect(document.body.firstElementChild).toBe(frame);window.close()
+  test("a controlled field that rejects the value returns an error", () => {
+    const f = browserFixture('<input value="original">')
+    try {
+      const element = f.document.querySelector("input")!
+      element.addEventListener("input", () => { element.value = "original" })
+      expect(() => f.run("type", { ref: f.snapshot().elements[0]!.ref, text: "new" })).toThrow("rejected")
+    } finally { f.close() }
   })
-})
-
-describe("browser view native click coordinates",()=>{
-  test("the bridge receives a coordinate object instead of a JSON string",()=>{
-    const {window,evaluate}=page('<button>Go</button>')
-    expect(evaluate(viewClickPointScript(1))).toEqual({x:60,y:35});window.close()
+  test("select exposes actual options and chooses by exact label", () => {
+    const f = browserFixture('<select aria-label="Category"><option value="all">All</option><option value="shows">Shows</option></select>')
+    try {
+      const ref = f.snapshot().elements[0]!.ref
+      f.run("select", { ref, label: "Shows" })
+      expect(f.document.querySelector("select")!.value).toBe("shows")
+    } finally { f.close() }
   })
-  test("a target covered after observation cannot receive a native click",()=>{
-    const {window,document,evaluate}=page('<button>Go</button>')
-    const cover=document.createElement('div');document.body.append(cover)
-    Object.defineProperty(document,'elementFromPoint',{value:()=>cover,configurable:true})
-    expect(evaluate(viewClickPointScript(1))).toBeNull();window.close()
+  test("changed targets and replaced DOM nodes invalidate refs, unrelated text does not", () => {
+    const f = browserFixture('<button>Continue</button><aside>Clock</aside>')
+    try {
+      const button = f.document.querySelector("button")!
+      let clicks = 0
+      button.addEventListener("click", () => clicks++)
+      const ref = f.snapshot().elements[0]!.ref
+      f.document.querySelector("aside")!.textContent = "new clock value"
+      f.run("click", { ref })
+      expect(clicks).toBe(1)
+      button.textContent = "Delete account"
+      expect(() => f.run("click", { ref })).toThrow("Stale")
+      const next = f.snapshot().elements[0]!.ref
+      button.replaceWith(button.cloneNode(true))
+      expect(() => f.run("click", { ref: next })).toThrow("Stale")
+      expect(clicks).toBe(1)
+    } finally { f.close() }
   })
-  test("an iframe click includes the frame offset and checks the outer page for overlays",()=>{
-    const {window,document,element:frame,evaluate}=page('<iframe></iframe>')
-    const inner=(frame as HTMLIFrameElement).contentDocument!
-    // happy-dom exposes contentDocument but does not wire frameElement back.
-    Object.defineProperty(inner.defaultView!,'frameElement',{value:frame,configurable:true})
-    inner.body.innerHTML='<button>Go</button>'
-    const button=inner.querySelector('button')!
-    button.scrollIntoView=()=>{}
-    button.getBoundingClientRect=()=>({x:5,y:6,width:40,height:20,top:6,left:5,right:45,bottom:26,toJSON(){}})
-    Object.defineProperty(inner,'elementFromPoint',{value:()=>button,configurable:true})
-    ;(window as unknown as {__jevFast:unknown}).__jevFast={nodes:new Map([[1,button]])}
-    expect(evaluate(viewClickPointScript(1))).toEqual({x:35,y:36})
-    const overlay=document.createElement('div');document.body.append(overlay)
-    Object.defineProperty(document,'elementFromPoint',{value:()=>overlay,configurable:true})
-    expect(evaluate(viewClickPointScript(1))).toBeNull();window.close()
+  test("another snapshot invalidates previous refs", () => {
+    const f = browserFixture('<button>Go</button>')
+    try {
+      const ref = f.snapshot().elements[0]!.ref
+      f.snapshot()
+      expect(() => f.run("click", { ref })).toThrow("Stale")
+    } finally { f.close() }
+  })
+  test("covered or disabled targets never receive a click", () => {
+    const f = browserFixture('<button>Go</button><div>Overlay</div>')
+    try {
+      const ref = f.snapshot().elements[0]!.ref
+      f.hit(f.document.querySelector("div")! as unknown as Element)
+      expect(() => f.run("click_point", { ref })).toThrow("covered")
+      f.hit(undefined)
+      f.document.querySelector("button")!.disabled = true
+      expect(() => f.run("click_point", { ref })).toThrow("disabled")
+    } finally { f.close() }
+  })
+  test("native click returns an object and selectors must identify one element", () => {
+    const f = browserFixture('<button>One</button><button>Two</button>')
+    try {
+      expect(f.run("click_point", { ref: f.snapshot().elements[0]!.ref })).toEqual({ x: 60, y: 35 })
+      expect(() => f.run("click", { selector: "button" })).toThrow("2 elements")
+      expect(f.run("wait", { selector: "#not-yet-present" })).toEqual({ matched: false })
+    } finally { f.close() }
+  })
+  test("passwords are masked and actual media state is exposed", () => {
+    const f = browserFixture('<input type="password" value="secret"><a href="/watch/123">Show</a><video></video>')
+    try {
+      const result = f.snapshot()
+      expect(JSON.stringify(result)).not.toContain("secret")
+      expect(result.elements.find(e => e.role === "link")!.href).toBe("https://fixture.test/watch/123")
+      expect(result.media[0]).toMatchObject({ paused: true, currentTime: 0 })
+    } finally { f.close() }
   })
 })

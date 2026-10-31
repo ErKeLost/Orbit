@@ -53,7 +53,13 @@ const AGENT_TAB: &str = "agent";
 /// Installed into every page, before its own scripts: the shim above.
 const NEW_TAB_SHIM: &str = r#"
 (() => {
-  const ask = (href) => { if (href) location.href = "orbit-tab:" + href; };
+  const ask = (href) => {
+    if (!href) return;
+    const resolved = new URL(href, location.href).href;
+    if (!/^https?:/i.test(resolved)) return;
+    if ((window.__orbitAutomationClickUntil || 0) > Date.now()) location.href = resolved;
+    else location.href = "orbit-tab:" + resolved;
+  };
   const originalOpen = window.open;
   window.open = function (url, ...rest) {
     const href = typeof url === "string" ? url : url && url.href ? url.href : "";
@@ -279,9 +285,10 @@ pub fn browser_view_sync(
                         // from, and the closure cannot borrow the outer map.
                         if let Some(state) = tabs.values_mut().find(|state| state.view.label() == label) {
                             state.loading = loading;
-                            if !loading {
-                                state.loaded = true;
-                            }
+                            // Wry emits Started at document commit, before
+                            // optional images/video/subresources finish. Once
+                            // this callback returns, evaluation is available.
+                            state.loaded = true;
                         }
                     }
                 }
@@ -302,7 +309,7 @@ pub fn browser_view_sync(
                 url: target.to_string(),
                 visible: false,
                 loading: target.as_str() != BLANK,
-                loaded: target.as_str() == BLANK,
+                loaded: false,
                 rect,
             },
         );
@@ -384,6 +391,8 @@ pub fn browser_view_navigate(
     let id = resolve_tab_id(&host, &tab)?;
     let mut tabs = host.tabs.lock().map_err(|error| error.to_string())?;
     let state = tabs.get_mut(&id).ok_or_else(|| "浏览器标签页尚未打开".to_string())?;
+    state.loaded = false;
+    state.loading = true;
     state.view.navigate(target.clone()).map_err(|error| error.to_string())?;
     state.url = target.to_string();
     Ok(state.status())
@@ -601,6 +610,8 @@ struct ViewRequest {
     #[serde(default)]
     owner: String,
     #[serde(default)]
+    new_tab: bool,
+    #[serde(default)]
     scope: String,
     #[serde(default)]
     tab: String,
@@ -652,6 +663,31 @@ fn handle(app: &AppHandle, request: ViewRequest) -> Result<String, String> {
         if !agent.owns(&request.tab, &request.owner) { return Err("浏览器操作权已释放或属于另一项任务，请重新获取目标页面".into()); }
     } else if ["eval", "navigate", "go", "reload", "clickAt"].contains(&request.op.as_str()) { return Err("浏览器操作需要有效的 owner".into()); }
     match request.op.as_str() {
+        "tabs" => {
+            let (ids, current) = {
+                let agent = host.agent.lock().map_err(|e| e.to_string())?;
+                (agent.tabs(&request.scope), agent.current(&request.scope))
+            };
+            let tabs: Vec<_> = ids.into_iter().map(|tab| status(&host, &tab)).filter(|tab| tab.open).collect();
+            let current = current.filter(|id| tabs.iter().any(|tab| &tab.tab == id));
+            Ok(serde_json::json!({ "currentTabId": current, "tabs": tabs }).to_string())
+        }
+        "acquire" => {
+            if !status(&host, &request.tab).open { return Err("目标页面已关闭，请使用 browser_open".into()); }
+            if host.importing.load(std::sync::atomic::Ordering::SeqCst) { return Err("正在导入浏览器资料，请稍后再试".into()); }
+            host.agent.lock().map_err(|e| e.to_string())?.acquire(&request.scope, &request.tab, &request.owner, Instant::now())?;
+            Ok(serde_json::json!({ "tab": request.tab }).to_string())
+        }
+        "releaseOwner" => {
+            let tabs = host.agent.lock().map_err(|e| e.to_string())?.release_owner(&request.scope, &request.owner);
+            for tab in tabs { let _ = app.emit("browser:released", serde_json::json!({ "tab": tab })); }
+            Ok("null".into())
+        }
+        "present" => {
+            if !host.agent.lock().map_err(|e| e.to_string())?.owns(&request.tab, &request.owner) { return Err("没有目标页面的操作权".into()); }
+            app.emit("browser:open", serde_json::json!({ "tab": request.tab })).map_err(|e| e.to_string())?;
+            Ok("null".into())
+        }
         "status" => serde_json::to_string(&status(&host, &request.tab)).map_err(|error| error.to_string()),
         "eval" => {
             let script = request.script.ok_or_else(|| "eval 缺少 script".to_string())?;
@@ -681,8 +717,8 @@ fn handle(app: &AppHandle, request: ViewRequest) -> Result<String, String> {
             // of adding a tab. Any other name is taken literally (a caller that
             // already knows which tab it wants, and the older behaviour).
             if request.owner.is_empty() { return Err("打开任务页面需要 owner".into()); }
-            let origin = if url.is_empty() { None } else { Some(parse(&url)?.origin().ascii_serialization()) };
-            let preferred = if wanted != AGENT_TAB && !wanted.is_empty() { Some(wanted.to_string()) } else if url.is_empty() { host.active.lock().ok().map(|id| id.clone()).filter(|id| !id.is_empty()) } else { None };
+            let origin = if request.new_tab { Some(format!("new:{}", request.owner)) } else if url.is_empty() { None } else { Some(parse(&url)?.origin().ascii_serialization()) };
+            let preferred = if request.new_tab { None } else if wanted != AGENT_TAB && !wanted.is_empty() { Some(wanted.to_string()) } else { None };
             let tab = claim_agent_tab(&host, &request.scope, origin.as_deref(), preferred.as_deref(), &request.owner)?;
             let shared = true;
             app.emit(
@@ -739,8 +775,7 @@ fn handle(app: &AppHandle, request: ViewRequest) -> Result<String, String> {
         // result links.
         "clickAt" => {
             let (x, y) = (request.x.unwrap_or(-1.0), request.y.unwrap_or(-1.0));
-            let rect = with_tab(&host, &request.tab, |state| state.rect)?;
-            trusted_click(app, rect, x, y)
+            trusted_click(app, &request.tab, x, y)
         }
         other => Err(format!("未知操作 {other}")),
     }
@@ -823,12 +858,11 @@ fn new_tab_id() -> String {
 
 fn eval_in(app: &AppHandle, view: Webview, script: String, timeout_ms: u64) -> Result<String, String> {
     let budget = timeout_ms.clamp(100, 120_000);
-    // Wait for a completed load first: before the first one, wry queues the
-    // script and throws the callback away, which reads as a timeout with no
-    // cause.
+    // Wait for document commit. Earlier, Wry queues the script but drops its
+    // callback. Waiting for all resources instead stalls on ads and media.
     let ready_deadline = Instant::now() + Duration::from_millis(budget);
     loop {
-        let (loaded, loading) = match view.label().strip_prefix("browser-view-") {
+        let loaded = match view.label().strip_prefix("browser-view-") {
             Some(_) => app
                 .try_state::<BrowserViewHost>()
                 .map(|host| {
@@ -837,15 +871,15 @@ fn eval_in(app: &AppHandle, view: Webview, script: String, timeout_ms: u64) -> R
                         Ok(tabs) => tabs
                             .values()
                             .find(|state| state.view.label() == view.label())
-                            .map(|state| (state.loaded, state.loading))
-                            .unwrap_or((true, false)),
-                        Err(_) => (true, false),
+                            .map(|state| state.loaded)
+                            .unwrap_or(true),
+                        Err(_) => true,
                     }
                 })
-                .unwrap_or((true, false)),
-            None => (true, false),
+                .unwrap_or(true),
+            None => true,
         };
-        if loaded && !loading {
+        if loaded {
             break;
         }
         if Instant::now() > ready_deadline {
@@ -859,8 +893,11 @@ fn eval_in(app: &AppHandle, view: Webview, script: String, timeout_ms: u64) -> R
     })
     .map_err(|error| error.to_string())?;
     receiver
-        .recv_timeout(Duration::from_millis(budget))
-        .map_err(|_| "页面脚本没有在超时前返回结果".to_string())
+        .recv_timeout(ready_deadline.saturating_duration_since(Instant::now()))
+        .map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => "页面脚本没有在超时前返回结果".to_string(),
+            mpsc::RecvTimeoutError::Disconnected => "页面尚未就绪或已关闭，求值回调被释放；请重新读取页面".to_string(),
+        })
 }
 
 /// Serve the driving channel for the life of the app.
@@ -876,6 +913,12 @@ pub fn serve(app: AppHandle) {
             return;
         }
     };
+    if let Some(parent) = path.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            eprintln!("[view] 无法创建浏览器通道目录：{error}");
+            return;
+        }
+    }
     let _ = std::fs::remove_file(&path);
     let listener = match std::os::unix::net::UnixListener::bind(&path) {
         Ok(listener) => listener,
@@ -938,11 +981,16 @@ fn click_is_inside(rect: ViewRect, x: f64, y: f64, inner: (f64, f64)) -> bool {
 /// same injection the phone's screen channel uses, so it rides the existing
 /// accessibility grant instead of a second permission.
 #[cfg(target_os = "macos")]
-fn trusted_click(app: &AppHandle, rect: ViewRect, x: f64, y: f64) -> Result<String, String> {
-    use xa11y::{MouseButton, Point};
-    if x < 0.0 || y < 0.0 {
+fn trusted_click(app: &AppHandle, tab: &str, x: f64, y: f64) -> Result<String, String> {
+    use xa11y::Point;
+    // Physical mouse input is global, even when two Pi sessions are running.
+    static POINTER: Mutex<()> = Mutex::new(());
+    let _pointer = POINTER.lock().map_err(|e| e.to_string())?;
+    if !x.is_finite() || !y.is_finite() || x < 0.0 || y < 0.0 {
         return Err("clickAt 需要页面内的 x/y".to_string());
     }
+    let host = app.state::<BrowserViewHost>();
+    let rect = with_tab(&host, tab, |state| state.rect)?;
     if !(0.0..=rect.width).contains(&x) || !(0.0..=(rect.height)).contains(&y) {
         return Err(format!("({x}, {y}) 不在视图范围内 {}x{}", rect.width, rect.height));
     }
@@ -961,10 +1009,12 @@ fn trusted_click(app: &AppHandle, rect: ViewRect, x: f64, y: f64) -> Result<Stri
     // Re-read the geometry *after* the wait. The window can move, the pane can be
     // resized and the user can switch apps while the loop waits; a point
     // computed from a stale origin is a click at the wrong place.
-    let origin = window.outer_position().map_err(|error| error.to_string())?;
+    let origin = window.inner_position().map_err(|error| error.to_string())?;
     let scale = window.scale_factor().map_err(|error| error.to_string())?;
     let size = window.inner_size().map_err(|error| error.to_string())?;
     let inner = (size.width as f64 / scale, size.height as f64 / scale);
+    let (rect, visible) = with_tab(&host, tab, |state| (state.rect, state.visible))?;
+    if !visible { return Err("目标页面当前不可见，未点击；请先显示该页面".into()); }
     if !click_is_inside(rect, x, y, inner) {
         return Err("浏览器视图已不在主窗口内，未点击".to_string());
     }
@@ -974,19 +1024,15 @@ fn trusted_click(app: &AppHandle, rect: ViewRect, x: f64, y: f64) -> Result<Stri
     let screen_x = (origin.x as f64 / scale + rect.x + x).round() as i32;
     let screen_y = (origin.y as f64 / scale + rect.y + y).round() as i32;
     let input = xa11y::input_sim().map_err(|error| error.to_string())?;
-    input
-        .mouse()
-        .move_to(Point::new(screen_x, screen_y))
-        .map_err(|error| error.to_string())?;
-    std::thread::sleep(Duration::from_millis(60));
-    input.mouse().down(MouseButton::Left).map_err(|error| error.to_string())?;
-    std::thread::sleep(Duration::from_millis(40));
-    input.mouse().up(MouseButton::Left).map_err(|error| error.to_string())?;
+    // xa11y-macos 0.15 down/up put their Quartz events at (0,0).
+    // click(point) carries this point on both events, rather than assuming
+    // Quartz will substitute the cursor location for a button-only event.
+    input.mouse().click(Point::new(screen_x, screen_y)).map_err(|error| error.to_string())?;
     Ok(serde_json::json!({ "x": screen_x, "y": screen_y }).to_string())
 }
 
 #[cfg(not(target_os = "macos"))]
-fn trusted_click(_app: &AppHandle, _rect: ViewRect, _x: f64, _y: f64) -> Result<String, String> {
+fn trusted_click(_app: &AppHandle, _tab: &str, _x: f64, _y: f64) -> Result<String, String> {
     Err("可信点击目前只在 macOS 上可用".to_string())
 }
 

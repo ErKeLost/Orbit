@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-23T12:14:05.784Z",
+  "checkedAt": "2026-10-31T05:25:16.411Z",
   "results": [
     "bundled codemode sandbox: worker + quickjs wasm start",
     "SDK live context and compaction configuration",
@@ -7,6 +7,7 @@
     "current model returned by Pi model catalog",
     "current thinking level returned by Pi capability API",
     "GUI extension: tool inventory",
+    "direct browser tools: no nested Jev task, session default and mode gating",
     "GUI extension: active tools update",
     "GUI extension: multi-agent tools enabled",
     "GUI extension: multi-agent tools disabled",
