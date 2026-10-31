@@ -198,7 +198,7 @@ describe("panel switches keep the work area alive", () => {
     // top of whatever replaced it. Hiding (not closing) keeps the page alive.
     const tab = readFileSync("src/features/browser/BrowserTab.tsx", "utf8")
     expect(tab).toContain('last = "hidden"')
-    expect(tab).toContain("void syncBrowserView(path, parked, undefined, false)")
+    expect(tab).toContain("void surface.present(parked, undefined, false)")
   })
 })
 

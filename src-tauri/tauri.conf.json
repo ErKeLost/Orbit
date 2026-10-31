@@ -1,13 +1,13 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Orbit",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "identifier": "ai.pi.gui",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "bun run dev",
-    "beforeBuildCommand": "node scripts/bundle-pi.mjs && node node_modules/typescript/bin/tsc -b && node node_modules/typescript/bin/tsc -p tsconfig.computer-use.json && node node_modules/vite/bin/vite.js build",
+    "beforeBuildCommand": "node scripts/bundle-pi.mjs && node node_modules/typescript/bin/tsc -b && node node_modules/typescript/bin/tsc -p tsconfig.computer-use.json && node node_modules/typescript/bin/tsc -p tsconfig.browser-use.json && node node_modules/typescript/bin/tsc -p tsconfig.voice.json && node node_modules/vite/bin/vite.js build",
     "beforeBundleCommand": "node scripts/sync-worker.mjs"
   },
   "app": {
@@ -93,7 +93,8 @@
       "resources/computer-use",
       "resources/node_modules",
       "resources/node-runtime",
-      "resources/pi-runtime"
+      "resources/pi-runtime",
+      "resources/voice"
     ]
   }
 }

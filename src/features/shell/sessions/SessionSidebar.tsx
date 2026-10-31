@@ -102,7 +102,7 @@ function SessionCard({
                 {title}
               </span>
             )}
-            <span className={`flex shrink-0 items-center gap-1 text-[11px] tabular-nums ${statusClass}`}>
+            <span className={`flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] tabular-nums ${statusClass}`}>
               {needsInput ? (
                 <>
                   <CircleAlert className="size-3" strokeWidth={1.75} />

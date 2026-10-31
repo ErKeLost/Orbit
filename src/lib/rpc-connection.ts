@@ -85,8 +85,9 @@ function activateConnection(id:string,cwd:string){
  persistSession(cwd,saved.state?.sessionFile);syncLiveSessions()
  if(saved.connection==='online')void Promise.all([refresh(id),syncSessionModes(id)]).catch(error=>patch(id,{error:String(error)}))
 }
-async function startConnection(cwd:string,id:string,options?:{restoreLast?:boolean;sessionPath?:string;keepTranscript?:boolean}){
- const token=Symbol(id);connections.set(id,{token,cwd});projectActive.set(cwd,id)
+async function startConnection(cwd:string,id:string,options?:{restoreLast?:boolean;sessionPath?:string;keepTranscript?:boolean;background?:boolean;signal?:AbortSignal}){
+ if(options?.signal?.aborted)throw new DOMException("Aborted","AbortError")
+ const token=Symbol(id);connections.set(id,{token,cwd});if(!options?.background)projectActive.set(cwd,id)
  // `keepTranscript` is a recovery of the session already on screen: it goes
  // through the same attach and rehydrate, but does not blank what the user is
  // looking at while it does. See `reconnectKeepsTranscript`.
@@ -125,6 +126,7 @@ async function startConnection(cwd:string,id:string,options?:{restoreLast?:boole
    void primeProjection(options.sessionPath).then(primed=>{if(primed)patch(id,{transcript:primed.transcript})}).catch(()=>undefined)
   }
   await invoke('pi_connect',{cwd,onEvent,connectionId:id})
+  if(options?.signal?.aborted){await invoke('pi_disconnect',{project:id}).catch(()=>{});throw new DOMException("Aborted","AbortError")}
   const state=await request<RpcSessionState>({type:'get_state'},45000,id)
   if(connections.get(id)?.token!==token)return
   patch(id,{state})

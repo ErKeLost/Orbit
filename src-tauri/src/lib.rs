@@ -20,6 +20,7 @@ pub mod disclaim;
 mod screen;
 pub mod browser;
 pub mod browser_view;
+mod browser_leases;
 mod cookie_import;
 // Pi bridge split by domain: `bridge` keeps the shared worker registry and
 // runtime discovery; each command lives with the data it reads and writes.
@@ -395,11 +396,17 @@ pub fn run() {
             #[cfg(desktop)]
             rime::rime_config,
             #[cfg(desktop)]
+            rime::rime_check,
+            #[cfg(desktop)]
+            rime::rime_voices,
+            #[cfg(desktop)]
             rime::save_rime_config,
             #[cfg(desktop)]
             rime::save_rime_api_key,
             #[cfg(desktop)]
             rime::rime_tts,
+            #[cfg(desktop)]
+            rime::rime_tts_prepare,
             #[cfg(desktop)]
             rime::rime_stt,
             #[cfg(desktop)]

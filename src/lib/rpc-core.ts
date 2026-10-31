@@ -161,6 +161,16 @@ async function ensureSessionMetadata(id:string){
  finally{sessionMetadataPending.delete(id)}
 }
 const snapshotListeners=new Map<string,Set<()=>void>>()
+export type SessionEvent = { connectionId:string; sessionFile:string; sequence:number; observedAt:number; event:Event }
+const sessionEventListeners=new Map<string,Set<(event:SessionEvent)=>void>>()
+const sessionEventSequences=new Map<string,number>()
+/** Ordered source events, before rendering/burst coalescing. Observers cannot mutate the RPC stream. */
+export function subscribeSessionEvents(id:string,listener:(event:SessionEvent)=>void){
+ let listeners=sessionEventListeners.get(id)
+ if(!listeners){listeners=new Set();sessionEventListeners.set(id,listeners)}
+ listeners.add(listener)
+ return ()=>{listeners.delete(listener);if(!listeners.size){sessionEventListeners.delete(id);sessionEventSequences.delete(id)}}
+}
 function notifySnapshot(id:string){const set=snapshotListeners.get(id);if(!set)return;for(const listener of[...set])listener()}
 function patch(id:string,value:Partial<Snapshot>){
  // 用户刚点了切换、Pi 还没确认的模型优先：重连期间回来的 `get_state` 是重启后的
@@ -271,6 +281,12 @@ function flushEvents(project:string){
 }
 function clearEvents(project:string){cancelFlush(project);const timer=flushTimers.get(project);if(timer)clearTimeout(timer);flushTimers.delete(project);eventQueues.delete(project)}
 function dispatch(event:Event,project:string){
+ const listeners=sessionEventListeners.get(project)
+ if(listeners?.size){
+  const sequence=(sessionEventSequences.get(project)??0)+1;sessionEventSequences.set(project,sequence)
+  const observed={connectionId:project,sessionFile:current(project).state?.sessionFile??'',sequence,observedAt:Date.now(),event}
+  for(const listener of [...listeners]){try{listener(observed)}catch(error){console.error('Session observer failed',error)}}
+ }
  // Anything a user may act on (approvals, dialogs, lifecycle) lands at once,
  // after delivering the output that preceded it so ordering is preserved.
  if(!burstEvents.has(event.type)){flushEvents(project);applyEvent(event,project);return}

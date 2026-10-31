@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react"
 import { listen } from "@tauri-apps/api/event"
-import { browserImportSources, browserImportState, importBrowserSession, type ImportSource } from "../../lib/browser-import"
+import { browserImportSources, browserImportState, importBrowserSession, importSummary, useBrowserImportStatus, type ImportSource } from "../../lib/browser-import"
 import { persistState } from "../../lib/persistent"
 import { useWorkspace } from "../../lib/store"
+import { Select } from "../../shared/ui/controls"
 
 /**
  * The offer to bring an existing browser session into this panel.
@@ -37,7 +38,8 @@ export function BrowserImportPrompt() {
   const desktop = useWorkspace((state) => state.runtimeTarget === "desktop")
   const [dismissed, setDismissed] = useState(dismissedBefore)
   const [offer, setOffer] = useState<ImportSource | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [sources, setSources] = useState<ImportSource[]>([])
+  const { busy, revision } = useBrowserImportStatus()
   const [progress, setProgress] = useState<Progress | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
@@ -56,8 +58,9 @@ export function BrowserImportPrompt() {
         // Nothing to offer once something has been imported. The backend records
         // it, so an import answers for every panel at once — which a dismissal
         // does not, being about the asking rather than the session.
-        if (await browserImportState()) return
+        if (await browserImportState()) { setOffer(null); return }
         const sources = await browserImportSources()
+        setSources(sources)
         // Offered for any profile that exists, not only one whose cookie count
         // could be measured. The count is a measurement the backend is allowed to
         // fail at, and treating "unknown" as "nothing to import" is how this
@@ -70,7 +73,7 @@ export function BrowserImportPrompt() {
         setFailure(error instanceof Error ? error.message : String(error))
       }
     })()
-  }, [desktop, dismissed])
+  }, [desktop, dismissed, revision])
 
   const stopAsking = () => {
     setDismissed(true)
@@ -85,16 +88,14 @@ export function BrowserImportPrompt() {
 
   const run = async () => {
     if (!offer) return
-    setBusy(true)
+    setFailure(null)
     setProgress(null)
     try {
-      const { cookies } = await importBrowserSession(offer.browser, offer.profile)
-      setDone(`已导入 ${cookies} 个 cookie，这个面板现在直接用你已有的账号`)
+      const { report } = await importBrowserSession(offer.browser, offer.profile)
+      setDone(importSummary(report))
       setOffer(null)
     } catch (error) {
       setFailure(error instanceof Error ? error.message : String(error))
-    } finally {
-      setBusy(false)
     }
   }
 
@@ -122,7 +123,7 @@ export function BrowserImportPrompt() {
     return (
       <div className="browser-banner" role="status">
         <span className="min-w-0 flex-1 truncate">
-          正在导入登录… {progress ? `${progress.done} / ${progress.total} · ${percent}%` : "准备中"}
+          正在导入登录… {progress ? progress.done === progress.total ? "正在验证 Cookie…" : `${progress.done} / ${progress.total} · ${percent}%` : "准备中"}
         </span>
         <span
           aria-hidden
@@ -138,8 +139,16 @@ export function BrowserImportPrompt() {
   return (
     <div className="browser-banner" role="status">
       <span className="min-w-0 flex-1 truncate">
-        {who} {offer.cookies === null ? "里有已登录的账号" : `里有 ${offer.cookies} 个 cookie`}，导入到这个面板？
+        {who} {offer.cookies === null ? "的浏览器资料" : `里有 ${offer.cookies} 个 Cookie`}，导入到这个面板？
       </span>
+      {sources.length > 1 ? <Select
+        label="选择要导入的浏览器资料"
+        value={`${offer.browser}:${offer.profile}`}
+        options={sources.map(source => ({ value: `${source.browser}:${source.profile}`, label: `${source.browser} · ${source.account ?? source.label}` }))}
+        onChange={value => setOffer(sources.find(source => `${source.browser}:${source.profile}` === value) ?? null)}
+        className="w-44 shrink-0"
+        width={320}
+      /> : null}
       <button type="button" className="browser-banner-action" onClick={() => void run()}>一键导入</button>
       <button type="button" className="browser-banner-action" onClick={stopAsking}>不再显示</button>
     </div>

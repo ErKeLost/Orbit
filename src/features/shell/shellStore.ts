@@ -248,6 +248,7 @@ type ShellState = {
    * lands in it, the user types in it) and becomes the column's own.
    */
   adoptBrowser: (path: string, url?: string) => void;
+  releaseBrowser: (path: string) => void;
   pinFile: (path: string, pane?: string) => void;
   closeFile: (path: string, pane?: string) => void;
   focusFile: (path: string | null, pane?: string) => void;
@@ -366,7 +367,10 @@ export const useShell = create<ShellState>((set, get) => {
       // 浮起来的页也是"在前面的那一页"：agent 的通道默认对它说话。
       set({ browserActive: path });
     },
-    dockBrowserPip: () => set({ browserPip: null }),
+    dockBrowserPip: () => {
+      const tab = get().browserPip?.tab;
+      set({ browserPip: null, ...(tab ? { browserActive: tab, browserOpen: true } : {}) });
+    },
     moveBrowserPip: (patch) => {
       const state = get();
       const pip = state.browserPip;
@@ -599,7 +603,7 @@ export const useShell = create<ShellState>((set, get) => {
       const asked = options?.path?.trim();
       const existing = asked ? get().browserTabs.find((tab) => tab.path === asked) : undefined;
       if (existing) {
-        get().updateBrowser(existing.path, url ? { url } : {});
+        set({ browserTabs: get().browserTabs.map(tab => tab.path === existing.path ? { ...tab, ...(url ? { url } : {}), agent: true as const, handoff: undefined } : tab) });
         get().setBrowserActive(existing.path);
         get().setBrowserOpen(true);
         return existing.path;
@@ -632,12 +636,8 @@ export const useShell = create<ShellState>((set, get) => {
     },
 
     adoptBrowser: (path, url) => {
-      // Exactly one handed-over page: a takeover surface is not a log, so the
-      // previous one goes as the new one arrives. Closing it here is what keeps
-      // "every run leaves a tab behind" from becoming a tab strip of dead ends.
-      for (const stale of get().browserTabs.filter((tab) => tab.handoff && tab.path !== path)) {
-        get().closeFile(stale.path);
-      }
+      // A handoff changes who owns the page, not the page's lifetime. Keep
+      // earlier sites so a later task cannot quietly close the user's context.
       const tabs = get().browserTabs;
       const existing = tabs.find((tab) => tab.path === path);
       if (!existing) {
@@ -652,6 +652,16 @@ export const useShell = create<ShellState>((set, get) => {
         browserActive: path,
         browserOpen: true,
       });
+    },
+
+    releaseBrowser: (path) => {
+      const tabs = get().browserTabs;
+      if (!tabs.some(tab => tab.path === path && tab.agent)) return;
+      set({ browserTabs: tabs.map(tab => {
+        if (tab.path !== path) return tab;
+        const { agent: _owner, ...released } = tab;
+        return released;
+      }) });
     },
 
     updateBrowser: (path, patch) => {
@@ -687,6 +697,7 @@ export const useShell = create<ShellState>((set, get) => {
           // An empty browser column is nothing to look at: with its last page
           // gone the column goes too (there is nothing left to lose).
           browserOpen: rest.length === 0 ? false : get().browserOpen,
+          browserPip: get().browserPip?.tab === path ? null : get().browserPip,
         });
         return;
       }

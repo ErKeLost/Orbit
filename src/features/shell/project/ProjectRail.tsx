@@ -250,7 +250,7 @@ function RailSessionCard({
           </span>
         )}
       </span>
-      <span className="flex w-6 shrink-0 items-center justify-end text-[10px] tabular-nums text-content/30 group-hover:text-content/45">
+      <span className="flex min-w-6 shrink-0 items-center justify-end whitespace-nowrap text-[10px] leading-none tabular-nums text-content/30 group-hover:text-content/45">
         {running ? (
           <TerminalSpinner className="inline-block w-3 select-none text-center text-[11px] leading-none text-accent" />
         ) : (

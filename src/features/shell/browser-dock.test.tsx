@@ -4,7 +4,8 @@ import { createRoot } from "react-dom/client";
 
 // The column's page is a native view, which does not exist here: the dock's own
 // behaviour (tab strip, address bar, close) is what this covers.
-vi.mock("../../lib/native", () => ({ invoke: async () => ({ open: true, url: "", visible: true, loading: false }) }));
+const nativeCall = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => ({ open: true, url: "", visible: true, loading: false })));
+vi.mock("../../lib/native", () => ({ invoke: nativeCall }));
 // The page's own channels (import progress, native view events) are desktop-only.
 vi.mock("@tauri-apps/api/event", () => ({ listen: async () => () => undefined }));
 
@@ -34,6 +35,16 @@ async function mount() {
 }
 
 describe("the browser column", () => {
+  test("opening an agent's blank tab creates a native view before a website is chosen", async () => {
+    const box = { x:100, y:100, width:520, height:600, top:100, left:100, right:620, bottom:700, toJSON:()=>({}) };
+    const bounds = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(box as DOMRect);
+    nativeCall.mockClear();
+    await mount();
+    await act(async () => { useShell.getState().openBrowser("", {path:"browser:blank-agent"}); });
+    await act(async () => { await new Promise(resolve => requestAnimationFrame(resolve)); });
+    expect(nativeCall).toHaveBeenCalledWith("browser_view_sync", expect.objectContaining({tab:"browser:blank-agent",visible:true}));
+    bounds.mockRestore();
+  });
   test("stays hidden until opened, and keeps its pages when collapsed", async () => {
     const host = await mount();
     const dock = host.querySelector("[data-browser-dock]") as HTMLElement & { hidden: boolean };
@@ -92,7 +103,7 @@ describe("the browser column", () => {
     expect(useShell.getState().openLink("https://example.com/next")).toBe(path);
   });
 
-  test("only one handed-over page is kept", async () => {
+  test("a later handoff preserves the earlier site's page", async () => {
     await mount();
     let first = "";
     let second = "";
@@ -106,7 +117,6 @@ describe("the browser column", () => {
     await act(async () => {
       useShell.getState().adoptBrowser(second);
     });
-    // A takeover surface is not a log: the older wall goes as the newer arrives.
-    expect(useShell.getState().browserTabs.map((tab) => tab.path)).toEqual([second]);
+    expect(useShell.getState().browserTabs.map((tab) => tab.path)).toEqual([first, second]);
   });
 });

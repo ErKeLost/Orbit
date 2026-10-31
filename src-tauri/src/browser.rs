@@ -24,21 +24,12 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-// The DevTools cookie read is the only async WebSocket user here, and the
-// desktop-only crates below are not compiled for mobile targets.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-use futures_util::{SinkExt, StreamExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::webview::cookie::{self as web_cookie, Cookie, SameSite};
-use tauri::Manager;
 use tauri::Emitter;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-use tokio_tungstenite::connect_async;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-use tokio_tungstenite::tungstenite::Message;
 
 /// The viewport the agent assumes when the dock is closed. The dock overrides
 /// it with its own size while it is open, so the picture is never a scaled
@@ -840,7 +831,6 @@ pub fn browser_client_report(message: String) {
 /// and walks the pages, so a database the *source* browser currently holds open
 /// still yields a whole snapshot. A plain file copy does not — it can catch the
 /// file mid-transaction and produce a database that will not open.
-use crate::cookie_import::SQLITE3;
 
 /// One profile a session can be imported from. `path` is the profile directory
 /// (`…/Google/Chrome/Default`), which is what the cookies live in.
@@ -889,6 +879,14 @@ pub struct ImportReport {
     /// those users be asked again.
     #[serde(default)]
     pub synced: bool,
+    #[serde(default)]
+    pub version: u32,
+    #[serde(default)]
+    pub skipped: u64,
+    #[serde(default)]
+    pub skipped_domains: Vec<String>,
+    #[serde(default)]
+    pub partition: Option<String>,
 }
 
 /// The one browser an import can come from: the one Orbit actually launches,
@@ -900,6 +898,7 @@ pub struct ImportReport {
 /// copied out of a *different* browser fail to decrypt and the target drops them
 /// on startup. Listing Edge next to Chrome would be a button that reports success
 /// and imports nothing.
+#[cfg(test)]
 fn importable_browser(home: &Path) -> Option<(&'static str, PathBuf)> {
     let executable = find_browser().ok()?;
     let file = executable.file_name().and_then(|name| name.to_str()).unwrap_or_default();
@@ -923,6 +922,7 @@ fn importable_browser(home: &Path) -> Option<(&'static str, PathBuf)> {
 /// A profile is a directory *and* an entry in `profile.info_cache`. Listing
 /// directories alone would offer `System Profile` and `Guest Profile` as if they
 /// were the user's.
+#[cfg(test)]
 fn profile_entries(root: &Path) -> Vec<(String, Option<String>, Option<String>)> {
     let Ok(text) = std::fs::read_to_string(root.join("Local State")) else {
         return Vec::new();
@@ -944,7 +944,8 @@ fn profile_entries(root: &Path) -> Vec<(String, Option<String>, Option<String>)>
 
 /// Whether the source browser currently holds this profile.
 fn profile_in_use(profile: &Path) -> bool {
-    let Ok(target) = std::fs::read_link(profile.join("SingletonLock")) else {
+    let lock = profile.parent().unwrap_or(profile).join("SingletonLock");
+    let Ok(target) = std::fs::read_link(&lock).or_else(|_| std::fs::read_link(profile.join("SingletonLock"))) else {
         return false;
     };
     target
@@ -953,39 +954,6 @@ fn profile_in_use(profile: &Path) -> bool {
         .next()
         .and_then(|value| value.parse::<i32>().ok())
         .is_some_and(process_alive)
-}
-
-fn snapshot_database(source: &Path, target: &Path) -> Result<(), String> {
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| format!("无法创建目录 {}：{error}", parent.display()))?;
-    }
-    let _ = std::fs::remove_file(target);
-    let script = format!(".backup '{}'", target.display().to_string().replace('\'', "''"));
-    let output = Command::new(SQLITE3)
-        .arg(format!("file:{}?mode=ro", source.display()))
-        .arg(script)
-        .output()
-        .map_err(|error| format!("无法运行 sqlite3：{error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "快照 {} 失败：{}",
-            source.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    Ok(())
-}
-
-fn count_cookies(database: &Path) -> Option<u64> {
-    let output = Command::new(SQLITE3)
-        .arg(format!("file:{}?mode=ro", database.display()))
-        .arg("select count(*) from cookies;")
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
 }
 
 fn import_report_path() -> Result<PathBuf, String> {
@@ -999,68 +967,15 @@ fn now_seconds() -> u64 {
         .unwrap_or(0)
 }
 
-/// Every profile the launcher's browser has that carries something to import,
-/// followed by every other browser whose session can be read directly.
-///
-/// The two kinds of source are listed together because they answer the same
-/// question — "which of my logins can Orbit have" — but they do not travel the
-/// same way. The launcher's own browser is copied whole, ciphertext included
-/// (`Device Bound Sessions` and all), because the same binary and the same
-/// Keychain entry decrypt it later. Any other browser is *read* here, with its
-/// own key, and the cookies are written straight into the column. Listing only
-/// the launcher's browser is what made a user who never opens Chrome see an
-/// empty list with no explanation.
+/// All browser profiles use one import path, independent of the CDP fallback browser.
 #[tauri::command(async)]
 pub fn browser_import_sources() -> Result<Vec<ImportSource>, String> {
     let home = home_dir()?;
-    let launched = importable_browser(&home);
-    // Kept separately from the tuple, because the second half of the list needs
-    // the *name* to skip the browser that is already listed above.
-    let launched_name = launched.as_ref().map(|(name, _)| *name);
-    let mut sources = Vec::new();
-    if let Some((browser, root)) = launched {
-        if root.is_dir() {
-            for (profile, name, account) in profile_entries(&root) {
-                let path = root.join(&profile);
-                if !path.is_dir() {
-                    continue;
-                }
-                let cookies = count_cookies(&path.join("Cookies"));
-                // A profile with no cookie database is not a login anyone can
-                // import, and offering it would only produce an empty result.
-                if cookies.is_none() && !path.join("Cookies").is_file() {
-                    continue;
-                }
-                sources.push(ImportSource {
-                    browser: browser.to_string(),
-                    profile: profile.clone(),
-                    label: name.unwrap_or_else(|| profile.clone()),
-                    path: path.display().to_string(),
-                    cookies,
-                    account,
-                    running: profile_in_use(&path),
-                });
-            }
-        }
-    }
-    // The browser above is already listed, and its copy path is the better one:
-    // skipping it here keeps one profile from appearing twice with two different
-    // meanings.
-    for source in crate::cookie_import::sources(&home) {
-        if launched_name == Some(source.browser) {
-            continue;
-        }
-        sources.push(ImportSource {
-            browser: source.browser.to_string(),
-            profile: source.profile.clone(),
-            label: source.label.clone(),
-            path: source.path.display().to_string(),
-            cookies: crate::cookie_import::cookie_count(&source),
-            account: source.account.clone(),
-            running: profile_locked(&source.path, matches!(source.kind, crate::cookie_import::Kind::Firefox)),
-        });
-    }
-    Ok(sources)
+    Ok(crate::cookie_import::sources(&home).into_iter().map(|source| ImportSource {
+        browser: source.browser.to_string(), profile: source.profile.clone(), label: source.label.clone(),
+        path: source.path.display().to_string(), cookies: crate::cookie_import::cookie_count(&source),
+        account: source.account.clone(), running: profile_locked(&source.path, matches!(source.kind, crate::cookie_import::Kind::Firefox)),
+    }).collect())
 }
 
 /// Whether another browser is holding this profile open right now.
@@ -1076,200 +991,36 @@ fn profile_locked(path: &Path, firefox: bool) -> bool {
     profile_in_use(path)
 }
 
-/// What the copy half produced, before anything has reached the column.
-struct CopyOutcome {
-    browser: String,
-    profile: String,
-    device_bound: bool,
-}
+static IMPORT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// Copy one browser's session into the profile Orbit's browser uses.
-///
-/// Copy one browser's session into the profile Orbit's browser uses.
-///
-/// Taken by name rather than by path: the frontend may only name a browser and a
-/// profile that [`browser_import_sources`] reported, so no caller can talk this
-/// into reading an arbitrary file off the disk.
-///
-/// Half of an import, and deliberately not a command of its own any more: the
-/// profile copy is invisible to the browser the column actually renders, and a
-/// command that wrote a report here would say "imported" about a session nobody
-/// could use.
-fn copy_profile(browser: &str, profile: &str) -> Result<CopyOutcome, String> {
-    // The lock is held across the whole copy: an import mutates the very
-    // directory a concurrent `--browser-ensure` reads.
-    let _guard = lock_session()?;
-    let home = home_dir()?;
-    let (available, root) = importable_browser(&home)
-        .ok_or_else(|| "没有找到可导入的浏览器内核；Orbit 需要装一个 Chromium 系浏览器才能导入登录".to_string())?;
-    // The list the frontend picked from was built for this same browser, so a
-    // mismatch means it is stale — not that the caller may name another one.
-    if browser != available {
-        return Err(format!("当前可导入的是 {available}，不是 {browser}"));
-    }
-    let source = root.join(profile);
-    if !source.is_dir() {
-        return Err(format!("找不到要导入的 profile：{}", source.display()));
-    }
-
-    let target = profile_dir()?;
-    // Unconditionally, and not only when a session file says so: Chrome holds this
-    // profile open and writes its cookies back on the way out, which would undo
-    // the copy. `stop_browser()` is forced — unlike `close()` — because the
-    // profile cannot be copied while any Chrome still holds it, and it is also
-    // the only path that clears an orphan: a browser still running after its
-    // session file was lost, exactly the case a `live_session().is_some()` guard
-    // would miss.
-    stop_browser()?;
-
-    // A staging directory next to the target: everything is produced and checked
-    // there first, and only then moved into place. A failure mid-copy leaves the
-    // target profile exactly as it was instead of half old and half new.
-    let staging = browser_dir()?.join("import-staging");
-    let _ = std::fs::remove_dir_all(&staging);
-    if let Err(error) = std::fs::create_dir_all(staging.join("Default")) {
-        return Err(format!("无法创建导入暂存目录：{error}"));
-    }
-
-    let staged = stage_profile(&source, &target, &staging);
-    let result = match staged {
-        Ok(device_bound) => commit_staged(&staging, &target, device_bound).map(|()| CopyOutcome {
-            browser: browser.to_string(),
-            profile: profile.to_string(),
-            device_bound,
-        }),
-        Err(error) => Err(error),
-    };
-    // Always: a leftover staging directory would be read as a candidate next
-    // time, and its cookies are already installed or rejected by now.
-    let _ = std::fs::remove_dir_all(&staging);
-    result
-}
-
-/// Produce a complete, verified copy in `staging`, without touching `target`.
-///
-/// Returns whether a device-bound session came with it. Everything that can
-/// fail — reading the source database, finding no cookies, copying — fails here,
-/// while the target is still untouched.
-fn stage_profile(source: &Path, target: &Path, staging: &Path) -> Result<bool, String> {
-    std::fs::create_dir_all(staging.join("Default")).map_err(|error| format!("无法创建导入暂存目录：{error}"))?;
-
-    // `Local State` is the profile list and the OS-crypt bookkeeping. Only ever
-    // written for a target that has none: overwriting it with the source's would
-    // make the target forget its own profiles, and, on builds that record key
-    // derivation there, its own cookies.
-    let source_state = source.with_file_name("Local State");
-    if !target.join("Local State").is_file() && source_state.is_file() {
-        std::fs::copy(&source_state, staging.join("Local State"))
-            .map_err(|error| format!("复制 Local State 失败：{error}"))?;
-    }
-
-    snapshot_database(&source.join("Cookies"), &staging.join("Default/Cookies"))?;
-    let copied = count_cookies(&staging.join("Default/Cookies")).unwrap_or(0);
-    // A copy that produced an unreadable or empty database is not an import, and
-    // saying so here is what keeps it from being reported as one.
-    if copied == 0 {
-        return Err(format!("{} 里没有可导入的 cookie", source.display()));
-    }
-
-    // The device-bound session records. Without these Chrome culls `SID` and the
-    // other `__Secure-*PSID*` cookies on startup — measured, not assumed — which
-    // is the difference between "the session came over" and "every Google site
-    // asks you to sign in again".
-    let bound = source.join("Device Bound Sessions");
-    let device_bound = bound.is_file();
-    if device_bound {
-        std::fs::copy(&bound, staging.join("Default/Device Bound Sessions"))
-            .map_err(|error| format!("复制 Device Bound Sessions 失败：{error}"))?;
-    }
-    Ok(device_bound)
-}
-
-/// Move a verified staging directory into the target profile.
-///
-/// Rename is atomic within the same directory, and cookies are moved **last**:
-/// the decisive artifact is what makes an import real, and a failure before it
-/// leaves no cookie in the target. Device Bound Sessions go before cookies
-/// because cookies without their bound sessions are culled on startup.
-fn commit_staged(staging: &Path, target: &Path, device_bound: bool) -> Result<(), String> {
-    std::fs::create_dir_all(target.join("Default")).map_err(|error| format!("无法创建资料目录：{error}"))?;
-    let state = staging.join("Local State");
-    if state.is_file() {
-        std::fs::rename(&state, target.join("Local State")).map_err(|error| format!("安装 Local State 失败：{error}"))?;
-    }
-    if device_bound {
-        std::fs::rename(
-            staging.join("Default/Device Bound Sessions"),
-            target.join("Default/Device Bound Sessions"),
-        )
-        .map_err(|error| format!("安装 Device Bound Sessions 失败：{error}"))?;
-    }
-    std::fs::rename(staging.join("Default/Cookies"), target.join("Default/Cookies"))
-        .map_err(|error| format!("安装 Cookies 失败：{error}"))?;
-    Ok(())
-}
-
-/// Copy a session and hand it to the browser the column renders — the whole
-/// import, and the only thing that writes a report.
-///
-/// One command rather than two because the two halves are one outcome. A report
-/// written after the copy alone claimed success for a session the agent could not
-/// use, and then suppressed every later offer: the worst of both, a silent
-/// failure and a silenced retry.
-///
-/// Two ways in, chosen by which browser the profile belongs to:
-///
-/// * the browser Orbit launches is **copied** whole, ciphertext included, and
-///   then asked for its own plaintext over DevTools — that is the only path that
-///   also carries `Device Bound Sessions`;
-/// * any other browser is **read** here, with that browser's own key (Firefox
-///   needs none), and the cookies are written straight into the column. Without
-///   this, a user who never opens Chrome had nothing to import and no way to
-///   find out why.
+/// Read a consistent source snapshot and verify cookies in the actual panel store.
 #[tauri::command]
-pub async fn browser_import_session(
-    app: tauri::AppHandle,
-    browser: String,
-    profile: String,
-) -> Result<ImportReport, String> {
+pub async fn browser_import_session(app: tauri::AppHandle, browser: String, profile: String) -> Result<ImportReport, String> {
+    let _guard = IMPORT_LOCK.try_lock().map_err(|_| "已有浏览器导入正在进行，请等它结束")?;
+    let _profile_guard = crate::browser_view::begin_profile_import(&app)?;
+    let partition = source_partition(&browser, &profile);
     let home = home_dir()?;
-    let launched = importable_browser(&home).map(|(name, _)| name.to_string());
-    let (report_browser, report_profile, cookies, device_bound) =
-        if launched.as_deref() == Some(browser.as_str()) {
-            let copied = copy_profile(&browser, &profile)?;
-            let cookies = sync_cookies(&app).await? as u64;
-            (copied.browser, copied.profile, cookies, copied.device_bound)
-        } else {
-            // Named rather than pathed: the only values accepted are the ones
-            // `browser_import_sources` reported, so this cannot be talked into
-            // reading an arbitrary directory.
-            let source = crate::cookie_import::sources(&home)
-                .into_iter()
-                .find(|source| source.browser == browser && source.profile == profile)
-                .ok_or_else(|| format!("找不到导入来源 {browser} / {profile}，请刷新列表"))?;
-            let values = crate::cookie_import::read_cookies(&source)?;
-            if values.is_empty() {
-                return Err(format!("{} 的这个 profile 里没有可导入的 cookie", source.browser));
-            }
-            let written = write_webview_cookies(&app, &values)? as u64;
-            // No `Device Bound Sessions` on this path: those records are sealed
-            // to the browser that made them, so sites that require them (Google
-            // among them) will ask for one sign-in. Reporting `false` is what
-            // keeps the result honest instead of promising a session that the
-            // next request quietly drops.
-            (browser, profile, written, false)
-        };
-    let report = ImportReport {
-        browser: report_browser,
-        profile: report_profile,
-        cookies,
-        device_bound,
-        imported_at: now_seconds(),
-        synced: true,
-    };
+    let source = crate::cookie_import::sources(&home).into_iter()
+        .find(|source| source.browser == browser && source.profile == profile)
+        .ok_or_else(|| format!("找不到导入来源 {browser} / {profile}，请刷新列表"))?;
+    // Keychain prompts, SQLite and WebKit calls can block; keep the async runtime responsive.
+    let read = tauri::async_runtime::spawn_blocking(move || crate::cookie_import::read_cookies(&source)).await.map_err(|e| e.to_string())??;
+    if read.cookies.is_empty() { return Err(format!("{browser} 的这个 profile 没有可导入的普通 Cookie（跳过 {} 个）", read.skipped)); }
+    let writer = app.clone();
+    let target_partition = partition.clone();
+    let (cookies, skipped, skipped_domains) = tauri::async_runtime::spawn_blocking(move || {
+        let view = crate::browser_view::profile_cookie_view(&writer, &target_partition)?;
+        let result = write_webview_cookies(&writer, &view, read);
+        let _ = view.close();
+        result
+    }).await.map_err(|e| e.to_string())??;
+    let report = ImportReport { browser, profile, cookies: cookies as u64, device_bound: false, imported_at: now_seconds(), synced: true, version: 3, skipped: skipped as u64, skipped_domains, partition: Some(partition) };
     let path = import_report_path()?;
-    let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
-    std::fs::write(&path, text).map_err(|error| format!("无法写入 {}：{error}", path.display()))?;
+    let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(path.parent().ok_or("导入记录目录不存在")?).map_err(|e| e.to_string())?;
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, text).and_then(|_| std::fs::rename(&temp, &path)).map_err(|e| format!("无法保存导入结果：{e}"))?;
+    if let Ok(mut active) = ACTIVE_PARTITION.write() { *active = report.partition.clone(); }
     Ok(report)
 }
 
@@ -1283,79 +1034,29 @@ pub fn browser_import_state() -> Result<Option<ImportReport>, String> {
     // A report without `synced` came from the version that wrote one after the
     // profile copy alone. It does not mean the session is usable, so it does not
     // count as an import — which is what lets those users be offered it again.
-    Ok(serde_json::from_str::<ImportReport>(&text).ok().filter(|report| report.synced))
+    Ok(serde_json::from_str::<ImportReport>(&text).ok().filter(|report| report.synced && report.version >= 3 && report.cookies > 0 && report.partition.is_some()))
+}
+
+static ACTIVE_PARTITION: std::sync::LazyLock<std::sync::RwLock<Option<String>>> = std::sync::LazyLock::new(|| std::sync::RwLock::new(browser_import_state().ok().flatten().and_then(|report| report.partition)));
+pub(crate) fn active_partition() -> Option<String> { ACTIVE_PARTITION.read().ok().and_then(|value| value.clone()) }
+fn source_partition(browser: &str, profile: &str) -> String {
+    // Stable FNV-1a identity; source names are metadata, never secret material.
+    let mut hash = 0x6c62272e07bb014262b821756295c58du128;
+    for byte in browser.bytes().chain([0]).chain(profile.bytes()) {
+        hash ^= byte as u128; hash = hash.wrapping_mul(0x0000000001000000000000000000013b);
+    }
+    format!("{hash:032x}")
 }
 
 // ---------------------------------------------------------------------------
 // Handing the imported session to the column's own browser
 // ---------------------------------------------------------------------------
 
-/// The cookies Orbit's browser holds, straight from the browser itself.
-///
-/// Deliberately not decrypted here. Chrome's cookie values are sealed with the
-/// macOS Keychain entry for **its own** identity, and reimplementing that
-/// (Keychain read, PBKDF2, AES-CBC, and whatever the next Chrome changes it to)
-/// is a standing liability. Chrome already knows how to open its own database,
-/// so the import copies the profile and then asks the browser for the plaintext
-/// over the same DevTools protocol the agent drives it with.
-/// `async` on purpose, and not merely convenient: this is called from inside
-/// Tauri's own runtime, where building a second one and blocking on it panics
-/// ("Cannot start a runtime from within a runtime") on a worker thread that
-/// nothing is catching — which leaves the caller's promise unsettled forever, and
-/// looks exactly like an import stuck at "导入中" with no error anywhere.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-async fn cdp_cookies(session: &BrowserSession) -> Result<Vec<Value>, String> {
-    let url = format!("ws://127.0.0.1:{}{}", session.port, session.browser_ws);
-    (async move {
-        let (mut socket, _) = connect_async(&url)
-            .await
-            .map_err(|error| format!("无法连接浏览器调试口：{error}"))?;
-        socket
-            .send(Message::text(r#"{"id":1,"method":"Storage.getCookies"}"#.to_string()))
-            .await
-            .map_err(|error| format!("发送 CDP 请求失败：{error}"))?;
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while Instant::now() < deadline {
-            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
-                break;
-            };
-            // Bounded per read, not only per iteration. `socket.next()` returns
-            // when a frame arrives or the socket closes — a socket that stays open
-            // and silent would park here forever, and the deadline above would
-            // never be reached. That is the same shape of hang as the nested
-            // runtime: a caller waiting on a promise that can no longer settle.
-            let frame = match tokio::time::timeout(remaining, socket.next()).await {
-                Ok(Some(Ok(frame))) => frame,
-                Ok(Some(Err(error))) => return Err(format!("读取 CDP 响应失败：{error}")),
-                Ok(None) => break,
-                Err(_) => break,
-            };
-            let Message::Text(text) = frame else {
-                continue;
-            };
-            let Ok(value) = serde_json::from_str::<Value>(&text) else {
-                continue;
-            };
-            if value.get("id").and_then(Value::as_i64) != Some(1) {
-                continue;
-            }
-            if let Some(error) = value.get("error") {
-                return Err(format!("浏览器拒绝了取 cookie：{error}"));
-            }
-            return Ok(value
-                .pointer("/result/cookies")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default());
-        }
-        Err("浏览器没有在超时前返回 cookie".to_string())
-    })
-    .await
-}
-
 /// One CDP cookie row as the cookie crate's type, which is what WebKit takes.
 fn webkit_cookie(value: &Value) -> Option<Cookie<'static>> {
     let name = value.get("name").and_then(Value::as_str)?;
+    if value.get("partitionKey").is_some() || value.get("partitionKeyOpaque").and_then(Value::as_bool) == Some(true) { return None; }
+    if name.is_empty() || value.get("domain").and_then(Value::as_str).is_none_or(str::is_empty) { return None; }
     let raw = value.get("value").and_then(Value::as_str).unwrap_or("");
     let mut cookie = Cookie::new(name.to_string(), raw.to_string());
     if let Some(domain) = value.get("domain").and_then(Value::as_str) {
@@ -1391,14 +1092,6 @@ fn webkit_cookie(value: &Value) -> Option<Cookie<'static>> {
     Some(cookie)
 }
 
-/// Mobile has no Orbit-owned browser to read cookies out of, and the WebSocket
-/// crates are desktop-only in `Cargo.toml`, so this target gets a stub with the
-/// same signature instead of a second dependency tree.
-#[cfg(any(target_os = "android", target_os = "ios"))]
-async fn cdp_cookies(_session: &BrowserSession) -> Result<Vec<Value>, String> {
-    Err("导入浏览器登录只在桌面端可用".to_string())
-}
-
 /// The domain string the `cookie` crate must hold, so WebKit receives the one
 /// the source browser had.
 ///
@@ -1431,42 +1124,16 @@ struct ImportProgress {
     total: usize,
 }
 
-/// Read Chrome's cookies and write them into the store the column reads.
-///
-/// The two browsers keep **separate stores** — Chrome's is a directory under
-/// `~/.pi/agent/browser`, the column is WebKit's — so copying the profile only
-/// gets the cookies as far as Chrome. This is the other half, and it goes through
-/// `WKHTTPCookieStore` (via `Webview::set_cookie`), which is the only way to write
-/// the httpOnly cookies every real login depends on: a script cannot set those,
-/// and neither can a file copy, because the formats are different engines'.
-///
-/// WebKit's store is the default one, shared by every web view in the app, so
-/// writing through the main web view is writing to the store the browser column
-/// reads.
-///
-/// Not a command of its own: re-syncing is re-importing, and a second entry point
-/// that nothing calls is a second thing to keep correct. A real `async fn` rather
-/// than a sync one marked `(async)`, because the latter still runs inside Tauri's
-/// runtime, where a nested `block_on` panics on a worker thread and leaves the
-/// caller waiting forever.
-async fn sync_cookies(app: &tauri::AppHandle) -> Result<usize, String> {
-    let session = ensure(None)?;
-    let values = cdp_cookies(&session).await?;
-    write_webview_cookies(app, &values)
-}
-
 /// Put CDP-shaped cookies into the store the browser column reads.
 ///
 /// Split out of `sync_cookies` because a source Orbit did not launch has no
 /// DevTools port to ask: its cookies are read straight out of its database
 /// (see `cookie_import`) and land here in the same shape, through the same
 /// writer. One place decides what "the column is signed in" means.
-fn write_webview_cookies(app: &tauri::AppHandle, values: &[Value]) -> Result<usize, String> {
+fn write_webview_cookies(app: &tauri::AppHandle, webview: &tauri::Webview, mut read: crate::cookie_import::CookieRead) -> Result<(usize, usize, Vec<String>), String> {
+    let values = &read.cookies;
     let total = values.len();
-    let webview = app
-        .get_webview("main")
-        .ok_or_else(|| "主窗口不存在，无法写入 cookie".to_string())?;
-    let mut written = 0usize;
+    let mut expected = Vec::new();
     for (index, value) in values.iter().enumerate() {
         // One event per 25 cookies: one per cookie would be 3 778 promises the
         // banner cannot paint anyway.
@@ -1474,17 +1141,34 @@ fn write_webview_cookies(app: &tauri::AppHandle, values: &[Value]) -> Result<usi
             let _ = app.emit("orbit://browser/import-progress", ImportProgress { done: index, total });
         }
         let Some(cookie) = webkit_cookie(value) else {
+            read.skipped += 1;
             continue;
         };
-        if webview.set_cookie(cookie).is_ok() {
-            written += 1;
+        if webview.set_cookie(cookie.clone()).is_ok() {
+            expected.push(cookie);
+        } else {
+            read.skipped += 1;
+            if read.skipped_domains.len() < 20 { read.skipped_domains.insert(value["domain"].as_str().unwrap_or_default().trim_start_matches('.').to_string()); }
+        }
+    }
+    // A successful setter is not proof that WebKit retained the cookie (prefix,
+    // domain, expiry and policy can reject it). Verify the actual destination jar.
+    let retained = webview.cookies().map_err(|e| format!("Cookie 已写入，但无法验证目标存储：{e}"))?;
+    let mut written = 0usize;
+    for cookie in expected {
+        if retained.iter().any(|stored| stored.name() == cookie.name() && stored.value() == cookie.value()
+            && stored.domain().map(|d| d.trim_start_matches('.')) == cookie.domain().map(|d| d.trim_start_matches('.'))
+            && stored.path() == cookie.path()) { written += 1; }
+        else {
+            read.skipped += 1;
+            if read.skipped_domains.len() < 20 { read.skipped_domains.insert(cookie.domain().unwrap_or_default().trim_start_matches('.').to_string()); }
         }
     }
     let _ = app.emit("orbit://browser/import-progress", ImportProgress { done: total, total });
     if written == 0 && total > 0 {
         return Err(format!("{total} 个 cookie 全部写入失败"));
     }
-    Ok(written)
+    Ok((written, read.skipped, read.skipped_domains.into_iter().collect()))
 }
 // ---------------------------------------------------------------------------
 // Helper invocation: `Orbit --browser-ensure [--url <url>]`
@@ -1588,27 +1272,6 @@ mod tests {
     /// A source root is always under the user's own home and inside the
     /// launcher's browser directory: a path this could be talked into reading
     /// anywhere else is the one thing the by-name import exists to prevent.
-    /// Live, not hermetic: it needs a Chrome already running on Orbit's own
-    /// profile. `cargo test -- --ignored cdp_cookies`
-    ///
-    /// This is the half of the import that cannot be unit-tested away — a
-    /// WebSocket handshake, one CDP call, and Chrome's own JSON shape — so it is
-    /// worth one test that fails loudly when that shape moves.
-    #[test]
-    #[ignore = "requires a browser already running on Orbit's profile"]
-    fn cdp_cookies_reads_a_live_session() {
-        let session = read_session().expect("no session file: start the browser first");
-        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime");
-        let cookies = runtime.block_on(cdp_cookies(&session)).expect("CDP read failed");
-        assert!(!cookies.is_empty(), "Chrome returned no cookies at all");
-        assert!(cookies.iter().filter_map(webkit_cookie).count() > 0, "not one cookie survived the mapping");
-        let with_domain = cookies
-            .iter()
-            .filter(|cookie| cookie.get("name").and_then(Value::as_str).is_some() && cookie.get("domain").and_then(Value::as_str).is_some())
-            .count();
-        assert_eq!(with_domain, cookies.len(), "every CDP row carries a name and a domain");
-    }
-
     /// A real row keeps its flags and its date: losing either turns a login into
     /// a cookie that WebKit will not send.
     #[test]
@@ -1666,6 +1329,19 @@ mod tests {
     }
 
     #[test]
+    fn source_profiles_have_stable_distinct_cookie_partitions() {
+        assert_eq!(source_partition("Chrome","Work"), source_partition("Chrome","Work"));
+        assert_ne!(source_partition("Chrome","Work"), source_partition("Chrome","Personal"));
+        assert_ne!(source_partition("Chrome","Work"), source_partition("Edge","Work"));
+        assert_eq!(source_partition("Chrome","Work").len(),32);
+    }
+
+    #[test]
+    fn partitioned_rows_are_never_imported_as_first_party_cookies() {
+        assert!(webkit_cookie(&serde_json::json!({"name":"sid","value":"v","domain":".test","partitionKey":{"topLevelSite":"https://other.test"}})).is_none());
+    }
+
+    #[test]
     fn the_importable_root_is_the_launched_browser_only() {
         let home = PathBuf::from("/tmp/orbit-home");
         let Some((display, root)) = importable_browser(&home) else {
@@ -1694,14 +1370,6 @@ mod tests {
             user_agent: "UA".to_string(),
             target_owner_pid: 7,
         }
-    }
-
-    fn sqlite_available() -> bool {
-        Command::new(SQLITE3)
-            .arg("-version")
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
     }
 
     /// A session file must appear whole or not at all, and must not leave behind
@@ -1745,67 +1413,4 @@ mod tests {
         assert!(may_close_target(0, 7, false), "a session from before owners existed");
     }
 
-    /// Staging must never overwrite a `Local State` the target already has, and
-    /// the target stays untouched until the verified staging is committed.
-    #[test]
-    fn staging_never_overwrites_the_targets_local_state() {
-        if !sqlite_available() {
-            eprintln!("skip: sqlite3 unavailable");
-            return;
-        }
-        let root = scratch("stage-local-state");
-        let source = root.join("source/Default");
-        let target = root.join("target");
-        let staging = root.join("staging");
-        std::fs::create_dir_all(&source).unwrap();
-        std::fs::create_dir_all(&target).unwrap();
-        std::fs::write(source.with_file_name("Local State"), "from-source").unwrap();
-        std::fs::write(target.join("Local State"), "target-own").unwrap();
-        let created = Command::new(SQLITE3)
-            .arg(source.join("Cookies"))
-            .arg("create table cookies (host_key text, name text, value text); insert into cookies values ('a.com','SID','x');")
-            .status()
-            .unwrap();
-        assert!(created.success());
-
-        let device_bound = stage_profile(&source, &target, &staging).unwrap();
-        assert!(!device_bound);
-        // Staging does not touch the target, and it deliberately does not stage
-        // the source's Local State over the target's own.
-        assert_eq!(std::fs::read_to_string(target.join("Local State")).unwrap(), "target-own");
-        assert!(!staging.join("Local State").is_file());
-
-        commit_staged(&staging, &target, device_bound).unwrap();
-        assert_eq!(std::fs::read_to_string(target.join("Local State")).unwrap(), "target-own");
-        assert!(target.join("Default/Cookies").is_file());
-        let _ = std::fs::remove_dir_all(&root);
     }
-
-    /// A target that has no `Local State` gets the source's, so a first import
-    /// into a fresh profile still carries the profile list.
-    #[test]
-    fn a_target_without_local_state_is_given_one() {
-        if !sqlite_available() {
-            eprintln!("skip: sqlite3 unavailable");
-            return;
-        }
-        let root = scratch("stage-fresh-target");
-        let source = root.join("source/Default");
-        let target = root.join("target");
-        let staging = root.join("staging");
-        std::fs::create_dir_all(&source).unwrap();
-        std::fs::create_dir_all(&target).unwrap();
-        std::fs::write(source.with_file_name("Local State"), "from-source").unwrap();
-        Command::new(SQLITE3)
-            .arg(source.join("Cookies"))
-            .arg("create table cookies (host_key text, name text, value text); insert into cookies values ('a.com','SID','x');")
-            .status()
-            .unwrap();
-
-        let device_bound = stage_profile(&source, &target, &staging).unwrap();
-        assert_eq!(std::fs::read_to_string(staging.join("Local State")).unwrap(), "from-source");
-        commit_staged(&staging, &target, device_bound).unwrap();
-        assert_eq!(std::fs::read_to_string(target.join("Local State")).unwrap(), "from-source");
-        let _ = std::fs::remove_dir_all(&root);
-    }
-}

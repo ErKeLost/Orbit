@@ -1529,3 +1529,12 @@ html.theme-light [data-composer-box] {
   width: 0;
   height: 0;
 }
+
+/* Only the AI reply scrolls; the current user message stays above this region. */
+.voice-reply-scroll {
+  max-height: min(320px, 35dvh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+}

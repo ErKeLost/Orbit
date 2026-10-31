@@ -14,13 +14,14 @@
  */
 
 /** 一次断句产出的音频：16 kHz 单声道，signed PCM16。 */
-export type Utterance = { pcm: Int16Array; durationMs: number }
+export type Utterance = { pcm: Int16Array; durationMs: number; lastVoicedAt?: number; endReason?: "silence" | "segment" }
 
 export type MicCaptureHandlers = {
   /** 一句话说完了（或到达单句上限）。 */
   onUtterance: (utterance: Utterance) => void
   /** 检测到起音：可以在这里先把 STT 的 WebSocket 建起来。 */
   onSpeechStart?: () => void
+  onDiscard?: () => void
   /** 正在采集的一句话的增量音频（16k 单声道 PCM16）。 */
   onChunk?: (chunk: Int16Array) => void
   /** agent 正在说话时用户开口了：立刻停播放，并从这里开始录新的一句。 */
@@ -32,19 +33,19 @@ export type MicCaptureHandlers = {
 }
 
 const TARGET_RATE = 16_000
-const FRAME = 2_048
+const FRAME = 320
 /**
  * 静音多久算一句话说完。
  *
  * 这个数字直接就是用户感受里的「延迟」：说完最后一个字，还要等它才能动。650ms 时
  * 每句话都明显顿一下；450ms 跟手得多，代价是环境吵、或者句中间停顿长（中文里很正常）
- * 时会把一句话拆成两段——两段也不是灾难，后一段照样会被当成插话送进去。
+ * 时会把一句话拆成两段。设置只决定用户轮次的静音边界，传输时长限制不代表用户说完。
  */
 const END_SILENCE_MS = 450
-/** 单句上限：再长就不是"一句话"了，先送去转写。 */
+/** 单条识别流的音频上限；拆流后由 SpeechInput 合并成同一用户轮次。 */
 const MAX_UTTERANCE_MS = 20_000
 /** 起音前保留的音频，避免第一个字被切掉。 */
-const PRE_ROLL_FRAMES = 5
+const PRE_ROLL_FRAMES = 8
 /** 至少要说这么久才算一句话（排除咳嗽、键盘声）。 */
 const MIN_VOICED_FRAMES = 4
 /** agent 说话时，打断需要连续多少帧超门限。 */
@@ -105,7 +106,7 @@ export class MicCapture {
   private stream: MediaStream | null = null
   private context: AudioContext | null = null
   private source: MediaStreamAudioSourceNode | null = null
-  private processor: ScriptProcessorNode | null = null
+  private processor: ScriptProcessorNode | AudioWorkletNode | null = null
   private sink: GainNode | null = null
 
   private agentSpeaking = false
@@ -116,6 +117,16 @@ export class MicCapture {
   private silent = 0
   private frames = 0
   private bargeInFrames = 0
+  private generation = 0
+  private opening: Promise<void> | null = null
+  private pendingContext: AudioContext | null = null
+  private pendingStream: MediaStream | null = null
+  private listening = true
+  private endpointMs = END_SILENCE_MS
+  private lastVoicedAt = 0
+
+  setEndpointMs(value: number): void { this.endpointMs = Math.max(200, Math.min(1200, value)) }
+  setListening(value: boolean): void { this.listening = value; this.reset() }
 
   constructor(handlers: MicCaptureHandlers) {
     this.handlers = handlers
@@ -139,40 +150,79 @@ export class MicCapture {
     this.bargeInFrames = 0
   }
 
-  async start(deviceId?: string): Promise<void> {
-    if (this.context) return;
-    // 两条都是几百毫秒的等待，没有依赖关系：一起发出去，别串行。
-    const streamPromise = navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        // 没选设备时交给系统默认，选了就钉住（deviceId 为空串是合法值，不能传）。
-        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
-      },
-    });
-    const context = new AudioContext();
-    const [stream] = await Promise.all([streamPromise, context.resume().catch(() => undefined)]);
-    const source = context.createMediaStreamSource(stream);
-    const processor = context.createScriptProcessor(FRAME, 1, 1);
-    // 必须接进图里才会跑，但用户不该听到自己的麦克风。
-    const sink = context.createGain();
-    sink.gain.value = 0;
-    source.connect(processor);
-    processor.connect(sink);
-    sink.connect(context.destination);
-    processor.onaudioprocess = (event) => this.onFrame(event.inputBuffer.getChannelData(0), context.sampleRate);
+  start(deviceId?: string): Promise<void> {
+    if (this.context) return Promise.resolve();
+    if (this.opening) return this.opening;
+    const opening = this.openDevice(++this.generation, deviceId);
+    this.opening = opening;
+    void opening.finally(() => { if (this.opening === opening) this.opening = null; }).catch(() => undefined);
+    return opening;
+  }
 
-    this.stream = stream;
-    this.context = context;
-    this.source = source;
-    this.processor = processor;
-    this.sink = sink;
-    this.reset();
+  private async openDevice(generation: number, deviceId?: string): Promise<void> {
+    const context = new AudioContext({ latencyHint: "interactive" });
+    this.pendingContext = context;
+    let streamPromise: Promise<MediaStream> | undefined;
+    let stream: MediaStream | undefined;
+    let source: MediaStreamAudioSourceNode | undefined;
+    let processor: AudioWorkletNode | ScriptProcessorNode | undefined;
+    let sink: GainNode | undefined;
+    try {
+      streamPromise = navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true,
+          ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+        },
+      });
+      // Permission may resolve after cancellation while resume() is still stuck.
+      // Release that stream independently of the other pending device operation.
+      void streamPromise.then(value => {
+        if (generation !== this.generation) value.getTracks().forEach(track => track.stop());
+        else this.pendingStream = value;
+      }).catch(() => undefined);
+      [stream] = await Promise.all([streamPromise, context.resume()]);
+      if (generation !== this.generation) throw new DOMException("Aborted", "AbortError");
+      source = context.createMediaStreamSource(stream);
+      try {
+        await context.audioWorklet.addModule(new URL("./capture.worklet.js", import.meta.url).href);
+        if (generation !== this.generation) throw new DOMException("Aborted", "AbortError");
+        processor = new AudioWorkletNode(context, "orbit-capture");
+        processor.port.onmessage = (event: MessageEvent<Float32Array>) => { if (generation === this.generation) this.onFrame(event.data, TARGET_RATE); };
+      } catch (error) {
+        if (generation !== this.generation) throw error;
+        // Older WebViews keep the same VAD frames through ScriptProcessor.
+        processor = context.createScriptProcessor(2048, 1, 1);
+        let buffered: number[] = [];
+        processor.onaudioprocess = (event) => {
+          if (generation !== this.generation) return;
+          const pcm = downsample(event.inputBuffer.getChannelData(0), context.sampleRate);
+          for (const sample of pcm) buffered.push(sample / 0x8000);
+          while (buffered.length >= FRAME) { this.onFrame(Float32Array.from(buffered.slice(0, FRAME)), TARGET_RATE); buffered = buffered.slice(FRAME); }
+        };
+      }
+      if (generation !== this.generation) throw new DOMException("Aborted", "AbortError");
+      // Keep capture in the audio graph without playing the microphone back.
+      sink = context.createGain(); sink.gain.value = 0;
+      source.connect(processor); processor.connect(sink); sink.connect(context.destination);
+      this.stream = stream; this.context = context; this.source = source; this.processor = processor; this.sink = sink;
+      this.reset();
+    } catch (error) {
+      processor?.disconnect(); source?.disconnect(); sink?.disconnect();
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      else void streamPromise?.then(value => value.getTracks().forEach(track => track.stop())).catch(() => undefined);
+      if (context.state !== "closed") void context.close().catch(() => undefined);
+      throw error;
+    } finally {
+      if (this.pendingContext === context) { this.pendingContext = null; this.pendingStream = null; }
+    }
   }
 
   stop(): void {
+    this.generation += 1
+    this.opening = null
+    if (this.pendingContext && this.pendingContext.state !== "closed") void this.pendingContext.close().catch(() => undefined)
+    this.pendingContext = null
+    this.pendingStream?.getTracks().forEach(track => track.stop()); this.pendingStream = null
     this.processor?.disconnect()
     this.source?.disconnect()
     this.sink?.disconnect()
@@ -203,9 +253,13 @@ export class MicCapture {
   private onFrame(frame: Float32Array, rate: number): void {
     const level = rms(frame)
     this.handlers.onLevel(Math.min(1, level * 8))
+    if (!this.listening) return
     const pcm = downsample(frame, rate)
+    if (level > this.threshold) this.lastVoicedAt = performance.now()
 
-    if (this.agentSpeaking) {
+    if (this.agentSpeaking && !this.collecting) {
+      this.preRoll.push(pcm)
+      if (this.preRoll.length > PRE_ROLL_FRAMES) this.preRoll.shift()
       // agent 在说话：只在门限明显被越过时才算打断，否则就是它自己的回声。
       const gate = this.threshold * BARGE_IN_RATIO
       if (level > gate) {
@@ -214,10 +268,11 @@ export class MicCapture {
           this.bargeInFrames = 0
           this.handlers.onBargeIn();
           this.beginCollect()
-          this.chunks.push(pcm)
+          this.chunks = this.preRoll.slice()
+          this.preRoll = []
           this.voiced = BARGE_IN_FRAMES
           this.handlers.onSpeechStart?.()
-          this.handlers.onChunk?.(pcm)
+          for (const chunk of this.chunks) this.handlers.onChunk?.(chunk)
         }
       } else {
         this.bargeInFrames = 0
@@ -255,8 +310,8 @@ export class MicCapture {
 
     const silenceMs = this.silent * this.frameMs(rate)
     const totalMs = this.frames * this.frameMs(rate)
-    if (silenceMs >= END_SILENCE_MS || totalMs >= MAX_UTTERANCE_MS) {
-      this.finish()
+    if (silenceMs >= this.endpointMs || totalMs >= MAX_UTTERANCE_MS) {
+      this.finish(silenceMs >= this.endpointMs ? "silence" : "segment")
     }
   }
 
@@ -269,19 +324,22 @@ export class MicCapture {
   }
 
   /** 交出去一句话，并回到待机。 */
-  private finish(): void {
+  private finish(endReason: "silence" | "segment" = "silence"): void {
     const chunks = this.chunks
     const voiced = this.voiced
-    const frames = this.frames
-    const rate = this.context?.sampleRate ?? 48_000
     this.reset()
-    if (voiced < MIN_VOICED_FRAMES) return
+    if (voiced < MIN_VOICED_FRAMES) { this.handlers.onDiscard?.(); return }
     const pcm = concat(chunks)
     if (pcm.length === 0) return
     this.handlers.onUtterance({
       pcm,
-      durationMs: Math.round(frames * this.frameMs(rate)),
+      durationMs: Math.round(pcm.length / TARGET_RATE * 1000),
+      lastVoicedAt: this.lastVoicedAt,
+      endReason,
     })
+    // A transport rollover is still the same speech. Start the next stream
+    // immediately and retain every following sample, including quiet ones.
+    if (endReason === "segment") { this.beginCollect(); this.handlers.onSpeechStart?.() }
   }
 
   /** 外部（比如按钮）强制结束当前这句。 */

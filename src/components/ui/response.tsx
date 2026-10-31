@@ -4,7 +4,7 @@
  * registry 版本包 `streamdown`（连带 react-markdown + shiki + katex）来渲染 markdown。
  * 语音页不装它，两个原因：
  *
- * * **内容本来就是纯文本。** `VOICE_PREFIX` 明确要求模型「no markdown, no code」，
+ * * **内容本来就是纯文本。** 独立语音对话模型输出可直接朗读的短句，
  *   旁白更是我们自己拼的短句，渲染器只会是空转。
  * * **这一页对首字延迟最敏感。** 多拉一个带着 shiki 的 chunk 换不来任何可见差别。
  *

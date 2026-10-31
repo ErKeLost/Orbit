@@ -50,10 +50,6 @@ const NEW_TAB_SCHEME: &str = "orbit-tab";
 /// knowing anything changed.
 const AGENT_TAB: &str = "agent";
 
-/// How long a claim on the agent's tab counts as a live run. A run's own budget
-/// is capped at ten minutes, so anything older is a run that never released.
-const AGENT_CLAIM_TTL: Duration = Duration::from_secs(11 * 60);
-
 /// Installed into every page, before its own scripts: the shim above.
 const NEW_TAB_SHIM: &str = r#"
 (() => {
@@ -80,28 +76,12 @@ pub struct BrowserViewHost {
     /// does not name one.
     active: Mutex<String>,
     /// The agent's own tab, which sequential runs share.
-    agent: Mutex<AgentTab>,
-}
-
-/// The one tab agent runs share.
-///
-/// A tab per run put a tab in the strip every time and took it away again, which
-/// is not what a browser does: the same page should stay up, be navigated in
-/// place, and keep its history. So a run asks for *this* tab and gets it as long
-/// as no other run is holding it. A second concurrent run is given a tab of its
-/// own — two runs must never read or click each other's page — and closes it on
-/// the way out.
-#[derive(Default)]
-struct AgentTab {
-    id: Option<String>,
-    /// When the tab was last handed to a run. The budget contract caps a run at
-    /// ten minutes, so an older claim belongs to a run that died without
-    /// releasing it, and the same tab is free again. No pid probing: the claim is
-    /// not a lock over a shared resource, it is a hint about liveness.
-    claimed_at: Option<Instant>,
+    agent: Mutex<crate::browser_leases::BrowserLeases>,
+    importing: std::sync::atomic::AtomicBool,
 }
 
 struct Tab {
+    partition: Option<String>,
     view: Webview,
     /// The address we asked for. Deliberately *not* read back from the view:
     /// `Webview::url()` reaches wry's `url_from_webview`, which unwraps the
@@ -246,7 +226,13 @@ pub fn browser_view_sync(
 ) -> Result<BrowserViewStatus, String> {
     let wanted = url.as_deref().map(parse).transpose()?;
     let shown = visible.unwrap_or(true);
+    if host.importing.load(std::sync::atomic::Ordering::SeqCst) { return Err("正在导入浏览器资料，请稍后再试".into()); }
+    let partition = crate::browser::active_partition();
     let mut tabs = host.tabs.lock().map_err(|error| error.to_string())?;
+    if tabs.get(&tab).is_some_and(|state| state.partition != partition) {
+        if let Some(previous) = tabs.remove(&tab) { previous.view.close().map_err(|e| e.to_string())?; }
+        forget_agent_tab(&host, &tab);
+    }
     if !tabs.contains_key(&tab) && !shown {
         // Nothing to hide: a tab that is not on screen must not create a view.
         return Ok(BrowserViewStatus::default());
@@ -300,6 +286,7 @@ pub fn browser_view_sync(
                     }
                 }
             });
+        let builder = configure_partition(builder, partition.as_deref())?;
         let view = window
             .add_child(
                 builder,
@@ -310,11 +297,12 @@ pub fn browser_view_sync(
         tabs.insert(
             tab.clone(),
             Tab {
+                partition,
                 view,
                 url: target.to_string(),
                 visible: false,
-                loading: true,
-                loaded: false,
+                loading: target.as_str() != BLANK,
+                loaded: target.as_str() == BLANK,
                 rect,
             },
         );
@@ -480,96 +468,12 @@ pub fn browser_view_close(app: AppHandle, host: tauri::State<'_, BrowserViewHost
     Ok(())
 }
 
-/// The addresses that belong to the person rather than to the run.
-///
-/// A run can only ever get as far as a sign-in wall or a checkout: both want an
-/// account or a card that it does not have. Whole words only, because `payload`
-/// is not a payment page and `accounting` is not an account.
-const HUMAN_MARKS: &[&str] = &[
-    "login",
-    "signin",
-    "sign-in",
-    "log-in",
-    "logon",
-    "auth",
-    "oauth",
-    "sso",
-    "passport",
-    "account",
-    "pay",
-    "payment",
-    "checkout",
-    "recharge",
-    "billing",
-    "subscribe",
-    "verify",
-    "captcha",
-];
-
-fn url_asks_for_a_human(url: &str) -> bool {
-    let lower = url.to_ascii_lowercase();
-    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
-        return false;
-    }
-    // The query is where `?redirect=` and tracking live; the address that says
-    // what this page *is* ends at the path.
-    let address = lower.split(['?', '#']).next().unwrap_or(&lower);
-    address
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .any(|word| HUMAN_MARKS.contains(&word))
-}
-
-/// The page itself saying "a person is needed here": a password box, a one-time
-/// code, a QR code, a captcha. Only consulted when the address alone did not
-/// settle it, and bounded — a run's shutdown must not wait on a page.
-const HUMAN_PROBE: &str = r#"(() => !!document.querySelector(
-  'input[type="password"], input[autocomplete="one-time-code"], [class*="qrcode"], [id*="qrcode"], [class*="captcha"], [id*="captcha"]'
-))()"#;
-
-fn page_asks_for_a_human(app: &AppHandle, view: Webview) -> bool {
-    matches!(eval_in(app, view, HUMAN_PROBE.to_string(), 1500), Ok(text) if text.trim() == "true")
-}
-
-/// Close the tab a run opened — unless the page is one only the person can use.
-///
-/// Closing it then destroys the one thing the run did manage to load, and the
-/// window drops back to whatever page was in front *before* the run — which is
-/// how "I opened the console for you" ends up looking like "nothing happened".
-/// So that page stays: the view is kept, it comes to the front, and the frontend
-/// is told to make the tab the person's (`browser:handoff`).
-#[cfg(desktop)]
-fn close_run_tab(app: AppHandle, host: tauri::State<'_, BrowserViewHost>, tab: String) -> Result<(), String> {
-    // An unnamed close would mean "whatever is in front", and that is the page
-    // the reader is on. Every run names its own tab; this keeps that true.
-    if tab.trim().is_empty() {
-        return Err("关闭浏览器标签页需要指定 tab".to_string());
-    }
-    let id = resolve_tab_id(&host, &tab)?;
-    let (view, url) = {
-        let tabs = host.tabs.lock().map_err(|error| error.to_string())?;
-        match tabs.get(&id) {
-            Some(state) => (state.view.clone(), state.url.clone()),
-            // Already gone (a reconcile swept it): there is nothing to hand over.
-            None => return Ok(()),
-        }
-    };
-    if url_asks_for_a_human(&url) || page_asks_for_a_human(&app, view) {
-        if let Ok(mut active) = host.active.lock() {
-            *active = id.clone();
-        }
-        // The page is the person's now, so it stops being the agent's tab: the
-        // next run gets one of its own instead of navigating this away from under
-        // whoever is typing into it.
-        forget_agent_tab(&host, &id);
-        let _ = app.emit("browser:handoff", serde_json::json!({ "tab": id, "url": url }));
-        return Ok(());
-    }
-    browser_view_close(app, host, tab)
-}
-
-#[cfg(mobile)]
-fn close_run_tab(app: AppHandle, host: tauri::State<'_, BrowserViewHost>, tab: String) -> Result<(), String> {
-    browser_view_close(app, host, tab)
+/// A run finishing releases operation rights but never destroys the page the user is watching.
+fn close_run_tab(app: AppHandle, host: tauri::State<'_, BrowserViewHost>, tab: String, owner: String) -> Result<(), String> {
+    release_agent_tab(&host, &tab, &owner)?;
+    let url = with_tab(&host, &tab, |state| state.url.clone()).unwrap_or_default();
+    let _ = app.emit("browser:handoff", serde_json::json!({"tab":tab,"url":url}));
+    Ok(())
 }
 
 /// Close every browser view whose tab the frontend no longer has.
@@ -695,6 +599,10 @@ pub fn browser_view_page(app: AppHandle, host: tauri::State<'_, BrowserViewHost>
 struct ViewRequest {
     op: String,
     #[serde(default)]
+    owner: String,
+    #[serde(default)]
+    scope: String,
+    #[serde(default)]
     tab: String,
     #[serde(default)]
     script: Option<String>,
@@ -739,6 +647,10 @@ fn channel_reply(ok: bool, payload: Result<String, String>) -> String {
 
 fn handle(app: &AppHandle, request: ViewRequest) -> Result<String, String> {
     let host = app.state::<BrowserViewHost>();
+    if ["status", "eval", "navigate", "go", "reload", "clickAt"].contains(&request.op.as_str()) && !request.owner.is_empty() {
+        let agent = host.agent.lock().map_err(|e| e.to_string())?;
+        if !agent.owns(&request.tab, &request.owner) { return Err("浏览器操作权已释放或属于另一项任务，请重新获取目标页面".into()); }
+    } else if ["eval", "navigate", "go", "reload", "clickAt"].contains(&request.op.as_str()) { return Err("浏览器操作需要有效的 owner".into()); }
     match request.op.as_str() {
         "status" => serde_json::to_string(&status(&host, &request.tab)).map_err(|error| error.to_string()),
         "eval" => {
@@ -768,13 +680,11 @@ fn handle(app: &AppHandle, request: ViewRequest) -> Result<String, String> {
             // runs, so the next run navigates the page the last one left instead
             // of adding a tab. Any other name is taken literally (a caller that
             // already knows which tab it wants, and the older behaviour).
-            let (tab, shared) = if wanted.is_empty() {
-                (new_tab_id(), false)
-            } else if wanted == AGENT_TAB {
-                claim_agent_tab(&host)
-            } else {
-                (wanted.to_string(), false)
-            };
+            if request.owner.is_empty() { return Err("打开任务页面需要 owner".into()); }
+            let origin = if url.is_empty() { None } else { Some(parse(&url)?.origin().ascii_serialization()) };
+            let preferred = if wanted != AGENT_TAB && !wanted.is_empty() { Some(wanted.to_string()) } else if url.is_empty() { host.active.lock().ok().map(|id| id.clone()).filter(|id| !id.is_empty()) } else { None };
+            let tab = claim_agent_tab(&host, &request.scope, origin.as_deref(), preferred.as_deref(), &request.owner)?;
+            let shared = true;
             app.emit(
                 "browser:open",
                 serde_json::json!({ "url": url, "tab": tab, "shared": shared }),
@@ -784,9 +694,13 @@ fn handle(app: &AppHandle, request: ViewRequest) -> Result<String, String> {
         }
         // A run giving its page back without destroying it: the next run finds
         // the same tab, hence the same page and history. See `release_agent_tab`.
-        "release" => release_agent_tab(&host, &request.tab).map(|_| "null".to_string()),
+        "release" => {
+            release_agent_tab(&host, &request.tab, &request.owner)?;
+            app.emit("browser:released", serde_json::json!({"tab":request.tab})).map_err(|e| e.to_string())?;
+            Ok("null".to_string())
+        }
         // A run taking its page back. Not always a close: see `close_run_tab`.
-        "close" => close_run_tab(app.clone(), host, request.tab).map(|_| "null".to_string()),
+        "close" => close_run_tab(app.clone(), host, request.tab, request.owner).map(|_| "null".to_string()),
         // A caller that already knows the page belongs to the person can say so
         // directly, instead of leaving it to the close-time check.
         "handoff" => {
@@ -832,54 +746,62 @@ fn handle(app: &AppHandle, request: ViewRequest) -> Result<String, String> {
     }
 }
 
-/// The tab a run should drive: the agent's own when it is free, a private one
-/// when another run still holds it.
-fn claim_agent_tab(host: &BrowserViewHost) -> (String, bool) {
-    let mut agent = match host.agent.lock() {
-        Ok(agent) => agent,
-        // A poisoned lock is a bug elsewhere, not a page: behave as if another run
-        // holds the tab, which is the harmless direction (a private tab).
-        Err(_) => return (new_tab_id(), false),
-    };
-    let now = Instant::now();
-    let held = agent
-        .claimed_at
-        .map(|at| now.duration_since(at) < AGENT_CLAIM_TTL)
-        .unwrap_or(false);
-    match agent.id.clone() {
-        Some(id) if !held => {
-            agent.claimed_at = Some(now);
-            (id, true)
-        }
-        Some(_) => (new_tab_id(), false),
-        None => {
-            let id = new_tab_id();
-            agent.id = Some(id.clone());
-            agent.claimed_at = Some(now);
-            (id, true)
-        }
-    }
+fn claim_agent_tab(host: &BrowserViewHost, scope: &str, origin: Option<&str>, preferred: Option<&str>, owner: &str) -> Result<String, String> {
+    let mut agent = host.agent.lock().map_err(|e| e.to_string())?;
+    if host.importing.load(std::sync::atomic::Ordering::SeqCst) { return Err("正在导入浏览器资料，请稍后再试".into()); }
+    Ok(agent.claim(scope, origin, preferred, owner, Instant::now(), new_tab_id))
 }
-
-/// Hand the page back without closing it, so the next run navigates it in place.
-fn release_agent_tab(host: &BrowserViewHost, tab: &str) -> Result<(), String> {
-    let id = resolve_tab_id(host, tab)?;
-    let mut agent = host.agent.lock().map_err(|error| error.to_string())?;
-    if agent.id.as_deref() == Some(id.as_str()) {
-        agent.claimed_at = None;
-    }
+fn release_agent_tab(host: &BrowserViewHost, tab: &str, owner: &str) -> Result<(), String> {
+    if tab.is_empty() { return Err("释放操作权需要指定 tab".into()); }
+    let mut agent = host.agent.lock().map_err(|e| e.to_string())?;
+    if !agent.release(tab, owner) { return Err("这项任务不再持有页面操作权".into()); }
     Ok(())
 }
-
-/// The tab is gone, or is the person's now: it is no longer the agent's page.
 fn forget_agent_tab(host: &BrowserViewHost, id: &str) {
-    let Ok(mut agent) = host.agent.lock() else {
-        return;
-    };
-    if agent.id.as_deref() == Some(id) {
-        agent.id = None;
-        agent.claimed_at = None;
+    if let Ok(mut agent) = host.agent.lock() { agent.forget(id); }
+}
+
+pub(crate) struct ProfileImportGuard(AppHandle);
+impl Drop for ProfileImportGuard {
+    fn drop(&mut self) {
+        self.0.state::<BrowserViewHost>().importing.store(false, std::sync::atomic::Ordering::SeqCst);
     }
+}
+pub(crate) fn begin_profile_import(app: &AppHandle) -> Result<ProfileImportGuard, String> {
+    let host = app.state::<BrowserViewHost>();
+    let leases = host.agent.lock().map_err(|e| e.to_string())?;
+    if leases.has_active() { return Err("浏览器任务还在运行，请等任务结束后再导入资料".into()); }
+    if host.importing.swap(true, std::sync::atomic::Ordering::SeqCst) { return Err("已有浏览器资料正在导入".into()); }
+    Ok(ProfileImportGuard(app.clone()))
+}
+
+#[cfg(desktop)]
+fn configure_partition(builder: WebviewBuilder<tauri::Wry>, partition: Option<&str>) -> Result<WebviewBuilder<tauri::Wry>, String> {
+    let Some(partition) = partition else { return Ok(builder); };
+    let id = u128::from_str_radix(partition, 16).map_err(|_| "浏览器资料标识无效")?;
+    #[cfg(target_os = "macos")]
+    {
+        static VERSION: std::sync::LazyLock<u32> = std::sync::LazyLock::new(|| std::process::Command::new("sw_vers").arg("-productVersion").output().ok()
+            .and_then(|result| String::from_utf8(result.stdout).ok()).and_then(|value| value.split('.').next().and_then(|major| major.trim().parse::<u32>().ok())).unwrap_or(0));
+        if *VERSION < 14 { return Err("独立浏览器资料需要 macOS 14 或更新版本".into()); }
+        Ok(builder.data_store_identifier(id.to_be_bytes()))
+    }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = id; Ok(builder.data_directory(crate::browser::browser_dir()?.join("webview-profiles").join(partition))) }
+}
+
+#[cfg(desktop)]
+pub(crate) fn profile_cookie_view(app: &AppHandle, partition: &str) -> Result<tauri::Webview, String> {
+    let window = app.get_window("main").ok_or("主窗口不存在")?;
+    let label = format!("cookie-import-{}", uuid::Uuid::new_v4());
+    let builder = configure_partition(WebviewBuilder::new(label, WebviewUrl::External(parse(BLANK)?)), Some(partition))?;
+    let view = window.add_child(builder, LogicalPosition::new(-10000.0, -10000.0), LogicalSize::new(1.0, 1.0)).map_err(|e| e.to_string())?;
+    view.hide().map_err(|e| e.to_string())?;
+    Ok(view)
+}
+#[cfg(mobile)]
+pub(crate) fn profile_cookie_view(_app: &AppHandle, _partition: &str) -> Result<tauri::Webview, String> {
+    Err("浏览器资料导入仅在桌面端可用".into())
 }
 
 /// A tab id this process mints for a caller that did not name one.

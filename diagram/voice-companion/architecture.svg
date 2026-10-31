@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 900" role="img" aria-labelledby="title description">
+  <title id="title">Orbit 语音工作助理架构提案</title>
+  <desc id="description">语音入口通过控制器和 Jev 判断意图。任务命令经网关交给 Pi；进度、分析与闲聊由独立对话层处理。Pi 事件持续更新任务视图，所有声音经统一调度后播放。</desc>
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0H0V40" fill="none" stroke="#1e293b" stroke-width="0.5"/></pattern>
+    <marker id="arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0 9 3.5 0 7Z" fill="#94a3b8"/></marker>
+    <marker id="orange" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0 9 3.5 0 7Z" fill="#fb923c"/></marker>
+    <marker id="green" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto"><path d="M0 0 9 3.5 0 7Z" fill="#34d399"/></marker>
+    <style>
+      text{font-family:'SF Mono','Noto Sans SC','PingFang SC',sans-serif;fill:#e2e8f0}
+      .heading{font-size:17px;font-weight:600}.sub{font-size:12px;fill:#94a3b8}.label{font-size:12px;fill:#cbd5e1}.line{fill:none;stroke:#94a3b8;stroke-width:1.8;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1280" height="900" fill="#0f172a"/>
+  <rect width="1280" height="900" fill="url(#grid)"/>
+  <rect x="30" y="108" width="1220" height="510" rx="14" fill="none" stroke="#475569" stroke-dasharray="8 5"/>
+  <text x="48" y="129" class="sub">同一个桌面应用 · 职责分离，不要求新增远程服务</text>
+  <rect x="30" y="661" width="1220" height="158" rx="14" fill="none" stroke="#475569" stroke-dasharray="8 5"/>
+  <text x="48" y="683" class="sub">贯穿所有路径的契约</text>
+
+  <path d="M275 190H355" class="line"/>
+  <text x="315" y="173" text-anchor="middle" class="label">用户话语</text>
+  <path d="M600 190H690" class="line"/>
+  <text x="645" y="173" text-anchor="middle" class="label">上下文</text>
+  <path d="M915 190H995" class="line"/>
+  <text x="955" y="173" text-anchor="middle" class="label">写操作</text>
+  <path d="M1105 228V360" class="line"/>
+  <text x="1120" y="280" class="label">派发 / steer / 排队</text>
+  <text x="1120" y="300" class="sub">取消 / 回答确认</text>
+  <path d="M802 228V282H480V360" class="line"/>
+  <text x="627" y="269" text-anchor="middle" class="label">进度 / 分析 / 问答 / 闲聊 / 澄清</text>
+  <path d="M690 405H600" class="line"/>
+  <text x="645" y="387" text-anchor="middle" class="label">只读事实</text>
+  <path d="M355 405H275" class="line"/>
+  <text x="315" y="387" text-anchor="middle" class="label">短句</text>
+  <path d="M170 360V228" class="line"/>
+  <text x="184" y="285" class="label">流式播放</text>
+  <text x="184" y="305" class="sub">用户插话立即停声</text>
+  <path d="M1105 450V530" fill="none" stroke="#fb923c" stroke-width="2" marker-end="url(#orange)"/>
+  <text x="1122" y="494" class="label">执行事件</text>
+  <path d="M802 530V450" fill="none" stroke="#fb923c" stroke-width="2" marker-end="url(#orange)"/>
+  <text x="818" y="494" class="label">增量投影</text>
+  <path d="M690 567H170V450" fill="none" stroke="#34d399" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#green)"/>
+  <text x="420" y="552" text-anchor="middle" class="label">需要确认 / 阻塞 / 失败 / 完成 → 主动播报策略</text>
+
+  <rect x="65" y="152" width="210" height="76" rx="8" fill="#0f172a"/>
+  <rect x="65" y="152" width="210" height="76" rx="8" fill="#083344" fill-opacity="0.5" stroke="#22d3ee"/>
+  <text x="170" y="181" text-anchor="middle" class="heading">语音 I/O</text>
+  <text x="170" y="205" text-anchor="middle" class="sub">AudioWorklet · ASR / TTS</text>
+  <rect x="355" y="152" width="245" height="76" rx="8" fill="#0f172a"/>
+  <rect x="355" y="152" width="245" height="76" rx="8" fill="#064e3b" fill-opacity="0.4" stroke="#34d399"/>
+  <text x="477" y="181" text-anchor="middle" class="heading">VoiceController</text>
+  <text x="477" y="205" text-anchor="middle" class="sub">绑定目标 · 对话轮次 · 生命周期</text>
+  <rect x="690" y="152" width="225" height="76" rx="8" fill="#0f172a"/>
+  <rect x="690" y="152" width="225" height="76" rx="8" fill="#78350f" fill-opacity="0.4" stroke="#fbbf24"/>
+  <text x="802" y="181" text-anchor="middle" class="heading">Jev IntentRouter</text>
+  <text x="802" y="205" text-anchor="middle" class="sub">有限意图 + 目标 + 不确定性</text>
+  <rect x="995" y="152" width="220" height="76" rx="8" fill="#0f172a"/>
+  <rect x="995" y="152" width="220" height="76" rx="8" fill="#881337" fill-opacity="0.35" stroke="#fb7185"/>
+  <text x="1105" y="181" text-anchor="middle" class="heading">CommandGateway</text>
+  <text x="1105" y="205" text-anchor="middle" class="sub">校验目标 / 状态 · 幂等投递</text>
+
+  <rect x="65" y="360" width="210" height="90" rx="8" fill="#0f172a"/>
+  <rect x="65" y="360" width="210" height="90" rx="8" fill="#083344" fill-opacity="0.5" stroke="#22d3ee"/>
+  <text x="170" y="390" text-anchor="middle" class="heading">SpeechArbiter</text>
+  <text x="170" y="413" text-anchor="middle" class="sub">所有声音统一调度</text>
+  <text x="170" y="433" text-anchor="middle" class="sub">优先级 · 合并 · 过期 · 取消</text>
+  <rect x="355" y="360" width="245" height="90" rx="8" fill="#0f172a"/>
+  <rect x="355" y="360" width="245" height="90" rx="8" fill="#064e3b" fill-opacity="0.4" stroke="#34d399"/>
+  <text x="477" y="390" text-anchor="middle" class="heading">ConversationAgent</text>
+  <text x="477" y="413" text-anchor="middle" class="sub">快速事实回答 / 独立模型解释</text>
+  <text x="477" y="433" text-anchor="middle" class="sub">保留自己的对话上下文</text>
+  <rect x="690" y="360" width="225" height="90" rx="8" fill="#0f172a"/>
+  <rect x="690" y="360" width="225" height="90" rx="8" fill="#4c1d95" fill-opacity="0.4" stroke="#a78bfa"/>
+  <text x="802" y="390" text-anchor="middle" class="heading">TaskView</text>
+  <text x="802" y="413" text-anchor="middle" class="sub">实时事实 · 检查点 · 证据</text>
+  <text x="802" y="433" text-anchor="middle" class="sub">按需维护阶段摘要</text>
+  <rect x="995" y="360" width="220" height="90" rx="8" fill="#0f172a"/>
+  <rect x="995" y="360" width="220" height="90" rx="8" fill="#064e3b" fill-opacity="0.4" stroke="#34d399"/>
+  <text x="1105" y="390" text-anchor="middle" class="heading">Pi Sessions</text>
+  <text x="1105" y="413" text-anchor="middle" class="sub">执行 agent · 文件 / 终端</text>
+  <text x="1105" y="433" text-anchor="middle" class="sub">browser_task / gui_task</text>
+  <rect x="690" y="530" width="525" height="70" rx="8" fill="#0f172a"/>
+  <rect x="690" y="530" width="525" height="70" rx="8" fill="#7c2d12" fill-opacity="0.35" stroke="#fb923c"/>
+  <text x="952" y="558" text-anchor="middle" class="heading">SessionObserver · 复用 RPC 事件</text>
+  <text x="952" y="581" text-anchor="middle" class="sub">公开文本 / 工具步骤 / 确认 / 错误 / 完成 / 连接状态</text>
+
+  <rect x="60" y="706" width="350" height="80" rx="8" fill="#1e293b" stroke="#475569"/>
+  <text x="235" y="735" text-anchor="middle" class="heading">固定 session 身份</text>
+  <text x="235" y="760" text-anchor="middle" class="sub">切换页面不会把指令发到另一条任务</text>
+  <rect x="465" y="706" width="350" height="80" rx="8" fill="#1e293b" stroke="#475569"/>
+  <text x="640" y="735" text-anchor="middle" class="heading">语音与任务独立存续</text>
+  <text x="640" y="760" text-anchor="middle" class="sub">停播 / 挂断与取消任务分别处理</text>
+  <rect x="870" y="706" width="350" height="80" rx="8" fill="#1e293b" stroke="#475569"/>
+  <text x="1045" y="735" text-anchor="middle" class="heading">每轮回调可失效</text>
+  <text x="1045" y="760" text-anchor="middle" class="sub">epoch / turnId 拦截迟到的文本和音频</text>
+
+  <path d="M45 860H80" class="line"/><text x="94" y="864" class="sub">用户请求 / 数据读取</text>
+  <path d="M325 860H360" stroke="#fb923c" stroke-width="2" marker-end="url(#orange)"/><text x="374" y="864" class="sub">执行事件</text>
+  <path d="M555 860H590" stroke="#34d399" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#green)"/><text x="604" y="864" class="sub">主动通知</text>
+  <text x="1235" y="864" text-anchor="end" class="sub">架构提案 · 2026-10-30</text>
+  <text x="35" y="48" font-size="25" font-weight="700">Orbit · 语音工作助理</text>
+  <text x="35" y="77" font-size="14" fill="#94a3b8">一句话派任务，随时问进度；对话持续进行，执行按明确指令推进。</text>
+</svg>

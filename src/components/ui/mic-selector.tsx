@@ -37,7 +37,9 @@ export function useAudioDevices() {
     try {
       setLoading(true);
       setError(null);
-      setDevices(toDevices(await navigator.mediaDevices.enumerateDevices()));
+      const list = await navigator.mediaDevices.enumerateDevices();
+      setDevices(toDevices(list));
+      setHasPermission(list.some(device => device.kind === "audioinput" && !!device.label));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "无法枚举音频设备");
     } finally {
@@ -67,11 +69,12 @@ export function useAudioDevices() {
 
   useEffect(() => {
     const onChange = () => {
-      void (hasPermission ? withPermission() : withoutPermission());
+      // Enumerating changed devices never opens a second capture stream.
+      void withoutPermission();
     };
     navigator.mediaDevices.addEventListener("devicechange", onChange);
     return () => navigator.mediaDevices.removeEventListener("devicechange", onChange);
-  }, [hasPermission, withPermission, withoutPermission]);
+  }, [withoutPermission]);
 
   return { devices, loading, error, hasPermission, loadDevices: withPermission };
 }
@@ -87,25 +90,17 @@ export type MicSelectorProps = {
 
 export function MicSelector({ value, onValueChange, muted, onMutedChange, disabled, className }: MicSelectorProps) {
   const { devices, loading, error, hasPermission, loadDevices } = useAudioDevices();
-  const [selected, setSelected] = useState(value ?? "");
+  const [internalSelected, setSelected] = useState("");
   const [internalMuted, setInternalMuted] = useState(false);
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
 
   const isMuted = muted ?? internalMuted;
+  const selected = value ?? internalSelected;
   const current = devices.find((device) => device.deviceId === selected) ?? devices[0];
 
-  useEffect(() => {
-    if (value !== undefined) setSelected(value);
-  }, [value]);
-
-  // 默认选第一个：不选的话设置页永远显示 "No microphone"。
-  useEffect(() => {
-    if (!selected && devices[0]) {
-      setSelected(devices[0].deviceId);
-      onValueChange?.(devices[0].deviceId);
-    }
-  }, [devices, selected, onValueChange]);
+  // An empty value means the system default. Enumeration and remounting must
+  // never submit a selection or restart the live call's capture stream.
 
   const toggleMute = () => {
     const next = !isMuted;

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef } from "react";
 import { Globe, PanelRight, X } from "../../shared/ui/icons";
-import { syncBrowserView } from "../../lib/browser-view";
+import { claimBrowserSurface } from "../../lib/browser-surface";
 import { useShell } from "../shell/shellStore";
+import { useBrowserImportStatus } from "../../lib/browser-import";
 import "../../styles/browser-channel.css";
 
 /**
@@ -37,9 +38,12 @@ export function BrowserPip() {
   const closeFile = useShell((state) => state.closeFile);
   const setBrowserActive = useShell((state) => state.setBrowserActive);
   const stage = useRef<HTMLDivElement | null>(null);
+  const place = useRef<() => void>(() => undefined);
 
   const tab = pip ? tabs.find((item) => item.path === pip.tab) : undefined;
   const path = pip?.tab ?? "";
+  const url = tab?.url;
+  const { busy: importing, revision: importRevision } = useBrowserImportStatus();
 
   /**
    * 把视图摆到卡片里那块空地。
@@ -48,18 +52,39 @@ export function BrowserPip() {
    * 页面布局，不会自己跟过来。
    */
   useEffect(() => {
-    if (!pip || !tab) return;
+    if (!path || importing) return;
     const element = stage.current;
     if (!element) return;
-    const rect = element.getBoundingClientRect();
-    if (rect.width < 1 || rect.height < 1) return;
-    void syncBrowserView(
-      pip.tab,
-      { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-      tab.url || undefined,
-      true,
-    ).catch(() => undefined);
-  }, [pip, tab]);
+    const surface = claimBrowserSurface(path);
+    let frame = 0;
+    const sync = () => {
+      frame = 0;
+      const rect = element.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1) return;
+      void surface.present({ x: rect.x, y: rect.y, width: rect.width, height: rect.height }, url || undefined).catch(() => undefined);
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(sync); };
+    place.current = schedule;
+    // Position changes while dragging; size also changes on viewport resize.
+    const observer = new ResizeObserver(schedule);
+    observer.observe(element);
+    window.addEventListener("resize", schedule);
+    window.addEventListener("orbit:browser-profile-changed", schedule);
+    sync();
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); window.removeEventListener("resize", schedule); window.removeEventListener("orbit:browser-profile-changed", schedule); place.current = () => undefined; surface.release(); };
+  }, [path, url, importing, importRevision]);
+  useEffect(() => { place.current(); }, [pip]);
+  useEffect(() => {
+    if (!path) return;
+    const constrain = () => {
+      const current = useShell.getState().browserPip;
+      if (!current) return;
+      const width = Math.min(current.width, window.innerWidth), height = Math.min(current.height, window.innerHeight);
+      moveBrowserPip({ width, height, x: Math.max(0, Math.min(current.x, window.innerWidth - width)), y: Math.max(0, Math.min(current.y, window.innerHeight - height)) });
+    };
+    window.addEventListener("resize", constrain);
+    return () => window.removeEventListener("resize", constrain);
+  }, [path, moveBrowserPip]);
 
   // 画中画在前，agent 的通道默认对它说话。
   const pipTab = pip?.tab;
@@ -129,6 +154,7 @@ export function BrowserPip() {
       <header
         role="toolbar"
         aria-label="画中画"
+        style={{ touchAction: "none" }}
         onPointerDown={onDragDown}
         onPointerMove={onDragMove}
         onPointerUp={onDragUp}
@@ -145,6 +171,7 @@ export function BrowserPip() {
           title="收回浏览器列"
           aria-label="收回浏览器列"
           onClick={dockBrowserPip}
+          onPointerDown={event => event.stopPropagation()}
           className="grid size-6.5 shrink-0 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content"
         >
           <PanelRight className="size-3.5" strokeWidth={1.75} />
@@ -157,6 +184,7 @@ export function BrowserPip() {
             closeFile(path);
             dockBrowserPip();
           }}
+          onPointerDown={event => event.stopPropagation()}
           className="grid size-6.5 shrink-0 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content"
         >
           <X className="size-3.5" strokeWidth={1.75} />

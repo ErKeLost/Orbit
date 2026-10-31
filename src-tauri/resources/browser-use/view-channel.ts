@@ -35,11 +35,14 @@ export async function viewRequest<T = unknown>(
 ): Promise<T | null> {
   const path = viewSocketPath()
   return new Promise<T | null>((resolve, reject) => {
+    if (options.signal?.aborted) { reject(new Error("视图通道请求被取消")); return }
     let socket: Socket
+    let timer: ReturnType<typeof setTimeout> | undefined
     let settled = false
     const finish = (fn: () => void) => {
       if (settled) return
       settled = true
+      clearTimeout(timer)
       socket?.destroy()
       options.signal?.removeEventListener("abort", abort)
       fn()
@@ -48,7 +51,7 @@ export async function viewRequest<T = unknown>(
     options.signal?.addEventListener("abort", abort, { once: true })
 
     socket = connect(path)
-    const timer = setTimeout(() => finish(() => reject(new Error("视图通道没有响应"))), options.timeoutMs ?? 15_000)
+    timer = setTimeout(() => finish(() => reject(new Error("视图通道没有响应"))), options.timeoutMs ?? 15_000)
     let buffer = ""
     socket.setEncoding("utf8")
     socket.on("data", chunk => {
@@ -90,22 +93,22 @@ export async function viewRequest<T = unknown>(
  * is "whatever is in front", and a run that reads one tab while it clicks another
  * is the bug this parameter exists to prevent.
  */
-export async function viewStatus(tab?: string): Promise<ViewStatus | null> {
-  return viewRequest<ViewStatus>({ op: "status", ...(tab ? { tab } : {}) }, { timeoutMs: 3_000 })
+export async function viewStatus(tab?: string, owner?: string): Promise<ViewStatus | null> {
+  return viewRequest<ViewStatus>({ op: "status", ...(tab ? { tab } : {}), ...(owner ? { owner } : {}) }, { timeoutMs: 3_000 })
 }
 
 /** Run a script in one tab's page and return its result. */
-export async function viewEval<T = unknown>(script: string, options: { tab?: string; timeoutMs?: number } = {}): Promise<T | null> {
+export async function viewEval<T = unknown>(script: string, options: { tab?: string; timeoutMs?: number; owner?: string } = {}): Promise<T | null> {
   const timeoutMs = options.timeoutMs ?? 10_000
   return viewRequest<T>(
-    { op: "eval", script, timeoutMs, ...(options.tab ? { tab: options.tab } : {}) },
+    { op: "eval", script, timeoutMs, owner: options.owner, ...(options.tab ? { tab: options.tab } : {}) },
     { timeoutMs: timeoutMs + 2_000 },
   )
 }
 
 /** Navigate one tab. Without a tab the app navigates the active one. */
-export async function viewNavigate(url: string, tab?: string): Promise<void> {
-  await viewRequest({ op: "navigate", url, ...(tab ? { tab } : {}) })
+export async function viewNavigate(url: string, tab?: string, owner?: string): Promise<void> {
+  await viewRequest({ op: "navigate", url, owner, ...(tab ? { tab } : {}) })
 }
 
 /**
@@ -120,8 +123,8 @@ export async function viewNavigate(url: string, tab?: string): Promise<void> {
  * An older app that does not return a tab id answers with `null`; the caller
  * treats that as "ask for a tab and then use the active one".
  */
-export async function viewOpen(url: string, tab?: string): Promise<{ tab: string; shared?: boolean } | null> {
-  return viewRequest<{ tab: string; shared?: boolean } | null>({ op: "open", url, ...(tab ? { tab } : {}) }, { timeoutMs: 5_000 })
+export async function viewOpen(url: string, tab?: string, claim?: {scope:string;owner:string}): Promise<{ tab: string; shared?: boolean } | null> {
+  return viewRequest<{ tab: string; shared?: boolean } | null>({ op: "open", url, ...claim, ...(tab ? { tab } : {}) }, { timeoutMs: 5_000 })
 }
 
 /**
@@ -131,8 +134,8 @@ export async function viewOpen(url: string, tab?: string): Promise<{ tab: string
  * left them, and the next run continues in this tab. Closing instead is what used
  * to make every task end by taking its page away.
  */
-export async function viewRelease(tab: string): Promise<void> {
-  await viewRequest({ op: "release", tab }, { timeoutMs: 3_000 })
+export async function viewRelease(tab: string, owner?: string): Promise<void> {
+  await viewRequest({ op: "release", tab, owner }, { timeoutMs: 3_000 })
 }
 
 /**
@@ -142,11 +145,11 @@ export async function viewRelease(tab: string): Promise<void> {
  * `isTrusted` or calls `window.open` ignores anything a script dispatches, and
  * this is the only honest way around that.
  */
-export async function viewClickAt(tab: string, x: number, y: number): Promise<{ x: number; y: number } | null> {
-  return viewRequest<{ x: number; y: number }>({ op: "clickAt", tab, x, y }, { timeoutMs: 5_000 })
+export async function viewClickAt(tab: string, x: number, y: number, owner?: string): Promise<{ x: number; y: number } | null> {
+  return viewRequest<{ x: number; y: number }>({ op: "clickAt", tab, x, y, owner }, { timeoutMs: 5_000 })
 }
 
 
-export async function viewClose(tab: string): Promise<void> {
-  await viewRequest({ op: "close", tab }, { timeoutMs: 5_000 })
+export async function viewClose(tab: string, owner?: string): Promise<void> {
+  await viewRequest({ op: "close", tab, owner }, { timeoutMs: 5_000 })
 }

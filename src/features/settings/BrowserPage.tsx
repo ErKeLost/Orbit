@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { browserImportSources, browserImportState, importBrowserSession, type ImportReport, type ImportSource } from "../../lib/browser-import"
+import { browserImportSources, browserImportState, importBrowserSession, importSummary, useBrowserImportStatus, type ImportReport, type ImportSource } from "../../lib/browser-import"
 import { Group, Notice, PrimaryButton, Row, SecondaryButton } from "../../shared/ui/controls"
 import { toast } from "../../shared/ui/toast"
 
@@ -16,6 +16,7 @@ export function BrowserPage() {
   const [sources, setSources] = useState<ImportSource[] | null>(null)
   const [report, setReport] = useState<ImportReport | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const { busy: importing } = useBrowserImportStatus()
   const [failure, setFailure] = useState<string | null>(null)
 
   const load = async () => {
@@ -42,11 +43,11 @@ export function BrowserPage() {
     // describe both.
     const notice = toast.info(`正在从 ${source.browser} 导入…`, { duration: Infinity })
     try {
-      const { report, cookies } = await importBrowserSession(source.browser, source.profile)
+      const { report } = await importBrowserSession(source.browser, source.profile)
       setReport(report)
       setFailure(null)
-      toast.success(`已导入 ${cookies} 个 cookie`, {
-        description: `${report.browser} · ${report.profile} 的登录已写入浏览器面板，可以直接用了`,
+      toast.success(importSummary(report), {
+        description: `${report.browser} · ${report.profile}。${report.skippedDomains?.length ? `未完整导入：${report.skippedDomains.join("、")}` : "登录是否有效由站点决定。"}`,
       })
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
@@ -60,16 +61,15 @@ export function BrowserPage() {
 
   return (
     <>
+      {failure ? <Notice>{failure}</Notice> : null}
       <Group
         title="从其他浏览器导入登录"
-        description="把另一个浏览器的登录状态复制到 Orbit 的浏览器资料目录，这样 browser use 可以直接用你已有的账号。复制的是会话（cookie），不改动来源浏览器。"
+        description="选择要复制的浏览器资料，将可导入的 Cookie 写入 Orbit 面板并验证。不改动来源浏览器；建议先退出来源浏览器，让最新登录状态落盘。"
       >
         {sources === null ? (
           <Notice>正在检测已安装的浏览器…</Notice>
-        ) : failure ? (
-          <Notice>无法读取浏览器资料：{failure}</Notice>
         ) : sources.length === 0 ? (
-          <Notice>没有检测到带登录信息的 Chromium 系浏览器资料。装好 Chrome / Edge / Brave 并至少浏览过一次后再回来。</Notice>
+          <Notice>没有检测到可导入的浏览器资料。支持 Chrome、Edge、Brave、Arc 和 Firefox 等浏览器。</Notice>
         ) : (
           sources.map((source) => {
             const key = `${source.browser}:${source.profile}`
@@ -84,7 +84,7 @@ export function BrowserPage() {
               .join(" · ")
             return (
               <Row key={key} label={account} description={details} anchorId={`browser-import-${key}`}>
-                <PrimaryButton disabled={busy !== null} onClick={() => void runImport(source)}>
+                <PrimaryButton disabled={importing} onClick={() => void runImport(source)}>
                   {busy === key ? "导入中…" : "导入"}
                 </PrimaryButton>
               </Row>
@@ -93,13 +93,14 @@ export function BrowserPage() {
         )}
       </Group>
 
+      <SecondaryButton disabled={importing} onClick={()=>void load()}>刷新浏览器资料</SecondaryButton>
       <Group title="导入状态" description="导入的是一次快照。之后在来源浏览器里新登录的站点，需要再导入一次。">
         {report ? (
           <Row
             label={`上次导入：${report.browser} · ${report.profile}`}
-            description={`${report.cookies} 个 cookie · ${new Date(report.importedAt * 1000).toLocaleString()}`}
+            description={`${importSummary(report)} · ${new Date(report.importedAt * 1000).toLocaleString()}${report.skippedDomains?.length ? ` · 未完整导入：${report.skippedDomains.join("、")}` : ""}`}
           >
-            <SecondaryButton disabled={busy !== null} onClick={() => void load()}>
+            <SecondaryButton disabled={importing} onClick={() => void load()}>
               刷新
             </SecondaryButton>
           </Row>
@@ -110,7 +111,7 @@ export function BrowserPage() {
 
       <Group title="已知限制">
         <Notice>
-          导入的是 cookie，即登录状态；不包含保存的密码与自动填表。少数站点（Google 及其服务）使用「设备绑定会话」，它们要求客户端出示一把只在原浏览器资料里存在的私钥，所以这类账号导入后仍会要求你登录一次——这是 Google 的设计目的，不是导入失败。其余绝大多数站点导入即可用。
+          导入 Cookie 不等于完整复制登录。密码、自动填表、Local Storage、IndexedDB、分区 Cookie 和设备绑定密钥不会迁移；依赖这些数据或站点风控的账号可能仍需登录。请在实际站点确认登录状态。
         </Notice>
       </Group>
     </>

@@ -44,15 +44,15 @@ export function isBrowserPath(path: string): boolean {
  * path (`browser:<id>`) is the identity the native view is keyed by
  * (`browser_view.rs`).
  *
- * `agent` marks the page a browser run asked for: that run closes it when it
- * ends (`browser:close`), so it is a scratch page, not somewhere a link the
- * user clicked should be sent — it would vanish under them a moment later.
+ * `agent` marks a page a browser run has temporarily claimed. The claim is
+ * released when the run ends; the page remains available for the user and the
+ * next run can reuse it without destroying its history.
  */
 export type BrowserTabInfo = {
   path: string;
   url: string;
   title?: string;
-  /** A run owns this tab; it is closed when the run ends. */
+  /** A run currently has exclusive operation rights for this tab. */
   agent?: true;
   /**
    * A run's tab that outlived its run because only the person can continue

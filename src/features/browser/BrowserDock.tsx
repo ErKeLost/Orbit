@@ -194,7 +194,7 @@ export function BrowserDock() {
           // the view it had not created yet. The column then showed an empty
           // pane (and the app held no view at all).
           <div key={tab.path} hidden={tab.path !== shown?.path} className="absolute inset-0 flex min-h-0 min-w-0">
-            <BrowserTab path={tab.path} url={tab.url} title={tab.title} active={tab.path === shown?.path} />
+            <BrowserTab path={tab.path} url={tab.url} title={tab.title} active={tab.path === shown?.path} agent={tab.agent} />
           </div>
         ))}
       </div>

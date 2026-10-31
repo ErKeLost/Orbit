@@ -37,6 +37,8 @@ export const SETTINGS_INDEX: SettingIndexEntry[] = [
   { id: "voice-key", section: "voice", label: "Rime API Key", keywords: "rime 语音 key 密钥 tts stt token" },
   { id: "voice-model", section: "voice", label: "语音模型", keywords: "rime coda mist v3 音质 延迟 tts" },
   { id: "voice-speaker", section: "voice", label: "音色", keywords: "speaker astra luna 声音 tts" },
+  { id: "voice-check", section: "voice", label: "语音连接检查", keywords: "rime stt tts 诊断 检查 鉴权 权限" },
+  { id: "voice-lexicon", section: "voice", label: "自定义发音", keywords: "rime coda lexicon pronunciation 发音 音标 词典" },
   { id: "voice-lang", section: "voice", label: "合成语言", keywords: "lang language 中文 英文 tts" },
   { id: "voice-stt-lang", section: "voice", label: "转写语言", keywords: "stt asr 识别 转写 语言" },
   // 第三方接入

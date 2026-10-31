@@ -29,13 +29,16 @@ export function useBrowserViews() {
       const tab = event.payload?.tab?.trim();
       useShell.getState().openBrowser(event.payload?.url ?? "", tab ? { path: tab } : undefined);
     });
-    // ...and the other half of that ownership: when the run ends, the app closes
-    // the tab it minted. Without this the tab entry would outlive its page — the
-    // strip would grow by one tab per run, and each one would re-create a view
-    // for a page that no longer exists.
+    // A browser run now releases its lease when it ends. The page is deliberately
+    // kept in the strip, so its cookies, scroll position and navigation history
+    // remain available for the user and the next run.
     const closing = listen<{ tab?: string }>("browser:close", event => {
       const tab = event.payload?.tab?.trim();
       if (tab) useShell.getState().closeFile(tab);
+    });
+    const released = listen<{ tab?: string }>("browser:released", event => {
+      const tab = event.payload?.tab?.trim();
+      if (tab) useShell.getState().releaseBrowser(tab);
     });
     // View lifetime follows **tab** lifetime, not "which tab is in front".
     //
@@ -66,6 +69,7 @@ export function useBrowserViews() {
       unsubscribe();
       void pending.then(unlisten => unlisten());
       void closing.then(unlisten => unlisten());
+      void released.then(unlisten => unlisten());
       void handedOver.then(unlisten => unlisten());
     };
   }, []);

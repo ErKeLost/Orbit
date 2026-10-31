@@ -308,11 +308,13 @@ export class BrowserDriver {
 
   /** The engine this driver reports in the run's metrics. */
   readonly engine = "chrome" as const
+  private readonly signal?: AbortSignal
 
-  private constructor(client: CdpClient, sessionId: string, session: BrowserSession) {
+  private constructor(client: CdpClient, sessionId: string, session: BrowserSession, signal?: AbortSignal) {
     this.client = client
     this.stack.push({ sessionId, targetId: session.targetId })
     this.session = session
+    this.signal = signal
   }
 
   static async open(url: string | undefined, signal?: AbortSignal): Promise<BrowserDriver> {
@@ -326,7 +328,7 @@ export class BrowserDriver {
     const existing = await client.send<{ targetInfos: { targetId: string }[] }>("Target.getTargets")
     const known = new Set(existing.targetInfos.map(info => info.targetId))
     const attached = await client.send<{ sessionId: string }>("Target.attachToTarget", { targetId: session.targetId, flatten: true })
-    const driver = new BrowserDriver(client, attached.sessionId, session)
+    const driver = new BrowserDriver(client, attached.sessionId, session, signal)
     // A page that opens a window (login flows, target="_blank") would otherwise
     // run in a tab nobody is attached to. Auto-attach with
     // `waitForDebuggerOnStart` is what makes the new tab arrive paused, so it
@@ -792,6 +794,7 @@ export class BrowserDriver {
 
   /** Execute one observed target. Throws `StalePage` when nothing was delivered. */
   async act(action: BrowserAction, page: BrowserObservation, text?: string): Promise<void> {
+    this.signal?.throwIfAborted()
     // A missing action is a bug in the loop, not a page condition: failing here
     // is the difference between a clear error and a silent no-op.
     if (!action || typeof action.kind !== "string") throw new Error("没有可执行的目标（内部错误）")
@@ -881,6 +884,7 @@ export class BrowserDriver {
       throw new StalePage("目标已变化，请重新观察", "changed")
     }
     const target = delivered
+    this.signal?.throwIfAborted()
     if (action.kind === "select") {
       this.afterInput = action
       return
@@ -889,9 +893,11 @@ export class BrowserDriver {
       await this.send("Input.dispatchMouseEvent", { type, x: target.x, y: target.y, button: "left", clickCount: 1 })
     }
     if (action.kind === "fill") {
+      this.signal?.throwIfAborted()
       const modifier = process.platform === "darwin" ? 4 : 2
       await this.send("Input.dispatchKeyEvent", { type: "keyDown", key: "a", code: "KeyA", modifiers: modifier, commands: ["selectAll"] })
       await this.send("Input.dispatchKeyEvent", { type: "keyUp", key: "a", code: "KeyA", modifiers: modifier })
+      this.signal?.throwIfAborted()
       if (text) await this.send("Input.insertText", { text })
     }
     this.afterInput = action

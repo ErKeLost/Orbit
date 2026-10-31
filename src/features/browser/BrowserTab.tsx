@@ -7,11 +7,12 @@ import {
   browserViewPage,
   browserViewReload,
   browserViewStop,
-  syncBrowserView,
   type ViewRect,
 } from "../../lib/browser-view"
+import { claimBrowserSurface } from "../../lib/browser-surface"
 import { useShell } from "../shell/shellStore"
 import { BrowserImportPrompt } from "./BrowserImportPrompt"
+import { useBrowserImportStatus } from "../../lib/browser-import"
 import "../../styles/browser-channel.css"
 
 /**
@@ -27,7 +28,7 @@ import "../../styles/browser-channel.css"
  * in front and a switch to a full-page surface. This component only owns the
  * page.
  */
-export function BrowserTab({ path, url, title, active = true }: { path: string; url: string; title?: string; active?: boolean }) {
+export function BrowserTab({ path, url, title, active = true, agent = false }: { path: string; url: string; title?: string; active?: boolean; agent?: boolean }) {
   const updateBrowser = useShell((state) => state.updateBrowser)
   /**
    * 这一页现在是不是浮在窗口上。
@@ -39,6 +40,13 @@ export function BrowserTab({ path, url, title, active = true }: { path: string; 
   const floating = useShell((state) => state.browserPip?.tab === path)
   const toggleBrowserPip = useShell((state) => state.toggleBrowserPip)
   const [loading, setLoading] = useState(false)
+  const [profileRevision, setProfileRevision] = useState(0)
+  const { busy: importing, revision: importRevision } = useBrowserImportStatus()
+  useEffect(() => {
+    const changed = () => setProfileRevision(value => value + 1)
+    window.addEventListener("orbit:browser-profile-changed", changed)
+    return () => window.removeEventListener("orbit:browser-profile-changed", changed)
+  }, [])
   /** Whether the field currently holds something the user typed. */
   const [drafting, setDrafting] = useState(false)
   /**
@@ -86,6 +94,8 @@ export function BrowserTab({ path, url, title, active = true }: { path: string; 
 
   /** Place the view where this pane's content area is. */
   useEffect(() => {
+    if (floating || importing) return
+    const surface = claimBrowserSurface(path)
     let frame = 0
     let cancelled = false
     /** The last box the app was told about, so an unchanged layout costs nothing. */
@@ -104,7 +114,7 @@ export function BrowserTab({ path, url, title, active = true }: { path: string; 
         const parked = lastBox.current
         if (!parked || last === "hidden") return
         last = "hidden"
-        void syncBrowserView(path, parked, undefined, false).catch(() => undefined)
+        void surface.present(parked, undefined, false).catch(() => undefined)
         return
       }
       const box: ViewRect = { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
@@ -112,10 +122,13 @@ export function BrowserTab({ path, url, title, active = true }: { path: string; 
       const key = `${Math.round(box.x)}:${Math.round(box.y)}:${Math.round(box.width)}:${Math.round(box.height)}`
       if (key === last) return
       last = key
-      void syncBrowserView(path, box, url || undefined, live)
+      // A task may request only an open browser. Its blank tab still needs a real
+      // view; otherwise the driver waits for a view the frontend refuses to create.
+      void surface.present(box, url || undefined, live || agent)
         .then(status => {
-          if (cancelled) return
+          if (cancelled || !status) return
           setLoading(status.loading)
+          setFailure(null)
         })
         .catch(error => fail(`视图不可用：${error instanceof Error ? error.message : String(error)}`))
     }
@@ -155,8 +168,9 @@ export function BrowserTab({ path, url, title, active = true }: { path: string; 
       window.clearInterval(poll)
       if (frame) window.cancelAnimationFrame(frame)
       if (follow) window.cancelAnimationFrame(follow)
+      surface.release()
     }
-  }, [path, url, live, fail, floating])
+  }, [path, url, live, agent, fail, floating, profileRevision, importing, importRevision])
 
   // The page owns the address while the field is not being edited: the field is
   // written by code, never by a re-render.
@@ -168,7 +182,7 @@ export function BrowserTab({ path, url, title, active = true }: { path: string; 
 
   // The page is the authority on its own address and title.
   useEffect(() => {
-    if (!live) return
+    if (!live || importing) return
     let cancelled = false
     let reported = false
     const read = async () => {
@@ -198,25 +212,7 @@ export function BrowserTab({ path, url, title, active = true }: { path: string; 
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [path, live, fail, updateBrowser])
-
-  // Switching away from this tab must not destroy its page.
-  //
-  // A pane renders only its *active* file, so this component unmounts whenever
-  // another tab comes to the front — while the tab itself, and the page behind
-  // it, still exist. Closing the view here (which is what this used to do) threw
-  // away the page's scroll, its form state and its session every time the user
-  // switched tabs, and read as "the page reloads by itself". Hiding keeps it
-  // alive and off screen; a tab that is actually *closed* has its view destroyed
-  // by the browser feature's reconciler, which is the only thing that knows the
-  // difference (`use-browser-views.ts`).
-  useEffect(() => () => {
-    // 浮着的那一页由画中画负责，收回列里是另一件事。
-    if (floating) return
-    const box = lastBox.current
-    if (!box) return
-    void syncBrowserView(path, box, undefined, false).catch(() => undefined)
-  }, [path, floating])
+  }, [path, live, fail, updateBrowser, importing, importRevision])
 
   const run = (label: string, action: () => Promise<unknown>) => {
     void action().catch(error => fail(`${label}失败：${error instanceof Error ? error.message : String(error)}`))
@@ -225,17 +221,10 @@ export function BrowserTab({ path, url, title, active = true }: { path: string; 
   const go = (value: string) => {
     const target = normalizeAddress(value)
     if (!target) return
+    if (target === url) { run("刷新页面", () => browserViewReload(path)); return }
+    // The owning surface places and navigates the page when its URL changes.
+    // This also handles an address entered while the page is floating in PiP.
     updateBrowser(path, { url: target })
-    // Through `sync`, not `navigate`: this is the first load of a brand-new tab
-    // as often as not, and `navigate` fails when the view does not exist yet
-    // (measured: "浏览器标签页尚未打开" on the tab's first URL). Sync creates,
-    // places and loads in one call, so there is no window to lose the race in.
-    const element = stage.current
-    const rect = element?.getBoundingClientRect()
-    if (!rect) return
-    run("打开页面", () =>
-      syncBrowserView(path, { x: rect.x, y: rect.y, width: rect.width, height: rect.height }, target, true),
-    )
   }
 
   return (

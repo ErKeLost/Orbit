@@ -126,15 +126,18 @@ const EXCLUDED: Record<string, string> = {
   // 语音 Agent 的一整个环（麦克风采集 → 扬声器播放）都发生在桌面的 WebView 里，
   // 电话端既没有这条采集/播放通路，也不该拿桌面机器人的耳朵去听手机上的房间。
   rime_config: "reads the desktop's rime.json; the phone has no agent dir",
+  rime_check: "checks desktop speech credentials without sending microphone audio",
   save_rime_config: "writes the desktop's rime.json",
   save_rime_api_key: "writes the desktop's auth.json",
   rime_tts: "speaks through the desktop's speakers",
+  rime_voices: "reads the desktop voice engine catalog",
   rime_stt: "listens through the desktop's microphone",
   rime_stt_open: "opens a desktop speech stream; the phone has no capture path",
   rime_stt_push: "feeds desktop-captured audio into that stream",
   rime_stt_finish: "closes a desktop speech stream",
   rime_stt_abort: "drops a desktop speech stream",
   rime_tts_stream: "synthesizes through the desktop's speaker pipeline",
+  rime_tts_prepare: "warms the desktop's speech connection",
   rime_tts_send: "feeds text into a desktop speech stream",
   rime_tts_finish: "closes a desktop speech stream",
   rime_tts_cancel: "cancels a desktop speech stream",

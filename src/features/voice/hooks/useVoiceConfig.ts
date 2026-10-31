@@ -6,6 +6,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { rimeConfig, saveRimeApiKey, saveRimeConfig, type RimeConfig } from "../../../lib/rpc-projects";
+import { resolveVoiceConfig } from "../model/voice-config";
 
 export function useVoiceConfig() {
   const [config, setConfig] = useState<RimeConfig | null>(null);
@@ -13,7 +14,7 @@ export function useVoiceConfig() {
 
   const reload = useCallback(async () => {
     try {
-      setConfig(await rimeConfig());
+      setConfig(resolveVoiceConfig(await rimeConfig()));
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -33,7 +34,7 @@ export function useVoiceConfig() {
 
   const updateConfig = useCallback(async (patch: Partial<RimeConfig>) => {
     const next = await saveRimeConfig(patch);
-    setConfig((current) => (current ? { ...current, ...next } : next));
+    setConfig(resolveVoiceConfig(next));
   }, []);
 
   return { config, error, reload, saveKey, updateConfig, clearError: () => setError(null) };

@@ -1,6 +1,17 @@
 import { invoke } from "./native"
 import { useShell } from "../features/shell/shellStore"
 import { browserViewReload } from "./browser-view"
+import { useSyncExternalStore } from "react"
+
+let importSnapshot = { busy: false, revision: 0 }
+const importListeners = new Set<() => void>()
+const subscribeImport = (listener: () => void) => { importListeners.add(listener); return () => { importListeners.delete(listener) } }
+const getImportSnapshot = () => importSnapshot
+export function useBrowserImportStatus() { return useSyncExternalStore(subscribeImport, getImportSnapshot) }
+function setImportBusy(busy: boolean) {
+  importSnapshot = { busy, revision: importSnapshot.revision + (busy ? 0 : 1) }
+  for (const listener of importListeners) listener()
+}
 
 /**
  * Bringing an existing browser session into Orbit's own browser.
@@ -38,6 +49,10 @@ export type ImportReport = {
    */
   deviceBound: boolean
   importedAt: number
+  skipped?: number
+  skippedDomains?: string[]
+  version?: number
+  partition?: string
 }
 
 /** Every installed Chromium-family profile that has cookies to bring over. */
@@ -68,6 +83,7 @@ export function browserImportState(): Promise<ImportReport | null> {
  * looking at.
  */
 export function reloadOpenBrowserTabs(): void {
+  window.dispatchEvent(new Event("orbit:browser-profile-changed"))
   // Tabs are the window's, not a workspace's: one list, one pass.
   for (const tab of useShell.getState().browserTabs) {
     void browserViewReload(tab.path).catch(() => undefined)
@@ -84,7 +100,20 @@ export function reloadOpenBrowserTabs(): void {
  * longer has.
  */
 export async function importBrowserSession(browser: string, profile: string): Promise<{ report: ImportReport; cookies: number }> {
-  const report = await browserImportSession(browser, profile)
-  reloadOpenBrowserTabs()
-  return { report, cookies: report.cookies }
+  if (importSnapshot.busy) throw new Error("已有浏览器导入正在进行，请等它结束")
+  setImportBusy(true)
+  try {
+    const report = await browserImportSession(browser, profile)
+    reloadOpenBrowserTabs()
+    return { report, cookies: report.cookies }
+  } finally {
+    // Resume native placement after success or failure; a transient import lock
+    // must not leave the browser stuck behind an error banner.
+    setImportBusy(false)
+    window.dispatchEvent(new Event("orbit:browser-profile-changed"))
+  }
+}
+
+export function importSummary(report: ImportReport): string {
+  return `已验证 ${report.cookies} 个 Cookie${report.skipped ? `，跳过 ${report.skipped} 个` : ""}。部分站点可能仍需重新登录。`
 }

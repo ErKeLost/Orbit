@@ -89,6 +89,25 @@ pub struct Source {
     pub account: Option<String>,
 }
 
+#[derive(Default)]
+pub struct CookieRead {
+    pub cookies: Vec<Value>,
+    pub skipped: usize,
+    pub skipped_domains: std::collections::BTreeSet<String>,
+}
+
+impl CookieRead {
+    fn skip(&mut self, host: &str) {
+        self.skipped += 1;
+        if self.skipped_domains.len() < 20 { self.skipped_domains.insert(host.trim_start_matches('.').to_string()); }
+    }
+}
+
+/// Upgraded profiles can retain an obsolete Cookies file beside the live database.
+pub fn chromium_database(profile: &Path) -> Option<PathBuf> {
+    [profile.join("Network/Cookies"), profile.join("Cookies")].into_iter().find(|path| path.is_file())
+}
+
 /// One Chromium-family browser worth looking for, and the root it lives in.
 struct ChromiumRoot {
     browser: &'static str,
@@ -250,7 +269,7 @@ fn chromium_sources(data: &Path) -> Vec<Source> {
         };
         for (profile, info) in cache {
             let path = directory.join(profile);
-            if !path.join("Cookies").is_file() {
+            if chromium_database(&path).is_none() {
                 continue;
             }
             let field = |key: &str| {
@@ -312,7 +331,7 @@ fn firefox_sources(home: &Path) -> Vec<Source> {
 /// How many cookies a source holds, for the list the picker shows.
 pub fn cookie_count(source: &Source) -> Option<u64> {
     let (database, table) = match source.kind {
-        Kind::Chromium { .. } => (source.path.join("Cookies"), "cookies"),
+        Kind::Chromium { .. } => (chromium_database(&source.path)?, "cookies"),
         Kind::Firefox => (source.path.join("cookies.sqlite"), "moz_cookies"),
     };
     count_rows(&database, table)
@@ -384,74 +403,90 @@ fn firefox_same_site(value: Option<&Value>) -> Option<&'static str> {
 /// That shape is the point: `browser::webkit_cookie` already turns it into a
 /// WebKit cookie, so an imported session lands in the column through exactly
 /// the code path a same-browser import uses.
-pub fn read_cookies(source: &Source) -> Result<Vec<Value>, String> {
+pub fn read_cookies(source: &Source) -> Result<CookieRead, String> {
+    let database = match source.kind {
+        Kind::Firefox => source.path.join("cookies.sqlite"),
+        Kind::Chromium { .. } => chromium_database(&source.path).ok_or("找不到来源 Cookie 数据库")?,
+    };
+    let snapshot = CookieSnapshot::create(&database)?;
     match source.kind {
-        Kind::Firefox => firefox_cookies(&source.path.join("cookies.sqlite")),
-        Kind::Chromium { service } => chromium_source_cookies(&source.path, service),
+        Kind::Firefox => firefox_cookies(&snapshot.database),
+        Kind::Chromium { service } => chromium_source_cookies(&snapshot.database, service),
     }
 }
+
+struct CookieSnapshot { directory: PathBuf, database: PathBuf }
+impl CookieSnapshot {
+    fn create(source: &Path) -> Result<Self, String> {
+        let directory = std::env::temp_dir().join(format!("orbit-cookie-import-{}", uuid::Uuid::new_v4()));
+        #[cfg(unix)]
+        { use std::os::unix::fs::DirBuilderExt; std::fs::DirBuilder::new().mode(0o700).create(&directory).map_err(|e| e.to_string())?; }
+        #[cfg(not(unix))]
+        std::fs::create_dir(&directory).map_err(|e| e.to_string())?;
+        let snapshot = Self { database: directory.join("Cookies"), directory };
+        let output = Command::new(SQLITE3).arg("-cmd").arg(".timeout 5000")
+            .arg(format!("file:{}?mode=ro", source.display()))
+            .arg(format!(".backup '{}'", snapshot.database.display().to_string().replace('\'', "''")))
+            .output().map_err(|e| format!("无法快照 Cookie 数据库：{e}"))?;
+        if !output.status.success() { return Err(format!("无法读取 Cookie 数据库：{}", String::from_utf8_lossy(&output.stderr).trim())); }
+        Ok(snapshot)
+    }
+}
+impl Drop for CookieSnapshot { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.directory); } }
 
 /// A Chromium profile needs that browser's own Safe Storage key, which only a
 /// desktop build can ask the OS for.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn chromium_source_cookies(profile: &Path, service: &str) -> Result<Vec<Value>, String> {
+fn chromium_source_cookies(database: &Path, service: &str) -> Result<CookieRead, String> {
     let password = safe_storage_password(service)?;
-    chromium_cookies(&profile.join("Cookies"), &password)
+    chromium_cookies(database, &password)
 }
 
 /// Mobile has neither a keychain lookup nor OpenSSL. Firefox's plaintext store
 /// still works, which is why enumeration stays compiled there.
 #[cfg(any(target_os = "android", target_os = "ios"))]
-fn chromium_source_cookies(_profile: &Path, _service: &str) -> Result<Vec<Value>, String> {
+fn chromium_source_cookies(_profile: &Path, _service: &str) -> Result<CookieRead, String> {
     Err("从 Chromium 浏览器导入登录只在桌面端可用".to_string())
 }
 
-/// Firefox's cookies, whose values are stored in the clear.
-fn firefox_cookies(database: &Path) -> Result<Vec<Value>, String> {
-    let rows = query_json(
-        database,
-        "select host, name, value, path, expiry, isSecure, isHttpOnly, sameSite from moz_cookies;",
-    )?;
-    let cookies = rows
-        .iter()
-        .filter_map(|row| {
-            let host = row.get("host").and_then(Value::as_str)?;
-            let name = row.get("name").and_then(Value::as_str)?;
-            if host.is_empty() || name.is_empty() {
-                return None;
-            }
-            let mut cookie = json!({
-                "name": name,
-                "value": row.get("value").and_then(Value::as_str).unwrap_or(""),
-                "domain": host,
-                "path": row.get("path").and_then(Value::as_str).unwrap_or("/"),
-                "secure": row.get("isSecure").and_then(Value::as_i64).unwrap_or(0) != 0,
-                "httpOnly": row.get("isHttpOnly").and_then(Value::as_i64).unwrap_or(0) != 0,
-                // Firefox stores expiry in seconds since the epoch, and 0 means a
-                // session cookie; CDP spells that as -1.
-                "expires": match row.get("expiry").and_then(Value::as_i64).unwrap_or(0) {
-                    0 => -1.0,
-                    seconds => seconds as f64,
-                },
-            });
-            if let Some(same_site) = firefox_same_site(row.get("sameSite")) {
-                cookie["sameSite"] = json!(same_site);
-            }
-            Some(cookie)
-        })
-        .collect();
-    Ok(cookies)
+/// Preserve Firefox's schema-dependent expiry and container boundaries.
+fn firefox_cookies(database: &Path) -> Result<CookieRead, String> {
+    let version = query_json(database, "pragma user_version;")?.first().and_then(|row| row["user_version"].as_u64()).unwrap_or(0);
+    let columns = query_json(database, "pragma table_info(moz_cookies);")?;
+    let has = |name: &str| columns.iter().any(|column| column["name"].as_str() == Some(name));
+    let origin = if has("originAttributes") { "originAttributes" } else { "'' as originAttributes" };
+    let same = if has("sameSite") { "sameSite" } else { "null as sameSite" };
+    let raw = if has("rawSameSite") { "rawSameSite" } else { "null as rawSameSite" };
+    let rows = query_json(database, &format!("select host, name, value, path, expiry, isSecure, isHttpOnly, {same}, {raw}, {origin} from moz_cookies;"))?;
+    let mut read = CookieRead::default();
+    for row in rows {
+        let host = row["host"].as_str().unwrap_or_default();
+        let name = row["name"].as_str().unwrap_or_default();
+        if host.is_empty() || name.is_empty() { continue; }
+        if row["originAttributes"].as_str().is_some_and(|value| !value.is_empty()) { read.skip(host); continue; }
+        let expiry = row["expiry"].as_i64().unwrap_or(0);
+        let mut cookie = json!({"name":name,"value":row["value"].as_str().unwrap_or_default(),"domain":host,
+            "path":row["path"].as_str().unwrap_or("/"),"secure":row["isSecure"].as_i64()==Some(1),"httpOnly":row["isHttpOnly"].as_i64()==Some(1),
+            "expires":if expiry<=0 {-1.0} else if version>=16 {(expiry/1000) as f64} else {expiry as f64}});
+        if !(row["sameSite"].as_i64()==Some(1) && row["rawSameSite"].as_i64()==Some(0)) {
+            if let Some(site)=firefox_same_site(row.get("sameSite")) { cookie["sameSite"]=json!(site); }
+        }
+        read.cookies.push(cookie);
+    }
+    Ok(read)
 }
 
 /// Chromium-family cookies: plaintext rows are taken as-is, encrypted ones are
 /// decrypted with the source browser's own key.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn chromium_cookies(database: &Path, password: &str) -> Result<Vec<Value>, String> {
+fn chromium_cookies(database: &Path, password: &str) -> Result<CookieRead, String> {
     // Columns that have been there since the format existed, plus the optional
     // one handled below.
     const COLUMNS: &str = "host_key, name, value, hex(encrypted_value) as encrypted, path, \
          expires_utc, is_secure, is_httponly, samesite";
-    let rows = match query_json(database, &format!("select {COLUMNS}, is_partitioned from cookies;")) {
+    let schema_version = query_json(database, "select value from meta where key = 'version' limit 1;")
+        .ok().and_then(|rows| rows.first().and_then(|row| row["value"].as_str().and_then(|v| v.parse::<u32>().ok()).or_else(|| row["value"].as_u64().map(|v| v as u32)))).unwrap_or(23);
+    let rows = match query_json(database, &format!("select {COLUMNS}, top_frame_site_key from cookies;")) {
         Ok(rows) => rows,
         // A database written before partitioned cookies existed has no such
         // column. Dropping the filter is not a loss: there is nothing to skip.
@@ -460,7 +495,7 @@ fn chromium_cookies(database: &Path, password: &str) -> Result<Vec<Value>, Strin
         }
         Err(error) => return Err(error),
     };
-    let mut cookies = Vec::new();
+    let mut read = CookieRead::default();
     let mut undecryptable = 0usize;
     for row in &rows {
         let Some(host) = row.get("host_key").and_then(Value::as_str) else {
@@ -476,7 +511,8 @@ fn chromium_cookies(database: &Path, password: &str) -> Result<Vec<Value>, Strin
         // outside it, which a flat store cannot express. Skipping them is
         // honest; importing them as first-party would sign the user into the
         // wrong context.
-        if row.get("is_partitioned").and_then(Value::as_i64).unwrap_or(0) != 0 {
+        if row.get("top_frame_site_key").and_then(Value::as_str).is_some_and(|site| !site.is_empty()) {
+            read.skip(host);
             continue;
         }
         let plaintext = row.get("value").and_then(Value::as_str).unwrap_or("");
@@ -488,15 +524,14 @@ fn chromium_cookies(database: &Path, password: &str) -> Result<Vec<Value>, Strin
             };
             let Some(blob) = decode_hex(hex) else {
                 undecryptable += 1;
+                read.skip(host);
                 continue;
             };
-            if blob.is_empty() {
-                continue;
-            }
-            match decrypt_value(&blob, password, host) {
+            match if blob.is_empty() { Ok(String::new()) } else { decrypt_value_version(&blob, password, host, schema_version) } {
                 Ok(value) => value,
                 Err(_) => {
                     undecryptable += 1;
+                    read.skip(host);
                     continue;
                 }
             }
@@ -513,16 +548,16 @@ fn chromium_cookies(database: &Path, password: &str) -> Result<Vec<Value>, Strin
         if let Some(same_site) = chromium_same_site(row.get("samesite")) {
             cookie["sameSite"] = json!(same_site);
         }
-        cookies.push(cookie);
+        read.cookies.push(cookie);
     }
     // Every encrypted row failing is a wrong key, not a few stale rows: saying so
     // is what keeps "0 imported" from looking like an empty browser.
-    if cookies.is_empty() && undecryptable > 0 {
+    if read.cookies.is_empty() && undecryptable > 0 {
         return Err(format!(
-            "{undecryptable} 个 cookie 都用这个浏览器的密钥解不开；请在系统钥匙串提示里允许访问后再试"
+            "{undecryptable} 个 Cookie 无法解密，未导入。请核对来源浏览器与资料；可能是密钥不匹配或加密格式不支持"
         ));
     }
-    Ok(cookies)
+    Ok(read)
 }
 
 /// Chromium's `expires_utc` (microseconds since 1601) as CDP's seconds.
@@ -557,8 +592,8 @@ fn chromium_key(password: &str) -> [u8; CHROMIUM_KEY_LEN] {
     // SHA-1 and 1003 iterations are the format, not a choice: every database on
     // disk was written with them.
     pbkdf2_hmac(
-        CHROMIUM_SALT,
         password.as_bytes(),
+        CHROMIUM_SALT,
         CHROMIUM_ITERATIONS,
         MessageDigest::sha1(),
         &mut key,
@@ -573,8 +608,13 @@ fn chromium_key(password: &str) -> [u8; CHROMIUM_KEY_LEN] {
 /// cookie's host to the plaintext; that prefix is stripped, and a value that
 /// does not carry the right digest for its own host is treated as
 /// undecryptable rather than imported under the wrong name.
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+#[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
 pub fn decrypt_value(blob: &[u8], password: &str, host: &str) -> Result<String, String> {
+    decrypt_value_version(blob, password, host, 23)
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn decrypt_value_version(blob: &[u8], password: &str, host: &str, schema_version: u32) -> Result<String, String> {
     let (version, ciphertext) = blob.split_at(blob.len().min(3));
     if ciphertext.is_empty() {
         return Err("加密值为空".to_string());
@@ -591,7 +631,12 @@ pub fn decrypt_value(blob: &[u8], password: &str, host: &str) -> Result<String, 
     let key = chromium_key(password);
     let mut plaintext = decrypt(Cipher::aes_128_cbc(), &key, Some(&CHROMIUM_IV), ciphertext)
         .map_err(|_| "解密失败：钥匙串里的密钥和这个浏览器的 cookie 不匹配".to_string())?;
-    if plaintext.len() > CHROMIUM_HOST_HASH_LEN {
+    if schema_version >= 24 {
+        if plaintext.len() < CHROMIUM_HOST_HASH_LEN { return Err("Cookie 缺少域名绑定摘要".into()); }
+        let digest = hash(MessageDigest::sha256(), host.as_bytes()).map_err(|e| e.to_string())?;
+        if digest.as_ref() != &plaintext[..CHROMIUM_HOST_HASH_LEN] { return Err("Cookie 的域名绑定摘要不匹配".into()); }
+        plaintext.drain(..CHROMIUM_HOST_HASH_LEN);
+    } else if plaintext.len() > CHROMIUM_HOST_HASH_LEN {
         let digest = hash(MessageDigest::sha256(), host.as_bytes())
             .map_err(|error| format!("无法计算 host 摘要：{error}"))?;
         if digest.as_ref() == &plaintext[..CHROMIUM_HOST_HASH_LEN] {
@@ -609,7 +654,7 @@ pub fn decrypt_value(blob: &[u8], password: &str, host: &str) -> Result<String, 
 #[cfg(target_os = "macos")]
 pub fn safe_storage_password(service: &str) -> Result<String, String> {
     let output = Command::new("security")
-        .args(["find-generic-password", "-w", "-s", service])
+        .args(["find-generic-password", "-w", "-s", service, "-a", service.strip_suffix(" Safe Storage").unwrap_or(service)])
         .output()
         .map_err(|error| format!("无法运行 security：{error}"))?;
     if !output.status.success() {
@@ -671,6 +716,13 @@ mod tests {
     }
 
     #[test]
+    fn chromium_key_matches_an_independent_pbkdf2_sha1_vector() {
+        // Node crypto.pbkdf2Sync("test-password", "saltysalt", 1003, 16, "sha1").
+        // A round trip through seal() alone cannot detect swapped password/salt.
+        assert_eq!(chromium_key("test-password").as_slice(), decode_hex("c0ffe4c25f07f62bfc6ab011d9efa54e").unwrap());
+    }
+
+    #[test]
     fn an_old_value_without_the_host_prefix_still_decrypts() {
         let key = chromium_key(PASSWORD);
         let mut blob = b"v11".to_vec();
@@ -724,5 +776,49 @@ mod tests {
         assert_eq!(decode_hex("4f72626974").unwrap(), b"Orbit");
         assert!(decode_hex("abc").is_none());
         assert!(decode_hex("zz").is_none());
+    }
+
+    fn fixture_database(sql: &str) -> (PathBuf, PathBuf) {
+        let root=std::env::temp_dir().join(format!("orbit-cookie-test-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let database=root.join("Cookies");
+        let output=Command::new(SQLITE3).arg(&database).arg(sql).output().unwrap();
+        assert!(output.status.success(),"{}",String::from_utf8_lossy(&output.stderr));
+        (root,database)
+    }
+
+    #[test]
+    fn network_database_takes_precedence_over_an_upgrade_leftover() {
+        let (root,legacy)=fixture_database("create table cookies (name text);");
+        assert_eq!(chromium_database(&root),Some(legacy));
+        std::fs::create_dir(root.join("Network")).unwrap();
+        let current=root.join("Network/Cookies"); std::fs::write(&current,[]).unwrap();
+        assert_eq!(chromium_database(&root),Some(current));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn schema_24_validates_domain_binding_even_for_an_empty_cookie() {
+        let value=seal(b"", ".example.test");
+        assert_eq!(decrypt_value_version(&value,PASSWORD,".example.test",24).unwrap(),"");
+        assert!(decrypt_value_version(&value,PASSWORD,".other.test",24).is_err());
+    }
+
+    #[test]
+    fn chromium_partitioned_cookies_are_counted_and_never_widened() {
+        let (root,db)=fixture_database("create table meta (key text,value text);insert into meta values ('version','24');create table cookies (host_key text,name text,value text,encrypted_value blob,path text,expires_utc integer,is_secure integer,is_httponly integer,samesite integer,top_frame_site_key text);insert into cookies values ('.example.test','session','ok',X'','/',0,1,1,1,'');insert into cookies values ('.example.test','partition','other',X'','/',0,1,1,1,'https://other.test');");
+        let snapshot=CookieSnapshot::create(&db).unwrap();
+        let read=chromium_cookies(&snapshot.database,PASSWORD).unwrap();
+        assert_eq!(read.cookies.len(),1);assert_eq!(read.cookies[0]["value"],"ok");assert_eq!(read.skipped,1);
+        let temporary=snapshot.directory.clone();drop(snapshot);assert!(!temporary.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn firefox_millisecond_expiry_and_container_identity_survive_import() {
+        let (root,db)=fixture_database("pragma user_version=16;create table moz_cookies (host text,name text,value text,path text,expiry integer,isSecure integer,isHttpOnly integer,sameSite integer,originAttributes text);insert into moz_cookies values ('example.test','sid','ordinary','/',1893456000000,1,1,1,'');insert into moz_cookies values ('example.test','sid','container','/',1893456000000,1,1,1,'^userContextId=2');");
+        let read=firefox_cookies(&db).unwrap();
+        assert_eq!(read.cookies.len(),1);assert_eq!(read.cookies[0]["expires"],1893456000.0);assert_eq!(read.cookies[0]["value"],"ordinary");assert_eq!(read.skipped,1);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

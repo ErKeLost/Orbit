@@ -11,6 +11,7 @@ import {applyRequestBudget,resolveRequestBudgetSettings} from './request-budget.
 import type {BudgetMessage,RequestBudgetSettings} from './request-budget.ts'
 import {enableFastSearchTools,FAST_SEARCH_GUIDELINE} from './search-tools.ts'
 import {enableWebSearchTool,registerWebSearch,resolveWebSearchSettings} from './web-search.ts'
+import {registerVoiceService} from './voice/service.ts'
 // Pi official docs/extensions.md: registerCommand, getAllTools, setActiveTools,
 // ExtensionCommandContext.navigateTree and setLabel. Loaded only by this GUI.
 export const SESSION_META_TYPE='pi-gui-session-meta'
@@ -1077,6 +1078,7 @@ function dropReason(settings:RequestBudgetSettings,result:{droppedByCount:number
 }
 
 export default async function (pi: ExtensionAPI) {
+  registerVoiceService(pi)
   let latestProviderToolChars: number | undefined
   registerSubagentTools(pi)
   registerImages(pi)

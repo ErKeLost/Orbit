@@ -56,13 +56,13 @@ export function registerBrowserTask(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "browser_task",
     label: "Browser task",
-    description: "Drive the real browser in Orbit's third column to finish one web goal: read the live page, click, type and select through the DevTools protocol, and report what the page actually shows.",
+    description: "Open or navigate Orbit's browser column and finish one web goal: read the live page, click, type and select, then report what the page actually shows. Use this directly for opening the browser, even without a destination URL.",
     promptGuidelines: [
       "Give one complete web goal and, when the task starts somewhere specific, a start URL. Do not plan clicks, name selectors or CSS, describe coordinates, or invent what 'done' looks like: the loop reads the live page and a decision model picks one operation and one observed element per step.",
       "Put every exact string you already know in textSlots with a short purpose — search terms, names, dates, addresses, codes. They win over anything the run would write itself, and the decision model sees only each purpose, never the value.",
       "Fields no textSlot covers are written by the run's own model, reading the goal and the page (this is what makes 'search for X' work without preparing X first). It never invents personal data: a value it cannot know stops the run with needs_text naming the field, so re-issue with that value added. Use allowGeneratedText: false when every value must come from textSlots.",
       "Use readOnly for inspection goals (read, summarise, check a page) so nothing on the page can be changed.",
-      "The browser is a real Chrome with its own profile: it is signed in only to what you signed in inside this column. Never try to get past a sign-in wall, paywall or captcha — the run reports blocked instead, and the user can sign in by hand in the same column.",
+      "The primary browser is the native view in Orbit's column, using its selected profile. A separate Chrome profile is a compatibility fallback, reported in the result; its login state may differ. Never try to bypass a sign-in wall, paywall or captcha.",
       "Steps that look irreversible (buying, sending, publishing, deleting) pause for the user's confirmation; if there is no one to confirm, the run stops with needs_review rather than acting.",
       "Set the budget to the size of the job, not larger: a task that needs ten steps should not be given a hundred. The result reports status, the page it ended on, and the page's own visible text as evidence.",
       "Prefer browser_task over gui_task when the goal is a website: the element table is the page's own DOM and the input is a real browser click, not a synthetic one.",
@@ -73,6 +73,7 @@ export function registerBrowserTask(pi: ExtensionAPI): void {
       try {
         const result = await runBrowserTask({
           input,
+          scope: ctx.sessionManager.getSessionFile() ?? ctx.sessionManager.getSessionId(),
           signal,
           emit: event => publish(onUpdate, event),
           ...(ctx?.hasUI

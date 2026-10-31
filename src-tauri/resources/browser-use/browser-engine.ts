@@ -50,7 +50,7 @@ const CONTROL_OPERATIONS = {
   SCROLL_DOWN: "Scroll the page down to reveal content that is not on screen.",
   SCROLL_UP: "Scroll the page up to reveal content that is not on screen.",
   WAIT: "Wait briefly for the page to finish updating.",
-  DONE: "Every requirement of the goal is now visibly satisfied on this page.",
+  DONE: "Every requirement of the goal is verified by the observed browser state or visible page. An open blank tab satisfies a request to open the browser when no destination was requested.",
   BLOCKED: "No offered operation can make progress from this page.",
 } as const
 
@@ -528,15 +528,13 @@ function validateChoice(
  * engine a run used is now reported in its metrics: a fall back is never silent
  * again.
  */
-async function openDriver(url: string | undefined, signal?: AbortSignal): Promise<{ driver: BrowserDriverLike; fallback?: string }> {
+async function openDriver(url: string | undefined, signal?: AbortSignal, scope?: string): Promise<{ driver: BrowserDriverLike; fallback?: string }> {
+  signal?.throwIfAborted()
   if (await ViewDriver.available().catch(() => false)) {
     try {
-      return { driver: await ViewDriver.open(url, signal) }
+      return { driver: await ViewDriver.open(url, signal, scope) }
     } catch (error) {
-      // A view that cannot be driven (no tab appeared, a page that refuses
-      // scripts) must not fail the run — but *why* it fell back is the fact that
-      // used to be swallowed by this catch while a run quietly drove a browser
-      // nobody could see. It travels with the result instead.
+      signal?.throwIfAborted()
       return { driver: await BrowserDriver.open(url, signal), fallback: error instanceof Error ? error.message : String(error) }
     }
   }
@@ -564,6 +562,7 @@ export type BrowserDriverLike = {
 
 export type RunBrowserTaskOptions = {
   input: BrowserTaskInput
+  scope?: string
   signal?: AbortSignal
   emit?: (event: BrowserTaskEvent) => void
   /** Asked before an irreversible step. Without it such a step never executes. */
@@ -606,11 +605,18 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
     if (detail) failure = { stage, ...(branch ? { branch } : {}), detail, ...(hint ? { hint } : {}) }
     emit?.({ type: "status", step: actions, status: next, payload: { detail: detail ?? next } })
   }
+  // Decisions, field generation and confirmations can outlive cancellation or
+  // the budget. Recheck after each await before delivering any new action.
+  const interrupted = () => {
+    if (signal?.aborted) { stop("aborted", "任务被取消"); return true }
+    if (Date.now() > deadline) { stop("timeout", `超过时间预算（${input.budget.maxDurationMs}ms）`, "duration", "提高 maxDurationMs 或缩小目标", "budget"); return true }
+    return false
+  }
 
   try {
     if (!driver) {
       emit?.({ type: "launching", step: 0, status: "running", payload: { url: input.url ?? "" } })
-      const opened = await openDriver(input.url, signal)
+      const opened = await openDriver(input.url, signal, options.scope)
       driver = opened.driver
       if (opened.fallback) {
         metrics.engineFallback = opened.fallback
@@ -623,14 +629,7 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
     emit?.({ type: "observed", step: 0, status: "running", payload: { url: page.url, candidates: page.actions.length } })
 
     while (true) {
-      if (signal?.aborted) {
-        stop("aborted", "任务被取消")
-        break
-      }
-      if (Date.now() > deadline) {
-        stop("timeout", `超过时间预算（${input.budget.maxDurationMs}ms）`, "duration", "提高 maxDurationMs 或缩小目标", "budget")
-        break
-      }
+      if (interrupted()) break
       if (decisions >= input.budget.maxDecisions) {
         stop("max_decisions", `超过决策预算（${input.budget.maxDecisions}）`, "decisions", "提高 maxDecisions", "budget")
         break
@@ -641,6 +640,7 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
           ? await options.decide(page, input.goal, trace, input.textSlots ?? [], { readOnly: input.readOnly, usedSlots, signal })
           : await decideWithRetry(page, input, trace, usedSlots, signal)
       } catch (error) {
+        if (interrupted()) break
         const detail = error instanceof Error ? error.message : String(error)
         stop("error", detail, "decision", "可以重试；若反复失败请缩小目标或检查 Jev 额度", "decide")
         break
@@ -656,6 +656,7 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
         status: "running",
         payload: { operation: decision.operation, target: decision.target, label: decision.action?.label, latencyMs: decision.latencyMs, confidence: decision.confidence },
       })
+      if (interrupted()) break
 
       if (decision.operation === "DONE" || decision.operation === "BLOCKED") {
         // The page must not have moved since the decision: "done" about a page
@@ -666,6 +667,7 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
           trace.push({ step: actions, operation: decision.operation, note: "决策后页面已变化，重新观察" })
           continue
         }
+        if (interrupted()) break
         // A `DONE` with no confidence behind it is not evidence that the goal is
         // met, so it is refused and recorded — but it stays on the table. Taking
         // it away (as the desktop loop does) would mean a page that has genuinely
@@ -709,6 +711,7 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
           stop("needs_text", detail, branch, hint, "slot")
         },
       })
+      if (interrupted()) break
       if (missingText) break
 
       const irreversible = decision.irreversible ?? 0
@@ -719,6 +722,7 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
           break
         }
         const accepted = await options.confirm(summary).catch(() => false)
+        if (interrupted()) break
         if (!accepted) {
           stop("needs_review", `用户拒绝了这一步：${summary}`, "declined", undefined, "risk-gate")
           break
@@ -755,8 +759,10 @@ export async function runBrowserTask(options: RunBrowserTaskOptions): Promise<Br
       }
 
       try {
+        if (interrupted()) break
         await time(metrics, "action", () => driver!.act(action, page!, text))
       } catch (error) {
+        if (signal?.aborted) { stop("aborted", "任务被取消"); break }
         if (error instanceof PageBusy) {
           // Nothing was decided and nothing was delivered: the page simply never
           // became readable. Waiting and reading again is the whole remedy, and

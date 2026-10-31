@@ -157,6 +157,36 @@ const budget = { maxActions: 6, maxDecisions: 10, maxDurationMs: 30_000 }
 const slots: TextSlot[] = [{ id: "query", value: "private song", description: "the song to search for" }]
 
 describe("loop rules", () => {
+  test("cancellation while a decision is pending cannot deliver another action", async () => {
+    const controller = new AbortController()
+    const driver = fakeDriver([observation([click("e3", 20, "Go"), ...controls])])
+    const result = await runBrowserTask({input:{goal:"go",budget},driver,signal:controller.signal,decide:async()=>{
+      controller.abort()
+      return decision(click("e3",20,"Go"))
+    }})
+    expect(result.status).toBe("aborted")
+    expect(driver.acts).toHaveLength(0)
+  })
+  test("cancellation during text generation cannot type the late result", async () => {
+    const controller = new AbortController()
+    const driver = fakeDriver([observation([fill("e1",10,"Search")])])
+    const result = await runBrowserTask({input:{goal:"search",budget},driver,signal:controller.signal,
+      decide:async()=>decision(fill("e1",10,"Search"),{operation:"TYPE_TEXT"}),
+      generate:async()=>{controller.abort();return {text:"late text",latencyMs:1}},
+    })
+    expect(result.status).toBe("aborted")
+    expect(driver.acts).toHaveLength(0)
+  })
+  test("cancellation while a confirmation is open cannot deliver the confirmed action", async () => {
+    const controller=new AbortController()
+    const driver=fakeDriver([observation([click("e1",10,"Publish")])])
+    const result=await runBrowserTask({input:{goal:"publish",budget},driver,signal:controller.signal,
+      decide:async()=>decision(click("e1",10,"Publish"),{irreversible:0.9}),
+      confirm:async()=>{controller.abort();return true},
+    })
+    expect(result.status).toBe("aborted")
+    expect(driver.acts).toHaveLength(0)
+  })
   test("records the action before observing its result", async () => {
     // The post-action read fails; the delivered action must still be reported.
     const driver = fakeDriver([observation([...controls]), observation([...controls])], { unreadableAfter: 1 })

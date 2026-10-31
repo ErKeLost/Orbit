@@ -63,11 +63,12 @@ export async function deliveryFor(command:RpcCommand,target=activeTarget()):Prom
 }
 /** Session-level commands: open / switch / retire a session, send prompts,
  *  steer a running turn, and the queue. */
-export async function sendPrompt(command:RpcCommand,target=activeTarget(),wasRunning?:boolean){
+export async function sendPrompt(command:RpcCommand,target=activeTarget(),wasRunning?:boolean,beforeSend?:()=>void){
  // 一切都落在这条连接自己的快照上：后台面板/分屏发消息，不会把乐观预览、等待位写进别的会话。
  const id=route(target),running=wasRunning??current(id).transcript.running
  try{
   const delivery=await deliveryFor(command,id)
+  beforeSend?.()
   const result=await request<{disposition?:string}>(delivery.command,45000,id)
   // 退化成普通 prompt 的那一条已经开了一轮，不再需要用 `prompt_settled` 收等待位。
   if(!running&&result?.disposition!=='started')applyLocalEvent(id,{type:'prompt_settled'})

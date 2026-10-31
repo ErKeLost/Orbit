@@ -124,6 +124,26 @@ describe("画中画", () => {
     expect(useShell.getState().browserTabs).toHaveLength(0);
   });
 
+  test("不同网站交接时保留先前打开的浏览器页", async () => {
+    const first = useShell.getState().openBrowser("https://one.example/login", { path: "browser:one" });
+    useShell.getState().adoptBrowser(first, "https://one.example/login");
+    const second = useShell.getState().openBrowser("https://two.example/dashboard", { path: "browser:two" });
+    useShell.getState().adoptBrowser(second, "https://two.example/dashboard");
+    expect(useShell.getState().browserTabs.map(tab=>tab.path)).toEqual(["browser:one","browser:two"]);
+    expect(useShell.getState().browserActive).toBe("browser:two");
+  });
+  test("后台任务释放页面不会抢焦点；用户关闭浮页同时清理画中画", async () => {
+    const first=useShell.getState().openBrowser("https://one.example",{path:"browser:first"});
+    const second=useShell.getState().openBrowser("https://two.example");
+    useShell.getState().releaseBrowser(first);
+    expect(useShell.getState().browserActive).toBe(second);
+    expect(useShell.getState().browserTabs[0].agent).toBeUndefined();
+    useShell.getState().toggleBrowserPip(first);
+    useShell.getState().closeFile(first);
+    expect(useShell.getState().browserPip).toBeNull();
+    expect(useShell.getState().browserTabs.map(tab=>tab.path)).toEqual([second]);
+  });
+
   test("拖动记住位置：下次弹出还在原处", async () => {
     let path = "";
     await act(async () => {

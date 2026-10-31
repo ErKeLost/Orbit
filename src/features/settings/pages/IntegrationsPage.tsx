@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Input, Toggle } from "../../../shared/ui/controls";
+import { Button, Input, Select, Toggle } from "../../../shared/ui/controls";
 import { Icon } from "../../../components/Icon";
 import { ImageEndpointDialog } from "../../../components/ImageEndpointDialog";
 import { toast as gooeyToast } from "../../../shared/ui/toast";
@@ -53,20 +53,14 @@ function CapabilityRow({
         {`generate_${kind}`}
       </span>
       {showSelect ? (
-        <select
-          aria-label={`${spec.label ?? kind} 默认模型`}
-          className="provider-kind-select"
+        <Select
+          label={`${spec.label ?? kind} 默认模型`}
+          className="w-52 shrink-0"
           value={defaultModel ?? ""}
           disabled={disabled}
-          onChange={(event) => onPickModel(event.target.value)}
-        >
-          <option value="">（未设置）</option>
-          {models.map((model) => (
-            <option key={model.id} value={model.id}>
-              {model.name ?? model.id}
-            </option>
-          ))}
-        </select>
+          onChange={onPickModel}
+          options={[{ value: "", label: "（未设置）" }, ...models.map(model => ({ value: model.id, label: model.name ?? model.id }))]}
+        />
       ) : (
         <span className="provider-connection-note">
           {enabled ? `${models.length} 个模型` : "已关闭"}
@@ -232,20 +226,14 @@ export function IntegrationsPage() {
               </div>
               <div className="provider-row">
                 <span className="provider-row-label">默认模型</span>
-                <select
-                  aria-label="默认出图模型"
-                  className="provider-kind-select"
+                <Select
+                  label="默认出图模型"
+                  className="w-52 shrink-0"
                   value={config.data?.defaults?.model ?? ""}
                   disabled={!desktop}
-                  onChange={(event) => void write({ model: event.target.value }, "默认模型已切换")}
-                >
-                  <option value="">（未设置）</option>
-                  {models.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.name ?? model.id}
-                    </option>
-                  ))}
-                </select>
+                  onChange={model => void write({ model }, "默认模型已切换")}
+                  options={[{ value: "", label: "（未设置）" }, ...models.map(model => ({ value: model.id, label: model.name ?? model.id }))]}
+                />
                 <span className="provider-connection-note">generate_image 缺省用它，调用时也可单独指定</span>
               </div>
               <div className="provider-row">

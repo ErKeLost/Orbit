@@ -6,6 +6,8 @@ import { cn } from "@/lib/utils"
 
 export type LiveWaveformProps = HTMLAttributes<HTMLDivElement> & {
   active?: boolean
+  /** Project an existing audio owner; supplying this never opens a microphone. */
+  level?: number
   processing?: boolean
   deviceId?: string
   barWidth?: number
@@ -29,6 +31,7 @@ export type LiveWaveformProps = HTMLAttributes<HTMLDivElement> & {
 
 export const LiveWaveform = ({
   active = false,
+  level,
   processing = false,
   deviceId,
   barWidth = 3,
@@ -66,6 +69,9 @@ export const LiveWaveform = ({
   const needsRedrawRef = useRef(true)
   const gradientCacheRef = useRef<CanvasGradient | null>(null)
   const lastWidthRef = useRef(0)
+  const levelRef = useRef(level)
+  const controlled = level !== undefined
+  useEffect(() => { levelRef.current = level }, [level])
 
   const heightStyle = typeof height === "number" ? `${height}px` : height
 
@@ -230,7 +236,7 @@ export const LiveWaveform = ({
 
   // Handle microphone setup and teardown
   useEffect(() => {
-    if (!active) {
+    if (!active || controlled) {
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((track) => track.stop())
         streamRef.current = null
@@ -313,6 +319,7 @@ export const LiveWaveform = ({
     }
   }, [
     active,
+    controlled,
     deviceId,
     fftSize,
     smoothingTimeConstant,
@@ -339,7 +346,22 @@ export const LiveWaveform = ({
       if (active && currentTime - lastUpdateRef.current > updateRate) {
         lastUpdateRef.current = currentTime
 
-        if (analyserRef.current) {
+        if (levelRef.current !== undefined) {
+          const value = Math.min(1, Math.max(0, levelRef.current * sensitivity))
+          if (mode === "static") {
+            const count = Math.max(1, Math.floor(rect.width / (barWidth + barGap)))
+            staticBarsRef.current = Array.from({ length: count }, (_, index) => {
+              const distance = Math.abs((index + 0.5) / count - 0.5) * 2
+              return Math.max(0.05, value * (1 - distance * 0.6))
+            })
+            lastActiveDataRef.current = staticBarsRef.current
+          } else {
+            historyRef.current.push(Math.max(0.05, value))
+            historyRef.current = historyRef.current.slice(-historySize)
+            lastActiveDataRef.current = [...historyRef.current]
+          }
+          needsRedrawRef.current = true
+        } else if (analyserRef.current) {
           const dataArray = new Uint8Array(
             analyserRef.current.frequencyBinCount
           )

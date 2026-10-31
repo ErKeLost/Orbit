@@ -18,7 +18,7 @@ export type ExecutionBudget = { maxActions: number; maxDecisions: number; maxDur
 
 export type BrowserTaskInput = {
   goal: string
-  /** Where to start. Omitted reuses the page the browser column already shows. */
+  /** Where to start. Omitted continues this session's last claimed page. */
   url?: string
   textSlots?: TextSlot[]
   /**
