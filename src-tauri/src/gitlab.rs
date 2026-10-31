@@ -1165,6 +1165,10 @@ mod tests {
     fn serve_gitlab(
         responses: Vec<(u16, Value)>,
     ) -> (GitlabConfig, thread::JoinHandle<Vec<String>>) {
+        // Agent construction initializes the OS trust store once. Do it before
+        // the mock server's accept deadline so certificate enumeration cannot
+        // make these local HTTP tests fail under parallel load.
+        let _ = gitlab_agent();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let config = GitlabConfig {
