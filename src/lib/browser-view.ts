@@ -23,8 +23,8 @@ export type BrowserViewStatus = { open: boolean; url: string; visible: boolean; 
  * shows or hides it — one call, so there is no window between "the tab exists"
  * and "the page is loading" for a race to fall into.
  */
-export function syncBrowserView(tab: string, rect: ViewRect, url?: string, visible = true): Promise<BrowserViewStatus> {
-  return invoke<BrowserViewStatus>("browser_view_sync", { tab, rect, url: url ?? null, visible })
+export function syncBrowserView(tab: string, rect: ViewRect, url?: string, visible = true, background = false): Promise<BrowserViewStatus> {
+  return invoke<BrowserViewStatus>("browser_view_sync", { tab, rect, url: url ?? null, visible, ...(background ? { background: true } : {}) })
 }
 
 /** Which tab the agent's channel talks to: the one in front. */

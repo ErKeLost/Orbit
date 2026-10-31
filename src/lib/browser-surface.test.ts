@@ -11,7 +11,7 @@ describe("browser surface ownership", () => {
     const pip=claimBrowserSurface("page")
     await pip.present({...rect,x:100})
     expect(sync.mock.calls).toHaveLength(2)
-    expect(sync.mock.calls.at(-1)).toEqual(["page",{...rect,x:100},undefined,true])
+    expect(sync.mock.calls.at(-1)).toEqual(["page",{...rect,x:100},undefined,true,false])
     dock.release()
     await pip.present({...rect,x:120})
     expect(sync.mock.calls.at(-1)?.[3]).toBe(true)

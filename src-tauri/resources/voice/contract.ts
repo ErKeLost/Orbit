@@ -10,7 +10,7 @@ export const VOICE_CAPABILITIES = {
   general_question: { description: "Request stable general knowledge, advice or discussion that can be answered without external evidence or tools.", effect: "conversation.read", target: false },
   chat: { description: "Social conversation, acknowledgement or encouragement. Reaffirming an already active instruction adds no new work unless the caller changes its scope or requests a new action.", effect: "conversation.read", target: false },
   reply_confirmation: { description: "Provide a decision or value for the specific pending interaction already explained to the caller.", effect: "task.write", target: true },
-  control_voice: { description: "Change the voice call or its current playback. Continuing existing task execution is independent of playback and needs no extra command.", effect: "voice.write", target: false },
+  control_voice: { description: "Change voice playback or end the call. Stopping playback leaves tasks running. Ending the call also cancels the session created by that call; sessions merely observed remain independent.", effect: "voice.write", target: false },
   control_task: { description: "Explicitly cancel the execution of a task, independently of voice playback.", effect: "task.write", target: true },
   change_focus: { description: "Change the session being observed or discussed, without changing its execution.", effect: "focus.write", target: true },
   clarify: { description: "The caller's requested effect or its required target cannot be resolved from available context.", effect: "conversation.read", target: false },

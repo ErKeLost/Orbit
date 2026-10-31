@@ -35,6 +35,8 @@ beforeEach(() => {
     browserTabs: [],
     browserActive: null,
     browserOpen: false,
+    browserAutoReveal: true,
+    browserWidth: 520,
     browserPip: null,
   });
 });
@@ -154,6 +156,69 @@ describe("the browser column", () => {
     expect(useShell.getState().browserTabs).toHaveLength(0);
     expect(useShell.getState().browserOpen).toBe(false);
     expect(path).not.toBe("");
+  });
+
+  test("agent navigation, new tabs and handoff respect manual collapse until the user reopens", async () => {
+    const host = await mount();
+    const dock = host.querySelector("[data-browser-dock]") as HTMLElement;
+    await act(async () => {
+      useShell.getState().openBrowser("https://one.example", { path: "browser:one" });
+      useShell.getState().setBrowserOpen(false);
+      useShell.getState().openBrowser("https://one.example/next", { path: "browser:one" });
+      useShell.getState().openBrowser("https://two.example", { path: "browser:two" });
+      useShell.getState().adoptBrowser("browser:two");
+    });
+    expect(dock.hidden).toBe(true);
+    expect(useShell.getState().browserActive).toBe("browser:one");
+    expect(useShell.getState().browserTabs).toHaveLength(2);
+    await act(async () => useShell.getState().setBrowserOpen(true));
+    expect(dock.hidden).toBe(false);
+    await act(async () => useShell.getState().openBrowser("https://two.example/next", { path: "browser:two" }));
+    expect(useShell.getState().browserActive).toBe("browser:two");
+  });
+
+  test("a new background task page gets a hidden native view without reopening the dock", async () => {
+    const host = await mount();
+    nativeCall.mockClear();
+    await act(async () => {
+      useShell.getState().setBrowserOpen(false);
+      useShell.getState().openBrowser("https://background.example", { path: "browser:background" });
+    });
+    await act(async () => { await new Promise(resolve => requestAnimationFrame(resolve)); });
+    expect((host.querySelector("[data-browser-dock]") as HTMLElement).hidden).toBe(true);
+    expect(nativeCall).toHaveBeenCalledWith("browser_view_sync", expect.objectContaining({ tab: "browser:background", visible: false, background: true }));
+  });
+
+  test("reorder preserves page identity, selection and tabs opened while a drag settles", () => {
+    const shell = useShell.getState();
+    const first = shell.openBrowser("https://one.example");
+    const second = shell.openBrowser("https://two.example");
+    const third = shell.openBrowser("https://three.example");
+    const pages = useShell.getState().browserTabs.slice();
+    shell.reorderBrowserTabs([second, first]);
+    expect(useShell.getState().browserTabs).toEqual([pages[1], pages[0], pages[2]]);
+    expect(useShell.getState().browserActive).toBe(third);
+    shell.closeBrowserTabs(first, "current");
+    shell.reorderBrowserTabs([first, second, third]);
+    expect(useShell.getState().browserTabs.map(tab => tab.path)).toEqual([second, third]);
+  });
+
+  test("the divider commits a fast pointer release and releases capture when focus is lost", async () => {
+    const host = await mount();
+    const handle = host.querySelector('[role="separator"]') as HTMLElement;
+    const capture = vi.fn(), release = vi.fn();
+    handle.setPointerCapture = capture;
+    handle.releasePointerCapture = release;
+    await act(async () => handle.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 1, clientX: 500 })));
+    await act(async () => window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, clientX: 400 })));
+    expect(useShell.getState().browserWidth).toBe(620);
+    expect(capture).toHaveBeenCalledWith(1);
+    expect(release).toHaveBeenCalledWith(1);
+    expect(document.documentElement.classList.contains("is-resizing")).toBe(false);
+    await act(async () => handle.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 2, clientX: 400 })));
+    await act(async () => window.dispatchEvent(new Event("blur")));
+    expect(release).toHaveBeenCalledWith(2);
+    expect(document.documentElement.classList.contains("is-resizing")).toBe(false);
   });
 
   test("a run's tab at a sign-in wall becomes the reader's tab instead of vanishing", async () => {

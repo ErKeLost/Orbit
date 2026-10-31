@@ -38,6 +38,7 @@ export function BrowserTab({ path, url, title, active = true, agent = false }: {
    * 在列和浮窗之间来回跳。
    */
   const floating = useShell((state) => state.browserPip?.tab === path)
+  const dockOpen = useShell((state) => state.browserOpen)
   const toggleBrowserPip = useShell((state) => state.toggleBrowserPip)
   const [loading, setLoading] = useState(false)
   const [importRequested, setImportRequested] = useState(false)
@@ -112,6 +113,16 @@ export function BrowserTab({ path, url, title, active = true, agent = false }: {
       // 原生子视图不是页面布局的一部分，没人报告矩形它就会浮在别的界面上。这里
       // 主动 hide —— 只是隐藏，页面本身、滚动和登录态都留着，回来重新 show 同一页。
       if (rect.width < 1 || rect.height < 1) {
+        // A collapsed browser remains a valid task surface. Create/keep its
+        // native page hidden, so navigation and DOM work need not reopen UI.
+        if (agent) {
+          const parked = lastBox.current ?? { x: -10000, y: -10000, width: 1120, height: 780 }
+          const key = `background:${url}`
+          if (last === key) return
+          last = key
+          void surface.present(parked, url || undefined, false, true).catch(error => fail(`后台视图不可用：${error instanceof Error ? error.message : String(error)}`))
+          return
+        }
         const parked = lastBox.current
         if (!parked || last === "hidden") return
         last = "hidden"
@@ -171,7 +182,7 @@ export function BrowserTab({ path, url, title, active = true, agent = false }: {
       if (follow) window.cancelAnimationFrame(follow)
       surface.release()
     }
-  }, [path, url, live, agent, fail, floating, profileRevision, importing, importRevision])
+  }, [path, url, live, agent, fail, floating, dockOpen, profileRevision, importing, importRevision])
 
   // The page owns the address while the field is not being edited: the field is
   // written by code, never by a re-render.

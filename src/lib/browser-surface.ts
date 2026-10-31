@@ -16,10 +16,10 @@ export function claimBrowserSurface(tab: string) {
     return result
   }
   return {
-    present(rect: ViewRect, url?: string, visible = true) {
+    present(rect: ViewRect, url?: string, visible = true, background = false) {
       box = rect
       const current = ++revision
-      return enqueue(() => owners.get(tab) === owner && current === revision ? syncBrowserView(tab, rect, url, visible) : Promise.resolve(undefined))
+      return enqueue(() => owners.get(tab) === owner && current === revision ? syncBrowserView(tab, rect, url, visible, background) : Promise.resolve(undefined))
     },
     release() {
       if (owners.get(tab) !== owner) return

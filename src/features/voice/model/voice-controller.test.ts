@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import { emptyTranscript } from "@/lib/protocol/types"
 import { useWorkspace } from "@/lib/store"
+const stopping = vi.hoisted(() => vi.fn(async (_binding: {connectionId:string;sessionFile:string}) => {}))
 const fixture = vi.hoisted(() => ({ snapshots: new Map<string, unknown>(), connections: new Map<string, { cwd: string }>(), prepareInput: vi.fn(async () => {}), prepareOutput: vi.fn(async () => {}), activate: vi.fn(), setDevice: vi.fn(async () => {}), stopInput: vi.fn(), disposeOutput: vi.fn(), config: vi.fn(), checkService: vi.fn(async () => {}), configure: vi.fn(async () => ({type:"done"})), outputHandlers: undefined as {onFirstAudio:(at:number)=>void}|undefined, create: vi.fn(), close: vi.fn(async () => {}), route: vi.fn(), execute: vi.fn(async () => {}), cancels: vi.fn(), append: vi.fn(), events: new Map<string, (event: unknown) => void>() }))
 vi.mock("@/lib/rpc-core", () => ({ connections: fixture.connections, current: (id: string) => fixture.snapshots.get(id), subscribeSessionEvents: (id: string, callback: (event: unknown) => void) => { fixture.events.set(id,callback); return ()=>fixture.events.delete(id) } }))
 vi.mock("@/lib/rpc-connection", () => ({ startConnection: fixture.create, closeConnection: fixture.close }))
 vi.mock("@/lib/rpc-projects", () => ({ rimeConfig: fixture.config, rimeTtsPrepare: async () => {}, saveRimeConfig: async (config: unknown) => config }))
 vi.mock("./voice-service", () => ({ checkVoiceService: fixture.checkService, voiceService: (target: string, input: {action:string}, ...args: unknown[]) => input.action === "configure_session" ? fixture.configure(target,input,...args) : fixture.route(target,input,...args) }))
-vi.mock("./command-gateway", () => ({ boundSnapshot: (binding: {connectionId:string;sessionFile:string}) => { const snapshot=fixture.snapshots.get(binding.connectionId) as {state:{sessionFile:string}};if(snapshot?.state.sessionFile!==binding.sessionFile)throw new Error("binding changed");return snapshot }, CommandGateway: class { execute = fixture.execute } }))
+vi.mock("./command-gateway", () => ({ stopBoundTask: stopping, boundSnapshot: (binding: {connectionId:string;sessionFile:string}) => { const snapshot=fixture.snapshots.get(binding.connectionId) as {state:{sessionFile:string}};if(snapshot?.state.sessionFile!==binding.sessionFile)throw new Error("binding changed");return snapshot }, CommandGateway: class { execute = fixture.execute } }))
 vi.mock("./speech-input", () => ({ SpeechInput: class { prepareDevice=fixture.prepareInput; activate=fixture.activate; setEndpointMs() {} stop=fixture.stopInput; setSpeaking() {} setDevice=fixture.setDevice } }))
 vi.mock("./speech-output", () => ({ SpeechOutput: class { constructor(handlers: {onFirstAudio:(at:number)=>void}) {fixture.outputHandlers=handlers} busy=false; prepare=fixture.prepareOutput; begin() {} append=fixture.append; finish() {} cancel=fixture.cancels; dispose=fixture.disposeOutput } }))
 const { VoiceController } = await import("./voice-controller")
@@ -190,12 +191,56 @@ describe("voice call and session isolation", () => {
     expect(fixture.execute).toHaveBeenCalledWith(expect.any(String), { connectionId: target, sessionFile: "/new-voice" }, expect.objectContaining({ intent: "lookup" }), expect.stringContaining("北京"), undefined, expect.any(AbortSignal))
     voice.stop()
   })
-  test("task dispatch keeps its bound target when the user switches workspace; hangup never cancels the task", async () => {
+  test("hangup stops the owned task even after the workspace changes", async () => {
     const voice=new VoiceController();await voice.start();const target=voice.getSnapshot().focusId
     useWorkspace.getState().set({connectionId:"somewhere-else",panel:"chat"})
     await voice.submitText("fix login")
     expect(fixture.execute).toHaveBeenCalledWith(expect.any(String),{connectionId:target,sessionFile:"/new-voice"},expect.objectContaining({intent:"dispatch_task"}),expect.stringContaining("fix login"),undefined,expect.any(AbortSignal))
-    voice.stop();expect(fixture.close).not.toHaveBeenCalled()
+    await voice.stop();expect(stopping).toHaveBeenCalledExactlyOnceWith({connectionId:target,sessionFile:"/new-voice"})
+    expect(fixture.close).not.toHaveBeenCalled()
+  })
+  test("hanging up while observing an ordinary session stops only the owned session", async () => {
+    const voice=new VoiceController();await voice.start();const owned=voice.getSnapshot().focusId
+    voice.setFocus("original")
+    await voice.stop()
+    expect(stopping).toHaveBeenCalledExactlyOnceWith({connectionId:owned,sessionFile:"/new-voice"})
+    expect(stopping).not.toHaveBeenCalledWith(expect.objectContaining({connectionId:"original"}))
+  })
+  test("stopping playback leaves execution alone; explicit task cancellation stays on the call", async () => {
+    const voice=new VoiceController();await voice.start();const target=voice.getSnapshot().focusId
+    voice.interrupt();expect(stopping).not.toHaveBeenCalled();expect(fixture.execute).not.toHaveBeenCalled()
+    fixture.route.mockResolvedValueOnce(decision("control_task",target))
+    await voice.submitText("停止当前任务")
+    expect(fixture.execute).toHaveBeenCalledWith(expect.any(String),{connectionId:target,sessionFile:"/new-voice"},expect.objectContaining({intent:"control_task"}),"停止当前任务",undefined,expect.any(AbortSignal))
+    expect(voice.getSnapshot().state).not.toBe("off")
+    await voice.stop()
+  })
+  test("a spoken hangup uses the same owned-task cleanup as the hangup button", async () => {
+    const voice=new VoiceController();await voice.start();const target=voice.getSnapshot().focusId
+    fixture.route.mockResolvedValueOnce({type:"decision",decision:{...decision("control_voice",target).decision,voiceControl:"end_call"}})
+    await voice.submitText("结束通话")
+    expect(stopping).toHaveBeenCalledExactlyOnceWith({connectionId:target,sessionFile:"/new-voice"})
+    expect(voice.getSnapshot().state).toBe("off")
+  })
+  test("explicit stop can target the ordinary session being observed while preserving the call", async () => {
+    const voice = new VoiceController(); await voice.start(); const owned = voice.getSnapshot().focusId
+    voice.setFocus("original")
+    fixture.route.mockResolvedValueOnce(decision("control_task", "original"))
+    await voice.submitText("stop the current task")
+    expect(fixture.execute).toHaveBeenCalledWith(expect.any(String), { connectionId: "original", sessionFile: "/original" }, expect.objectContaining({ intent: "control_task" }), "stop the current task", undefined, expect.any(AbortSignal))
+    expect(voice.getSnapshot()).toMatchObject({ focusId: "original", state: "ready" })
+    expect(stopping).not.toHaveBeenCalled()
+    await voice.stop()
+    expect(stopping).toHaveBeenCalledExactlyOnceWith({ connectionId: owned, sessionFile: "/new-voice" })
+  })
+  test("a late stop failure cannot change a subsequent call", async () => {
+    let reject!:(reason:unknown)=>void
+    stopping.mockImplementationOnce(()=>new Promise((_resolve,fail)=>{reject=fail}))
+    const voice=new VoiceController();await voice.start();const ending=voice.stop()
+    await voice.start();const target=voice.getSnapshot().focusId
+    reject(new Error("old stop failed"));await ending
+    expect(voice.getSnapshot()).toMatchObject({focusId:target,state:"ready",error:null})
+    await voice.stop()
   })
   test("a delayed route result after hangup cannot dispatch a task", async () => {
     let release!: (value: unknown)=>void

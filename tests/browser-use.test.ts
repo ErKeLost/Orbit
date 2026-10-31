@@ -146,4 +146,19 @@ describe("direct browser service", () => {
       expect(host.tabs.get(tabId)!.owner).toBeUndefined()
     } finally { host.close() }
   })
+  test("clicking a background page keeps the panel hidden and does not deliver a global mouse click", async () => {
+    const host = browserHost(), service = new BrowserService(host.transport)
+    try {
+      const { tabId } = await service.run("a", "open", { url: "https://fixture.test/" }) as { tabId: string }
+      host.tabs.get(tabId)!.visible = false
+      const clicked = { count: 0 }
+      host.fixture.document.querySelector("button")!.addEventListener("click", () => { clicked.count++ })
+      host.calls.length = 0
+      expect(await service.run("a", "click", { tabId, selector: "button" })).toMatchObject({ tabId, delivered: true })
+      expect(clicked.count).toBe(1)
+      expect(host.tabs.get(tabId)!.visible).toBe(false)
+      expect(host.calls.some(call => call.op === "present" || call.op === "clickAt")).toBe(false)
+      expect(host.tabs.get(tabId)!.owner).toBeUndefined()
+    } finally { host.close() }
+  })
 })

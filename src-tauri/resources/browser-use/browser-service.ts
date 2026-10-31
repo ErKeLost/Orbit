@@ -96,12 +96,11 @@ export class BrowserService {
       }
       if (operation === "click" && process.platform === "darwin") {
         if (!ready.visible) {
-          await send("present")
-          const deadline = Date.now() + 3000
-          while (!(await send<ViewStatus>("status", {}, 1000))?.visible) {
-            if (Date.now() >= deadline) throw new Error("The target tab is not visible; no click was delivered.")
-            await delay(50, signal)
-          }
+          // Respect a manually collapsed panel or a different foreground tab.
+          // DOM delivery can run in the background; never send a global mouse
+          // click to an invisible page or steal focus to make it clickable.
+          await page("click")
+          return { tabId: id, delivered: true, note: "Background DOM click delivered. Verify with browser_snapshot. If the site requires a trusted visible gesture, ask the user to show the browser panel." }
         }
         const point = await page("click_point") as { x: number; y: number }
         await send("clickAt", point, 5000)

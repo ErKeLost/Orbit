@@ -4,7 +4,7 @@ import { startConnection, closeConnection } from "@/lib/rpc-connection"
 import { rimeConfig, rimeTtsPrepare, type RimeConfig } from "@/lib/rpc-projects"
 import { SpeechInput } from "./speech-input"
 import { SpeechOutput } from "./speech-output"
-import { CommandGateway, boundSnapshot, type VoiceBinding } from "./command-gateway"
+import { CommandGateway, boundSnapshot, stopBoundTask, type VoiceBinding } from "./command-gateway"
 import { taskView, eventFact, progressReply, type TaskFact } from "./task-view"
 import { checkVoiceService, voiceService } from "./voice-service"
 import { VoiceMetrics, type VoiceTrace } from "./latency"
@@ -196,6 +196,9 @@ export class VoiceController {
   }
 
   stop = () => {
+    // The service session was created by this call. Focus may now point at an
+    // ordinary session being observed; hanging up must never abort that one.
+    const owned = this.serviceBinding
     this.epoch++; this.startup?.abort(); this.startup = null; this.on = false; this.response?.abort(); this.response = null
     this.input?.stop(); this.input = null; this.output?.dispose(); this.output = null
     for (const unsubscribe of this.watchers.values()) unsubscribe(); this.watchers.clear(); this.workspaceUnsubscribe?.(); this.workspaceUnsubscribe = null
@@ -204,6 +207,11 @@ export class VoiceController {
     this.pendingRequest = undefined; this.watched.clear()
     this.hearing = false; this.processing = false; this.speaking = false
     this.update({ starting: false, startupStage: null, state: "off", level: 0, outputLevel: 0, partial: "", focusId: "", focusTitle: "" })
+    const epoch = this.epoch
+    if (owned) return stopBoundTask(owned).catch(error => {
+      // Do not stop a replacement session or let a late failure modify a new call.
+      if (epoch === this.epoch) this.fail(new Error(`停止语音任务失败：${error instanceof Error ? error.message : String(error)}`))
+    })
   }
   interrupt = () => { this.response?.abort(); this.processing = false; this.cancelOutput(); this.state() }
   setDeviceId = (id: string) => {
@@ -294,7 +302,7 @@ export class VoiceController {
       this.speak(reply, replies); return
     }
     if (decision.intent === "control_voice") {
-      if (decision.voiceControl === "end_call") this.stop()
+      if (decision.voiceControl === "end_call") await this.stop()
       else if (decision.voiceControl === "stop_speech") this.interrupt()
       else this.speak(this.say("Should I stop speaking, or end the call?", "¿Quieres que deje de hablar o que termine la llamada?"))
       return

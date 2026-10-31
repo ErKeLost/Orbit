@@ -105,6 +105,8 @@ export function useDragResize({
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
+      window.removeEventListener("blur", stop);
+      handle.removeEventListener("lostpointercapture", stop);
       restoreSelection();
       document.body.style.cursor = previousCursor;
       document.documentElement.classList.remove("is-resizing");
@@ -121,6 +123,9 @@ export function useDragResize({
 
     const onUp = (ev: PointerEvent) => {
       if (ev.pointerId !== pointerId) return;
+      // A fast release can carry the final coordinate before another frame or
+      // pointermove arrives. Persist the actual drop position.
+      if (ev.type === "pointerup") pendingX = ev.clientX;
       stop();
     };
 
@@ -128,6 +133,8 @@ export function useDragResize({
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
+    window.addEventListener("blur", stop);
+    handle.addEventListener("lostpointercapture", stop);
   };
 
   useEffect(() => () => stopDrag.current?.(), []);

@@ -31,6 +31,7 @@ function reset() {
     browserTabs: [],
     browserActive: null,
     browserOpen: false,
+    browserAutoReveal: true,
     browserPip: null,
   });
   sync.mockClear();

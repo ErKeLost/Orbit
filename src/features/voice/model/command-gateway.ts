@@ -9,6 +9,24 @@ export function boundSnapshot(binding: VoiceBinding) {
   return snapshot
 }
 
+/** Cancel execution and queued follow-ups for exactly the session the caller selected. */
+export async function stopBoundTask(binding: VoiceBinding, signal?: AbortSignal) {
+  signal?.throwIfAborted()
+  boundSnapshot(binding)
+  const state = await request<{ sessionFile?: string }>({ type: "get_state" }, 5000, binding.connectionId)
+  signal?.throwIfAborted()
+  boundSnapshot(binding)
+  if (state.sessionFile !== binding.sessionFile) throw new Error("会话身份已改变，未停止任务")
+  let queueError: unknown
+  try { await request({ type: "clear_queue" }, 8000, binding.connectionId) }
+  catch (error) { queueError = error }
+  // Once stopping has begun, finish it even if playback is interrupted. A new
+  // voice turn must not leave the old task running after its queue was cleared.
+  boundSnapshot(binding)
+  await request({ type: "abort" }, 8000, binding.connectionId)
+  if (queueError) throw new Error("已发送中止，但待执行队列清理失败，请检查该会话", { cause: queueError })
+}
+
 export class CommandGateway {
   private receipts = new Map<string, Promise<void>>()
   execute(commandId: string, binding: VoiceBinding, decision: VoiceDecision, text: string, announcedConfirmation?: string, signal?: AbortSignal): Promise<void> {
@@ -23,6 +41,10 @@ export class CommandGateway {
   private async deliver(binding: VoiceBinding, decision: VoiceDecision, text: string, announcedConfirmation?: string, signal?: AbortSignal) {
     signal?.throwIfAborted()
     const snapshot = boundSnapshot(binding)
+    if (decision.intent === "control_task") {
+      await stopBoundTask(binding, signal)
+      return
+    }
     if (decision.intent === "reply_confirmation") {
       const dialog = snapshot.dialogs.find(item => item.id === announcedConfirmation)
       if (!dialog || dialog !== snapshot.dialogs[0]) throw new Error("这项确认已经失效，请先听新的确认内容")
@@ -42,10 +64,6 @@ export class CommandGateway {
     signal?.throwIfAborted()
     boundSnapshot(binding)
     if (state.sessionFile !== binding.sessionFile) throw new Error("会话身份已改变，未发送任务")
-    if (decision.intent === "control_task") {
-      await request({ type: "abort" }, 8000, binding.connectionId)
-      return
-    }
     const behavior = decision.intent === "steer_task" ? "steer" : decision.intent === "queue_task" || state.isStreaming ? "followUp" : undefined
     // A new unrelated task queues behind current work. Only an explicit steer redirects it.
     await sendPrompt({ type: "prompt", message: text, ...(behavior ? { streamingBehavior: behavior } : {}) }, binding.connectionId, state.isStreaming === true, () => { signal?.throwIfAborted(); boundSnapshot(binding) })

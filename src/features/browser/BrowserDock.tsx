@@ -1,4 +1,6 @@
-import { useCallback, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback } from "react";
+import { useDragResize } from "../../shared/hooks/useDragResize";
+import { useAnimatedReorder } from "../../shared/hooks/useAnimatedReorder";
 import { Globe, Plus, X } from "../../shared/ui/icons";
 import { useShell } from "../shell/shellStore";
 import { BrowserTab } from "./BrowserTab";
@@ -24,11 +26,7 @@ import { reportMenuFailure, showBrowserTabMenu } from "./browser-tab-menu";
 const WIDTH_DEFAULT = 520;
 const WIDTH_MIN = 320;
 
-function clampWidth(value: number) {
-  const max = Math.max(WIDTH_MIN, Math.floor(window.innerWidth * 0.7));
-  if (!Number.isFinite(value)) return WIDTH_DEFAULT;
-  return Math.min(max, Math.max(WIDTH_MIN, Math.round(value)));
-}
+const maxWidth = () => Math.max(WIDTH_MIN, Math.floor(window.innerWidth * 0.7));
 
 /** The tab strip's label for a page: its host, until the page reports its title. */
 function tabName(url: string, title?: string) {
@@ -50,40 +48,12 @@ export function BrowserDock() {
   const setActive = useShell((state) => state.setBrowserActive);
   const openBrowser = useShell((state) => state.openBrowser);
   const closeFile = useShell((state) => state.closeFile);
+  const reorderBrowserTabs = useShell((state) => state.reorderBrowserTabs);
   /** 画中画里浮着的那一页：标签上给它一个记号，否则那一格会像是空的。 */
   const floatingTab = useShell((state) => state.browserPip?.tab ?? null);
 
-  // Drag state lives here, not in the store: a pointermove should repaint this
-  // column, not every subscriber, and the width is only worth persisting once
-  // the user lets go. The column is anchored on the right edge, so moving the
-  // pointer away from it makes it wider.
-  const [dragged, setDragged] = useState<number | null>(null);
-  const drag = useRef<{ origin: number; size: number; reached: number } | null>(null);
-  const painted = dragged ?? width;
-
-  const onResizeDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    drag.current = { origin: event.clientX, size: painted, reached: painted };
-  };
-
-  const onResizeMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const current = drag.current;
-    if (!current) return;
-    const reached = clampWidth(current.size + (current.origin - event.clientX));
-    current.reached = reached;
-    setDragged(reached);
-  };
-
-  const onResizeUp = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const current = drag.current;
-    if (!current) return;
-    drag.current = null;
-    setWidth(current.reached);
-    setDragged(null);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
-  };
+  const resize = useDragResize({ min: WIDTH_MIN, max: maxWidth, defaultWidth: WIDTH_DEFAULT, initial: width, direction: "left", onCommit: setWidth });
+  const sortable = useAnimatedReorder(tabs.map(tab => tab.path), reorderBrowserTabs);
 
   const shown = tabs.find((tab) => tab.path === active) ?? tabs[0] ?? null;
 
@@ -99,32 +69,44 @@ export function BrowserDock() {
 
   return (
     <section
+      ref={resize.setPaneRef}
       data-browser-dock=""
       aria-label="浏览器"
       hidden={!open}
-      style={{ width: painted }}
+      // Reserve a real gutter: z-index cannot put a DOM handle above a native
+      // sibling WebView. Its stage must begin beyond the whole grab area.
+      style={{ width: resize.width, paddingLeft: 8 }}
       className="relative flex h-full min-h-0 min-w-0 shrink-0 flex-col border-l border-stroke bg-background-base"
     >
       <div
         role="separator"
         aria-orientation="vertical"
         aria-label="调整浏览器宽度"
-        aria-valuenow={painted}
+        aria-valuenow={resize.width}
         aria-valuemin={WIDTH_MIN}
+        aria-valuemax={maxWidth()}
+        data-tauri-drag-region="false"
         tabIndex={0}
-        onPointerDown={onResizeDown}
-        onPointerMove={onResizeMove}
-        onPointerUp={onResizeUp}
-        onPointerCancel={onResizeUp}
-        onDoubleClick={() => setWidth(WIDTH_DEFAULT)}
-        className="absolute inset-y-0 -left-px z-10 w-1.5 cursor-col-resize touch-none"
-      />
+        onPointerDown={resize.onPointerDown}
+        onDoubleClick={resize.onDoubleClick}
+        className={`absolute inset-y-0 left-0 z-10 w-2 cursor-col-resize touch-none select-none hover:bg-accent/15 ${resize.dragging ? "bg-accent/15" : ""}`}
+      >
+        <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-px bg-stroke" />
+      </div>
       <div className="flex h-9 min-w-0 shrink-0 items-center border-b border-stroke">
         <div role="tablist" aria-label="浏览器标签" className="scrollbar-none flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overscroll-none pl-1.5 pr-2.5">
           {tabs.map((tab) => {
             const selected = shown?.path === tab.path;
             return (
-              <div key={tab.path} className="group relative flex h-full w-44 min-w-24 shrink items-center"
+              <div key={tab.path}
+                ref={node => sortable.setItemRef(tab.path, node)}
+                className="reorder-item tab-motion group relative flex h-full w-44 min-w-24 shrink touch-none select-none items-center"
+                data-tauri-drag-region="false"
+                onPointerDown={event => {
+                  if (event.button !== 0 || (event.target as HTMLElement).closest("[data-no-drag]")) return;
+                  setActive(tab.path);
+                  sortable.onItemPointerDown(tab.path, event);
+                }}
                 onContextMenu={event => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -142,7 +124,7 @@ export function BrowserDock() {
                   role="tab"
                   aria-selected={selected}
                   title={tabName(tab.url, tab.title)}
-                  onClick={() => setActive(tab.path)}
+                  onClick={() => { if (!sortable.consumeClick()) setActive(tab.path); }}
                   className={`relative flex h-7.5 min-w-0 flex-1 cursor-default items-center gap-1.5 self-center rounded-md px-2 pr-7 text-left text-[13px] ${
                     selected ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
                   }`}
@@ -162,8 +144,11 @@ export function BrowserDock() {
                   type="button"
                   title="关闭标签页"
                   aria-label={`关闭 ${tabName(tab.url, tab.title)}`}
+                  data-no-drag
+                  onPointerDown={event => event.stopPropagation()}
                   onClick={(event) => {
                     event.stopPropagation();
+                    if (sortable.consumeClick()) return;
                     close(tab.path);
                   }}
                   className="absolute right-1 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-content/50 opacity-0 hover:bg-content/10 hover:text-content group-hover:opacity-100"

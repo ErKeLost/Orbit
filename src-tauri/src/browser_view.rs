@@ -230,6 +230,7 @@ pub fn browser_view_sync(
     rect: ViewRect,
     url: Option<String>,
     visible: Option<bool>,
+    background: Option<bool>,
 ) -> Result<BrowserViewStatus, String> {
     let wanted = url.as_deref().map(parse).transpose()?;
     let shown = visible.unwrap_or(true);
@@ -240,7 +241,7 @@ pub fn browser_view_sync(
         if let Some(previous) = tabs.remove(&tab) { previous.view.close().map_err(|e| e.to_string())?; }
         forget_agent_tab(&host, &tab);
     }
-    if !tabs.contains_key(&tab) && !shown {
+    if !tabs.contains_key(&tab) && !shown && !background.unwrap_or(false) {
         // Nothing to hide: a tab that is not on screen must not create a view.
         return Ok(BrowserViewStatus::default());
     }
@@ -302,6 +303,7 @@ pub fn browser_view_sync(
                 LogicalSize::new(rect.width.max(1.0), rect.height.max(1.0)),
             )
             .map_err(|error| format!("无法创建浏览器视图：{error}"))?;
+        if !shown { view.hide().map_err(|error| error.to_string())?; }
         tabs.insert(
             tab.clone(),
             Tab {
@@ -369,6 +371,7 @@ pub fn browser_view_sync(
     _rect: ViewRect,
     _url: Option<String>,
     _visible: Option<bool>,
+    _background: Option<bool>,
 ) -> Result<BrowserViewStatus, String> {
     Err("手机端没有浏览器栏".to_string())
 }

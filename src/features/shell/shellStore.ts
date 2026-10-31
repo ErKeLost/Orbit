@@ -174,6 +174,7 @@ type ShellState = {
   browserTabs: BrowserTabInfo[];
   browserActive: string | null;
   browserOpen: boolean;
+  browserAutoReveal: boolean;
   browserWidth: number;
   setBrowserOpen: (open: boolean) => void;
   setBrowserWidth: (width: number) => void;
@@ -228,6 +229,7 @@ type ShellState = {
   /** Open a browser tab (a real web view) in a pane, and return its tab path. */
   openBrowser: (url: string, options?: { path?: string }) => string;
   closeBrowserTabs: (path: string, mode: "current" | "others" | "right" | "all") => void;
+  reorderBrowserTabs: (paths: string[]) => void;
   /**
    * Open an http(s) link from inside the app.
    *
@@ -343,8 +345,10 @@ export const useShell = create<ShellState>((set, get) => {
     browserTabs: [] as BrowserTabInfo[],
     browserActive: null as string | null,
     browserOpen: readBool("orbit.browser.open", false),
+    // A manual collapse suppresses subsequent agent presentation requests.
+    browserAutoReveal: true,
     browserWidth: readNumber("orbit.browser.size", 520),
-    setBrowserOpen: (browserOpen) => { write("orbit.browser.open", String(browserOpen)); set({ browserOpen }); },
+    setBrowserOpen: (browserOpen) => { write("orbit.browser.open", String(browserOpen)); set({ browserOpen, browserAutoReveal: browserOpen }); },
     setBrowserWidth: (browserWidth) => { write("orbit.browser.size", String(browserWidth)); set({ browserWidth }); },
     setBrowserActive: (browserActive) => set({ browserActive }),
     // 画中画：位置记在本地，下次弹出还在原处。
@@ -370,7 +374,7 @@ export const useShell = create<ShellState>((set, get) => {
     },
     dockBrowserPip: () => {
       const tab = get().browserPip?.tab;
-      set({ browserPip: null, ...(tab ? { browserActive: tab, browserOpen: true } : {}) });
+      set({ browserPip: null, ...(tab ? { browserActive: tab, browserOpen: true, browserAutoReveal: true } : {}) });
     },
     moveBrowserPip: (patch) => {
       const state = get();
@@ -602,11 +606,10 @@ export const useShell = create<ShellState>((set, get) => {
       // the same request twice navigates the existing tab instead of adding a
       // second one, and only a real browser path is accepted as a name.
       const asked = options?.path?.trim();
+      const reveal = !asked || get().browserAutoReveal;
       const existing = asked ? get().browserTabs.find((tab) => tab.path === asked) : undefined;
       if (existing) {
-        set({ browserTabs: get().browserTabs.map(tab => tab.path === existing.path ? { ...tab, ...(url ? { url } : {}), agent: true as const, handoff: undefined } : tab) });
-        get().setBrowserActive(existing.path);
-        get().setBrowserOpen(true);
+        set({ browserTabs: get().browserTabs.map(tab => tab.path === existing.path ? { ...tab, ...(url ? { url } : {}), agent: true as const, handoff: undefined } : tab), ...(reveal ? { browserActive: existing.path, browserOpen: true } : {}) });
         return existing.path;
       }
       const path = asked && isBrowserPath(asked) ? asked : `browser:${crypto.randomUUID().slice(0, 8)}`;
@@ -616,10 +619,27 @@ export const useShell = create<ShellState>((set, get) => {
       const tab: BrowserTabInfo = { path, url, ...(asked ? { agent: true as const } : {}) };
       set({
         browserTabs: [...get().browserTabs, tab],
-        browserActive: path,
-        browserOpen: true,
+        browserActive: reveal || !get().browserActive ? path : get().browserActive,
+        ...(reveal ? { browserOpen: true, browserAutoReveal: true } : {}),
       });
       return path;
+    },
+
+    reorderBrowserTabs: (paths) => {
+      const current = get().browserTabs;
+      const byPath = new Map(current.map(tab => [tab.path, tab]));
+      const ordered = [];
+      for (const path of paths) {
+        const tab = byPath.get(path);
+        if (!tab) continue;
+        ordered.push(tab);
+        byPath.delete(path);
+      }
+      // Preserve tabs opened while a gesture was settling; never resurrect a
+      // closed page or replace the native view's identity during a reorder.
+      ordered.push(...byPath.values());
+      if (ordered.every((tab, index) => tab === current[index])) return;
+      set({ browserTabs: ordered });
     },
 
     closeBrowserTabs: (path, mode) => {
@@ -637,6 +657,7 @@ export const useShell = create<ShellState>((set, get) => {
         browserTabs: rest,
         browserActive: state.browserActive && retained.has(state.browserActive) ? state.browserActive : (rest[Math.min(index, rest.length - 1)]?.path ?? null),
         browserOpen: rest.length > 0 && state.browserOpen,
+        browserAutoReveal: rest.length > 0 && state.browserAutoReveal,
         browserPip: state.browserPip && retained.has(state.browserPip.tab) ? state.browserPip : null,
       });
     },
@@ -661,7 +682,7 @@ export const useShell = create<ShellState>((set, get) => {
       const tabs = get().browserTabs;
       const existing = tabs.find((tab) => tab.path === path);
       if (!existing) {
-        set({ browserTabs: [...tabs, { path, url: url ?? "", handoff: true as const }], browserActive: path, browserOpen: true });
+        set({ browserTabs: [...tabs, { path, url: url ?? "", handoff: true as const }], ...(get().browserAutoReveal ? { browserActive: path, browserOpen: true } : {}) });
         return;
       }
       // `agent` has to go, not become false: `openLink` looks for a tab without
@@ -669,8 +690,7 @@ export const useShell = create<ShellState>((set, get) => {
       const { agent: _wasTheRuns, ...rest } = existing;
       set({
         browserTabs: tabs.map((tab) => (tab.path === path ? { ...rest, url: url || tab.url, handoff: true as const } : tab)),
-        browserActive: path,
-        browserOpen: true,
+        ...(get().browserAutoReveal ? { browserActive: path, browserOpen: true } : {}),
       });
     },
 
