@@ -1006,6 +1006,7 @@ pub async fn browser_import_session(app: tauri::AppHandle, browser: String, prof
     let (cookies, skipped, skipped_domains) = tauri::async_runtime::spawn_blocking(move || {
         let view = crate::browser_view::profile_cookie_view(&writer, &target_partition)?;
         let result = write_webview_cookies(&writer, &view, read);
+        #[cfg(desktop)]
         let _ = view.close();
         result
     }).await.map_err(|e| e.to_string())??;
