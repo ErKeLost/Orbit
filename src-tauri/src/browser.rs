@@ -827,11 +827,6 @@ pub fn browser_client_report(message: String) {
 // Importing a session from another browser
 // ---------------------------------------------------------------------------
 
-/// SQLite's own CLI. `.backup` is the online backup API: it takes a read lock
-/// and walks the pages, so a database the *source* browser currently holds open
-/// still yields a whole snapshot. A plain file copy does not — it can catch the
-/// file mid-transaction and produce a database that will not open.
-
 /// One profile a session can be imported from. `path` is the profile directory
 /// (`…/Google/Chrome/Default`), which is what the cookies live in.
 #[derive(Clone, Debug, Serialize)]

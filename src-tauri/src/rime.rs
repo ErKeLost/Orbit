@@ -494,7 +494,7 @@ async fn run_tts_connection(pool_key: String, connection_id: String, key: String
         let host = if config["model"] == "mistv3" { "mist.api.rime.ai" } else { "coda.api.rime.ai" };
         let mut socket = tokio::time::timeout(std::time::Duration::from_secs(10), connect_ws(host, "/ws", &key, Some("rime.v1.json"))).await.map_err(|_| "TTS 连接超时".to_string())??;
         // ready is an engine signal, not proof of authentication; started/errors remain authoritative.
-        let ready = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
             loop {
                 match socket.next().await {
                     Some(Ok(Message::Text(text))) => {
@@ -508,7 +508,6 @@ async fn run_tts_connection(pool_key: String, connection_id: String, key: String
                 }
             }
         }).await.map_err(|_| "TTS ready 超时".to_string())??;
-        let _ = ready;
         let mut idle_since = tokio::time::Instant::now();
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
         loop {
