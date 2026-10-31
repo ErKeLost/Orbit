@@ -47,14 +47,15 @@ export function taskView(snapshot: Snapshot, facts: TaskFact[] = []): TaskView {
     ...(confirmation ? { confirmation: { id: confirmation.id, question } } : {}),
   }
 }
-export function progressReply(view: TaskView, language: string) {
-  const zh = language === "zh"
-  if (view.state === "waiting_input") return zh ? `正在等你确认：${view.confirmation?.question}` : `It is waiting for your decision: ${view.confirmation?.question}`
-  if (view.state === "failed") return zh ? `这一轮出错了：${view.error}` : `The task failed: ${view.error}`
-  if (view.state === "cancelled") return zh ? "这项任务已停止。" : "The task has stopped."
-  if (view.state === "running") {
-    const recent = view.facts.at(-1)?.text
-    return zh ? `任务还在进行。${recent ? `最近的进展是：${recent}` : view.activeTools.length ? `当前正在运行 ${view.activeTools.join("、")}。` : "正在生成下一步回复。"}` : `It is still running. ${recent || (view.activeTools.length ? `Currently running ${view.activeTools.join(", ")}.` : "The agent is preparing its next response.")}`
+/** Safe status-only fallback. Task evidence is rendered by the voice model. */
+export function progressReply(view: TaskView, language: "en" | "es") {
+  const messages = {
+    waiting_input: ["It is waiting for your decision. Please review the question in the task session.", "Está esperando tu decisión. Revisa la pregunta en la sesión."],
+    failed: ["The task failed. Please review the details in the task session.", "La tarea ha fallado. Revisa los detalles en la sesión."],
+    cancelled: ["The task has stopped.", "La tarea se ha detenido."],
+    running: ["It is still running.", "La tarea sigue en curso."],
+    completed: ["This turn has finished. Please review the result in the task session.", "La tarea ha terminado. Revisa el resultado en la sesión."],
+    idle: ["There is no task running in this session.", "No hay ninguna tarea en curso en esta sesión."],
   }
-  return view.state === "completed" ? (zh ? "这一轮已经结束。" : "This turn has finished.") : (zh ? "这条会话目前没有正在运行的任务。" : "There is no task running in this session.")
+  return messages[view.state][language === "es" ? 1 : 0]!
 }

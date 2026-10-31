@@ -94,7 +94,7 @@ describe("task evidence", () => {
   test("a running task stays running while it has no new model text", () => {
     const view = taskView(snapshot({ transcript: { ...emptyTranscript(), running: true, tools: { t: { name: "browser_task", running: true } } } }))
     expect(view.state).toBe("running")
-    expect(progressReply(view, "en")).toContain("browser_task")
+    expect(progressReply(view, "en")).toContain("running")
     expect(progressReply(view, "en")).not.toContain("finished")
   })
   test("confirmation, failure and cancellation remain distinct", () => {

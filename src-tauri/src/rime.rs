@@ -179,9 +179,6 @@ fn normalized(value: &Value) -> Value {
         "speaker": speaker,
         "lang": lang,
         "sttLang": stt_lang,
-        "sttBackend": "rime",
-        "ttsBackend": "rime",
-        "spokenLang": pick("spokenLang").filter(|v| STT_LANGS.contains(v)).unwrap_or(stt_lang),
         "endpointMs": value.get("endpointMs").and_then(Value::as_u64).filter(|v| (200..=1200).contains(v)).unwrap_or(450),
         "timeScaleFactor": value.get("timeScaleFactor").and_then(Value::as_f64).filter(|v| v.is_finite() && (0.4..=2.5).contains(v)).unwrap_or(1.0),
         "textLookaheadTokens": value.get("textLookaheadTokens").and_then(Value::as_u64).filter(|v| *v <= 64).unwrap_or(0),
@@ -209,6 +206,9 @@ fn validate_patch(input: &Value) -> Result<Value, String> {
         .ok_or_else(|| "语音配置必须是一个对象".to_string())?;
     let mut out = Map::new();
     for (key, value) in object {
+        if ["sttBackend", "ttsBackend", "spokenLang"].contains(&key.as_str()) {
+            return Err("语音对话只使用 Rime；请使用 lang / sttLang 设置语言".into());
+        }
         if key == "customLexicon" && !value.is_null() {
             out.insert(key.clone(), json!(custom_lexicon(value)?)); continue;
         }
@@ -246,10 +246,8 @@ fn validate_patch(input: &Value) -> Result<Value, String> {
             "speaker" if !valid_speaker(&text) => {
                 return Err("speaker 只能包含字母、数字、_、-、.".into());
             }
-            "sttBackend" | "ttsBackend" if text != "rime" => return Err("语音对话只使用 Rime".into()),
-            "spokenLang" if !STT_LANGS.contains(&text.as_str()) => return Err("Rime 语音对话目前只支持英语 en / 西班牙语 es".into()),
             "sttMode" if !["written", "verbatim"].contains(&text.as_str()) => return Err("未知的 Rime 转写模式".into()),
-            "model" | "lang" | "sttLang" | "speaker" | "sttBackend" | "ttsBackend" | "spokenLang" | "sttMode" => {}
+            "model" | "lang" | "sttLang" | "speaker" | "sttMode" => {}
             _ => continue,
         }
         out.insert(key.clone(), Value::String(text));
@@ -1089,11 +1087,11 @@ mod tests {
     }
 
     #[test]
-    fn legacy_external_backends_cannot_be_reactivated() {
+    fn provider_switches_and_legacy_language_fields_are_not_configuration() {
         let config = normalized(&json!({"sttBackend":"speech","ttsBackend":"system","spokenLang":"zh"}));
-        assert_eq!(config["sttBackend"], "rime");
-        assert_eq!(config["ttsBackend"], "rime");
-        assert_eq!(config["spokenLang"], "en");
+        assert!(config.get("sttBackend").is_none());
+        assert!(config.get("ttsBackend").is_none());
+        assert!(config.get("spokenLang").is_none());
         assert!(validate_patch(&json!({"sttBackend":"speech"})).is_err());
         assert!(validate_patch(&json!({"ttsBackend":"system"})).is_err());
         assert!(validate_patch(&json!({"spokenLang":"zh"})).is_err());

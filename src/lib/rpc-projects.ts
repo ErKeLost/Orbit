@@ -181,9 +181,6 @@ export type RimeConfig = {
   speaker:string
   lang:string
   sttLang:string
-  sttBackend?:"rime"
-  ttsBackend?:"rime"
-  spokenLang?:string
   endpointMs?:number
   timeScaleFactor?:number
   textLookaheadTokens?:number

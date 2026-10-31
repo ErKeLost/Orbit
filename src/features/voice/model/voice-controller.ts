@@ -1,14 +1,14 @@
 import { useWorkspace } from "@/lib/store"
 import { connections, current, subscribeSessionEvents, type SessionEvent } from "@/lib/rpc-core"
 import { startConnection, closeConnection } from "@/lib/rpc-connection"
-import { rimeConfig, saveRimeConfig, rimeTtsPrepare, type RimeConfig } from "@/lib/rpc-projects"
+import { rimeConfig, rimeTtsPrepare, type RimeConfig } from "@/lib/rpc-projects"
 import { SpeechInput } from "./speech-input"
 import { SpeechOutput } from "./speech-output"
 import { CommandGateway, boundSnapshot, type VoiceBinding } from "./command-gateway"
 import { taskView, eventFact, progressReply, type TaskFact } from "./task-view"
 import { checkVoiceService, voiceService } from "./voice-service"
 import { VoiceMetrics, type VoiceTrace } from "./latency"
-import { speakable } from "./speechText"
+import { assertSpokenScript, conciseReply, voiceLanguage, type VoiceLanguage } from "../../../../src-tauri/resources/voice/policy"
 import { validatedDecision, EXECUTING_INTENTS, type PendingVoiceRequest, type VoiceRouteInput, type VoiceTarget, type VoiceHistory, type VoiceDecision } from "../../../../src-tauri/resources/voice/contract"
 import type { Utterance } from "./micCapture"
 import { resolveVoiceConfig } from "./voice-config"
@@ -18,7 +18,7 @@ import { rimeErrorMessage } from "@/lib/rime-error"
 export type VoiceStartupStage = "config" | "session" | "service" | "devices"
 export type VoiceState = "off" | "ready" | "listening" | "thinking" | "speaking"
 export type VoiceLogItem = { id: string; kind: "user" | "agent" | "system"; text: string; sessionFile?: string }
-type Announcement = { id: string; binding: VoiceBinding; text: string; priority: number; expires: number; confirmationId?: string }
+type Announcement = { id: string; binding: VoiceBinding; context: unknown; fallback: string; priority: number; expires: number; confirmationId?: string }
 export type VoiceSnapshot = {
   state: VoiceState; starting: boolean; startupStage: VoiceStartupStage | null; deviceId: string; level: number; outputLevel: number; log: VoiceLogItem[]; error: string | null
   focusId: string; focusTitle: string; targets: VoiceTarget[]; lastLatencyMs: number | null; partial: string
@@ -62,8 +62,8 @@ export class VoiceController {
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   private update(patch: Partial<VoiceSnapshot>) { this.value = { ...this.value, ...patch }; for (const listener of this.listeners) listener() }
   private state() { this.update({ state: !this.on ? "off" : this.hearing ? "listening" : this.speaking ? "speaking" : this.processing ? "thinking" : "ready" }) }
-  private language() { return this.config?.spokenLang ?? this.config?.lang ?? "en" }
-  private say(zh: string, en: string) { return this.language() === "zh" ? zh : en }
+  private language(): VoiceLanguage { return voiceLanguage(this.config?.lang ?? "en") }
+  private say(en: string, es: string) { return this.language() === "es" ? es : en }
   private log(kind: VoiceLogItem["kind"], text: string, id = crypto.randomUUID()) {
     const existing = this.value.log.find(item => item.id === id)
     const item = { id, kind, text, sessionFile: this.binding?.sessionFile }
@@ -140,10 +140,6 @@ export class VoiceController {
         if (signal.aborted) return
         this.config = resolveVoiceConfig(stored)
         if (!this.config.hasCredential) throw new Error("先在语音设置中保存 Rime API Key")
-        if (stored.configured === false || this.config.sttBackend !== stored.sttBackend || this.config.ttsBackend !== stored.ttsBackend || this.config.lang !== stored.lang || this.config.spokenLang !== stored.spokenLang || this.config.sttLang !== stored.sttLang) {
-          const { spokenLang, sttBackend, ttsBackend, sttLang, lang } = this.config
-          await waitForStartup(saveRimeConfig({ spokenLang, sttBackend, ttsBackend, sttLang, lang }), signal, 10000, "保存语音配置超时，请重试")
-        }
         if (signal.aborted) return
         input.setEndpointMs(this.config.endpointMs ?? 450)
         void rimeTtsPrepare().catch(() => undefined)
@@ -157,6 +153,7 @@ export class VoiceController {
         if (signal.aborted) return
         this.update({ startupStage: "service" })
         await waitForStartup(checkVoiceService(connectionId), signal, 12000, "语音服务初始化超时，请重试")
+        await waitForStartup(voiceService(connectionId, { action: "configure_session", language: this.language() }, signal), signal, 10000, "设置语音会话类型超时，请重试")
         if (!signal.aborted && !devicesReady) this.update({ startupStage: "devices" })
       })()
       // Device failures must surface immediately, even while Pi starts slowly.
@@ -290,16 +287,16 @@ export class VoiceController {
       if (signal.aborted) return
       this.pendingRequest = undefined; this.watched.add(binding.sessionFile)
       const trace = this.traces.get(this.turn); if (trace) this.metrics.mark(trace, "command_accepted")
-      const reply = decision.intent === "control_task" ? this.say("已发送停止请求。", "The stop request has been sent.") : decision.intent === "reply_confirmation" ? this.say("已回复这项确认。", "Your decision has been sent.") : decision.intent === "steer_task" ? this.say("已发送新的任务指示。", "The updated instruction has been sent.") : decision.intent === "queue_task" ? this.say("已加入后续任务。", "The request has been queued.") : lookup ? this.say("我来查一下。", "I'll look that up.") : this.say("任务已发送。", "The task has been sent.")
+      const reply = decision.intent === "control_task" ? this.say("The stop request has been sent.", "He enviado la solicitud de detener la tarea.") : decision.intent === "reply_confirmation" ? this.say("Your decision has been sent.", "He enviado tu decisión.") : decision.intent === "steer_task" ? this.say("The updated instruction has been sent.", "He enviado la nueva instrucción.") : decision.intent === "queue_task" ? this.say("The request has been queued.", "La solicitud está en la cola.") : lookup ? this.say("I'll look that up.", "Voy a consultarlo.") : this.say("The task has been sent.", "He enviado la tarea.")
       this.speak(reply, replies); return
     }
     if (decision.intent === "control_voice") {
       if (decision.voiceControl === "end_call") this.stop()
       else if (decision.voiceControl === "stop_speech") this.interrupt()
-      else this.speak(this.say("你是想停止播报，还是结束通话？", "Should I stop speaking, or end the call?"))
+      else this.speak(this.say("Should I stop speaking, or end the call?", "¿Quieres que deje de hablar o que termine la llamada?"))
       return
     }
-    if (decision.intent === "change_focus") { boundSnapshot(binding); this.setFocus(binding.connectionId); this.speak(this.say(`现在关注${target?.title ?? "这条会话"}。`, `Now watching ${target?.title ?? "this session"}.`)); return }
+    if (decision.intent === "change_focus") { boundSnapshot(binding); this.setFocus(binding.connectionId); this.speak(this.say("Now watching that session.", "Ahora estoy observando esa sesión.")); return }
     if (decision.intent === "clarify") {
       const question = await this.answer(text, { kind: "clarification", reason: decision.clarificationReason, request: requestText, focusedTarget: target ?? input.targets.find(item => item.id === input.focused), previousQuestion: input.pendingRequest?.question, attempts: input.pendingRequest?.attempts ?? 0 }, signal, replies)
       if (!signal.aborted) this.pendingRequest = { text: requestText.slice(0, 3000), question: question ?? "", attempts: (input.pendingRequest?.attempts ?? 0) + 1 }
@@ -307,15 +304,16 @@ export class VoiceController {
     }
     this.pendingRequest = undefined
     const view = taskView(boundSnapshot(binding), this.facts.get(binding.sessionFile))
-    if (decision.intent === "watch_task") { this.watched.add(binding.sessionFile); this.speak(this.say("通话期间，我会在这项任务结束、出错或需要你确认时提醒你。", "During this call, I will let you know when this task finishes, fails, or needs your decision."), replies); return }
-    if (decision.intent === "query_progress" && view.state !== "completed") { this.speak(progressReply(view, this.language()), replies); return }
+    if (decision.intent === "watch_task") { this.watched.add(binding.sessionFile); this.speak(this.say("I will let you know when this task finishes, fails, or needs your decision.", "Te avisaré cuando la tarea termine, falle o necesite tu decisión."), replies); return }
+
     await this.answer(text, decision.intent === "general_question" || (decision.intent === "chat" && !target) ? undefined : view, signal, replies)
   }
-  private speak(text: string, replies?: string[]) {
+  private speak(text: string, replies?: string[], confirmation?: Announcement) {
     if (!this.on) return
     if (replies) { replies.push(text); return }
+    assertSpokenScript(text); text = conciseReply(text)
     this.log("agent", text); this.remember("assistant", text)
-    this.pendingConfirmation = undefined; this.output?.begin(); this.output?.append(text); this.output?.finish()
+    this.output?.begin(); this.pendingConfirmation = confirmation; this.output?.append(text); this.output?.finish()
   }
   private async answer(text: string, context: unknown, signal: AbortSignal, replies?: string[]) {
     if (!this.binding) return
@@ -323,6 +321,7 @@ export class VoiceController {
     if (!replies) { this.pendingConfirmation = undefined; this.output?.begin() }
     await voiceService(this.serviceTarget(), { action: "answer", text, context, history: this.history, language: this.language() }, signal, event => {
       if (event.type === "delta" && event.text && !signal.aborted) {
+        assertSpokenScript(response + event.text)
         const trace = this.traces.get(this.turn); if (trace) this.metrics.mark(trace, "answer_first_token")
         response += event.text
         if (!replies) { this.log("agent", response, id); this.output?.append(event.text) }
@@ -364,16 +363,15 @@ export class VoiceController {
       const view = taskView(snapshot, this.facts.get(source.sessionFile))
       if (confirmation) { this.queueConfirmation(binding); return }
       if (event.type === "agent_settled") {
-        const result = view.state === "completed" && view.latestReply ? speakable(view.latestReply).slice(0, 1100) : progressReply(view, this.language())
-        this.enqueue({ id: `${source.sessionFile}:${source.sequence}`, binding, priority: 2, expires: Date.now() + 120000, text: result })
-      } else if (failure) this.enqueue({ id: `${source.sessionFile}:${source.sequence}`, binding, priority: 1, expires: Date.now() + 30000, text: this.say(`${view.title}：${event.toolName ?? "工具"}执行失败。`, `${view.title}: ${event.toolName ?? "a tool"} failed.`) })
+        this.enqueue({ id: `${source.sessionFile}:${source.sequence}`, binding, priority: 2, expires: Date.now() + 120000, context: { kind: "task_event", event: "settled", task: view }, fallback: progressReply(view, this.language()) })
+      } else if (failure) this.enqueue({ id: `${source.sessionFile}:${source.sequence}`, binding, priority: 1, expires: Date.now() + 30000, context: { kind: "task_event", event: "tool_failure", task: view, tool: event.toolName }, fallback: this.say("A tool failed while working on the task.", "Una herramienta ha fallado durante la tarea.") })
     })
   }
   private announceExistingConfirmation() { if (this.binding) this.queueConfirmation(this.binding) }
   private queueConfirmation(binding: VoiceBinding) {
     const view = taskView(current(binding.connectionId))
     if (!view.confirmation) return
-    this.enqueue({ id: `confirm:${view.confirmation.id}`, binding, priority: 0, expires: Infinity, confirmationId: view.confirmation.id, text: this.say(`需要你确认：${view.confirmation.question}`, `Your decision is needed: ${view.confirmation.question}`) })
+    this.enqueue({ id: `confirm:${view.confirmation.id}`, binding, priority: 0, expires: Infinity, confirmationId: view.confirmation.id, context: { kind: "task_event", event: "confirmation", task: view, dialog: current(binding.connectionId).dialogs[0] }, fallback: this.say("Your decision is needed. Please review the question in the task session.", "Necesito tu decisión. Revisa la pregunta en la sesión de la tarea.") })
   }
   private enqueue(item: Announcement) {
     if (this.seen.has(item.id)) return
@@ -384,18 +382,39 @@ export class VoiceController {
   private scheduleDrain() {
     if (this.drainScheduled) return
     this.drainScheduled = true
-    queueMicrotask(() => { this.drainScheduled = false; this.drain() })
+    queueMicrotask(() => { this.drainScheduled = false; void this.drain() })
   }
-  private drain() {
+  private async drain() {
     if (!this.on || this.hearing || this.processing || this.output?.busy) return
     while (this.announcements.length) {
       const item = this.announcements.shift()!
-      if (item.expires < Date.now()) continue
+      const valid = () => {
+        if (!this.on || controller.signal.aborted || item.expires < Date.now()) return false
+        try {
+          const snapshot = boundSnapshot(item.binding)
+          if (item.confirmationId && (this.binding?.sessionFile !== item.binding.sessionFile || this.binding.connectionId !== item.binding.connectionId || snapshot.dialogs[0]?.id !== item.confirmationId)) return false
+          return true
+        } catch { return false }
+      }
+      const controller = new AbortController()
+      if (!valid()) continue
+      this.response = controller; this.processing = true; this.state()
+      let text = "", rendered = false
       try {
-        const snapshot = boundSnapshot(item.binding)
-        if (item.confirmationId && !snapshot.dialogs.some(dialog => dialog.id === item.confirmationId)) continue
-      } catch { continue }
-      this.log("agent", item.text); this.remember("assistant", item.text); this.output?.begin(); this.pendingConfirmation = item.confirmationId ? item : undefined; this.output?.append(speakable(item.text)); this.output?.finish(); return
+        await voiceService(this.serviceTarget(), { action: "answer", text: "Briefly explain this task event to the caller.", context: item.context, language: this.language() }, controller.signal, event => {
+          if (event.type === "delta" && event.text && valid()) { assertSpokenScript(event.text); text += event.text }
+        })
+        rendered = !!text.trim()
+      } catch (error) {
+        if (!controller.signal.aborted) this.update({ error: error instanceof Error ? error.message : String(error) })
+      } finally {
+        if (this.response === controller) { this.processing = false; this.state() }
+      }
+      if (!valid()) { this.scheduleDrain(); return }
+      // A confirmation becomes actionable only after the complete, current
+      // explanation is rendered and its first audio actually reaches playback.
+      this.speak(rendered ? text : item.fallback, undefined, rendered && item.confirmationId ? item : undefined)
+      return
     }
   }
 }

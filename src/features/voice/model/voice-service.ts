@@ -27,7 +27,10 @@ export function voiceService(target: string, input: Record<string, unknown>, sig
       try { value = JSON.parse(event.statusText) } catch { return }
       if (value.id !== id) return
       if (value.type === "error") { finish(new Error(value.text || "语音请求失败")); return }
-      onEvent?.(value)
+      try { onEvent?.(value) } catch (error) {
+        void request({ type: "prompt", message: `/gui-voice ${JSON.stringify({ id, action: "cancel" })}` }, 3000, target).catch(() => undefined)
+        finish(error instanceof Error ? error : new Error(String(error))); return
+      }
       if (value.type !== "delta") finish(undefined, value)
     })
     const timeout = window.setTimeout(() => {

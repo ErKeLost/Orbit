@@ -34,7 +34,7 @@ export function VoiceSettingsPage() {
   const [catalogLoading, setCatalogLoading] = useState(false);
   const [changingVoice, setChangingVoice] = useState(false);
   const model = config?.model ?? "coda";
-  const language = config?.spokenLang ?? "en";
+  const language = config?.lang ?? "en";
   const call = useSyncExternalStore(voiceController.subscribe, voiceController.getSnapshot);
   const callActive = call.starting || call.state !== "off";
   const [checking, setChecking] = useState(false);
@@ -72,11 +72,11 @@ export function VoiceSettingsPage() {
     if (changingVoice) return;
     setChangingVoice(true);
     try {
-      const nextModel = patch.model ?? model, nextLanguage = patch.spokenLang ?? language;
+      const nextModel = patch.model ?? model, nextLanguage = patch.lang ?? language;
       const result = await rimeVoices(nextModel, nextLanguage);
       const speaker = result.voices.find(voice => voice.speaker === config?.speaker)?.speaker ?? result.voices[0]?.speaker;
       if (!speaker) throw new Error("Rime 音色目录中没有这个模型和语言的可用音色");
-      await updateConfig({ ...patch, speaker, spokenLang: nextLanguage, lang: nextLanguage, sttLang: nextLanguage });
+      await updateConfig({ ...patch, speaker, lang: nextLanguage, sttLang: nextLanguage });
     } catch (cause) { toast.error("更新语音设置失败", { description: cause instanceof Error ? cause.message : String(cause) }); }
     finally { setChangingVoice(false); }
   };
@@ -105,7 +105,7 @@ export function VoiceSettingsPage() {
 
       <Group title="实时对话" description="识别和合成统一使用 Rime。每次开麦创建独立会话，可以发任务、问进度或旁观已有任务。">
         <Row label="对话语言" description="Rime 识别目前支持英语和西班牙语，不支持中文，也不会自动识别语言。">
-          <Select label="对话语言" value={language} disabled={!config || changingVoice || checking} options={Object.entries(LANG_LABELS).map(([value,label])=>({value,label}))} onChange={spokenLang=>void chooseEngine({spokenLang})} />
+          <Select label="对话语言" value={language} disabled={!config || changingVoice || checking} options={Object.entries(LANG_LABELS).map(([value,label])=>({value,label}))} onChange={lang=>void chooseEngine({lang})} />
         </Row>
         <Row label="断句等待" description="说完后等待的静音毫秒数。更短更快，更长更适合句中停顿；默认 450ms。">
           <Input key={config?.endpointMs ?? 450} type="number" min={200} max={1200} step={50} defaultValue={config?.endpointMs ?? 450} onBlur={event=>{const endpointMs=Number(event.target.value);if(Number.isInteger(endpointMs)&&endpointMs>=200&&endpointMs<=1200)void saveSettings({endpointMs})}} className="max-w-24" />
