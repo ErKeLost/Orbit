@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Orbit",
-  "version": "1.0.23",
+  "version": "1.0.24",
   "identifier": "ai.pi.gui",
   "build": {
     "frontendDist": "../dist",
@@ -70,7 +70,7 @@
     "macOS": {
       "signingIdentity": "-",
       "hardenedRuntime": false,
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "13.0"
     },
     "linux": {
       "deb": {

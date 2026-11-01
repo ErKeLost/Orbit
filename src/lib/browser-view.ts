@@ -13,7 +13,7 @@
 import { invoke } from "./native"
 
 export type ViewRect = { x: number; y: number; width: number; height: number }
-export type BrowserViewStatus = { open: boolean; url: string; visible: boolean; loading: boolean }
+export type BrowserViewStatus = { open: boolean; url: string; visible: boolean; loading: boolean; tab: string; profile?: string | null }
 
 /**
  * One view per browser tab; `tab` is the tab entry's path (`browser:<id>`).
@@ -74,4 +74,9 @@ export function browserViewReconcile(tabs: string[]): Promise<number> {
  */
 export function browserViewPage(tab: string): Promise<{ title: string; url: string; loading: boolean; audioMuted?: boolean }> {
   return invoke<{ title: string; url: string; loading: boolean; audioMuted?: boolean }>("browser_view_page", { tab })
+}
+
+/** Native pages survive frontend reloads and keep their session ownership. */
+export function browserViewRestore(): Promise<BrowserViewStatus[]> {
+  return invoke<BrowserViewStatus[]>("browser_view_restore")
 }

@@ -20,6 +20,8 @@ pub mod disclaim;
 mod screen;
 pub mod browser;
 pub mod browser_view;
+#[cfg(desktop)]
+mod browser_cdp;
 mod browser_leases;
 mod cookie_import;
 // Pi bridge split by domain: `bridge` keeps the shared worker registry and
@@ -166,12 +168,23 @@ pub fn run() {
         normalize_path();
         adopt_login_shell_path();
     }
-    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = tauri::Builder::default().runtime(
+        tauri_runtime_cef::Cef::default()
+            .root_cache_path(browser::browser_dir().expect("browser data directory").join("cef"))
+            .secret_storage(tauri_runtime_cef::SecretStorage::System)
+            .persist_session_cookies(true)
+            .log_severity(cef::LogSeverity::ERROR),
+    );
+    #[cfg(desktop)]
+    let builder = builder.manage(browser_cdp::NativeCdp::default());
+    #[cfg(mobile)]
+    let builder = tauri::Builder::default().runtime(tauri_runtime_wry::Wry::default());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(mobile_update::init()).plugin(mobile_background::init());
     #[cfg(any(target_os = "android", target_os = "ios"))]
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init());
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(target_os = "ios")]
     let builder = builder.on_web_content_process_terminate(|webview| {
         let _ = webview.reload();
     });
@@ -237,9 +250,8 @@ pub fn run() {
             if let Some(main) = app.get_webview_window("main") {
                 let _ = main.show();
             }
-            // The column's view is this process's; the agent's loop is another.
-            // This is the socket between them (`browser_view::serve`).
-            browser_view::serve(app.handle().clone());
+            #[cfg(desktop)]
+            browser_cdp::serve(app.handle().clone());
             splash::mark(app.handle(), &app.state::<splash::SplashState>(), "backend");
             // 历史图片抽出来的文件是个缓存；超预算时在后台按修改时间清掉最旧的，
             // 不挡启动（缺的图下次装载时会重新抽）。
@@ -254,7 +266,6 @@ pub fn run() {
         .manage(power::KeepAwake::new())
         .manage(pty_term::PtyHost::new())
         .manage(screen::ScreenHost::default())
-        .manage(browser::BrowserHost::default())
         .manage(browser_view::BrowserViewHost::default())
         .invoke_handler(tauri::generate_handler![
             #[cfg(target_os = "macos")]
@@ -282,12 +293,7 @@ pub fn run() {
             gui_settings::get_request_budget,
             gui_settings::save_request_budget,
             computer_use::computer_use_key_status,
-            // Browser Use (`docs/BROWSER_USE.md`): the third column's Chrome.
-            // Screencast frames and input forwarding are CDP work and live in
-            // the webview; these commands own the process and the session file.
-            browser::browser_open,
-            browser::browser_status,
-            browser::browser_close,
+            // Native Chromium pages, browser placement and verified Profile import.
             browser::browser_client_report,
             browser::browser_import_sources,
             browser::browser_import_session,
@@ -306,6 +312,7 @@ pub fn run() {
             browser_view::browser_view_page,
             browser_view::browser_view_close,
             browser_view::browser_view_reconcile,
+            browser_view::browser_view_restore,
             computer_use::save_computer_use_key,
             computer_use::computer_use_config,
             computer_use::save_computer_use_config,
@@ -493,23 +500,15 @@ pub fn run() {
                 window.state::<pty_term::PtyHost>().kill_all();
                 window.state::<bridge::Bridge>().stop();
                 window.state::<remote::RemoteHost>().stop();
-                // The owned Chrome is Orbit's, not the user's: it goes away with
-                // the window that hosts the column showing it. The child web view
-                // is part of the window and dies with it.
-                let _ = browser::close();
             }
         })
         .build(tauri::generate_context!())
         .expect("error while building Orbit")
         .run(|app, event| {
-            let exit = matches!(event, tauri::RunEvent::Exit);
             #[cfg(target_os = "macos")]
             reopen_main_window(app, event);
             #[cfg(not(target_os = "macos"))]
             let _ = (app, event);
-            if exit {
-                let _ = browser::close();
-            }
         });
 }
 

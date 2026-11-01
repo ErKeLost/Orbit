@@ -1,6 +1,4 @@
 import { invoke } from "./native"
-import { useShell } from "../features/shell/shellStore"
-import { browserViewReload } from "./browser-view"
 import { useSyncExternalStore } from "react"
 
 let importSnapshot = { busy: false, revision: 0 }
@@ -64,34 +62,13 @@ export function browserImportState(): Promise<ImportReport | null> {
   return invoke<ImportReport | null>("browser_import_state")
 }
 
-/**
- * Reload every browser tab that is already open.
- *
- * A page that loaded before the import is holding a session it no longer has:
- * cookies are read per request, so only a new request sees them. Creating a
- * *new* tab would also work, but reloading is what keeps the tab the user is
- * looking at.
- */
-export function reloadOpenBrowserTabs(): void {
-  window.dispatchEvent(new Event("orbit:browser-profile-changed"))
-  // Tabs are the window's, not a workspace's: one list, one pass.
-  for (const tab of useShell.getState().browserTabs) {
-    void browserViewReload(tab.path).catch(() => undefined)
-  }
-}
-
-/**
- * The whole import, in the order it has to happen.
- *
- * The backend reads/decrypts a source snapshot and verifies the destination.
- * Reload the existing pages afterwards so their next request uses that store.
- */
+/** Import selects the Profile for subsequently created native tabs. Existing
+ * pages keep their request context, history, playback and session leases. */
 export async function importBrowserSession(browser: string, profile: string): Promise<{ report: ImportReport; cookies: number }> {
   if (importSnapshot.busy) throw new Error("已有浏览器导入正在进行，请等它结束")
   setImportBusy(true)
   try {
     const report = await browserImportSession(browser, profile)
-    reloadOpenBrowserTabs()
     return { report, cookies: report.cookies }
   } finally {
     // Resume native placement after success or failure; a transient import lock

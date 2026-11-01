@@ -1,0 +1,7 @@
+# Generated runtime assets are copied during bundling. Watching them would
+# rebuild the CEF .app immediately after every successful bundle.
+resources/node_modules/**
+resources/node-runtime/**
+resources/pi-runtime/**
+resources/computer-use/ax_control
+resources/pi-computer-use/**

@@ -572,7 +572,7 @@ fn chromium_expiry(value: Option<&Value>) -> f64 {
 
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn decode_hex(text: &str) -> Option<Vec<u8>> {
-    if text.len() % 2 != 0 {
+    if !text.len().is_multiple_of(2) {
         return None;
     }
     let bytes = text.as_bytes();

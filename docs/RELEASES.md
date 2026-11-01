@@ -6,13 +6,25 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.24
+
+Desktop browser pages now use native Chromium child views inside Tauri, controlled
+by Pi through a page-scoped CDP/Playwright relay. No screenshot stream renders the
+browser panel or its in-app picture-in-picture view. Chinese and multiline input,
+cross-origin frames, cancellation, Profile Cookie readback, and reconnecting an
+executor to its existing page are covered by the live browser integration check.
+
+Browser pages retain their native state when the panel is hidden or the frontend
+reloads. Imported Profiles affect new pages and preserve existing page contexts.
+The release includes the Chromium framework and helper processes, increasing the
+installer size. The Tauri CEF runtime is experimental. Native popup windows are
+not yet included in Orbit's session tab directory; picture-in-picture remains
+inside the Orbit window. See [BROWSER_USE.md](BROWSER_USE.md) for current limits.
+
 ## macOS architectures
 
-Two macOS jobs run, because they are two audiences rather than two builds of one
-target. Intel Macs that Ventura did not carry (2015–2017 models) can reach
-Monterey at most, and an Apple Silicon bundle is not something they can run at
-all. Dropping x86_64 does not make the app slower for them; it makes it not
-exist.
+Both Apple Silicon and Intel macOS builds include native Chromium (CEF 151).
+Both require macOS 13 or newer; macOS 11 and 12 are no longer supported.
 
 The Intel job runs on an **Intel runner** (`macos-15-intel`) instead of
 cross-compiling from the arm64 one. `scripts/sync-node-runtime.mjs` bundles the
@@ -40,13 +52,8 @@ is gated on `startsWith(matrix.name, 'macOS')` and builds its path from
 Accessibility grant is attached to the ad-hoc-signed worker inside the bundle.
 When this job was Apple-Silicon-only, that check hardcoded the `aarch64` path.
 
-`bundle.macOS.minimumSystemVersion` is `11.0`. Tauri's default is `10.13`, which
-is unreachable for arm64 but reachable for Intel — and High Sierra and Catalina
-stop at Safari 13/15, while the entire theme is built on `color-mix()`, which
-needs WebKit 16.2. Without the key those machines would install an app whose
-borders and dividers silently disappear. Big Sur can reach Safari 16.6, so
-`11.0` is the honest floor; there is no `Info.plist` key for a WebKit version, so
-a machine that has never taken a Safari update is still on its own.
+`bundle.macOS.minimumSystemVersion` is `13.0`, matching the minimum declared
+by the bundled CEF framework.
 
 ## macOS signing (current release configuration)
 
