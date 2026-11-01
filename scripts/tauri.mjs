@@ -4,6 +4,9 @@ import { spawn, spawnSync } from 'node:child_process'
 const root=resolve(import.meta.dirname,'..')
 const local=resolve(root,'work/toolchain')
 const env={...process.env}
+// quick-sharun's default anylinux.c URL moved. Keep the deployment shim in
+// the same pinned mirror used by the CEF bundler instead of a rolling 404.
+if(process.platform==='linux'&&!env.ANYLINUX_LIB_SOURCE)env.ANYLINUX_LIB_SOURCE='https://raw.githubusercontent.com/FabianLars/Anylinux-AppImages/3e280d1b2270fecfcb2c2c823b490c782ecf1277/useful-tools/lib/anylinux.c'
 const args=process.argv.slice(2)
 // Another project's Vite (or a second checkout) can already hold the default dev
 // port. ORBIT_DEV_PORT moves both the Vite server and Tauri's devUrl together.

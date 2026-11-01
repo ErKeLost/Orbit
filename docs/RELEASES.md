@@ -127,3 +127,13 @@ To release a version, keep `package.json`, `src-tauri/Cargo.toml`, and
 git tag v0.1.5
 git push origin v0.1.5
 ```
+
+## Retrying Linux packaging
+
+`Repair Linux release packages` rebuilds an existing draft release from its
+immutable tag. This handles packaging-only failures without changing a published
+tag or rebuilding platforms that already succeeded. It checks the version and
+draft state before uploading. The CEF AppImage deployment shim is pinned to the
+same mirror as its bundler because the upstream rolling URL returns 404. After
+repairing a failed release, run the normalization and asset-verification steps of
+`release.yml` before publishing the draft.
