@@ -3,7 +3,7 @@ mod android {
     use serde::Serialize;
     use tauri::{
         plugin::{Builder, PluginHandle, TauriPlugin},
-        AppHandle, Manager, Runtime, Wry,
+        AppHandle, Manager, Runtime, DynRuntime,
     };
 
     const PLUGIN_IDENTIFIER: &str = "ai.pi.gui";
@@ -15,9 +15,9 @@ mod android {
         version: String,
     }
 
-    pub struct MobileUpdate(PluginHandle<Wry>);
+    pub struct MobileUpdate(PluginHandle<DynRuntime>);
 
-    pub fn init() -> TauriPlugin<Wry> {
+    pub fn init() -> TauriPlugin<DynRuntime> {
         Builder::new("mobile-update")
             .setup(|app, api| {
                 let handle =

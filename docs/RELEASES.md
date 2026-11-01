@@ -88,7 +88,8 @@ release. The Tauri updater's minisign key
 
 ## Linux and Android signing
 
-Linux publishes an AppImage, a Debian package, and an RPM package. Release
+Linux publishes an AppImage, a Debian package, and an RPM package. The native
+CEF desktop runtime requires GTK 4.14 or newer; Linux builds use Ubuntu 24.04. Release
 artifacts include Node.js via `scripts/sync-node-runtime.mjs`. RPM packages do
 not require an external Node.js package: the previous `nodejs >= 22.19.0`
 string was encoded as a literal capability name, causing Fedora updates to

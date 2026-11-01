@@ -40,4 +40,4 @@ CEF 的资料目录位于 browser home 的 cef/ 下。应用外壳、默认浏�
 
 CEF 151 的 framework 声明最低 macOS 13，应用的最低版本已同步；macOS 11/12 无法运行此原生内核。
 
-本机验证目标是 Apple Silicon macOS。Windows、Linux 和移动端仍需要各自 CI/设备验证。CEF framework 和 helper 会增加安装包体积，本机未压缩的开发 .app 约 565 MiB。
+本机验证目标是 Apple Silicon macOS。Linux 构建使用 Ubuntu 24.04，原生 runtime 要求 GTK 4.14+。Windows、Linux 和移动端需要各自 CI/设备验证。CEF framework 和 helper 会增加安装包体积，本机未压缩的开发 .app 约 565 MiB。
