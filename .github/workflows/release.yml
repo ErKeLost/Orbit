@@ -141,6 +141,12 @@ jobs:
           # A failed build still warms the dependency cache for the retry.
           cache-on-failure: true
 
+      - name: Reset cached Windows CMake tool paths
+        if: runner.os == 'Windows'
+        # CMake caches Python's patch-version-specific Ninja path. Hosted
+        # runners may restore a cache produced by another Python patch.
+        run: node --input-type=module -e "import {globSync,rmSync} from 'node:fs'; for(const file of globSync('src-tauri/target/**/CMakeCache.txt'))rmSync(file)"
+
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'

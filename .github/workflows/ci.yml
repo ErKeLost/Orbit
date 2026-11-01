@@ -205,6 +205,12 @@ jobs:
         with:
           workspaces: src-tauri
           key: native-${{ runner.os }}
+      - name: Reset cached Windows CMake tool paths
+        if: runner.os == 'Windows'
+        # CMake caches Python's patch-version-specific Ninja path. Hosted
+        # runners may restore a cache produced by another Python patch.
+        run: node --input-type=module -e "import {globSync,rmSync} from 'node:fs'; for(const file of globSync('src-tauri/target/**/CMakeCache.txt'))rmSync(file)"
+
       - name: Check native desktop runtime
         run: cargo check --locked --lib --bins
         working-directory: src-tauri
