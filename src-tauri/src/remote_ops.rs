@@ -18,7 +18,7 @@
 //! *not* "every command": the exclusions are commands that are about *this
 //! device* rather than about the workspace —
 //!
-//! * `runtime_environment` / `splash_ready` / `mobile_update_*`: the phone's own
+//! * `runtime_environment` / `mobile_update_*`: the phone's own
 //!   bootstrap (its APK update is installed on the phone, never on the Mac);
 //! * `remote_host_*` / relay settings: the pairing host's own lifecycle. A phone
 //!   that could stop the Host would be cutting the branch it sits on;
@@ -814,7 +814,6 @@ mod tests {
         // its own APK update is installed on the phone — never on the Mac.
         for excluded in [
             "runtime_environment",
-            "splash_ready",
             "mobile_update_probe",
             "mobile_update_install",
             "remote_host_start",

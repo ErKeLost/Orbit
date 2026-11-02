@@ -58,7 +58,6 @@ mod power;
 mod remote;
 mod remote_ops;
 mod runtime;
-mod splash;
 #[cfg(windows)]
 mod windows;
 use tauri::Manager;
@@ -215,20 +214,6 @@ pub fn run() {
             app.state::<screen::ScreenHost>().attach(app.handle().clone());
             #[cfg(desktop)]
             {
-                // Transparent, undecorated splash that floats the mascot on the desktop.
-                tauri::WebviewWindowBuilder::new(app, "splashscreen", tauri::WebviewUrl::App("splashscreen.html".into()))
-                    .title("Orbit")
-                    .inner_size(340.0, 340.0)
-                    .center()
-                    .resizable(false)
-                    .decorations(false)
-                    .transparent(true)
-                    .shadow(false)
-                    .always_on_top(true)
-                    .skip_taskbar(true)
-                    .focused(true)
-                    .build()?;
-                splash::arm_failsafe(app.handle());
                 app.handle().plugin(tauri_plugin_process::init())?;
                 app.handle()
                     .plugin(tauri_plugin_updater::Builder::new().build())?;
@@ -240,7 +225,6 @@ pub fn run() {
             // The column's view is this process's; the agent's loop is another.
             // This is the socket between them (`browser_view::serve`).
             browser_view::serve(app.handle().clone());
-            splash::mark(app.handle(), &app.state::<splash::SplashState>(), "backend");
             // 历史图片抽出来的文件是个缓存；超预算时在后台按修改时间清掉最旧的，
             // 不挡启动（缺的图下次装载时会重新抽）。
             if let Some(dir) = media::session_media_dir(app.handle()) {
@@ -248,7 +232,6 @@ pub fn run() {
             }
             Ok(())
         })
-        .manage(splash::SplashState::default())
         .manage(bridge::Bridge::default())
         .manage(remote::RemoteHost::default())
         .manage(power::KeepAwake::new())
@@ -261,7 +244,6 @@ pub fn run() {
             ax::ax_observe,
             runtime::runtime_environment,
             power::set_keep_awake,
-            splash::splash_ready,
             providers::discover,
             providers::list_provider_models,
             providers::list_provider_profiles,
@@ -480,13 +462,7 @@ pub fn run() {
                 return;
             }
             if let tauri::WindowEvent::Destroyed = event {
-                // Only the main window's destruction is teardown. The splash
-                // window closes as part of a *normal* startup — a second or
-                // two after bootstrap has restored the Host — and stopping the
-                // Host there would kill the mobile access this launch had just
-                // brought back, which looks on the phone like the Mac going
-                // away. The bridge and PTYs belong to the main window's
-                // lifetime in the same way.
+                // The bridge and PTYs belong to the main window's lifetime.
                 if window.label() != "main" {
                     return;
                 }

@@ -39,7 +39,6 @@ export default defineConfig({
   // 全部语言内联成一个 10MB 的产物。ESM Worker 让每个语言仍是独立 chunk，
   // 用到才取（所有 `new Worker` 调用点本来就带 `{ type: "module" }`）。
   worker: { format: 'es' },
-  // Second entry for the native Tauri splashscreen window.
-  build: { rollupOptions: { input: { main: path.resolve(import.meta.dirname, 'index.html'), splashscreen: path.resolve(import.meta.dirname, 'splashscreen.html'), quickComposer: path.resolve(import.meta.dirname, 'quick-composer.html') } } },
+  build: { rollupOptions: { input: { main: path.resolve(import.meta.dirname, 'index.html'), quickComposer: path.resolve(import.meta.dirname, 'quick-composer.html') } } },
   server: { port: Number(process.env.ORBIT_DEV_PORT ?? 5173), strictPort: true, host: '127.0.0.1', watch: { ignored: ['**/src-tauri/target/**', path.join(import.meta.dirname, 'work', '**')] } },
 })

@@ -45,24 +45,10 @@
         --color-background-base: hsl(var(--theme-hue) var(--theme-saturation) var(--background-lightness));
       }
       html.theme-light { --background-lightness: 97%; }
-      html, body, #boot-splash { margin: 0; background: var(--color-background-base); }
-
-      /* 启动覆盖层在 React 首帧完成后淡出，避免初始化期间闪白屏。 */
-      #boot-splash {
-        position: fixed;
-        inset: 0;
-        z-index: 2147483647;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        pointer-events: none;
-        transition: opacity 0.16s ease;
-      }
-      #boot-splash.boot-splash-out { opacity: 0; }
+      html, body { margin: 0; background: var(--color-background-base); }
     </style>
   </head>
   <body>
-    <div id="boot-splash" aria-hidden="true"></div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -15,7 +15,7 @@
       {
         "label": "main",
         "title": "Orbit",
-        "visible": false,
+        "visible": true,
         "width": 1280,
         "height": 840,
         "resizable": true,

@@ -61,7 +61,6 @@ function dispatchedCommands(): string[] {
  */
 const EXCLUDED: Record<string, string> = {
   runtime_environment: "the phone's own runtime boundary; it decides the routing",
-  splash_ready: "the splash window exists on the desktop only",
   mobile_update_probe: "checks this phone's APK",
   mobile_update_install: "installs on this phone",
   background_connection_status: "the phone's own service state",
