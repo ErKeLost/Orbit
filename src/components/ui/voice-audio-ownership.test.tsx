@@ -41,6 +41,15 @@ describe("voice controls project the owned microphone",()=>{
     await render(<MicSelector value="usb" onValueChange={change} />)
     expect(host.querySelector("button")!.textContent).toContain("USB microphone")
   })
+  test("mute is an explicit controlled action", async () => {
+    const muted = vi.fn()
+    await render(<MicSelector value="builtin" muted={false} onMutedChange={muted} />)
+    await act(async () => host.querySelector("button")!.click())
+    const mute = [...host.querySelectorAll("button")].find(button => button.textContent?.trim() === "静音")!
+    await act(async () => mute.click())
+    expect(muted).toHaveBeenCalledExactlyOnceWith(true)
+    expect(getUserMedia).not.toHaveBeenCalled()
+  })
   test("a waveform with supplied levels never creates another capture stream or audio context",async()=>{
     await render(<LiveWaveform active level={0.1} />)
     await render(<LiveWaveform active level={0.8} />)

@@ -22,6 +22,7 @@ export class SpeechInput {
     onLevel: (level: number) => void; onError: (message: string) => void; onBargeIn: () => void
   }
   private streams = new Set<InputStream>()
+  private muted = false
   constructor(options: SpeechInputOptions, handlers: SpeechInput["handlers"]) {
     this.handlers = handlers
     this.mic = new MicCapture({
@@ -38,12 +39,32 @@ export class SpeechInput {
     await this.mic.start(deviceId)
     if (generation !== this.generation) throw new DOMException("Aborted", "AbortError")
   }
-  activate() { this.listening = true; this.mic.setListening(true); this.prepare() }
+  activate() {
+    this.listening = true
+    this.mic.setListening(!this.muted)
+    if (!this.muted) this.prepare()
+  }
   setEndpointMs(value: number) { this.mic.setEndpointMs(value) }
   async start(deviceId?: string) { await this.prepareDevice(deviceId); this.activate() }
   setSpeaking(value: boolean) { this.mic.setAgentSpeaking(value) }
   async setDevice(deviceId: string) { this.stop(); await this.start(deviceId || undefined) }
+  /** Pause local capture and discard any in-flight recognition while keeping the device open. */
+  setMuted(value: boolean) {
+    if (this.muted === value) return
+    this.muted = value
+    this.generation++
+    clearTimeout(this.expiry)
+    this.expiry = undefined
+    this.active = null
+    this.warm = null
+    this.turn = null
+    for (const state of this.streams) this.abort(state)
+    this.mic.setMuted(value)
+    this.mic.setListening(this.listening && !value)
+    if (!value && this.listening) this.prepare()
+  }
   private open(): InputStream {
+    if (this.muted) throw new Error("麦克风已静音")
     const state: InputStream = { id: Promise.resolve(""), pending: [], chain: Promise.resolve(), aborted: false, failed: null, born: performance.now() }
     this.streams.add(state)
     state.id = rimeSttOpen(event => {
@@ -65,7 +86,7 @@ export class SpeechInput {
     this.expiry = setTimeout(() => { if (this.warm === state) { this.warm = null; this.abort(state) } }, 10000)
   }
   private begin() {
-    if (!this.listening) return
+    if (!this.listening || this.muted) return
     clearTimeout(this.expiry)
     const turn = this.turn ?? { id: crypto.randomUUID(), segments: [], ended: false }
     this.turn = turn; turn.ended = false
@@ -107,6 +128,7 @@ export class SpeechInput {
     })
   }
   private chunk(chunk: Int16Array) {
+    if (this.muted) return
     const state = this.active?.segment.stream
     if (!state || state.aborted || state.failed) return
     // Opening is a real state: retain the first frames until the IPC stream id arrives.

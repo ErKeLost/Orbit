@@ -2,16 +2,17 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 import { emptyTranscript } from "@/lib/protocol/types"
 import { useWorkspace } from "@/lib/store"
 const stopping = vi.hoisted(() => vi.fn(async (_binding: {connectionId:string;sessionFile:string}) => {}))
-const fixture = vi.hoisted(() => ({ snapshots: new Map<string, unknown>(), connections: new Map<string, { cwd: string }>(), prepareInput: vi.fn(async () => {}), prepareOutput: vi.fn(async () => {}), activate: vi.fn(), setDevice: vi.fn(async () => {}), stopInput: vi.fn(), disposeOutput: vi.fn(), config: vi.fn(), checkService: vi.fn(async () => {}), configure: vi.fn(async () => ({type:"done"})), outputHandlers: undefined as {onFirstAudio:(at:number)=>void}|undefined, create: vi.fn(), close: vi.fn(async () => {}), route: vi.fn(), execute: vi.fn(async () => {}), cancels: vi.fn(), append: vi.fn(), events: new Map<string, (event: unknown) => void>() }))
-vi.mock("@/lib/rpc-core", () => ({ connections: fixture.connections, current: (id: string) => fixture.snapshots.get(id), subscribeSessionEvents: (id: string, callback: (event: unknown) => void) => { fixture.events.set(id,callback); return ()=>fixture.events.delete(id) } }))
+const fixture = vi.hoisted(() => ({ snapshots: new Map<string, unknown>(), connections: new Map<string, { cwd: string }>(), prepareInput: vi.fn(async () => {}), prepareOutput: vi.fn(async () => {}), activate: vi.fn(), setDevice: vi.fn(async () => {}), setMuted: vi.fn(), stopInput: vi.fn(), disposeOutput: vi.fn(), config: vi.fn(), checkService: vi.fn(async () => {}), configure: vi.fn(async () => ({type:"done"})), outputHandlers: undefined as {onFirstAudio:(at:number)=>void}|undefined, create: vi.fn(), close: vi.fn(async () => {}), refresh: vi.fn(async () => {}), clone: vi.fn(async () => {}), route: vi.fn(), execute: vi.fn(async () => {}), cancels: vi.fn(), append: vi.fn(), events: new Map<string, (event: unknown) => void>() }))
+vi.mock("@/lib/rpc-core", () => ({ connections: fixture.connections, current: (id: string) => fixture.snapshots.get(id), refresh: fixture.refresh, subscribeSessionEvents: (id: string, callback: (event: unknown) => void) => { fixture.events.set(id,callback); return ()=>fixture.events.delete(id) } }))
 vi.mock("@/lib/rpc-connection", () => ({ startConnection: fixture.create, closeConnection: fixture.close }))
+vi.mock("@/lib/rpc-session", () => ({ cloneSession: fixture.clone }))
 vi.mock("@/lib/rpc-projects", () => ({ rimeConfig: fixture.config, rimeTtsPrepare: async () => {}, saveRimeConfig: async (config: unknown) => config }))
 vi.mock("./voice-service", () => ({ checkVoiceService: fixture.checkService, voiceService: (target: string, input: {action:string}, ...args: unknown[]) => input.action === "configure_session" ? fixture.configure(target,input,...args) : fixture.route(target,input,...args) }))
 vi.mock("./command-gateway", () => ({ stopBoundTask: stopping, boundSnapshot: (binding: {connectionId:string;sessionFile:string}) => { const snapshot=fixture.snapshots.get(binding.connectionId) as {state:{sessionFile:string}};if(snapshot?.state.sessionFile!==binding.sessionFile)throw new Error("binding changed");return snapshot }, CommandGateway: class { execute = fixture.execute } }))
-vi.mock("./speech-input", () => ({ SpeechInput: class { prepareDevice=fixture.prepareInput; activate=fixture.activate; setEndpointMs() {} stop=fixture.stopInput; setSpeaking() {} setDevice=fixture.setDevice } }))
+vi.mock("./speech-input", () => ({ SpeechInput: class { prepareDevice=fixture.prepareInput; activate=fixture.activate; setEndpointMs() {} setMuted=fixture.setMuted; stop=fixture.stopInput; setSpeaking() {} setDevice=fixture.setDevice } }))
 vi.mock("./speech-output", () => ({ SpeechOutput: class { constructor(handlers: {onFirstAudio:(at:number)=>void}) {fixture.outputHandlers=handlers} busy=false; prepare=fixture.prepareOutput; begin() {} append=fixture.append; finish() {} cancel=fixture.cancels; dispose=fixture.disposeOutput } }))
 const { VoiceController } = await import("./voice-controller")
-function snapshot(file: string, running=false) { return { connection:"online",state:{sessionFile:file,sessionName:file},transcript:{...emptyTranscript(),running},dialogs:[],statuses:{} } }
+function snapshot(file: string, running=false) { return { connection:"online",state:{sessionFile:file,sessionName:file},transcript:{...emptyTranscript(),messages:[{id:"prior-message",message:{role:"user",content:"prior context"}}] as never,running},dialogs:[],statuses:{} } }
 const decision = (intent: string, target: string) => ({type:"decision",decision:{intent,target,confidence:0.99,targetConfidence:0.99,mutation:0.99,actionability:0.99,compound:0,model:"fixture",latencyMs:1}})
 const settle = async () => { for (let index=0; index<20; index++) await Promise.resolve() }
 describe("voice call and session isolation", () => {
@@ -19,7 +20,7 @@ describe("voice call and session isolation", () => {
   beforeEach(() => {
     vi.clearAllMocks(); fixture.config.mockResolvedValue({ hasCredential: true, configured: true, lang: "en", sttLang: "en" }); fixture.snapshots.clear(); fixture.connections.clear(); fixture.events.clear()
     fixture.snapshots.set("original",snapshot("/original",true));fixture.connections.set("original",{cwd:"/project"})
-    useWorkspace.getState().set({connection:"online",connectionId:"original",cwd:"/project",panel:"voice",state:{sessionFile:"/original"} as never,transcript:{...emptyTranscript(),running:true}})
+    useWorkspace.getState().set({connection:"online",connectionId:"original",cwd:"/project",panel:"voice",state:{sessionFile:"/original"} as never,transcript:{...emptyTranscript(),messages:[{id:"prior-message",message:{role:"user",content:"prior context"}}] as never,running:true}})
     fixture.create.mockImplementation(async (_cwd: string,id: string) => { fixture.snapshots.set(id,snapshot("/new-voice",true));fixture.connections.set(id,{cwd:"/project"}) })
     fixture.route.mockImplementation(async (target: string,input: {action:string;context?:{latestReply?:string;state?:string;task?:{latestReply?:string}};input?:{text:string;focused:string}}, _signal: AbortSignal, onEvent?: (value: unknown)=>void) => {
       if (input.action === "configure_session") return {type:"done"}
@@ -27,13 +28,25 @@ describe("voice call and session isolation", () => {
       return decision(input.input?.text.includes("progress")?"query_progress":"dispatch_task",input.input?.focused??target)
     })
   })
-  test("starting binds a fresh background session while preserving the current page and loading state", async () => {
+  test("starting binds the current Pi session while keeping a separate voice control session", async () => {
     const voice=new VoiceController();await voice.start()
     expect(fixture.create).toHaveBeenCalledWith("/project",expect.stringMatching(/^voice-/),expect.objectContaining({background:true,restoreLast:false,keepTranscript:true}))
-    expect(voice.getSnapshot().focusId).not.toBe("original")
-    expect(fixture.configure).toHaveBeenCalledWith(voice.getSnapshot().focusId,{action:"configure_session",language:"en"},expect.any(AbortSignal))
-    expect(fixture.configure).not.toHaveBeenCalledWith("original",expect.anything(),expect.anything())
+    expect(fixture.create).toHaveBeenCalledWith("/project",expect.stringMatching(/^voice-task-/),expect.objectContaining({background:true,restoreLast:false,keepTranscript:true,sessionPath:"/original"}))
+    expect(fixture.clone).toHaveBeenCalledWith(expect.stringMatching(/^voice-task-/))
+    expect(voice.getSnapshot().focusId).toMatch(/^voice-task-/)
+    expect(fixture.configure).toHaveBeenCalledWith(expect.stringMatching(/^voice-/),{action:"configure_session",language:"en"},expect.any(AbortSignal))
+    expect(fixture.configure).not.toHaveBeenCalledWith(voice.getSnapshot().focusId,expect.anything(),expect.anything())
     expect(useWorkspace.getState()).toMatchObject({connectionId:"original",panel:"voice",transcript:{loading:false,running:true}})
+    voice.stop()
+  })
+  test("an unsaved empty Pi session starts a fresh executor without trying to clone it", async () => {
+    fixture.snapshots.set("original",{...snapshot("/original"),transcript:emptyTranscript()})
+    useWorkspace.getState().set({transcript:emptyTranscript()})
+    const voice=new VoiceController();await voice.start()
+    const executorCall=fixture.create.mock.calls.find(call=>(call[1] as string).startsWith("voice-task-"))
+    expect(executorCall?.[2]).not.toHaveProperty("sessionPath")
+    expect(fixture.clone).not.toHaveBeenCalled()
+    expect(voice.getSnapshot()).toMatchObject({state:"ready",error:null,focusId:expect.stringMatching(/^voice-task-/)})
     voice.stop()
   })
   test("first click starts both audio devices before waiting for configuration or Pi", async () => {
@@ -48,6 +61,17 @@ describe("voice call and session isolation", () => {
     expect(voice.getSnapshot()).toMatchObject({starting:false,startupStage:null,state:"ready",error:null})
     expect(fixture.activate).toHaveBeenCalledOnce(); voice.stop()
   })
+  test("mute pauses recognition without ending the voice call", async () => {
+    const voice = new VoiceController(); await voice.start()
+    expect(voice.getSnapshot()).toMatchObject({ state: "ready", muted: false })
+    voice.setMuted(true)
+    expect(voice.getSnapshot()).toMatchObject({ state: "ready", muted: true, level: 0, partial: "" })
+    expect(fixture.setMuted).toHaveBeenLastCalledWith(true)
+    voice.setMuted(false)
+    expect(voice.getSnapshot()).toMatchObject({ state: "ready", muted: false })
+    expect(fixture.setMuted).toHaveBeenLastCalledWith(false)
+    voice.stop()
+  })
   test("session readiness cannot activate capture until the pending device is ready", async () => {
     let ready!: () => void
     fixture.prepareInput.mockImplementationOnce(() => new Promise(resolve=>{ready=resolve}))
@@ -56,7 +80,7 @@ describe("voice call and session isolation", () => {
     await voice.submitText("fix login");expect(fixture.execute).not.toHaveBeenCalled()
     expect(fixture.activate).not.toHaveBeenCalled()
     ready();await starting
-    expect(voice.getSnapshot().state).toBe("ready");expect(fixture.create).toHaveBeenCalledOnce();voice.stop()
+    expect(voice.getSnapshot().state).toBe("ready");expect(fixture.create).toHaveBeenCalledTimes(2);voice.stop()
   })
   test("repeated clicks and the same microphone selection do not restart startup or capture", async () => {
     let ready!: () => void
@@ -66,7 +90,7 @@ describe("voice call and session isolation", () => {
     voice.setDeviceId("builtin");voice.setDeviceId("another")
     expect(voice.getSnapshot().deviceId).toBe("builtin")
     ready();await starting;voice.setDeviceId("builtin")
-    expect(fixture.create).toHaveBeenCalledOnce();expect(fixture.setDevice).not.toHaveBeenCalled()
+    expect(fixture.create).toHaveBeenCalledTimes(2);expect(fixture.setDevice).not.toHaveBeenCalled()
     expect(fixture.prepareInput).toHaveBeenCalledExactlyOnceWith("builtin");voice.stop()
   })
   test("a device AbortError is visible and the next attempt succeeds without a stale state", async () => {
@@ -111,34 +135,61 @@ describe("voice call and session isolation", () => {
     fixture.create.mockImplementation(async (_cwd: string, id: string) => {
       fixture.snapshots.set(id, snapshot(`/sessions/${id}.jsonl`, true)); fixture.connections.set(id, {cwd:"/project"})
     })
-    const voice = new VoiceController(); await voice.start(); const first = voice.getSnapshot().focusId
-    await voice.submitText("fix login"); voice.stop(); await voice.start(); const second = voice.getSnapshot().focusId
+    const voice = new VoiceController(); await voice.start(); const first = fixture.create.mock.calls.at(-1)![1] as string
+    await voice.submitText("fix login"); await voice.stop()
+    expect(fixture.close).toHaveBeenCalledWith(first)
+    await voice.start(); const second = fixture.create.mock.calls.at(-1)![1] as string
     expect(second).not.toBe(first)
     expect(fixture.snapshots.get(second)).not.toEqual(fixture.snapshots.get(first))
     expect(voice.getSnapshot().log).toEqual([])
     await voice.submitText("progress?")
     expect(fixture.route.mock.calls.filter(call=>call[1].action === "route").at(-1)![1].input).toMatchObject({focused:second,history:[]})
     expect(useWorkspace.getState()).toMatchObject({connectionId:"original",panel:"voice",transcript:{loading:false}})
-    expect(fixture.close).not.toHaveBeenCalled(); voice.stop()
+    await voice.stop()
+    expect(fixture.close).toHaveBeenCalledWith(second)
   })
   test("a fresh-information question dispatches to Pi rather than the tool-less answer model", async () => {
-    fixture.route.mockImplementationOnce(async (target: string) => ({...decision("lookup",target),decision:{...decision("lookup",target).decision,mutation:0.1}}))
+    fixture.route.mockImplementationOnce(async (_target: string, input: {input: {focused: string}}) => ({...decision("lookup",input.input.focused),decision:{...decision("lookup",input.input.focused).decision,mutation:0.1}}))
     const voice = new VoiceController(); await voice.start(); const target = voice.getSnapshot().focusId
     await voice.submitText("北京现在天气怎么样？")
     expect(fixture.execute).toHaveBeenCalledWith(expect.any(String),{connectionId:target,sessionFile:"/new-voice"},expect.objectContaining({intent:"lookup"}),expect.stringContaining("北京现在天气怎么样？"),undefined,expect.any(AbortSignal))
     expect(fixture.route.mock.calls.filter(call => call[1].action === "route")).toHaveLength(1)
     expect(voice.getSnapshot().log.at(-1)?.text).toBe("I'll look that up."); voice.stop()
   })
+  test("an interrupted weather request reuses its task and fresh result instead of searching again", async () => {
+    const voice = new VoiceController(); await voice.start(); const target = voice.getSnapshot().focusId
+    fixture.route.mockImplementationOnce(async (_service: string, input: {input:{focused:string}}) => ({...decision("lookup",input.input.focused),decision:{...decision("lookup",input.input.focused).decision,workKind:"lookup"}}))
+    await voice.submitText("北京现在天气怎么样？")
+    expect(fixture.execute).toHaveBeenCalledTimes(1)
+
+    fixture.route.mockImplementationOnce(async () => decision("general_question",target))
+    await voice.submitText("顺便告诉我现在几点")
+    expect(fixture.execute).toHaveBeenCalledTimes(1)
+
+    const completed = snapshot("/new-voice")
+    completed.transcript.messages = [
+      { id:"weather-request", message:{role:"user",content:"北京现在天气怎么样？"} },
+      { id:"weather-result", message:{role:"assistant",content:"Beijing is sunny, 17 degrees Celsius."} },
+    ] as never
+    fixture.snapshots.set(target,completed)
+    fixture.events.get(target)!({connectionId:target,sessionFile:"/new-voice",sequence:40,observedAt:Date.now(),event:{type:"agent_settled"}})
+    await settle()
+
+    fixture.route.mockImplementationOnce(async (_service: string, input: {input:{focused:string}}) => ({...decision("lookup",input.input.focused),decision:{...decision("lookup",input.input.focused).decision,workKind:"lookup"}}))
+    await voice.submitText("天气怎么样？")
+    expect(fixture.execute).toHaveBeenCalledTimes(1)
+    expect(fixture.route.mock.calls.filter(call=>call[1].action === "route")).toHaveLength(3)
+    await voice.stop()
+  })
   test("redirected retrieval preserves both delivery and information-only instructions", async () => {
-    fixture.route.mockImplementationOnce(async (target: string) => {
-      const value = decision("steer_task", target)
+    fixture.route.mockImplementationOnce(async (_target: string, input: {input: {focused: string}}) => {
+      const value = decision("steer_task", input.input.focused)
       return { ...value, decision: { ...value.decision, workKind: "lookup", deliveryConfidence: 0.99 } }
     })
     const voice = new VoiceController(); await voice.start()
     await voice.submitText("别做这个了，改查上海天气")
     expect(fixture.execute.mock.calls[0]![2]).toMatchObject({ intent: "steer_task", workKind: "lookup" })
-    expect(fixture.execute.mock.calls[0]![3]).toContain("Read-only information request")
-    expect(fixture.execute.mock.calls[0]![3]).toContain("改查上海天气")
+    expect(fixture.execute.mock.calls[0]![3]).toContain("别做这个了，改查上海天气")
     voice.stop()
   })
   test("clarification asks about the missing detail and carries it into the next execution", async () => {
@@ -156,7 +207,7 @@ describe("voice call and session isolation", () => {
       const result = decision("dispatch_task",target); return {...result,decision:{...result.decision,continuesRequest:true}}
     })
     await voice.submitText("打开百度")
-    expect(fixture.execute.mock.calls[0]![3]).toContain('"currentRequest":"打开百度"'); voice.stop()
+    expect(fixture.execute.mock.calls[0]![3]).toBe("Original request: start a task\nVoice clarification: What would you like me to do?\nUser clarification: 打开百度"); await voice.stop()
   })
   test("Pi completion speaks the actual result and unrelated sessions stay quiet", async () => {
     const voice = new VoiceController(); await voice.start(); const target = voice.getSnapshot().focusId
@@ -184,7 +235,7 @@ describe("voice call and session isolation", () => {
     ] as never
     fixture.snapshots.set(target, waiting)
     fixture.route.mockImplementationOnce(async (_target: string, request: { input: unknown }) => {
-      expect(request.input).toMatchObject({ focused: target, text: "北京", focusedTask: { sessionFile: "/new-voice", goal: "查天气预报", latestReply: "你想查询哪个城市？" } })
+    expect(request.input).toMatchObject({ focused: target, text: "北京", focusedTask: { sessionFile: "/new-voice", goal: "查天气预报", latestReply: "你想查询哪个城市？" } })
       return decision("lookup", target)
     })
     await voice.submitText("北京")
@@ -195,15 +246,14 @@ describe("voice call and session isolation", () => {
     const voice=new VoiceController();await voice.start();const target=voice.getSnapshot().focusId
     useWorkspace.getState().set({connectionId:"somewhere-else",panel:"chat"})
     await voice.submitText("fix login")
-    expect(fixture.execute).toHaveBeenCalledWith(expect.any(String),{connectionId:target,sessionFile:"/new-voice"},expect.objectContaining({intent:"dispatch_task"}),expect.stringContaining("fix login"),undefined,expect.any(AbortSignal))
-    await voice.stop();expect(stopping).toHaveBeenCalledExactlyOnceWith({connectionId:target,sessionFile:"/new-voice"})
-    expect(fixture.close).not.toHaveBeenCalled()
+    expect(fixture.execute).toHaveBeenCalledWith(expect.any(String),{connectionId:target,sessionFile:"/new-voice"},expect.objectContaining({intent:"dispatch_task"}),"fix login",undefined,expect.any(AbortSignal))
+    await voice.stop();expect(stopping).toHaveBeenCalledWith({connectionId:target,sessionFile:"/new-voice"}); expect(fixture.close).toHaveBeenCalledWith(target)
   })
   test("hanging up while observing an ordinary session stops only the owned session", async () => {
-    const voice=new VoiceController();await voice.start();const owned=voice.getSnapshot().focusId
+    const voice=new VoiceController();await voice.start();const owned=fixture.create.mock.calls.at(-1)![1] as string
     voice.setFocus("original")
     await voice.stop()
-    expect(stopping).toHaveBeenCalledExactlyOnceWith({connectionId:owned,sessionFile:"/new-voice"})
+    expect(stopping).toHaveBeenCalledWith({connectionId:owned,sessionFile:"/new-voice"})
     expect(stopping).not.toHaveBeenCalledWith(expect.objectContaining({connectionId:"original"}))
   })
   test("stopping playback leaves execution alone; explicit task cancellation stays on the call", async () => {
@@ -215,15 +265,18 @@ describe("voice call and session isolation", () => {
     expect(voice.getSnapshot().state).not.toBe("off")
     await voice.stop()
   })
-  test("a spoken hangup uses the same owned-task cleanup as the hangup button", async () => {
+  test("a spoken hangup closes its cloned executor without aborting an untouched source session", async () => {
     const voice=new VoiceController();await voice.start();const target=voice.getSnapshot().focusId
+    const service=fixture.create.mock.calls.find(call=>(call[1] as string).startsWith("voice-"))![1] as string
     fixture.route.mockResolvedValueOnce({type:"decision",decision:{...decision("control_voice",target).decision,voiceControl:"end_call"}})
     await voice.submitText("结束通话")
-    expect(stopping).toHaveBeenCalledExactlyOnceWith({connectionId:target,sessionFile:"/new-voice"})
+    expect(stopping).toHaveBeenCalledWith({connectionId:target,sessionFile:"/new-voice"})
+    expect(fixture.close).toHaveBeenCalledWith(target)
+    expect(fixture.close).toHaveBeenCalledWith(service)
     expect(voice.getSnapshot().state).toBe("off")
   })
   test("explicit stop can target the ordinary session being observed while preserving the call", async () => {
-    const voice = new VoiceController(); await voice.start(); const owned = voice.getSnapshot().focusId
+    const voice = new VoiceController(); await voice.start(); const owned = fixture.create.mock.calls.at(-1)![1] as string
     voice.setFocus("original")
     fixture.route.mockResolvedValueOnce(decision("control_task", "original"))
     await voice.submitText("stop the current task")
@@ -231,7 +284,7 @@ describe("voice call and session isolation", () => {
     expect(voice.getSnapshot()).toMatchObject({ focusId: "original", state: "ready" })
     expect(stopping).not.toHaveBeenCalled()
     await voice.stop()
-    expect(stopping).toHaveBeenCalledExactlyOnceWith({ connectionId: owned, sessionFile: "/new-voice" })
+    expect(stopping).toHaveBeenCalledWith({ connectionId: owned, sessionFile: "/new-voice" })
   })
   test("a late stop failure cannot change a subsequent call", async () => {
     let reject!:(reason:unknown)=>void
@@ -249,12 +302,13 @@ describe("voice call and session isolation", () => {
     const accepted=voice.submitText("fix login");voice.stop();release(decision("dispatch_task",target));await accepted
     expect(fixture.execute).not.toHaveBeenCalled()
   })
-  test("watching an older session keeps all internal service commands on the new voice connection", async () => {
-    const voice=new VoiceController();await voice.start();const service=voice.getSnapshot().focusId
+  test("watching an older session keeps routing on the control session and targeting the selected session", async () => {
+    const voice=new VoiceController();await voice.start();const executor=voice.getSnapshot().focusId
+    const service=fixture.create.mock.calls.find(call=>(call[1] as string).startsWith("voice-"))![1] as string
     voice.setFocus("original");await voice.submitText("progress?")
     expect(fixture.route.mock.calls.find(call=>call[1].action === "route")![0]).toBe(service)
     expect(fixture.route.mock.calls.find(call=>call[1].action === "route")![1].input.focused).toBe("original")
-    expect(fixture.execute).not.toHaveBeenCalled();voice.stop()
+    expect(fixture.execute).not.toHaveBeenCalled();expect(executor).not.toBe(service);await voice.stop()
   })
   test("a session replacement during routing cannot retarget the task", async () => {
     let release!: (value: unknown)=>void
@@ -343,12 +397,14 @@ describe("voice call and session isolation", () => {
     fixture.route.mockImplementationOnce(async()=>({...decision("lookup",target),decision:{...decision("lookup",target).decision,continuesRequest:false}}))
     await voice.submitText("Weather.")
     const sent=fixture.execute.mock.calls[0]![3]
-    expect(sent).toContain('"currentRequest":"Weather."')
+    expect(sent).toContain("Original request: Help me check beijing Wiser")
+    expect(sent).toContain("Voice clarification: Do you mean the weather?")
+    expect(sent).toContain("User clarification: Weather.")
     expect(sent).toContain("Help me check beijing Wiser")
     expect(sent).toContain("Do you mean the weather?")
     voice.stop()
   })
-  test("a brief clarification from the voice executor is relayed directly without a completion paraphrase", async () => {
+  test("Pi follow-up questions are rendered by the voice responder from the executor transcript", async () => {
     const voice=new VoiceController();await voice.start();const target=voice.getSnapshot().focusId
     const waiting=snapshot("/new-voice")
     waiting.transcript.messages=[{id:"u",message:{role:"user",content:"Weather."}},{id:"a",message:{role:"assistant",content:"Which city should I check the weather for?"}}] as never
@@ -356,7 +412,7 @@ describe("voice call and session isolation", () => {
     fixture.events.get(target)!({connectionId:target,sessionFile:"/new-voice",sequence:30,observedAt:100,event:{type:"agent_settled"}})
     await settle()
     expect(voice.getSnapshot().log.at(-1)?.text).toBe("Which city should I check the weather for?")
-    expect(fixture.route).not.toHaveBeenCalled()
+    expect(fixture.route).toHaveBeenCalledWith(expect.any(String),expect.objectContaining({action:"answer",context:expect.objectContaining({kind:"task_event",task:expect.objectContaining({latestReply:"Which city should I check the weather for?"})})}),expect.any(AbortSignal),expect.any(Function))
     expect(fixture.append).toHaveBeenCalledExactlyOnceWith("Which city should I check the weather for?")
     voice.stop()
   })

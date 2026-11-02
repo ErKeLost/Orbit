@@ -11,6 +11,6 @@ export function useVoiceAgent() {
   const online = useWorkspace(state => state.connection === "online");
   return { ...snapshot, error: snapshot.error ?? error, config, online, runningTools: [],
     start: () => voiceController.start(), stop: voiceController.stop, interrupt: voiceController.interrupt,
-    setDeviceId: voiceController.setDeviceId,
+    setDeviceId: voiceController.setDeviceId, setMuted: voiceController.setMuted,
     diagnostics: voiceController.diagnostics, clearError: voiceController.clearError, saveKey, updateConfig };
 }

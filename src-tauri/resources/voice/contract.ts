@@ -6,8 +6,8 @@ export const VOICE_CAPABILITIES = {
   query_progress: { description: "Request observed execution state, progress, results or completion status.", effect: "observation.read", target: true },
   analyze_session: { description: "Request interpretation or explanation of observed work, without changing its execution.", effect: "observation.read", target: true },
   watch_task: { description: "Request continued observation or lifecycle notifications for existing work, without modifying, resuming or redispatching it.", effect: "observation.read", target: true },
-  lookup: { description: "Request an answer that needs fresh external evidence, a search, a website, a file or another tool. Questions themselves authorize read-only retrieval; use this even without an imperative verb. Do not answer changing facts from model memory.", effect: "information.read", target: true },
-  general_question: { description: "Request stable general knowledge, advice or discussion that can be answered without external evidence or tools.", effect: "conversation.read", target: false },
+  lookup: { description: "Ask the general-purpose Pi agent to answer a substantive informational question using session context and tools as appropriate. The request is read-only unless the caller explicitly asks for an operation.", effect: "information.read", target: true },
+  general_question: { description: "Common conversation such as greetings, acknowledgements or light social exchange. Substantive questions are routed to Pi.", effect: "conversation.read", target: false },
   chat: { description: "Social conversation, acknowledgement or encouragement. Reaffirming an already active instruction adds no new work unless the caller changes its scope or requests a new action.", effect: "conversation.read", target: false },
   reply_confirmation: { description: "Provide a decision or value for the specific pending interaction already explained to the caller.", effect: "task.write", target: true },
   control_voice: { description: "Change voice playback or end the call. Stopping playback leaves tasks running. Ending the call also cancels the session created by that call; sessions merely observed remain independent.", effect: "voice.write", target: false },
@@ -45,6 +45,7 @@ export type VoiceDecision = {
   voiceControl?: "stop_speech" | "end_call" | "none"
   confirmationResponse?: { id: string; action: "confirm" | "reject" | "cancel" | "select" | "text"; optionIndex?: number; confidence: number }
   actionability?: number
+  agentRequestConfidence?: number
   continuesRequest?: boolean
   clarificationReason?: ClarificationReason
   candidateIntent?: VoiceIntent
@@ -64,12 +65,12 @@ export function validatedDecision(value: VoiceDecision, input: VoiceRouteInput):
   const clarify = (clarificationReason: ClarificationReason): VoiceDecision => ({ ...value, candidateIntent: value.intent === "clarify" ? value.candidateIntent : value.intent, intent: "clarify", clarificationReason })
   const validIntent = Object.hasOwn(VOICE_INTENTS, value.intent)
   const target = input.targets.find(item => item.id === value.target)
-  const numbers = [value.confidence, value.targetConfidence, value.mutation, value.compound, ...(value.deliveryConfidence === undefined ? [] : [value.deliveryConfidence])]
+  const numbers = [value.confidence, value.targetConfidence, value.mutation, value.compound, ...(value.deliveryConfidence === undefined ? [] : [value.deliveryConfidence]), ...(value.agentRequestConfidence === undefined ? [] : [value.agentRequestConfidence])]
   if (!validIntent || numbers.some(n => !Number.isFinite(n) || n < 0 || n > 1) || (value.actionability !== undefined && (!Number.isFinite(value.actionability) || value.actionability < 0 || value.actionability > 1))) return clarify("invalid_decision")
-  if (value.confidence < 0.55) return clarify("uncertain_intent")
+  if (value.confidence < 0.55 && value.intent !== "lookup") return clarify("uncertain_intent")
   // A short dialog answer or cancellation has its own bound object. It does
   // not need to describe a new task; confirmation identity is checked below.
-  if (WORK_REQUEST_INTENTS.has(value.intent) && (value.actionability ?? 0) < 0.75) return clarify("incomplete_request")
+  if (WORK_REQUEST_INTENTS.has(value.intent) && value.intent !== "lookup" && (value.actionability ?? 0) < 0.75) return clarify("incomplete_request")
   if (MUTATING_INTENTS.has(value.intent)) {
     // Initial conservative gates; tune against the voice routing evaluation set.
     const newWork = value.intent === "dispatch_task" || value.intent === "queue_task"

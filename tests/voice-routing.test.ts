@@ -44,7 +44,9 @@ describe("voice route execution boundary", () => {
 describe("Jev responsibility boundaries", () => {
   const answers = (effect: string) => ({effect:{choice:effect,confidence:0.99},target:{choice:"a",confidence:0.99},workKind:{choice:"action",confidence:0.99},delivery:{choice:"additional",confidence:0.99},observation:{choice:"progress",confidence:0.99},mutation:{noul:0.99},actionability:{noul:0.99},compound:{noul:0}})
   test("a task delivery head cannot turn a conversation into execution", () => {
-    const result = decisionFromAnswers({...answers("respond"),observation:{choice:"conversation",confidence:0.99},delivery:{choice:"redirect",confidence:0.99}},input,"fixture",1)
+    // Delivery and observation are evidence for their own heads only; with a
+    // confirmed social exchange neither can turn the turn into execution.
+    const result = decisionFromAnswers({...answers("respond"),observation:{choice:"conversation",confidence:0.99},delivery:{choice:"redirect",confidence:0.99},commonConversationOnly:{noul:0.99}},input,"fixture",1)
     expect(result.intent).toBe("general_question")
   })
   test("supplying a missing location continues retrieval without becoming an approval", () => {
@@ -74,14 +76,16 @@ describe("Jev responsibility boundaries", () => {
     expect(decisionFromAnswers({ ...answers("execute"), delivery: { choice: "deferred", confidence: 0.6 } }, input, "fixture", 1)).toMatchObject({ intent: "queue_task", confidence: 0.99, deliveryConfidence: 0.6 })
     expect(decisionFromAnswers({ ...answers("execute"), delivery: { choice: "redirect", confidence: 0.6 } }, input, "fixture", 1)).toMatchObject({ intent: "clarify", candidateIntent: "steer_task" })
     expect(decisionFromAnswers({ ...answers("respond"), observation: { choice: "progress", confidence: 0.6 }, notify: { noul: 0.9 } }, input, "fixture", 1).intent).toBe("watch_task")
-    expect(decisionFromAnswers({ ...answers("respond"), observation: { choice: "conversation", confidence: 0.99 }, delivery: { choice: "redirect", confidence: 0.99 } }, input, "fixture", 1).intent).toBe("general_question")
+    expect(decisionFromAnswers({ ...answers("respond"), observation: { choice: "conversation", confidence: 0.99 }, delivery: { choice: "redirect", confidence: 0.99 }, commonConversationOnly: { noul: 0.99 } }, input, "fixture", 1).intent).toBe("general_question")
   })
   test("a grounded reply to Pi's question preserves the original retrieval request", () => {
     const context = { ...input, text: "北京", focusedTask: { sessionFile: "/a", state: "settled", goal: "查天气", latestReply: "哪个城市？", activeTools: [] } }
     const reply = { ...answers("execute"), effect: { choice: "execute", confidence: 0.4 }, workKind: { choice: "lookup", confidence: 0.99 }, continuesTask: { noul: 0.98 } }
     expect(decisionFromAnswers(reply, context, "fixture", 1).intent).toBe("lookup")
-    expect(decisionFromAnswers(reply, input, "fixture", 1).intent).toBe("clarify")
-    expect(decisionFromAnswers({ ...reply, effect: { choice: "respond", confidence: 0.99 }, observation: { choice: "conversation", confidence: 0.99 } }, context, "fixture", 1).intent).toBe("general_question")
+    // Without the observation context the same fragment asks nothing; a bare
+    // place name must not become a lookup on its own.
+    expect(decisionFromAnswers({ ...reply, actionability: { noul: 0.2 } }, input, "fixture", 1).intent).toBe("clarify")
+    expect(decisionFromAnswers({ ...reply, effect: { choice: "respond", confidence: 0.99 }, observation: { choice: "conversation", confidence: 0.99 }, commonConversationOnly: { noul: 0.99 } }, context, "fixture", 1).intent).toBe("general_question")
   })
   test("missing execution heads cannot silently default to a write", () => {
     expect(decisionFromAnswers({ ...answers("execute"), workKind: { choice: "invented", confidence: 0.99 } }, input, "fixture", 1).intent).toBe("clarify")

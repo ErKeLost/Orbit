@@ -19,6 +19,7 @@ import { LiveWaveform } from "@/components/ui/live-waveform";
 import { MicSelector } from "@/components/ui/mic-selector";
 import { OrbBoundary } from "./OrbBoundary";
 import { VoiceExchange } from "./VoiceExchange";
+import { Mic, MicOff } from "lucide-react";
 
 /** hook 的状态 → ElevenLabs Orb 的状态。它只认这四种（null 就是闲置）。 */
 const AGENT_STATE: Record<VoiceState, AgentState> = {
@@ -189,7 +190,16 @@ export function VoicePage() {
                 <CallEnd className="size-4" />
               </CallControl>
             )}
-            <MicSelector value={voice.deviceId} disabled={voice.starting} onValueChange={voice.setDeviceId} />
+            <CallControl label={voice.muted ? "取消静音" : "静音"} onClick={() => voice.setMuted(!voice.muted)}>
+              {voice.muted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+            </CallControl>
+            <MicSelector
+              value={voice.deviceId}
+              muted={voice.muted}
+              disabled={voice.starting}
+              onValueChange={voice.setDeviceId}
+              onMutedChange={voice.setMuted}
+            />
             {state === "speaking" ? <CallControl label="结束对话" danger onClick={voice.stop}><CallEnd className="size-4" /></CallControl> : null}
           </div>
         </div>
@@ -211,7 +221,13 @@ export function VoicePage() {
               开始对话
             </PrimaryButton>
           )}
-          <MicSelector value={voice.deviceId} disabled={voice.starting} onValueChange={voice.setDeviceId} />
+          <MicSelector
+            value={voice.deviceId}
+            muted={voice.muted}
+            disabled={voice.starting}
+            onValueChange={voice.setDeviceId}
+            onMutedChange={voice.setMuted}
+          />
         </div>
       )}
     </div>

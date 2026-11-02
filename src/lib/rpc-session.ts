@@ -127,6 +127,13 @@ export async function retireSession(sessionPath:string){
  await startConnection(cwd,id)
 }
 export async function getSessionTurnDurations(sessionPath:string):Promise<Record<string,number>> { if(mobileRuntime())return runRemoteHostOperation<Record<string,number>>({name:'session.turnDurations',sessionPath});if(!native) return {}; return invoke<Record<string,number>>('session_turn_durations',{sessionPath}) }
+
+/** Fork the current session in this connection without changing other connections. */
+export async function cloneSession(target=activeTarget()):Promise<void>{
+ const result=await request<{cancelled?:boolean}>({type:'clone'},45000,target)
+ if(result?.cancelled)throw new Error('克隆会话已取消')
+ await refresh(target)
+}
 export async function recallQueue(target=activeTarget()){const id=route(target),cleared=await request<{steering:string[];followUp:string[]}>({type:'clear_queue'},30000,id);const s=current(id);patch(id,{draft:[s.draft,...cleared.steering,...cleared.followUp].filter(Boolean).join('\n'),transcript:reduceEvent(s.transcript,{type:'queued_preview_clear'})})}
 /** Promote one queued follow-up into the running turn as a steer (Orbit's "Steer"). */
 export async function steerFollowUp(text:string,target=activeTarget()){

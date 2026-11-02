@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest"
 
 const fake = vi.hoisted(() => ({ handlers: null as Record<string, (...args: unknown[]) => unknown> | null, open: vi.fn(), push: vi.fn(async () => {}), finish: vi.fn(async () => ({ text: "hello" })), abort: vi.fn(async () => {}), fallback:vi.fn(async()=>({text:"fallback"})) }))
 vi.mock("./micCapture", () => ({
-  MicCapture: class { constructor(handlers: typeof fake.handlers) { fake.handlers = handlers } setEndpointMs() {} setListening() {} async start() {} stop() {} setAgentSpeaking() {} },
+  MicCapture: class { constructor(handlers: typeof fake.handlers) { fake.handlers = handlers } setEndpointMs() {} setListening() {} setMuted() {} async start() {} stop() {} setAgentSpeaking() {} },
   pcmToBase64: (pcm: Int16Array) => btoa(String.fromCharCode(...new Uint8Array(pcm.buffer))),
 }))
 vi.mock("@/lib/rpc-projects", () => ({ rimeSttOpen: fake.open, rimeSttPush: fake.push, rimeSttFinish: fake.finish, rimeSttAbort: fake.abort, rimeStt: fake.fallback }))

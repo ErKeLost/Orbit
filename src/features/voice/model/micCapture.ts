@@ -122,11 +122,27 @@ export class MicCapture {
   private pendingContext: AudioContext | null = null
   private pendingStream: MediaStream | null = null
   private listening = true
+  private muted = false
   private endpointMs = END_SILENCE_MS
   private lastVoicedAt = 0
 
   setEndpointMs(value: number): void { this.endpointMs = Math.max(200, Math.min(1200, value)) }
   setListening(value: boolean): void { this.listening = value; this.reset() }
+
+  /** Keep the device open while dropping every input frame until unmuted. */
+  setMuted(value: boolean): void {
+    this.muted = value
+    // Disable the input track as well as dropping frames. This lets the OS and
+    // browser treat the call as muted while preserving the open device/context.
+    for (const stream of [this.stream, this.pendingStream]) {
+      const tracks = stream?.getAudioTracks?.()
+      tracks?.forEach(track => { track.enabled = !value })
+    }
+    this.reset()
+    if (value) this.handlers.onLevel(0)
+  }
+
+  get isMuted(): boolean { return this.muted }
 
   constructor(handlers: MicCaptureHandlers) {
     this.handlers = handlers
@@ -178,7 +194,10 @@ export class MicCapture {
       // Release that stream independently of the other pending device operation.
       void streamPromise.then(value => {
         if (generation !== this.generation) value.getTracks().forEach(track => track.stop());
-        else this.pendingStream = value;
+        else {
+          this.pendingStream = value;
+          value.getAudioTracks?.().forEach(track => { track.enabled = !this.muted })
+        }
       }).catch(() => undefined);
       [stream] = await Promise.all([streamPromise, context.resume()]);
       if (generation !== this.generation) throw new DOMException("Aborted", "AbortError");
@@ -205,6 +224,7 @@ export class MicCapture {
       sink = context.createGain(); sink.gain.value = 0;
       source.connect(processor); processor.connect(sink); sink.connect(context.destination);
       this.stream = stream; this.context = context; this.source = source; this.processor = processor; this.sink = sink;
+      stream.getAudioTracks?.().forEach(track => { track.enabled = !this.muted })
       this.reset();
     } catch (error) {
       processor?.disconnect(); source?.disconnect(); sink?.disconnect();
@@ -251,6 +271,10 @@ export class MicCapture {
   }
 
   private onFrame(frame: Float32Array, rate: number): void {
+    if (this.muted) {
+      this.handlers.onLevel(0)
+      return
+    }
     const level = rms(frame)
     this.handlers.onLevel(Math.min(1, level * 8))
     if (!this.listening) return
