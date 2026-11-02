@@ -33,7 +33,7 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
               --title "Orbit $GITHUB_REF_NAME" --generate-notes \
-              --notes "Orbit installers for macOS 13+ (Apple Silicon and Intel), Linux, Windows, and Android. Desktop browser uses native Chromium (experimental CEF runtime). macOS builds use fast ad-hoc signing and are not notarized; right-click the app on first install to approve it. Updating may require allowing Accessibility again."
+              --notes "Orbit installers for macOS 13+ (Apple Silicon and Intel), Linux, Windows, and Android. Desktop browser uses native Chromium (experimental CEF runtime) on macOS and Windows; Linux uses the system WebKitGTK runtime. macOS builds use fast ad-hoc signing and are not notarized; right-click the app on first install to approve it. Updating may require allowing Accessibility again."
           fi
 
   release:
@@ -166,7 +166,7 @@ jobs:
           tauriScript: bun run tauri
           tagName: v__VERSION__
           releaseName: Orbit v__VERSION__
-          releaseBody: "Orbit installers for macOS 13+, Linux, Windows, and Android. Desktop browser uses native Chromium (experimental CEF runtime). macOS builds use fast ad-hoc signing and are not notarized; right-click the app on first install to approve it. Updating may require allowing Accessibility again."
+          releaseBody: "Orbit installers for macOS 13+, Linux, Windows, and Android. Desktop browser uses native Chromium (experimental CEF runtime) on macOS and Windows; Linux uses the system WebKitGTK runtime. macOS builds use fast ad-hoc signing and are not notarized; right-click the app on first install to approve it. Updating may require allowing Accessibility again."
           # Keep the release out of /releases/latest until every desktop
           # matrix job has uploaded its updater metadata.
           releaseDraft: true
@@ -176,6 +176,29 @@ jobs:
           uploadUpdaterSignatures: true
           updaterJsonPreferNsis: true
           args: ${{ matrix.args }}
+
+      - name: Verify packaged Linux build starts
+        if: matrix.name == 'Linux x86_64'
+        run: |
+          # 1.0.24 shipped a Linux binary that segfaulted before opening a window:
+          # the CEF runtime initialised GTK4 while `tauri` still links GTK3, so
+          # `gtk_init_check` resolved to libgtk-3 and died in glib's option parser.
+          # Nothing downstream noticed, because no step ever launched the package.
+          # Install the real artifact and require it to stay alive.
+          sudo apt-get install -y xvfb dbus-x11 xauth
+          sudo apt-get install -y ./src-tauri/target/release/bundle/deb/*.deb
+          set +e
+          dbus-run-session -- xvfb-run -a /usr/bin/orbit > /tmp/orbit-start.log 2>&1 &
+          app=$!
+          for _ in $(seq 1 15); do
+            sleep 1
+            if ! kill -0 "$app" 2>/dev/null; then break; fi
+          done
+          if ! kill -0 "$app" 2>/dev/null; then
+            echo "Orbit exited during startup:"; cat /tmp/orbit-start.log; exit 1
+          fi
+          kill "$app" 2>/dev/null || true
+          echo "Orbit stayed up for 15s"
 
       - name: Verify packaged macOS worker signature and startup
         if: startsWith(matrix.name, 'macOS')

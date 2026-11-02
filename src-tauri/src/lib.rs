@@ -168,7 +168,12 @@ pub fn run() {
         normalize_path();
         adopt_login_shell_path();
     }
-    #[cfg(desktop)]
+    // The desktop runtime is chosen per platform. Linux keeps WRY (GTK3/WebKitGTK):
+    // `tauri` 2.11.5 still links GTK3 unconditionally through muda and webkit2gtk,
+    // while the CEF runtime initialises GTK4 through winit. Both in one process
+    // means `gtk_init_check` is resolved to libgtk-3 and the GTK4 call crashes in
+    // `g_option_context_parse`, so every Linux launch died before the window.
+    #[cfg(all(desktop, not(target_os = "linux")))]
     let builder = tauri::Builder::default().runtime(
         tauri_runtime_cef::Cef::default()
             .root_cache_path(browser::browser_dir().expect("browser data directory").join("cef"))
@@ -176,9 +181,9 @@ pub fn run() {
             .persist_session_cookies(true)
             .log_severity(cef::LogSeverity::ERROR),
     );
-    #[cfg(desktop)]
+    #[cfg(all(desktop, not(target_os = "linux")))]
     let builder = builder.manage(browser_cdp::NativeCdp::default());
-    #[cfg(mobile)]
+    #[cfg(any(mobile, target_os = "linux"))]
     let builder = tauri::Builder::default().runtime(tauri_runtime_wry::Wry::default());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(mobile_update::init()).plugin(mobile_background::init());
@@ -250,7 +255,7 @@ pub fn run() {
             if let Some(main) = app.get_webview_window("main") {
                 let _ = main.show();
             }
-            #[cfg(desktop)]
+            #[cfg(all(desktop, not(target_os = "linux")))]
             browser_cdp::serve(app.handle().clone());
             splash::mark(app.handle(), &app.state::<splash::SplashState>(), "backend");
             // 历史图片抽出来的文件是个缓存；超预算时在后台按修改时间清掉最旧的，

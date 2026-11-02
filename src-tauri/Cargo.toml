@@ -134,7 +134,10 @@ videotoolbox = "=0.21.0"
 apple-cf = { version = "=0.11.0", features = ["cg", "cm", "cv", "iosurface"] }
 dispatch2 = "=0.3.1"
 
-[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+# Platform runtimes: mobile and Linux run on the system WebKitGTK stack. Linux is
+# listed here because the CEF runtime cannot coexist with the GTK3 that `tauri`
+# still links (muda + webkit2gtk); see `lib::run`.
+[target.'cfg(any(target_os = "android", target_os = "ios", target_os = "linux"))'.dependencies]
 tauri-runtime-wry = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
 tauri-plugin-barcode-scanner = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
 

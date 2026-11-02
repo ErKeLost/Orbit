@@ -86,6 +86,21 @@ grant survives Orbit updates even though Orbit's ad-hoc code hash changes every
 release. The Tauri updater's minisign key
 (`TAURI_SIGNING_PRIVATE_KEY`) is separate from macOS code signing.
 
+## Linux runtime
+
+Linux desktop runs on the platform WebKitGTK runtime (WRY), not CEF. `tauri`
+still links GTK3 unconditionally through `muda` and `webkit2gtk`, while the CEF
+runtime initialises GTK4 through `winit`. With both GTK major versions mapped,
+`gtk_init_check` resolves to `libgtk-3.so.0` and the GTK4 call path crashes in
+`g_option_context_parse` before the first window. v1.0.24 shipped that
+combination and every Linux launch dumped core. `lib::run` therefore selects the
+runtime per platform (`src-tauri/src/lib.rs`), and the release job installs the
+built package and requires it to stay alive for 15 seconds.
+
+The native Chromium browser (and the CEF-specific `browser_view` commands) is
+unavailable on Linux until the CEF runtime can run there without pulling GTK3
+into the same process.
+
 ## Linux and Android signing
 
 Linux publishes an AppImage, a Debian package, and an RPM package. The native
