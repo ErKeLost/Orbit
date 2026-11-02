@@ -254,15 +254,21 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
           <Terminal className="size-3.5" strokeWidth={1.75} />
         </TitleIconButton>
         <TitleIconButton
-          label={browserOpen ? "新建浏览器标签页" : "打开浏览器"}
+          label={browserOpen ? "收起浏览器" : "打开浏览器"}
           active={browserOpen}
           onClick={() => {
             // The browser is its own column (third column), not a pane: a page
             // needs width, and it must outlive the panes it was opened from.
             const shell = useShell.getState();
+            // This button toggles the browser column. Collapsing it keeps the
+            // existing pages alive so reopening restores the current tabs.
+            if (shell.browserOpen) {
+              shell.setBrowserOpen(false);
+              return;
+            }
             // Closed with pages still in it: bring the column back rather than
             // leaving those pages hidden behind a new, empty tab.
-            if (!shell.browserOpen && shell.browserTabs.length > 0) {
+            if (shell.browserTabs.length > 0) {
               shell.setBrowserOpen(true);
               return;
             }
