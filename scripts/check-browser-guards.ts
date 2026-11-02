@@ -1,75 +1,92 @@
-/** Native WebView integration checks. Requires a running Orbit desktop.
- * No model, API key, external website or Chromium fallback is involved. */
-import { randomUUID } from "node:crypto"
-import { BrowserService } from "../src-tauri/resources/browser-use/browser-service"
-import { viewRequest } from "../src-tauri/resources/browser-use/view-channel"
+/** Real native Chromium integration against a running Orbit desktop app.
+ * Local fixtures only; no model requests or private account data are used. */
+import assert from "node:assert/strict"
+import { BrowserService } from "../src-tauri/resources/browser-use/browser-service.ts"
+import { viewRequest } from "../src-tauri/resources/browser-use/view-channel.ts"
 
-const scope = `browser-guards-${randomUUID()}`
-if (!await viewRequest({ op: "tabs", scope })) {
-  console.log("SKIP: start Orbit desktop before running the native browser checks")
-  process.exit(0)
-}
-const server = Bun.serve({
-  port: 0,
-  fetch(request) {
-    const url = new URL(request.url)
-    const html = url.pathname === "/watch"
-      ? '<h1>Player fixture</h1><video controls></video><button onclick="window.clicks=(window.clicks||0)+1;this.textContent=\'Clicked once\'">Native click</button><aside id="clock"></aside>'
-      : url.pathname === "/search"
-        ? '<h1>Search results</h1><a href="/watch">Observed result</a>'
-        : '<h1>Browser guard checks</h1><form action="/search"><label>Query<input name="q"></label></form><button id="guard">Continue</button><aside id="clock"></aside>'
-    return new Response(`<!doctype html><meta charset="utf-8"><title>Orbit browser checks</title>
-      <style>body{font:16px system-ui;padding:24px}button,input,a{display:block;margin:20px;padding:12px}video{width:160px;height:90px}</style>
-      ${html}<script>addEventListener('pointerdown',e=>window.lastPointer={x:e.clientX,y:e.clientY,screenX:e.screenX,screenY:e.screenY,target:e.target.tagName});setInterval(()=>{const c=document.querySelector('#clock');if(c)c.textContent=String(Date.now())},50)</script>`,
-      { headers: { "content-type": "text/html; charset=utf-8" } })
-  },
-})
-const service = new BrowserService()
-type Snapshot = { tabId: string; url: string; elements: { ref: string; name: string; href?: string }[]; media: { paused: boolean }[] }
+const scope = `native-check-${process.pid}`
+let service = new BrowserService()
+const server = Bun.serve({ port: 0, fetch(request) {
+  if (new URL(request.url).pathname === "/frame") return new Response(`<!doctype html><meta charset="utf-8"><label>子框架<input></label><button onclick="parent.postMessage({nativeFrame: event.isTrusted}, '*')">跨域点击</button>`, { headers: { "content-type": "text/html;charset=utf-8" } })
+  return new Response(`<!doctype html><meta charset="utf-8"><title>Native Chromium check</title>
+    <form><label>查询<input name="q"></label></form>
+    <button id="click" onclick="window.clicked=event.isTrusted;this.textContent='可信点击成功'">原生点击</button>
+    <textarea aria-label="多行文本"></textarea>
+    <iframe title="跨域框架" src="http://localhost:${server.port}/frame"></iframe>
+    <script>addEventListener('message',e=>{if(e.data.nativeFrame)window.frameClicked=true})</script>`, { headers: { "content-type": "text/html;charset=utf-8" } })
+} })
+type Result = { tabId: string; value?: any; accessibilityTree?: string; text?: string }
+const run = (op: string, input: Record<string, unknown>, signal?: AbortSignal) => service.run(scope, op, input, signal) as Promise<Result>
 let tabId = ""
-const passed: string[] = []
-const check = (name: string, condition: unknown) => { if (!condition) throw new Error(name); passed.push(name) }
-const run = (operation: string, input: Record<string, unknown> = {}) => service.run(scope, operation, { ...(tabId ? { tabId } : {}), ...input })
+let leaseOwner = ""
+let extraConnection: { close(): Promise<void> } | undefined
 try {
-  const opened = await run("open", { url: `http://127.0.0.1:${server.port}/` }) as Snapshot
+  const opened = await run("open", { url: `http://127.0.0.1:${server.port}/` })
   tabId = opened.tabId
-  check("real native tab opened", tabId && opened.url.includes(`:${server.port}`))
-  const target = opened.elements.find(element => element.name === "Continue")!
-  await run("evaluate", { expression: "document.querySelector('#guard').textContent='Delete account'" })
-  let refused = false
-  try { await run("click", { ref: target.ref }) } catch (error) { refused = String(error).includes("Stale") }
-  check("changed target refused before native input", refused)
-  const snapshot = await run("snapshot") as Snapshot
-  const query = snapshot.elements.find(element => element.name === "Query")!
-  const value = "现在就出发 exact literal query"
-  await run("type", { ref: query.ref, text: value })
-  const filled = await run("evaluate", { expression: "document.querySelector('input').value" }) as { value: string }
-  check("full search text reaches native WebView", filled.value === value)
-  await run("press", { ref: query.ref, key: "Enter" })
-  await run("wait_for", { url: "/search?", text: "Search results", timeoutMs: 5000 })
-  const result = await run("snapshot") as Snapshot
-  check("Enter submits exactly the requested search", new URL(result.url).searchParams.get("q") === value)
-  const link = result.elements.find(element => element.name === "Observed result")!
-  await run("navigate", { url: link.href })
-  await run("wait_for", { url: "/watch", text: "Player fixture", timeoutMs: 5000 })
-  const player = await run("snapshot") as Snapshot
-  check("observed href navigates the same tab", player.tabId === tabId && new URL(player.url).pathname === "/watch")
-  check("media state reports paused rather than assuming playback", player.media[0]?.paused === true)
-  const native = player.elements.find(element => element.name === "Native click")!
-  await run("click", { ref: native.ref })
-  await run("wait_for", { text: "Clicked once", timeoutMs: 2000 })
-  const count = await run("evaluate", { expression: "Promise.resolve(window.clicks||0)" }) as { value: number }
-  check("native click delivered once despite unrelated clock changes", count.value === 1)
-  const recovered = await new BrowserService().run(scope, "snapshot", {}) as Snapshot
-  check("new Pi executor recovers stable session tab", recovered.tabId === tabId)
-  console.log(JSON.stringify({ passed: passed.length, checks: passed, tabId }, null, 2))
-} catch (error) {
-  const geometry = tabId ? await viewRequest({ op: "geometry", tab: tabId }).catch(() => null) : null
-  const pointer = tabId ? await run("evaluate", { expression: "({pointer:window.lastPointer??null,clicks:window.clicks??0,screen:{x:screenX,y:screenY},viewport:{width:innerWidth,height:innerHeight}})" }).catch(() => null) : null
-  console.error(JSON.stringify({ passed, tabId, geometry, pointer, error: String(error) }, null, 2))
-  throw error
-} finally {
+  assert.ok(tabId)
+  await run("type", { tabId, selector: "input", text: "现在就出发 中文输入" })
+  await run("click", { tabId, selector: "#click" })
+  await run("type", { tabId, selector: "textarea", text: "第一行\n第二行" })
+  await run("type", { tabId, selector: "textarea", text: "\n第三行", clear: false })
+  const value = (await run("evaluate", { tabId, expression: "({text:document.querySelector('input').value,multiline:document.querySelector('textarea').value,trusted:window.clicked,dpr:devicePixelRatio,engine:navigator.userAgent})" })).value
+  assert.equal(value.text, "现在就出发 中文输入")
+  assert.equal(value.multiline, "第一行\n第二行\n第三行")
+  assert.equal(value.trusted, true)
+  assert.match(value.engine, /Chrome\/151\./)
+  console.log("PASS native Chromium, Chinese/multiline input, trusted click, DPR", value.dpr)
+
+  await run("wait_for", { tabId, selector: 'iframe >> internal:control=enter-frame >> button', timeoutMs: 8000 })
+  const snapshot = await run("snapshot", { tabId })
+  assert.match(snapshot.text!, /子框架/)
+  await run("click", { tabId, selector: 'iframe >> internal:control=enter-frame >> button' })
+  assert.equal((await run("evaluate", { tabId, expression: "window.frameClicked" })).value, true)
+  console.log("PASS cross-origin iframe snapshot and trusted input")
+
+  // A Cookie in an unrelated domain must be visible from this Profile's store;
+  // Network.getCookies at about:blank would falsely report an empty import.
+  const owner = crypto.randomUUID()
+  leaseOwner = owner
+  await viewRequest({ op: "acquire", scope, tab: tabId, owner })
+  const endpoint = await viewRequest<any>({ op: "cdp", tab: tabId, owner })
+  const { NativePage } = await import("../src-tauri/resources/browser-use/native/connection.ts")
+  const attached = await NativePage.connect(endpoint)
+  extraConnection = attached
+  const cdp = await attached.page.context().newCDPSession(attached.page)
+  const cookie = { name: `orbit_native_${process.pid}`, value: "fixture", domain: "orbit-fixture.test", path: "/", secure: true, httpOnly: true, sameSite: "Lax" as const, expires: Math.floor(Date.now() / 1000) + 3600 }
+  await cdp.send("Network.setCookies", { cookies: [cookie] })
+  const stored = (await cdp.send("Storage.getCookies")).cookies.find(row => row.name === cookie.name)
+  assert.ok(stored)
+  for (const key of ["value", "domain", "path", "secure", "httpOnly", "sameSite", "expires"] as const) assert.equal(stored[key], cookie[key])
+  await cdp.send("Network.deleteCookies", { name: cookie.name, domain: cookie.domain, path: "/" })
+  await cdp.detach()
+  await attached.close()
+  extraConnection = undefined
+  await viewRequest({ op: "release", tab: tabId, owner })
+  console.log("PASS native Profile Cookie readback with expiry and flags")
+
+  const controller = new AbortController()
+  const waiting = run("evaluate", { tabId, expression: "while (true) {}" }, controller.signal)
+  const cancelTimer = setTimeout(() => controller.abort(), 300)
+  const started = Date.now()
+  try { await assert.rejects(waiting, /cancel|abort/i) } finally { clearTimeout(cancelTimer) }
+  assert.ok(Date.now() - started < 4000, "Cancelling an executing script must promptly free the page")
+  assert.equal((await run("evaluate", { tabId, expression: "6*7" })).value, 42)
+  console.log("PASS cancellation terminates executing script and releases control")
+
+  const other = new BrowserService()
+  try { await assert.rejects(other.run("another-session", "evaluate", { tabId, expression: "1" }), /does not own/) }
+  finally { await other.close() }
+  await service.close()
+  service = new BrowserService()
+  const resumed = await run("open", {})
+  assert.equal(resumed.tabId, tabId)
+  assert.equal((await run("evaluate", { tabId, expression: "document.querySelector('input').value" })).value, value.text)
+  console.log("PASS session isolation and executor restart preserve the native page")
+} catch (error) { console.error(error); process.exitCode = 1 }
+finally {
+  await extraConnection?.close()
+  if (leaseOwner) await viewRequest({ op: "releaseOwner", scope, owner: leaseOwner }).catch(() => undefined)
+  await service.close()
   server.stop(true)
-  // Keep the diagnostic page available to inspect; only give back control.
-  // Production tools also release instead of destroying browser tabs.
+  console.log("Fixture tab:", tabId, "— close it with the tab's × button after inspection")
 }

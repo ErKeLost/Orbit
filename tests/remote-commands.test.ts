@@ -105,6 +105,7 @@ const EXCLUDED: Record<string, string> = {
   browser_view_activate: "says which desktop browser tab is in front",
   browser_view_page: "reads the title, address and load flag of the desktop's browser tab",
   browser_view_close: "closes the desktop window's own child web view",
+  browser_view_restore: "restores this desktop window's live native browser pages",
   browser_view_reconcile: "closes this window's child web views whose tab is gone",
   // The import is about *this* machine's profiles: it reads another browser's
   // cookie database and writes the desktop's own browser profile. A phone has
@@ -112,9 +113,6 @@ const EXCLUDED: Record<string, string> = {
   browser_import_sources: "lists this machine's browser profiles",
   browser_import_state: "reports this machine's last browser-login import",
   browser_import_session: "copies a session between this machine's browser profiles",
-  browser_open: "starts the desktop's own Chrome and its screencast",
-  browser_status: "reports the desktop's Chrome session",
-  browser_close: "stops the desktop's Chrome process",
   browser_client_report: "writes the desktop's own log; there is no browser column on the phone",
   // Pre-existing gap, recorded here rather than left undecided: this writes the
   // desktop's mcp.json, which the phone cannot read back or act on.

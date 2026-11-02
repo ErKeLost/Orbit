@@ -52,6 +52,7 @@ const DURABLE_KEYS = [
   // for must not come back because the WebView's storage was cleared.
   "orbit.browserImport.dismissed",
   "orbit.browserImport.dismissed.v2",
+  "orbit.browserImport.dismissed.cef.v1",
   "pi-gui.sidebarOpen",
   "pi-gui.sidebarOpen.narrow",
   // Whether the phone should hold its pairing connection while the app is in

@@ -132,7 +132,7 @@ fn differs(left: &[u8], right: &[u8]) -> bool {
 
 /// One BGRA row (already packed to `width * 4`) → one packed RGB row.
 fn bgra_to_rgb_row(source: &[u8], target: &mut [u8]) {
-    for (pixel, out) in source.chunks_exact(4).zip(target.chunks_exact_mut(3)) {
+    for (pixel, out) in source.as_chunks::<4>().0.iter().zip(target.as_chunks_mut::<3>().0.iter_mut()) {
         out[0] = pixel[2];
         out[1] = pixel[1];
         out[2] = pixel[0];

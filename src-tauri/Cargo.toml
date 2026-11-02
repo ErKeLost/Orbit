@@ -1,16 +1,14 @@
 [package]
 name = "orbit"
-version = "1.0.23"
+version = "1.0.25"
 default-run = "orbit"
 description = "A local desktop workspace for Orbit"
 authors = ["you"]
 license = ""
 repository = ""
 edition = "2021"
-# The real floor, not an aspiration: `Option::is_none_or` (stable 1.82) is used
-# in this crate. Clippy's `incompatible_msrv` catches the gap, which is how this
-# was found.
-rust-version = "1.82.0"
+# Pinned CEF runtime uses Rust 2024 and declares MSRV 1.95.
+rust-version = "1.95"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -38,18 +36,18 @@ serde_json = "=1.0.151"
 serde = { version = "=1.0.229", features = ["derive"] }
 log = "=0.4.34"
 rustls = { version = "=0.23.43", default-features = false, features = ["ring", "std", "tls12"] }
-# `unstable` is what exposes `Window::add_child`: the browser column is a real
-# child web view (an engine drawing into this window), and that API is the only
-# way to place one. See `browser_view.rs` for why that matters.
-tauri = { version = "=2.11.5", features = ["protocol-asset", "macos-private-api", "unstable"] }
-tauri-plugin-dialog = "=2.7.3"
-tauri-plugin-opener = "2"
+# The desktop runtime is native Chromium (CEF). Mobile keeps its platform runtime.
+# Pin the upstream CEF branch and its CLI together; the published stable runtime
+# cannot host a Chromium native child view on macOS.
+tauri = { version = "=2.11.5", default-features = false, features = ["protocol-asset", "macos-private-api", "unstable"] }
+tauri-plugin-dialog = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
+tauri-plugin-opener = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
 # Durable key/value state. The WebView's localStorage lives in the renderer's
 # own storage, which the system can clear (and does under storage pressure);
 # pairing credentials and the mobile-access intent must survive that.
 # 2.5.0 requires tauri ^2.12; this is the newest that accepts the pinned 2.11.5.
-tauri-plugin-store = "=2.4.5"
-tauri-plugin-clipboard-manager = "=2.3.3"
+tauri-plugin-store = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
+tauri-plugin-clipboard-manager = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
 reqwest = { version = "=0.13.4", default-features = false, features = ["json", "rustls"] }
 # GitLab inbox: small blocking HTTP client for the REST API (same choice as the
 # MonoCode inbox this module was ported from). `tls` covers the ring rustls
@@ -78,19 +76,22 @@ libc = "=0.2.189"
 # can connect over a trusted LAN. These are desktop-only; mobile builds use
 # the shared TypeScript client and do not bundle a server.
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+cef = { version = "=151.8.1", default-features = false }
+tauri-runtime-cef = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1", features = ["unstable", "macos-private-api", "devtools"] }
+
 aes-gcm = "=0.10.3"
 openssl = { version = "=0.10.73", features = ["vendored"] }
 openssl-probe = "=0.1.6"
-tauri-plugin-updater = "2.11.0"
-tauri-plugin-process = "2.3.1"
+tauri-plugin-updater = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
+tauri-plugin-process = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
 # Desktop integration: one Orbit at a time, remembered window geometry, system
 # notifications, launch at login, and a global show/hide hotkey. Pinned to the
 # newest releases that still accept the tauri version pinned above.
-tauri-plugin-single-instance = "=2.4.5"
-tauri-plugin-window-state = "=2.4.1"
-tauri-plugin-notification = "=2.4.0"
-tauri-plugin-autostart = "=2.5.1"
-tauri-plugin-global-shortcut = "=2.3.2"
+tauri-plugin-single-instance = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
+tauri-plugin-window-state = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
+tauri-plugin-notification = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
+tauri-plugin-autostart = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
+tauri-plugin-global-shortcut = { path = "../vendor/tauri-plugin-global-shortcut" }
 tungstenite = { version = "=0.26.2", default-features = false, features = ["handshake", "native-tls"] }
 # The connection loops are async so a socket can be read and written at the same
 # time. The blocking version had to poll `read` on a timer to notice outbound
@@ -133,10 +134,26 @@ videotoolbox = "=0.21.0"
 apple-cf = { version = "=0.11.0", features = ["cg", "cm", "cv", "iosurface"] }
 dispatch2 = "=0.3.1"
 
-[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
-tauri-plugin-barcode-scanner = "2.4.6"
+# Platform runtimes: mobile and Linux run on the system WebKitGTK stack. Linux is
+# listed here because the CEF runtime cannot coexist with the GTK3 that `tauri`
+# still links (muda + webkit2gtk); see `lib::run`.
+[target.'cfg(any(target_os = "android", target_os = "ios", target_os = "linux"))'.dependencies]
+tauri-runtime-wry = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+tauri-plugin-barcode-scanner = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
 
 [target.'cfg(windows)'.dependencies]
 # ConPTY child management for the terminal: children join a job object so a
 # crashed host never leaves orphaned shells, and console windows stay hidden.
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_LibraryLoader", "Win32_System_Diagnostics_ToolHelp"] }
+
+
+[patch.crates-io]
+tauri = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+tauri-build = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+tauri-runtime = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+tauri-runtime-wry = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+tauri-utils = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+tauri-codegen = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+tauri-macros = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+tauri-plugin = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
+dpi = { git = "https://github.com/tauri-apps/winit-gtk4", branch = "master" }

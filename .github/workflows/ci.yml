@@ -84,6 +84,13 @@ jobs:
 
       # tauri-build copies the desktop resources even for cargo test/clippy.
       # A fresh checkout must generate the same runtime files as a release.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install CEF build tools
+        run: python -m pip install cmake==4.4.4 ninja==1.13.2
+
       - name: Prepare desktop runtime resources
         run: |
           bun install --frozen-lockfile
@@ -104,13 +111,13 @@ jobs:
       # The desktop target is the only one that can exercise the screen channel,
       # so this job runs where that code compiles.
       - name: Tests
-        run: cargo test --lib
+        run: cargo test --locked --lib
         working-directory: src-tauri
 
       # Denied rather than warned: the baseline is clean, and a warning that is
       # allowed to accumulate is a warning nobody reads.
       - name: Clippy
-        run: cargo clippy --lib -- -D warnings
+        run: cargo clippy --locked --lib -- -D warnings
         working-directory: src-tauri
 
   intel:
@@ -134,6 +141,13 @@ jobs:
         with:
           bun-version: 1.4.2
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install CEF build tools
+        run: python -m pip install cmake==4.4.4 ninja==1.13.2
+
       - name: Prepare desktop runtime resources
         run: |
           bun install --frozen-lockfile
@@ -153,6 +167,53 @@ jobs:
       # and the one a cross-target mistake breaks silently.
       - name: Type check for x86_64-apple-darwin
         run: bun run check:intel
+
+  desktop:
+    name: Native desktop (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.16.0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Install CEF build tools
+        run: python -m pip install cmake==4.4.4 ninja==1.13.2
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkit2gtk-4.1-dev libxdo-dev libayatana-appindicator3-dev libasound2-dev libnss3-dev libxss-dev
+      - name: Prepare runtime resources
+        run: |
+          bun install --frozen-lockfile
+          bun run bundle:pi
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: native-${{ runner.os }}
+      - name: Reset cached Windows CMake tool paths
+        if: runner.os == 'Windows'
+        # CMake caches Python's patch-version-specific Ninja path. Hosted
+        # runners may restore a cache produced by another Python patch.
+        run: node --input-type=module -e "import {globSync,rmSync} from 'node:fs'; for(const file of globSync('src-tauri/target/**/CMakeCache.txt'))rmSync(file)"
+
+      - name: Check native desktop runtime
+        run: cargo check --locked --lib --bins
+        working-directory: src-tauri
 
   android:
     name: Android target
@@ -203,5 +264,5 @@ jobs:
       # A macOS-only module reaching a cross-platform one shipped once for
       # exactly that reason, and the Android APK failed to build.
       - name: Type check for aarch64-linux-android
-        run: cargo check --lib --target aarch64-linux-android
+        run: cargo check --locked --lib --target aarch64-linux-android
         working-directory: src-tauri

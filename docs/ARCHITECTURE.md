@@ -59,7 +59,7 @@ diff 解析，`components/Icon.tsx` 引用 `features/shell/FileTypeIcon`。这�
 | `notes.rs` / `automations.rs` / `search.rs` | 笔记、定时任务、文件与会话搜索 |
 | `pty_term.rs` / `browser.rs` / `browser_view.rs` / `screen/` | 终端 PTY、Chrome/CDP、原生子 WebView、屏幕通道 |
 | `remote.rs` / `remote_ops.rs` | Host 生命周期、配对传输、手机可调用命令镜像 |
-| `runtime.rs` / `power.rs` / `splash.rs` / `mobile_*` | 运行时环境、唤醒锁、启动画面、手机生命周期 |
+| `runtime.rs` / `power.rs` / `mobile_*` | 运行时环境、唤醒锁、手机生命周期 |
 
 `pi_session.rs` 的 `pi_connect` 返回 Tauri `Channel` 而不是广播事件：一条连接的流只能
 被一个 WebView 消费；手机则走 `connection.attach` 和 relay，不共享本地 Channel。

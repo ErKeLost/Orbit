@@ -29,6 +29,13 @@ if (nodeRuntime.status !== 0) process.exit(nodeRuntime.status ?? 1);
 const computerUse = spawnSync(process.execPath, [resolve(root, "scripts/sync-computer-use.mjs")], { cwd: root, stdio: "inherit" });
 if (computerUse.status !== 0) process.exit(computerUse.status ?? 1);
 
+// Playwright controls the CEF page via a native CDP relay; it launches no browser.
+for (const name of ["playwright-core", "ws"]) {
+  const destination = resolve(root, "src-tauri/resources/node_modules", name);
+  rmSync(destination, { recursive: true, force: true });
+  mkdirSync(dirname(destination), { recursive: true });
+  cpSync(resolve(root, "node_modules", name), destination, { recursive: true, dereference: true });
+}
 if (current?.version === packageJson.version && current?.buildFormat === buildFormat && existsSync(resolve(output, "cli.js")) && existsSync(resolve(output, "index.js")) && existsSync(resolve(output, "codemode-worker.js"))) {
   verifyCodemode();
   process.exit(0);

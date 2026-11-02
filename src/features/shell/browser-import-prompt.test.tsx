@@ -47,7 +47,7 @@ describe("browser login import offer", () => {
     expect(imports.sources).not.toHaveBeenCalled();
   });
   test("the explicit toolbar entry can reimport even after success or dismissal", async () => {
-    localStorage.setItem("orbit.browserImport.dismissed.v2", "1");
+    localStorage.setItem("orbit.browserImport.dismissed.cef.v1", "1");
     imports.state.mockResolvedValue({ ...source, version: 4 });
     const host = await mount(true);
     expect(host.textContent).toContain("一键导入");

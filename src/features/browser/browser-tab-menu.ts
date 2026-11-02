@@ -1,7 +1,6 @@
 import { Menu } from "@tauri-apps/api/menu";
 import { LogicalPosition } from "@tauri-apps/api/dpi";
 import { browserViewSetAudioMuted } from "../../lib/browser-view";
-import { useWorkspace } from "../../lib/store";
 import { useShell } from "../shell/shellStore";
 
 /** Native menus stay above the native browser view, including when the tab is in PiP. */
@@ -12,7 +11,7 @@ export async function showBrowserTabMenu(path: string, x: number, y: number) {
   const tab = state.browserTabs[index];
   const close = (mode: "current" | "others" | "right" | "all") => () => useShell.getState().closeBrowserTabs(path, mode);
   const menu = await Menu.new({ items: [
-    { id: "toggle-mute", text: tab.audioMuted ? "取消标签页静音" : "将标签页静音", enabled: useWorkspace.getState().runtimePlatform === "macos", action: () => {
+    { id: "toggle-mute", text: tab.audioMuted ? "取消标签页静音" : "将标签页静音", enabled: true, action: () => {
       void browserViewSetAudioMuted(path, !tab.audioMuted).then(() => useShell.getState().updateBrowser(path, { audioMuted: !tab.audioMuted })).catch(reportMenuFailure);
     } },
     { id: "close", text: "关闭标签页", action: close("current") },

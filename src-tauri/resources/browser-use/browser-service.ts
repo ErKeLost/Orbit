@@ -1,19 +1,20 @@
 import { randomUUID } from "node:crypto"
-import { pageScript } from "./page-runtime.ts"
+import { NativePage, type NativeEndpoint } from "./native/connection.ts"
 import { viewRequest, type ViewStatus } from "./view-channel.ts"
 
+export type NativeConnector=(endpoint:NativeEndpoint,signal?:AbortSignal)=>Promise<Pick<NativePage,"page"|"driver"|"owner"|"connected"|"close">>
 type JsonInput = Record<string, unknown>
-type PageReply = { ok: boolean; value?: unknown; error?: string; pending?: boolean }
 type TabDirectory = { currentTabId: string | null; tabs: ViewStatus[] }
 export type BrowserTransport = <T>(input: JsonInput, options?: { timeoutMs?: number; signal?: AbortSignal }) => Promise<T | null>
 
 /** A tool executor, not a second agent. The host owns page identity and leases;
  * Pi owns reasoning, task context, recovery and verification. */
 export class BrowserService {
+  private pages = new Map<string, Awaited<ReturnType<NativeConnector>>>()
   private queues = new Map<string, Promise<unknown>>()
   private transport: BrowserTransport
 
-  constructor(transport: BrowserTransport = viewRequest) { this.transport = transport }
+  constructor(transport: BrowserTransport = viewRequest,private connect:NativeConnector=NativePage.connect) { this.transport = transport }
 
   async run(scope: string, operation: string, input: JsonInput, signal?: AbortSignal): Promise<unknown> {
     const previous = this.queues.get(scope) ?? Promise.resolve()
@@ -23,12 +24,17 @@ export class BrowserService {
     finally { if (this.queues.get(scope) === result) this.queues.delete(scope) }
   }
 
+  async close(){
+    await Promise.allSettled([...this.pages.values()].map(page=>page.close()))
+    this.pages.clear()
+  }
+
   private async execute(scope: string, operation: string, input: JsonInput, signal?: AbortSignal): Promise<unknown> {
     signal?.throwIfAborted()
     validate(operation, input)
     const directory = await this.transport<TabDirectory>({ op: "tabs", scope }, { signal, timeoutMs: 3000 })
     if (!directory) throw new Error("The browser host is unavailable. Open Orbit desktop and retry.")
-    if (operation === "status") return { engine: "native", ...directory }
+    if (operation === "status") return { engine: "chromium-native", ...directory }
 
     const requested = typeof input.tabId === "string" ? input.tabId : undefined
     if (requested && !directory.tabs.some(tab => tab.tab === requested)) {
@@ -58,12 +64,6 @@ export class BrowserService {
       signal?.throwIfAborted()
       return value
     }
-    const script = async (code: string): Promise<unknown> => {
-      const reply = await send<PageReply>("eval", { script: code, timeoutMs: 10000 })
-      if (!reply?.ok) throw new Error(reply?.error ?? "Page evaluation returned no result")
-      return reply.value
-    }
-    const page = (op: string, fields: JsonInput = input) => script(pageScript(op, fields))
     try {
       if (tab && id !== tab) throw new Error("The host returned a different tab; operation cancelled.")
       if (operation === "open" && tab) await send("present")
@@ -76,36 +76,24 @@ export class BrowserService {
       } while (Date.now() < until)
       if (!ready?.open) throw new Error("The browser tab did not become ready")
 
-      if (operation === "open" || operation === "navigate") {
-        const url = typeof input.url === "string" ? input.url : undefined
-        if (url && ready.url !== url) await send("navigate", { url })
-        if ((url ?? ready.url) === "about:blank") return blankSnapshot(id)
-        return { tabId: id, ...await page("snapshot") as object }
+      let native=this.pages.get(id)
+      if(native&&!native.connected){await native.close();this.pages.delete(id);native=undefined}
+      if(!native){
+        const endpoint=await send<NativeEndpoint>("cdp")
+        if(!endpoint)throw new Error("Native Chromium automation channel is not ready")
+        native=await this.connect(endpoint,signal);this.pages.set(id,native)
       }
-      if (operation === "snapshot") return ready.url === "about:blank" ? blankSnapshot(id) : { tabId: id, ...await page("snapshot") as object }
-      if (operation === "evaluate") return { tabId: id, value: await this.evaluate(String(input.expression), send,
-        code => this.transport({ op: "eval", tab: id, owner, script: code, timeoutMs: 500 }, { timeoutMs: 1000 }), signal) }
-      if (operation === "wait_for") {
-        const deadline = Date.now() + (Number(input.timeoutMs) || 5000)
-        do {
-          if ((await page("wait") as { matched: boolean }).matched) return { tabId: id, matched: true }
-          if (Date.now() >= deadline) break
-          await delay(100, signal)
-        } while (Date.now() < deadline)
-        throw new Error("The requested page condition did not match before the timeout")
-      }
-      if (operation === "click" && process.platform === "darwin") {
-        if (!ready.visible) {
-          // Respect a manually collapsed panel or a different foreground tab.
-          // DOM delivery can run in the background; never send a global mouse
-          // click to an invisible page or steal focus to make it clickable.
-          await page("click")
-          return { tabId: id, delivered: true, note: "Background DOM click delivered. Verify with browser_snapshot. If the site requires a trusted visible gesture, ask the user to show the browser panel." }
+      native.owner=owner
+      const abort=new AbortController(),cancel=()=>abort.abort()
+      signal?.addEventListener("abort",cancel,{once:true})
+      try {
+        signal?.throwIfAborted()
+        if(operation==="open"){
+          if(typeof input.url==="string"&&native.page.url()!==input.url)await native.page.goto(input.url,{waitUntil:"domcontentloaded",timeout:15000,signal:abort.signal})
+          return {tabId:id,...await native.driver.snapshot(abort.signal)}
         }
-        const point = await page("click_point") as { x: number; y: number }
-        await send("clickAt", point, 5000)
-      } else await page(operation)
-      return { tabId: id, delivered: true, note: "Operation delivered. Read browser_snapshot or browser_evaluate to verify its effect." }
+        return {tabId:id,...await native.driver.action(operation,input,abort.signal)}
+      } finally {signal?.removeEventListener("abort",cancel)}
     } finally {
       // Cleanup is independent of the aborted signal. Releasing control never
       // destroys page state, logins, playback or navigation history.
@@ -113,39 +101,6 @@ export class BrowserService {
     }
   }
 
-  private async evaluate(expression: string, send: <T>(op: string, fields?: JsonInput, timeoutMs?: number) => Promise<T | null>, cleanup: (script: string) => Promise<unknown>, signal?: AbortSignal) {
-    const key = `orbit-eval-${randomUUID()}`
-    // Wry callbacks do not await promises. Store a bounded JSON result in the
-    // page, and poll just this invocation's key.
-    try {
-      await send("eval", { script: `(() => {
-        const key=${JSON.stringify(key)};
-        window[key]={pending:true};
-        Promise.resolve().then(()=>(${expression})).then(value=>{
-          const json=JSON.stringify(value??null)??"null";
-          if(new TextEncoder().encode(json).length>65536)throw new Error("Evaluation result exceeds 64 KB. Return fewer fields.");
-          if(Object.hasOwn(window,key))window[key]={ok:true,value:JSON.parse(json)};
-        }).catch(error=>{if(Object.hasOwn(window,key))window[key]={ok:false,error:String(error?.message??error)}});
-        return null;
-      })()`, timeoutMs: 10000 })
-      const deadline = Date.now() + 10000
-      do {
-        const reply = await send<PageReply>("eval", { script: `window[${JSON.stringify(key)}] ?? {ok:false,error:"Page navigated during evaluation"}`, timeoutMs: 1000 }, 1000)
-        if (!reply?.pending) {
-          if (!reply?.ok) throw new Error(reply?.error ?? "Evaluation returned no result")
-          return reply.value ?? null
-        }
-        await delay(50, signal)
-      } while (Date.now() < deadline)
-      throw new Error("Page expression timed out after 10 seconds")
-    } finally {
-      await cleanup(`delete window[${JSON.stringify(key)}]`).catch(() => undefined)
-    }
-  }
-}
-
-function blankSnapshot(tabId: string) {
-  return { tabId, url: "about:blank", title: "", readyState: "complete", text: "", elements: [], media: [], frames: [], omitted: 0 }
 }
 
 function validate(operation: string, input: JsonInput) {

@@ -20,14 +20,14 @@ mod android {
     use super::*;
     use tauri::{
         plugin::{Builder, PluginHandle, TauriPlugin},
-        AppHandle, Manager, Wry,
+        AppHandle, Manager, DynRuntime,
     };
 
     const PLUGIN_IDENTIFIER: &str = "ai.pi.gui";
 
-    pub struct Connection(PluginHandle<Wry>);
+    pub struct Connection(PluginHandle<DynRuntime>);
 
-    pub fn init() -> TauriPlugin<Wry> {
+    pub fn init() -> TauriPlugin<DynRuntime> {
         Builder::new("mobile-background")
             .setup(|app, api| {
                 let handle = api.register_android_plugin(PLUGIN_IDENTIFIER, "ConnectionPlugin")?;

@@ -6,13 +6,25 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.24
+
+Desktop browser pages now use native Chromium child views inside Tauri, controlled
+by Pi through a page-scoped CDP/Playwright relay. No screenshot stream renders the
+browser panel or its in-app picture-in-picture view. Chinese and multiline input,
+cross-origin frames, cancellation, Profile Cookie readback, and reconnecting an
+executor to its existing page are covered by the live browser integration check.
+
+Browser pages retain their native state when the panel is hidden or the frontend
+reloads. Imported Profiles affect new pages and preserve existing page contexts.
+The release includes the Chromium framework and helper processes, increasing the
+installer size. The Tauri CEF runtime is experimental. Native popup windows are
+not yet included in Orbit's session tab directory; picture-in-picture remains
+inside the Orbit window. See [BROWSER_USE.md](BROWSER_USE.md) for current limits.
+
 ## macOS architectures
 
-Two macOS jobs run, because they are two audiences rather than two builds of one
-target. Intel Macs that Ventura did not carry (2015–2017 models) can reach
-Monterey at most, and an Apple Silicon bundle is not something they can run at
-all. Dropping x86_64 does not make the app slower for them; it makes it not
-exist.
+Both Apple Silicon and Intel macOS builds include native Chromium (CEF 151).
+Both require macOS 13 or newer; macOS 11 and 12 are no longer supported.
 
 The Intel job runs on an **Intel runner** (`macos-15-intel`) instead of
 cross-compiling from the arm64 one. `scripts/sync-node-runtime.mjs` bundles the
@@ -40,13 +52,8 @@ is gated on `startsWith(matrix.name, 'macOS')` and builds its path from
 Accessibility grant is attached to the ad-hoc-signed worker inside the bundle.
 When this job was Apple-Silicon-only, that check hardcoded the `aarch64` path.
 
-`bundle.macOS.minimumSystemVersion` is `11.0`. Tauri's default is `10.13`, which
-is unreachable for arm64 but reachable for Intel — and High Sierra and Catalina
-stop at Safari 13/15, while the entire theme is built on `color-mix()`, which
-needs WebKit 16.2. Without the key those machines would install an app whose
-borders and dividers silently disappear. Big Sur can reach Safari 16.6, so
-`11.0` is the honest floor; there is no `Info.plist` key for a WebKit version, so
-a machine that has never taken a Safari update is still on its own.
+`bundle.macOS.minimumSystemVersion` is `13.0`, matching the minimum declared
+by the bundled CEF framework.
 
 ## macOS signing (current release configuration)
 
@@ -79,9 +86,25 @@ grant survives Orbit updates even though Orbit's ad-hoc code hash changes every
 release. The Tauri updater's minisign key
 (`TAURI_SIGNING_PRIVATE_KEY`) is separate from macOS code signing.
 
+## Linux runtime
+
+Linux desktop runs on the platform WebKitGTK runtime (WRY), not CEF. `tauri`
+still links GTK3 unconditionally through `muda` and `webkit2gtk`, while the CEF
+runtime initialises GTK4 through `winit`. With both GTK major versions mapped,
+`gtk_init_check` resolves to `libgtk-3.so.0` and the GTK4 call path crashes in
+`g_option_context_parse` before the first window. v1.0.24 shipped that
+combination and every Linux launch dumped core. `lib::run` therefore selects the
+runtime per platform (`src-tauri/src/lib.rs`), and the release job installs the
+built package and requires it to stay alive for 15 seconds.
+
+The native Chromium browser (and the CEF-specific `browser_view` commands) is
+unavailable on Linux until the CEF runtime can run there without pulling GTK3
+into the same process.
+
 ## Linux and Android signing
 
-Linux publishes an AppImage, a Debian package, and an RPM package. Release
+Linux publishes an AppImage, a Debian package, and an RPM package. The native
+CEF desktop runtime requires GTK 4.14 or newer; Linux builds use Ubuntu 24.04. Release
 artifacts include Node.js via `scripts/sync-node-runtime.mjs`. RPM packages do
 not require an external Node.js package: the previous `nodejs >= 22.19.0`
 string was encoded as a literal capability name, causing Fedora updates to
@@ -119,3 +142,13 @@ To release a version, keep `package.json`, `src-tauri/Cargo.toml`, and
 git tag v0.1.5
 git push origin v0.1.5
 ```
+
+## Retrying Linux packaging
+
+`Repair Linux release packages` rebuilds an existing draft release from its
+immutable tag. This handles packaging-only failures without changing a published
+tag or rebuilding platforms that already succeeded. It checks the version and
+draft state before uploading. The CEF AppImage deployment shim is pinned to the
+same mirror as its bundler because the upstream rolling URL returns 404. After
+repairing a failed release, run the normalization and asset-verification steps of
+`release.yml` before publishing the draft.

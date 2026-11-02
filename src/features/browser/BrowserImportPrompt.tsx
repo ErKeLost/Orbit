@@ -22,7 +22,7 @@ import { Select } from "../../shared/ui/controls"
  * the shape this feature already failed in once.
  */
 // Re-offer once after fixing the dev/production cookie-store mismatch.
-const DISMISS_KEY = "orbit.browserImport.dismissed.v2"
+const DISMISS_KEY = "orbit.browserImport.dismissed.cef.v1"
 
 /** Where an import has got to, as the backend reports it. */
 type Progress = { done: number; total: number }

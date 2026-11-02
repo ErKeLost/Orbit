@@ -1,65 +1,43 @@
 # Browser Use
 
-更新于 2026-10-31。
+更新于 2026-11-01。
 
-Orbit 的网页任务由当前 Pi session 的模型直接完成。浏览器工具不启动 Jev、不调用另一个决策模型、不根据置信度判断任务完成，也不生成独立字段值。语音发起的任务和普通 Pi 任务使用同一工具链；语音路由、Rime 和原生桌面 `gui_task` 独立于这次迁移。
+Orbit 保留 Tauri。桌面使用 Tauri 的 CEF runtime，右侧浏览器是原生 Chromium 子视图。页面由 Chromium 渲染、合成并直接显示，文字选择、滚动、输入法、音视频都走浏览器原生路径。面板和画中画不经过 canvas、截图或图片流。
 
-## 执行链路
+## 控制链路
 
-用户目标 → Pi 的对话上下文与模型 → `browser_*` 工具 → BrowserService → 本机 Unix socket → Tauri BrowserViewHost → session 所属的 WebView。
+`Pi session → browser_* → NativePage → Playwright → page-scoped CDP relay → 原生 CEF 页面`
 
-Pi 负责规划、读取页面、选目标、恢复和确认结果。BrowserService 负责串行执行、取消、参数检查和短期操作租约。Rust 宿主持有页面身份和 session 归属。右侧面板与画中画展示同一个页面。
+前端只报告面板的逻辑坐标和可见性。后台先创建页面再通知前端，冷启动不依赖 React 事件订阅；前端重载时恢复 Rust 持有的页面目录。Rust 持有页面及其稳定 tabId、Profile 和 session lease；收起面板不销毁网页，明确关闭标签才销毁。自动化不会借用另一个 session 或用户当前的标签。
 
-这一职责划分参考本地 T3 Code 的 `apps/server/src/mcp/toolkits/preview/tools.ts`、`PreviewAutomationBroker.ts` 和桌面 BrowserHost。T3 桌面 Chromium/CDP 与 Orbit 的 Tauri/WKWebView 不同，不能直接复制 Electron 的实现并声称获得相同兼容性。
+Pi 使用与 t3code 桌面预览相同的 CDP relay 模式连接已存在的原生页面。Playwright 不启动另一份浏览器。relay 只暴露调用者拥有的一个 page，不暴露应用主界面，也不允许创建其他 browser context。输入使用 Chromium 的可信鼠标/键盘通道，不使用系统全局鼠标或手动派发 DOM 键盘事件。
 
-## 工具
+管理请求和原生 CDP 共用 WebSocket 服务，端点记录在 browser home 的 native-host.json（Unix 权限 0600）；管理协议在 Windows、macOS、Linux 使用相同实现。事件由异步通道唤醒，无轮询。原生 CDP WebSocket 仅绑定随机的 127.0.0.1 端口，使用每次运行生成的 token 和当前操作的 lease 校验；拒绝网页 Origin。CEF 自身的全浏览器调试端口保持关闭。CDP 请求 id 经 runtime allocator 分配，避免和 Tauri 内部请求冲突。
 
-| 工具 | 用途 |
-| --- | --- |
-| browser_status | 列出当前 session 的页面和 currentTabId；不会创建页面 |
-| browser_open | 打开面板，默认复用当前 session 的页面；reuseExistingTab=false 创建另一页 |
-| browser_navigate | 在指定 tabId 内导航到已知或观察到的 URL |
-| browser_snapshot | 读取可见文本、语义控件和 ref、href、值、下拉选项、iframe 与媒体状态 |
-| browser_click | 点击一个观察到的目标；macOS 走原生鼠标，失败不会再补脚本点击 |
-| browser_type | 输入准确的原文，默认替换，clear=false 追加；检测网站是否还原了输入 |
-| browser_press | 键盘事件；Enter 支持表单提交 |
-| browser_hover | 页面事件悬停；需要后续检查是否生效 |
-| browser_select | 按值或文本选择原生 select；自定义菜单使用点击 |
-| browser_scroll | 滚动页面或观察到的容器 |
-| browser_evaluate | 求值 JavaScript 表达式，支持 Promise，返回 value，最大 64 KB |
-| browser_wait_for | 按目标、可见文本、URL 的组合条件等待，最多 10 秒 |
+## 页面操作
 
-没有 `browser_task`、textSlots 或独立决策预算。旧 browser_task 的消息记录仍按电脑工具展示。
+快照来自 Playwright AI accessibility tree，包含 frame、ref、语义、href、输入值和媒体状态。同源与跨域 frame 均由 Chromium/Playwright 读取。导航、新快照和目标语义变化后需要刷新 ref。
 
-## 页面身份和生命周期
+操作送达后由 Pi 观察页面验证，不能把点击、播放按钮、广告或登录墙当成任务完成。browser_evaluate 的执行时间有界，支持异步值，输出最多 64 KB；取消时终止执行中的页面脚本，再释放 session lease。普通 Pi session 和 Rime 的消息路由不因浏览器迁移而改变。
 
-- 宿主以 Pi sessionId 维护页面目录；Pi 执行器重启后可恢复当前页面。不同 session 的页面不自动相互接管。
-- 每次读写固定 tabId 和 owner；同一 session 的工具按序执行。指定页面忙或已关闭时返回错误，不创建替代页面。
-- 普通快照与读写不会反复触发面板打开。明确 browser_open 会显示面板；原生点击需要目标可见时才显示目标页面。
-- 导航跨站复用同一 tabId，只有显式要求另开一页才创建。每次工具执行结束只释放控制权，保留页面、滚动、播放和登录态。
-- 取消后不再投递后续动作，异常也执行租约清理。全局物理鼠标串行，点击前重新检查页面可见性、主窗口位置和焦点。
-- refs 在导航或新快照后失效；节点被替换或目标语义/值变化也失效。不再因页面其他区域的时钟或横幅变化重复调用模型。
+## Profile 与构建
 
-## 验证与边界
+CEF 的资料目录位于 browser home 的 cef/ 下。应用外壳、默认浏览器和导入 Profile 使用不同的 request context。浏览器 Profile 使用独立 data_directory；Cookie 导入写入目标原生 Chromium context，通过页面的 Network.getAllCookies 读回核验值、域、路径、过期时间及标志，等待 Cookie 存储落盘。切换导入来源只影响新建页面，已有页面保留原 Profile。旧 WKWebView 的导入成功记录不作为 CEF 登录成功的证明，来源浏览器的设备绑定凭据仍不能仅靠 Cookie 复制。
 
-动作已送达不等于目标完成。Pi 必须根据后续快照或 evaluate 的结果判断。例如视频播放需要确认目标视频、paused=false、未 ended，且 currentTime 随时间增长；仅看到播放按钮或节目标题不能报告成功。广告、预览和会员限制必须如实说明。
+桌面依赖固定的 Tauri CEF 分支、对应插件集和 @tauri-apps/cli-cef。它会打包 CEF framework 与 helper processes，因此安装包会包含 Chromium。Tauri 外壳保留。移动端继续使用平台 runtime。
 
-页面内容作为不可信证据。点击、输入和 evaluate 都可能改变网站状态，沿用当前 Pi 的用户授权语义；遇到验证码、登录或付费边界应报告具体阻碍。
+全局快捷键插件有一个本地补丁：把等待主线程的修改命令移到异步 IPC 执行，避免 CEF 的 IPC 线程持有 PluginStore 时与主线程互相等待。补丁与许可证位于 vendor/tauri-plugin-global-shortcut。
 
-当前原生引擎仍有边界：跨域 iframe 只报告地址及不可访问；键盘/悬停/文本输入主要为 DOM 事件，无法保证所有网站接受；没有迁移 T3 的 Playwright/CDP、截图工具、录制与独立 PiP 窗口。原生点击需要显示目标页面。Profile 切换/导入目前仍采用既有应用流程，未在本次更换中承诺 T3 的 profile 生命周期完全一致。
+## 验证
 
-Unix socket 权限为 0600，不经外网。不自动回退到另一个 Chrome 或另一套登录态。
+`bun run check`、`bun run test:unit`、`bun run test:ui`、`cargo check` 验证接口、类型、页面归属及原生构建。`bun run check:browser-guards` 在运行中的桌面应用上验证真实 Chromium、中文输入和可信点击。原生窗口中的显示与输入还需桌面交互验证。
 
-## 文件与检查
+## 构建要求和当前边界
 
-- `src-tauri/resources/browser-use/mode.ts`：工具开关与主 agent 指令。
-- `tools.ts`：工具 schema、注册和 sessionId 绑定。
-- `browser-service.ts`：页面目录、执行队列、租约、取消、异步求值。
-- `page-runtime.ts`：页面快照与动作；无网络、模型或站点专用规则。
-- `view-channel.ts`：本地 IPC 传输。
-- `src-tauri/src/browser_view.rs`、`browser_leases.rs`：页面宿主与归属。
-- `bun run check`、`bun run test:unit`、`bun run test:ui`：静态和离线回归。
-- `bun run check:browser-guards`：运行中的 Orbit 原生 WebView 上验证本地页面、完整查询、Enter、href 导航、节点变化拒绝、媒体状态与点击。需要桌面进程；不可达时显式报告 SKIP。
-- `bun run test:pi`：隔离发行资源下的 Pi 扩展加载和工具开关检查。
+此实现使用实验中的官方 Tauri CEF 分支，不能视为稳定版 Tauri 的等价替换。固定的提交、CLI、插件以及 Cargo.lock 必须一起更新；winit-gtk4 的提交由锁文件固定。Rust 最低 1.95，仓库使用 1.98.1。需要 CMake 和 Ninja，可通过 `python -m pip install cmake==4.4.4 ninja==1.13.2` 安装；隔离的本地环境可放在 work/build-tools，或用 ORBIT_NATIVE_TOOLS 指定其 bin 目录。桌面使用 cli-cef，移动端使用原有 CLI。
 
-旧 Jev 浏览器循环、文本生成辅助器及 Chrome 兼容路径已从发行资源删除。历史设计和旧评估结果可从 Git 历史查看，不能作为新工具链的性能结果。
+网页原生弹窗保持 CEF 的 opener 和 POST 语义，显示为 Chromium 原生窗口；目前尚未把这些弹窗接入 Orbit 的 session 标签目录。这部分与 t3code 的新标签页接管仍有差距。画中画当前在 Orbit 窗口内移动同一原生视图，并非跨应用的独立置顶窗口。DRM 和付费媒体播放需要单独验证。
+
+CEF 151 的 framework 声明最低 macOS 13，应用的最低版本已同步；macOS 11/12 无法运行此原生内核。
+
+本机验证目标是 Apple Silicon macOS。Linux 构建使用 Ubuntu 24.04，原生 runtime 要求 GTK 4.14+。Windows、Linux 和移动端需要各自 CI/设备验证。CEF framework 和 helper 会增加安装包体积，本机未压缩的开发 .app 约 565 MiB。
