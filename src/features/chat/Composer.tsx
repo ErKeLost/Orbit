@@ -65,6 +65,7 @@ import { loadPromptSuggestion, savePromptSuggestion, transcriptTurn } from "./pr
 import { userText } from "./turnModel";
 import { SpeechInput } from "../../components/ai-elements/speech-input";
 import { ProjectPicker } from "./ProjectPicker";
+import { WorkspaceRoots } from "./WorkspaceRoots";
 import { ExtensionDialog } from "../../components/panels/ExtensionDialog";
 
 /**
@@ -280,6 +281,7 @@ function ComposerAction({ busy, disabled, hasValue, onSend, onStop }: { busy: bo
 
 export const Composer = memo(function Composer({ onSubmitted, centered = false, paneId = CHAT_PANE_ID }: { onSubmitted: () => void; centered?: boolean; paneId?: string }) {
   const project = useWorkspace((state) => state.cwd);
+  const homeDir = useWorkspace((state) => state.homeDir);
   // Sends go to this pane's pi connection, not the shell's projected one.
   const target = useSessionTarget();
   const connectionId = useWorkspace((state) => state.connectionId);
@@ -656,6 +658,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
             {/* 新会话（首页）：头部带项目选择器，发送前就能切项目 / 不在文件夹里工作。
                 会话开始后（centered=false）撤下选择器——中途切范围等于打断会话。 */}
             {centered ? <ProjectPicker disabled={running} /> : null}
+            {project && project !== homeDir ? <WorkspaceRoots projectFolder={project} disabled={running} /> : null}
             <BranchPicker cwd={project} current={branches?.current ?? null} disabled={running} />
             <div className="ml-auto flex shrink-0 items-center">
               <ContextMeter usage={context} compacting={compacting} />

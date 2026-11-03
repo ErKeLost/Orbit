@@ -6,11 +6,15 @@ import {
   activeProjects,
   archivedProjects,
   mergeProjects,
+  normalizeProjectPath,
+  projectExtraRoots,
+  projectFromSelection,
+  projectRoots,
   sortPinnedFirst,
   useProjects,
   type Project,
 } from "../../../lib/projects";
-import { connect, desktopRuntime, forgetProject, prefetchSession, queryClient, renameSession, report } from "../../../lib/rpc";
+import { connect, desktopRuntime, forgetProject, prefetchSession, queryClient, renameSession, report, setSessionRoots } from "../../../lib/rpc";
 import { useWorkspaceTabs } from "../use-workspace-tabs";
 import { useSessionContextMenu } from "../sessions/SessionMenu";
 import { SessionTitleField } from "../sessions/SessionTitleField";
@@ -42,6 +46,7 @@ import {
 import { DevModeSlot, IS_MAC, MOD, ResizeHandle, TabVisitNav } from "../chrome";
 import { TerminalSpinner } from "../TerminalSpinner";
 import { ProjectContextMenu } from "./ProjectContextMenu";
+import { ProjectsSection } from "./ProjectsSection";
 import { ProjectSwitcher } from "./ProjectSwitcher";
 import { useShell } from "../shellStore";
 import { ProjectEditorDialog } from "./ProjectEditorDialog";
@@ -280,7 +285,7 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
   const homeDir = useWorkspace((state) => state.homeDir);
   const liveSessions = useWorkspace((state) => state.liveSessions);
   const currentSessionFile = useWorkspace((state) => state.state?.sessionFile);
-  const { projects, add, update, remove } = useProjects();
+  const { projects, update, remove, reorder } = useProjects();
   const width = useShell((state) => state.projectRailWidth);
   const setWidth = useShell((state) => state.setProjectRailWidth);
   const setProjectRailOpen = useShell((state) => state.setProjectRailOpen);
@@ -320,6 +325,11 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
     [cwd, projects, workspaceMode],
   );
   const hidden = useMemo(() => archivedProjects(projects), [projects]);
+  /** 正在跑会话的项目：项目行尾带一颗转圈，切走之前就知道它还活着。 */
+  const runningPaths = useMemo(
+    () => liveSessions.filter((session) => session.running).map((session) => session.cwd),
+    [liveSessions],
+  );
   /** 侧栏标题认的项目：只有“在这个项目里工作”时才算，首页不属于任何项目。 */
   const currentProject = useMemo(
     () =>
@@ -440,11 +450,18 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
       report("请在电脑端选择文件夹");
       return;
     }
-    const selected = await open({ directory: true, multiple: true, title: "打开项目", defaultPath: cwd || undefined });
+    // 一次可以勾多个目录：第一个是项目主目录，其余作为**同一个**项目的附加 root，
+    // 不是多个项目。项目里已有的 roots 会被并进来（去重、主目录永远第一位）。
+    const selected = await open({ directory: true, multiple: true, title: "打开项目（可多选，第一个为主目录）", defaultPath: cwd || undefined });
     if (!selected) return;
-    const paths = (Array.isArray(selected) ? selected : [selected]).map((path) => path.replace(/\/+$/, "") || "/");
-    add(paths);
-    await chooseProject(paths[0]);
+    const picked = (Array.isArray(selected) ? selected : [selected]).map((path) => normalizeProjectPath(path));
+    // 第一个是主目录，其余并成同一个项目的附加 root；`update` 是 upsert，所以
+    // 已经注册过的目录不会变成第二条项目。
+    const project = projectFromSelection(projects, picked);
+    if (!project) return;
+    update(project);
+    if (projectRoots(project).length > 1) toast.success(`已打开 ${project.name}`, { description: `${projectRoots(project).length} 个目录` });
+    await chooseProject(project.path);
   }
 
   async function removeSelected() {
@@ -533,6 +550,25 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
           </div>
 
           <div ref={lockOverscroll} className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-none pb-2">
+            {/* 项目段：标题上那行菜单是「我在哪」，这一列是「我还能去哪」。 */}
+            <ProjectsSection
+              projects={visibleProjects}
+              currentPath={workspaceMode === "project" ? cwd : undefined}
+              busyPath={busyProject}
+              runningPaths={runningPaths}
+              onSelect={(path) => void chooseProject(path)}
+              onOpenMenu={(project, x, y) => setMenu({ project, x, y })}
+              onReorder={reorder}
+              onAdd={
+                runtimeTarget === "mobile"
+                  ? () => setPicker(true)
+                  : desktopRuntime()
+                    ? () => void addProjects().catch(report)
+                    : undefined
+              }
+              onHome={homeDir ? () => void chooseHome() : undefined}
+            />
+
             {railSessions.length > 0 ? (
               <div className="mb-2 shrink-0">
                 <button
@@ -620,7 +656,9 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
           onClose={() => setEditing(null)}
           onSave={async (project) => {
             update(project);
-            toast.success("项目已更新");
+            // 改的正是当前项目：会话里的附加 root 立刻跟上，不用等下次切换。
+            if (workspaceMode === "project" && cwd === project.path) await setSessionRoots(projectExtraRoots(project));
+            toast.success("项目已更新", { description: `${projectRoots(project).length} 个目录` });
           }}
         />
       ) : null}

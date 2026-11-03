@@ -1,7 +1,7 @@
 import { useEffect } from "react"
 import { listen } from "@tauri-apps/api/event"
 import { invoke } from "../lib/native"
-import { useProjects, type Project } from "../lib/projects"
+import { projectExtraRoots, useProjects, type Project } from "../lib/projects"
 import { connect, report } from "../lib/rpc"
 import { useRemoteProjects } from "../lib/remote-workspace"
 import { useWorkspace } from "../lib/store"
@@ -15,6 +15,8 @@ function published(projects: Project[]) {
   return projects.map((project) => ({
     path: project.path,
     name: project.name,
+    // 附加 root 一起发布：手机要能看出一个项目其实有几个目录（也能按它过滤）。
+    ...(projectExtraRoots(project).length ? { roots: projectExtraRoots(project) } : {}),
   }))
 }
 

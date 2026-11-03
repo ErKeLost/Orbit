@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useQueryClient } from "@tanstack/react-query";
-import { derivedProjectColor, projectColor, type Project } from "../../../lib/projects";
+import { derivedProjectColor, projectColor, projectRoots, type Project } from "../../../lib/projects";
 import { gitCheckout, gitCreateBranch, useGitBranches } from "../../../lib/git";
 import { report } from "../../../lib/rpc";
 import { LAYER } from "../../../shared/lib/layers";
@@ -13,6 +13,7 @@ import {
   ChevronRight,
   Folder,
   FolderOpen,
+  FolderTree,
   GitBranch,
   Loader,
   Plus,
@@ -474,13 +475,15 @@ export function ProjectSwitcher({
           <div role="listbox" aria-label="项目" className="min-h-0 flex-1 overflow-y-auto overscroll-none p-1.5">
             {projectRows.map((project, index) => {
               const selected = project.path === current?.path;
+              const roots = projectRoots(project);
               return (
                 <button
                   key={project.path}
                   type="button"
                   role="option"
                   aria-selected={selected}
-                  title={project.path}
+                  // 一个项目可以有多个 root：悬停给出全部，行尾只报个数。
+                  title={roots.length > 1 ? roots.join("\n") : project.path}
                   onMouseEnter={() => setActive(index)}
                   onClick={() => pickProject(project.path)}
                   className={`flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left ${
@@ -499,6 +502,12 @@ export function ProjectSwitcher({
                   <span className="min-w-0 max-w-[calc(100%-36px)] shrink-0 truncate text-[13px] font-medium">
                     {project.name}
                   </span>
+                  {roots.length > 1 ? (
+                    <span className="flex shrink-0 items-center gap-0.5 rounded bg-content/8 px-1 text-[10px] tabular-nums leading-4 text-content/45">
+                      <FolderTree className="size-2.5 shrink-0" strokeWidth={1.75} />
+                      {roots.length}
+                    </span>
+                  ) : null}
                   <span className="min-w-0 max-w-28 flex-1 truncate font-mono text-[11px] text-content/40">
                     {prettyCwd(parentPath(project.path))}
                   </span>

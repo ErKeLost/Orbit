@@ -4,6 +4,7 @@ import {homedir} from 'node:os'
 import {pathToFileURL} from 'node:url'
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, McpServerConfig, ModelRouteRequest, ToolInfo } from '@earendil-works/pi-coding-agent'
 import {registerSubagentTools,SUBAGENT_TOOL_NAMES} from './subagents/index.ts'
+import {registerWorkspace} from './workspace.ts'
 import {COMPUTER_USE_TOOL_NAMES,registerComputerUseMode} from './computer-use/mode.ts'
 import {BROWSER_USE_TOOL_NAMES,registerBrowserUseMode} from './browser-use/mode.ts'
 import {providerToolChars} from './context-payload.ts'
@@ -1081,6 +1082,7 @@ export default async function (pi: ExtensionAPI) {
   registerVoiceService(pi)
   let latestProviderToolChars: number | undefined
   registerSubagentTools(pi)
+  registerWorkspace(pi)
   registerImages(pi)
   registerWebSearch(pi,{readConfig:readWebSearchSettings,authPath:AUTH_CONFIG_PATH})
   pi.on('before_provider_request',event=>{latestProviderToolChars=providerToolChars(event.payload)})

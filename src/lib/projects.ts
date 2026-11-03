@@ -3,6 +3,8 @@ import { create } from "zustand"
 export type Project = {
   path: string
   name: string
+  /** 附加目录：项目主目录之外，同一个会话也能读写 / 引用的其它 root。 */
+  roots?: string[]
   /** 项目外观（monocode 的每项目外观）：色板索引 / 自定义色 / 置顶 / Logo 图片。 */
   colorIndex?: number
   customColor?: string
@@ -64,17 +66,56 @@ export function normalizeProjectPath(value: string): string {
   return value.replace(/\/+$/, "") || "/"
 }
 
+/** 一个项目 = 主目录 + 附加 root，去重且主目录永远在第一位。 */
+export function projectRoots(project: Project): string[] {
+  const seen = new Set<string>()
+  return [project.path, ...(project.roots ?? [])].flatMap(value => {
+    const path = normalizeProjectPath(value)
+    if (seen.has(path)) return []
+    seen.add(path)
+    return [path]
+  })
+}
+
+/** 主目录之外的附加 root。 */
+export function projectExtraRoots(project: Project): string[] {
+  return projectRoots(project).slice(1)
+}
+
 function normalizeProject(project: Project): Project {
   const path = normalizeProjectPath(project.path)
+  const roots = projectRoots({ ...project, path })
   return {
     path,
     name: project.name.trim() || path.split("/").filter(Boolean).at(-1) || "/",
+    ...(roots.length > 1 ? { roots } : {}),
     // 外观字段（颜色 / Logo / 置顶）原样保留，未设置就不写入。
     ...(project.colorIndex != null ? { colorIndex: project.colorIndex } : {}),
     ...(project.customColor ? { customColor: project.customColor } : {}),
     ...(project.pinned ? { pinned: true } : {}),
     ...(project.logoPath ? { logoPath: project.logoPath } : {}),
     ...(project.archivedAt != null ? { archivedAt: project.archivedAt } : {}),
+  }
+}
+
+/**
+ * 一次多选目录的结果：第一个是项目主目录，其余作为**同一个**项目的附加 root。
+ *
+ * 「勾两个目录 → 两个项目」曾经是个说出来谁都皱眉的结果：多选是「这一个项目
+ * 由这几个目录组成」，不是「顺手注册两个项目」。已有项目会复用名字与外观，
+ * roots 并进去并去重；返回值可以直接交给 `update`（upsert）。
+ */
+export function projectFromSelection(projects: Project[], paths: string[]): Project | null {
+  const picked = [...new Set(paths.map(normalizeProjectPath).filter(Boolean))]
+  const [primary, ...extra] = picked
+  if (!primary) return null
+  const existing = projects.find(project => project.path === primary)
+  const roots = projectRoots({ path: primary, name: existing?.name ?? "", roots: [...(existing?.roots ?? []), ...extra] })
+  return {
+    ...existing,
+    path: primary,
+    name: existing?.name ?? primary.split("/").filter(Boolean).at(-1) ?? "/",
+    roots,
   }
 }
 

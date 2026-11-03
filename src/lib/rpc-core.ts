@@ -2,6 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { invoke } from "./native";
 import type { RpcCommand, RpcResponse } from "@earendil-works/pi-coding-agent";
 import { useWorkspace, type LiveSession, type Workspace } from "./store";
+import { projectExtraRoots, useProjects } from "./projects";
 import { parseAgentSnapshot } from "./agents";
 import { projectDisconnected } from "./runtime-error";
 import { emptyTelemetry, observe } from "./telemetry";
@@ -330,6 +331,9 @@ const syncSessionModes=async(target:string)=>{
  await Promise.all([syncMultiAgentMode(target),syncComputerUseMode(target),syncBrowserUseMode(target)])
  syncedModes.set(id,key)
 }
+/** 让当前会话拿到项目的附加 root（`gui-workspace-set`，扩展写会话记录并注入 prompt）。 */
+export const setSessionRoots=(roots:string[],target=activeTarget())=>request({type:'prompt',message:`/gui-workspace-set ${JSON.stringify({roots})}`},30000,target)
+export async function syncConfiguredProjectRoots(cwd:string,target=cwd){const project=useProjects.getState().projects.find(item=>item.path===cwd);if(project)await setSessionRoots(projectExtraRoots(project),target)}
 /** 发送前调用：模式已同步过就直接返回，不再产生 RPC 往返。 */
 export async function ensureSessionModes(target=activeTarget()){
  const id=route(target)

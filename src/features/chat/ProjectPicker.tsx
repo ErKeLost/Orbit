@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { activeProjects, derivedProjectColor, normalizeProjectPath, sortPinnedFirst, useProjects } from "../../lib/projects";
+import { activeProjects, derivedProjectColor, normalizeProjectPath, projectFromSelection, sortPinnedFirst, useProjects } from "../../lib/projects";
 import { desktopRuntime, report } from "../../lib/rpc";
 import { useWorkspaceTabs } from "../shell/use-workspace-tabs";
 import { useWorkspace } from "../../lib/store";
@@ -51,19 +51,18 @@ export function ProjectPicker({ disabled }: { disabled: boolean }) {
       report("请在电脑端选择文件夹");
       return;
     }
-    // 选中的文件夹就是项目根；已有同名项目就复用它的名字和外观。
-    const selected = await open({ directory: true, title: "打开文件夹", defaultPath: cwd || undefined });
+    // 多选时第一个当项目主目录，其余作为**同一个**项目的附加 root；已有项目
+    // 复用它的名字和外观，roots 并进去。
+    const selected = await open({ directory: true, multiple: true, title: "打开文件夹（可多选，第一个为主目录）", defaultPath: cwd || undefined });
     if (!selected) return;
-    const path = normalizeProjectPath(Array.isArray(selected) ? (selected[0] ?? "") : (selected as string));
-    if (!path) return;
+    const picked = (Array.isArray(selected) ? selected : [selected])
+      .map((path) => normalizeProjectPath(path as string))
+      .filter(Boolean);
     const store = useProjects.getState();
-    const existing = store.projects.find((project) => project.path === path);
-    store.update({
-      ...existing,
-      path,
-      name: existing?.name ?? path.split("/").filter(Boolean).at(-1) ?? "/",
-    });
-    await pick(path, "project");
+    const project = projectFromSelection(store.projects, picked);
+    if (!project) return;
+    store.update(project);
+    await pick(project.path, "project");
   }
 
   return (
