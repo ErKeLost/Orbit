@@ -69,7 +69,12 @@ jobs:
             timeout: 120
           - name: Linux x86_64
             os: ubuntu-24.04
-            args: ""
+            # deb/rpm here; the AppImage is a separate, bounded step below.
+            # Its bundler (quick-sharun) stalled for 77 minutes inside the job
+            # budget on three consecutive releases, which cancelled the whole
+            # job and left Publish skipped — so it can no longer take the
+            # release down with it.
+            args: "--bundles deb,rpm"
             rust_targets: ""
             timeout: 90
           - name: Windows
@@ -199,6 +204,34 @@ jobs:
           fi
           kill "$app" 2>/dev/null || true
           echo "Orbit stayed up for 15s"
+
+      # AppImage users get an update only from a release that carries the
+      # bundle, so this is best-effort rather than fatal: `quick-sharun` fetches
+      # its own tooling at build time and has hung on the runner, and a Linux
+      # packager must not decide whether the other four platforms ship.
+      - name: Bundle AppImage (optional, bounded)
+        if: matrix.name == 'Linux x86_64'
+        id: appimage
+        continue-on-error: true
+        timeout-minutes: 20
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: bun run tauri build --bundles appimage
+
+      - name: Upload AppImage when it was produced
+        if: matrix.name == 'Linux x86_64' && steps.appimage.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          shopt -s nullglob
+          files=(src-tauri/target/release/bundle/appimage/*.AppImage src-tauri/target/release/bundle/appimage/*.AppImage.sig)
+          if [ ${#files[@]} -lt 2 ]; then
+            echo "AppImage or its signature missing" >&2
+            exit 1
+          fi
+          gh release upload "$GITHUB_REF_NAME" "${files[@]}" --clobber
 
       - name: Verify packaged macOS worker signature and startup
         if: startsWith(matrix.name, 'macOS')
@@ -385,11 +418,22 @@ jobs:
                           'pub_date': release['created_at']}
           manifest['version'] = version
 
+          # The AppImage is best-effort (see the bounded bundling step): when its
+          # step did not produce one, the manifest simply has no AppImage entry
+          # and deb/rpm AppImage-less Linux installs keep updating normally.
+          optional = {
+              'linux-x86_64': f'Orbit_{version}_amd64.AppImage',
+              'linux-x86_64-appimage': f'Orbit_{version}_amd64.AppImage',
+          }
+
           platforms = {}
           for platform, binary_name in targets.items():
               binary = by_name.get(binary_name)
               signature_file = os.path.join(sig_dir, binary_name + '.sig')
               if binary is None or not os.path.exists(signature_file):
+                  if platform in optional:
+                      print(f'{platform}: {binary_name} was not built, not publishing that entry')
+                      continue
                   raise SystemExit(f'{platform}: missing {binary_name} or its signature')
               platforms[platform] = {
                   'signature': open(signature_file).read(),
@@ -429,21 +473,25 @@ jobs:
               f'Orbit_{version}_x64.app.tar.gz', f'Orbit_{version}_x64.app.tar.gz.sig', f'Orbit_{version}_x64.dmg',
               f'Orbit_{version}_x64-setup.exe', f'Orbit_{version}_x64-setup.exe.sig',
               f'Orbit_{version}_x64_en-US.msi', f'Orbit_{version}_x64_en-US.msi.sig',
-              f'Orbit_{version}_amd64.AppImage', f'Orbit_{version}_amd64.AppImage.sig',
               f'Orbit_{version}_amd64.deb', f'Orbit_{version}_amd64.deb.sig',
               f'Orbit-{version}-1.x86_64.rpm', f'Orbit-{version}-1.x86_64.rpm.sig',
               f'orbit-android-arm64-v{version}.apk', 'latest.json',
           }
-          missing = required_assets - names
-          if missing:
-              raise SystemExit(f'Missing release assets: {sorted(missing)}')
           ids = {str(asset['id']) for asset in release['assets']}
           required_platforms = {
               'darwin-aarch64', 'darwin-aarch64-app',
               'darwin-x86_64', 'darwin-x86_64-app',
               'windows-x86_64', 'windows-x86_64-nsis', 'windows-x86_64-msi',
-              'linux-x86_64', 'linux-x86_64-appimage', 'linux-x86_64-deb', 'linux-x86_64-rpm',
+              'linux-x86_64-deb', 'linux-x86_64-rpm',
           }
+          # An AppImage is optional: require its asset and updater entries only
+          # when the normalized manifest actually advertises them.
+          if 'linux-x86_64' in update['platforms'] or 'linux-x86_64-appimage' in update['platforms']:
+              required_assets |= {f'Orbit_{version}_amd64.AppImage', f'Orbit_{version}_amd64.AppImage.sig'}
+              required_platforms |= {'linux-x86_64', 'linux-x86_64-appimage'}
+          missing = required_assets - names
+          if missing:
+              raise SystemExit(f'Missing release assets: {sorted(missing)}')
           missing = required_platforms - update['platforms'].keys()
           if missing:
               raise SystemExit(f'Missing updater platforms: {sorted(missing)}')

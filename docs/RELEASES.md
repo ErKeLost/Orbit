@@ -6,6 +6,21 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.28
+
+Same app as v1.0.27; the release pipeline is what changed. Three releases in a
+row (1.0.25, 1.0.26, 1.0.27) built macOS, Windows, Android, and Linux deb/rpm,
+then died inside the Linux AppImage bundling: `quick-sharun` fetched its own
+tooling and then stalled for the rest of the 90-minute job budget, so the job was
+cancelled and `Publish release` never ran. Those drafts are still unpublished.
+
+The Linux job now bundles `deb,rpm` and nothing else, and the AppImage is a
+separate step with a 20-minute bound that may fail without failing the job. The
+manifest normalization and verification accept a release without the AppImage:
+its updater entry is simply absent, so AppImage installs keep updating from the
+last release that carried one, and a release that does produce the bundle adds
+the entry back. Publishing is no longer decided by one flaky packager.
+
 ## v1.0.27
 
 Fixes opening a session on the phone. The desktop shell names connections
