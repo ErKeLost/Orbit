@@ -6,6 +6,24 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.26
+
+A project can hold more than one root again. Picking several folders in the
+project picker now makes **one** project whose first folder is the home and whose
+remaining folders are attached roots, instead of registering one project per
+folder. The editor adds and removes roots, project rows report how many they
+have, and the composer lists the attached ones. Attached roots contribute their
+`AGENTS.md` / `.claude` context and their `.pi/skills` / `.agents/skills` to the
+session, and the system prompt lists every root's absolute path. Roots are
+resolved on connect and on every session or project switch; the phone receives
+them in the published project registry.
+
+The left rail lists projects again, under the navigation and above sessions:
+click a row to switch, right-click for rename / logo / roots / remove, drag to
+reorder, and use the `+` menu to open a folder or work outside one. The title
+switcher stays — the list answers "where else can I go", the title answers
+"where am I".
+
 ## v1.0.24
 
 Desktop browser pages now use native Chromium child views inside Tauri, controlled
