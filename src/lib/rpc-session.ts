@@ -32,7 +32,7 @@ import {
   beginSessionReplacement,
   endSessionReplacement,
 } from "./rpc-core";
-import { activateConnection, closeConnection, connect, startConnection } from "./rpc-connection";
+import { activateConnection, closeConnection, connect, openWorkspaceConnection } from "./rpc-connection";
 import { mobileRuntime, native, report, workspaceBackend } from "./runtime";
 import { deliveryBehavior, type QueueBehavior } from "./session-delivery";
 
@@ -123,9 +123,11 @@ export async function retireSession(sessionPath:string){
  if(!wasActive)return
  const remaining=connectionsFor(cwd)[0]
  if(remaining){activateConnection(remaining,cwd);return}
+ // 手机端没有自己的进程：这条新会话要由电脑端开，回来的是它真实的连接 id。
  const id=`${cwd}#${crypto.randomUUID()}`
  useWorkspace.getState().set({...fresh(),cwd,connectionId:id,panel:'chat'})
- await startConnection(cwd,id)
+ const actual=await openWorkspaceConnection(cwd,id)
+ if(actual!==id)useWorkspace.getState().set({connectionId:actual})
 }
 export async function getSessionTurnDurations(sessionPath:string):Promise<Record<string,number>> { if(mobileRuntime())return runRemoteHostOperation<Record<string,number>>({name:'session.turnDurations',sessionPath});if(!native) return {}; return invoke<Record<string,number>>('session_turn_durations',{sessionPath}) }
 
@@ -255,8 +257,10 @@ async function changeSessionOnce(command:RpcCommand){
    const id=`${cwd}#${crypto.randomUUID()}`
    snapshots.set(active,snapshot())
    useWorkspace.getState().set({...fresh(),cwd,connectionId:id,panel:'chat'})
-   await startConnection(cwd,id,command.type==='switch_session'?{sessionPath:command.sessionPath}:undefined)
-   if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,id)
+   // 手机端换进程仍然要电脑端那条真实连接（本地编的 id 在 Host 侧不存在）。
+   const opened=await openWorkspaceConnection(cwd,id,command.type==='switch_session'?{sessionPath:command.sessionPath}:undefined)
+   if(opened!==id)useWorkspace.getState().set({connectionId:opened})
+   if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,opened)
    await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]});return
   }
   const result=await request<{cancelled?:boolean;text?:string}>(command,60000,active);if(result?.cancelled)throw new Error('扩展取消了会话切换');patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null});if(useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'});await loadMessages(active,command.type==='switch_session'?command.sessionPath:undefined);if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,active);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})

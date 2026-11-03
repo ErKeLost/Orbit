@@ -241,6 +241,23 @@ open, which also removes the wait. The phone's own comparison is a fallback for
 an older Host, and treats a trailing slash as the same directory — never as a
 different project.
 
+#### Opening a session from the phone
+
+Opening a session needs the same resolution, and used to skip it. The desktop
+shell names connections `<cwd>#<uuid>` because it starts those processes itself;
+on the phone that id belongs to nobody, so the Host answered `connection.attach`
+with 「桌面连接不存在或已经关闭」. What the user saw was a skeleton screen with two
+red banners, and a composer that could neither send nor pick a model — while the
+project and session lists stayed correct, because those arrive in the snapshot
+namespace and never touch a connection.
+
+So every phone-side entry that opens a connection goes through
+`resolveWorkspaceConnection` (snapshot → `connection.resolve` → `project.open` →
+wait), attaches the id the desktop actually has, and rebinds the tab to it.
+`startConnection`'s phone branch also honours `sessionPath`: tapping a session
+switches the worker to that session instead of showing whatever the connection
+had open last.
+
 The consequence is deliberate: the phone and the desktop share one workspace
 pointer. Opening a project on the phone switches the desktop to it, exactly as
 opening it on the desktop switches the phone.

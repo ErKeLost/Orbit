@@ -6,6 +6,21 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.27
+
+Fixes opening a session on the phone. The desktop shell names connections
+`<cwd>#<uuid>` because it starts those Pi processes itself; the phone reused the
+same id, which the Host does not know, so `connection.attach` failed with
+「桌面连接不存在或已经关闭」. The symptom was a skeleton screen with two red
+banners and a composer that could neither send nor pick a model, while the
+project and session lists stayed correct because they never touch a connection.
+
+Every phone entry that opens a connection now resolves the desktop's own id
+first (snapshot → `connection.resolve` → `project.open` → wait), attaches that,
+and rebinds the tab to it. The phone branch of `startConnection` also honours the
+requested `sessionPath`, so tapping a session switches the worker to it instead
+of showing whatever that connection had open last.
+
 ## v1.0.26
 
 A project can hold more than one root again. Picking several folders in the

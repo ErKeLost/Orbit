@@ -99,12 +99,19 @@ async function startConnection(cwd:string,id:string,options?:{restoreLast?:boole
    const state=await request<RpcSessionState>({type:'get_state'},45000,id)
    patch(id,{state})
    patch(id,{connection:'online'})
+   // 手机点的是列表里那条会话：连上之后还要真的切过去，否则屏幕上是这条连接
+   // 上次那个会话，点位却落在另一个标题上。
+   let switchedTo:string|undefined
+   if(options?.sessionPath&&options.sessionPath!==state.sessionFile){
+    try{await request({type:'switch_session',sessionPath:options.sessionPath},45000,id);switchedTo=options.sessionPath}
+    catch{patch(id,{notices:['会话无法读取，已打开新会话']})}
+   }
    // The transcript is the heaviest thing a connection carries, and failing to
    // fetch it must not take the connection down with it: the worker is attached
    // and still takes prompts, and re-entering the session retries the history.
    // Treating it as a failed connect is what turned one big `get_messages` into
    // 「连接失败」 and every later tap on the connection doing nothing.
-   await loadMessages(id).catch(error=>patch(id,{error:String(error)}))
+   await loadMessages(id,switchedTo).catch(error=>patch(id,{error:String(error)}))
   }catch(error){connections.delete(id);projectActive.delete(cwd);failPending(id,'连接失败');patch(id,{connection:'offline'});throw error}
   return
  }
@@ -183,33 +190,40 @@ export async function setBrowserUseMode(enabled:boolean){
  try{await request(browserUseModeCommand(enabled),30000)}
  catch(error){useWorkspace.getState().set({browserUseEnabled:previous});localStorage.setItem('pi-gui.browserUseEnabled',String(previous));throw error}
 }
+/**
+ * 手机端要「这个项目现在由电脑端哪条连接服务」。
+ *
+ * 手机上的连接 id 是电脑端起的，本地没有 id 可以自己编：任何
+ * `${cwd}#<uuid>` 直接 attach 都只会拿到「桌面连接不存在或已经关闭」。所以
+ * 所有入口（切项目、开会话、起后台会话）统一走这里 —— 先看快照，再让 Host
+ * resolve（它掌握路径的规范写法），还没有就让电脑端把这个项目真的打开，最后等
+ * 连接出现。拿回来的 `id` 才是能 attach、能发 `pi.command` 的那个。
+ */
+export async function resolveWorkspaceConnection(cwd:string):Promise<RemoteConnection>{
+ const snapshot=await remoteHostSnapshot()
+ if(snapshot.theme||snapshot.machineName)useWorkspace.getState().set({...snapshot.theme?{remoteTheme:snapshot.theme}:{},...snapshot.machineName?{remoteMachineName:snapshot.machineName}:{}})
+ let connection=findRemoteConnection(snapshot.connections,cwd)
+ if(!connection){
+  // 快照里只有电脑端发布过的字符串，认不出同一个目录的两种写法；路径身份由
+  // 电脑端说了算（登记的是 `/tmp/demo`，worker 报的是 `/private/tmp/demo`）。
+  connection=await resolveRemoteConnection(cwd)
+ }
+ if(!connection){
+  // 侧栏列的是电脑端整个项目表，但只有活着的连接才能 attach：让电脑端像在它
+  // 自己窗口里点一下那样打开这个项目，答案里带连接就省掉等待。
+  let opened:RemoteConnection|undefined
+  try{opened=asConnection(await runRemoteHostOperation({name:'project.open',path:cwd}))}
+  catch(error){throw new Error(`电脑端无法打开这个项目：${error instanceof Error?error.message:error}`)}
+  connection=opened??await waitForRemoteConnection(cwd)
+ }
+ if(!connection)throw new Error(`电脑端没有这个项目的活动连接：${cwd}（电脑端当前连接：${describeConnections(snapshot.connections)}）`)
+ return connection
+}
 export async function connect(cwd:string,workspaceMode:WorkspaceMode=useWorkspace.getState().workspaceMode,options?:{restoreLast?:boolean}){
  const restoreLast=options?.restoreLast!==false
  if(!native&&!mobileRuntime())throw new Error('请在桌面应用中选择项目')
  if(mobileRuntime()){
-  const snapshot=await remoteHostSnapshot()
-  if(snapshot.theme||snapshot.machineName)useWorkspace.getState().set({...snapshot.theme?{remoteTheme:snapshot.theme}:{},...snapshot.machineName?{remoteMachineName:snapshot.machineName}:{}})
-  let connection=findRemoteConnection(snapshot.connections,cwd)
-  if(!connection){
-   // A snapshot only carries the strings the desktop published, so it cannot
-   // resolve a spelling difference. The desktop owns path identity — a project
-   // may be registered as `/tmp/demo` while its Pi worker reports the canonical
-   // `/private/tmp/demo` — so ask the Host before deciding it is not open. A
-   // Host too old to answer leaves this undefined and the open below still runs.
-   connection=await resolveRemoteConnection(cwd)
-  }
-  if(!connection){
-   // The rail renders the desktop's whole registry, but only a project with a
-   // live Pi connection can be attached to. Tapping a listed-but-closed project
-   // used to dead-end; ask the desktop to open it (the same thing selecting it
-   // there does). An answer that already carries a connection means it was open
-   // all along, which skips the wait entirely.
-   let opened:RemoteConnection|undefined
-   try{opened=asConnection(await runRemoteHostOperation({name:'project.open',path:cwd}))}
-   catch(error){throw new Error(`电脑端无法打开这个项目：${error instanceof Error?error.message:error}`)}
-   connection=opened??await waitForRemoteConnection(cwd)
-  }
-  if(!connection)throw new Error(`电脑端没有这个项目的活动连接：${cwd}（电脑端当前连接：${describeConnections(snapshot.connections)}）`)
+  const connection=await resolveWorkspaceConnection(cwd)
   await connectRemoteConnection(connection,workspaceMode)
   if(workspaceMode==='project')await syncConfiguredProjectRoots(cwd)
   return
@@ -299,8 +313,21 @@ export function connectionOwningSession(sessionPath: string): string {
 }
 export function workspaceConnectionIds() { return [...connections.keys()] }
 /** Start a workspace's pi process without stealing the project's route. */
-export async function openWorkspaceConnection(cwd: string, id: string, options?: { sessionPath?: string; restoreLast?: boolean; keepTranscript?: boolean }) {
- await startConnection(cwd, id, options)
+export async function openWorkspaceConnection(cwd: string, id: string, options?: { sessionPath?: string; restoreLast?: boolean; keepTranscript?: boolean }): Promise<string> {
+ if (!mobileRuntime()) { await startConnection(cwd, id, options); return id }
+ // 手机上的面板拿到的 id 通常是本地编的（`<cwd>#<uuid>`）：电脑端不认识它，
+ // attach 只会得到「桌面连接不存在或已经关闭」。先问出电脑端那条真实连接，把
+ // 脚手架（快照 / 项目路由 / 当前投影）都搬到它名下，再从它 attach。
+ const connection = await resolveWorkspaceConnection(cwd)
+ if (connection.id !== id) {
+  const pending = snapshots.get(id)
+  if (pending && !snapshots.has(connection.id)) snapshots.set(connection.id, pending)
+  snapshots.delete(id)
+  if (useWorkspace.getState().connectionId === id) useWorkspace.getState().set({ connectionId: connection.id })
+ }
+ projectActive.set(connection.cwd, connection.id)
+ await startConnection(connection.cwd, connection.id, options)
+ return connection.id
 }
 /** Make an existing connection the active projection again. */
 export function focusWorkspaceConnection(id: string, cwd: string) {

@@ -151,6 +151,9 @@ async function runShow(id: string, cwd: string) {
   if (cached) patchConnectionSnapshot(target, { transcript: cached });
   // 新建/首页的空快照不需要骨架屏；复活的旧标签页才走骨架屏，避免先闪旧内容。
   const empty = (connectionSnapshot(target)?.transcript.messages.length ?? 0) === 0;
+  // 手机端回来的是电脑端真实那条连接的 id（本地编的 `<cwd>#<uuid>` 电脑端不认），
+  // 标签页跟着改绑过去，否则下一次点这个面又会拿一个不存在的 id 去 attach。
+  let connectionId = target;
   const task = openWorkspaceConnection(
     workspace.cwd,
     target,
@@ -159,7 +162,13 @@ async function runShow(id: string, cwd: string) {
       // 不能让空 transcript 先渲染成首页。
       ? { sessionPath: revivePath, ...(cached ? { keepTranscript: true } : {}) }
       : empty ? { keepTranscript: true } : undefined,
-  );
+  ).then((actual) => {
+    if (actual && actual !== connectionId) {
+      connectionId = actual;
+      primeConnectionSnapshot(actual);
+      useShell.getState().bindWorkspaceConnection(id, actual);
+    }
+  });
   const tracked = transitions.start(target, task);
   focusWorkspaceConnection(target, workspace.cwd);
   // settle（不论成败）后 `transitions` 自动注销这条 target。
@@ -168,7 +177,7 @@ async function runShow(id: string, cwd: string) {
   if (useShell.getState().workspaces.find((item) => item.id === id)?.cwd !== workspace.cwd) return;// bootstrap 不再预先建项目连接，附加 roots 跟着面上层后台同步，不挡首次渲染。
   // 项目模式下把项目的附加 root 同步进这条会话（失败不影响显示，下次打开会再试）。
   if (useWorkspace.getState().workspaceMode === "project") {
-    void syncConfiguredProjectRoots(workspace.cwd, target).catch(() => undefined);
+    void syncConfiguredProjectRoots(workspace.cwd, connectionId).catch(() => undefined);
   }
   // 旧连接只有在没被别的标签页引用、也没有会话内容时才收掉；否则它就是一条要
   // 留在后台继续跑的会话。
@@ -176,8 +185,8 @@ async function runShow(id: string, cwd: string) {
     void retireConnection(stale, "已切换范围");
   }
   // 启动进程不能抢走原来那个工作区的路由。
-  if (previous && previous !== target) restoreProjectRoute(workspace.cwd, previous);
-  focusWorkspaceConnection(target, workspace.cwd);
+  if (previous && previous !== connectionId) restoreProjectRoute(workspace.cwd, previous);
+  focusWorkspaceConnection(connectionId, workspace.cwd);
   enforceConnectionBudget();
 }
 
@@ -358,7 +367,7 @@ async function openSession(session: Pick<Session, "path"> & { cwd?: string }) {
 
   const target = owner || `${cwd}#${crypto.randomUUID()}`;
   // 连接 id 在创建时就绑好，标签页一出现就是这条连接，不会先渲染成首页。
-  shell.newWorkspace(cwd, target);
+  const workspace = shell.newWorkspace(cwd, target);
   primeConnectionSnapshot(target);
   // 之前开过这个会话：先把缓存正文画上去，连 pi 进程的时间也不用看骨架屏。
   const cached = cachedTranscript(session.path);
@@ -367,15 +376,24 @@ async function openSession(session: Pick<Session, "path"> & { cwd?: string }) {
     focusWorkspaceConnection(target, cwd);
     return;
   }
-  const task = openWorkspaceConnection(cwd, target, { sessionPath: session.path, ...(cached ? { keepTranscript: true } : {}) });
+  // 手机端会拿到电脑端真实的连接 id：标签页改绑过去，会话与附件都挂在这条上。
+  let connectionId = target;
+  const task = openWorkspaceConnection(cwd, target, { sessionPath: session.path, ...(cached ? { keepTranscript: true } : {}) })
+    .then((actual) => {
+      if (actual && actual !== connectionId) {
+        connectionId = actual;
+        primeConnectionSnapshot(actual);
+        useShell.getState().bindWorkspaceConnection(workspace.id, actual);
+      }
+    });
   const tracked = transitions.start(target, task);
   focusWorkspaceConnection(target, cwd);
   // settle（不论成败）后 `transitions` 自动注销这条 target。
   await tracked;
-  if (mode === "project") void syncConfiguredProjectRoots(cwd, target).catch(() => undefined);
-  focusWorkspaceConnection(target, cwd);
-  const openedSession = connectionSnapshot(target)?.state?.sessionFile;
-  if (openedSession) useShell.getState().updateWorkspace(useShell.getState().activeWorkspaceId, { sessionPath: openedSession });
+  if (mode === "project") void syncConfiguredProjectRoots(cwd, connectionId).catch(() => undefined);
+  focusWorkspaceConnection(connectionId, cwd);
+  const openedSession = connectionSnapshot(connectionId)?.state?.sessionFile;
+  if (openedSession) useShell.getState().updateWorkspace(workspace.id, { sessionPath: openedSession });
   enforceConnectionBudget();
 }
 
@@ -388,8 +406,12 @@ async function splitSession(paneId: string, dir: "right" | "down") {
   if (!newPaneId) return;
   const target = `${workspace.cwd}#${crypto.randomUUID()}`;
   shell.bindSessionConnection(newPaneId, target);
-  await openWorkspaceConnection(workspace.cwd, target);
-  focusWorkspaceConnection(target, workspace.cwd);
+  const actual = await openWorkspaceConnection(workspace.cwd, target);
+  if (actual && actual !== target) {
+    primeConnectionSnapshot(actual);
+    useShell.getState().bindSessionConnection(newPaneId, actual);
+  }
+  focusWorkspaceConnection(actual ?? target, workspace.cwd);
 }
 
 /* ------------------------------------------------------------------ *
@@ -487,17 +509,23 @@ async function openBackground(cwd: string, options?: { prompt?: string }): Promi
   const target = `${cwd}#${crypto.randomUUID()}`;
   const workspace = shell.newWorkspace(cwd, target, { background: true });
   primeConnectionSnapshot(target);
+  let connectionId = target;
   try {
-    await openWorkspaceConnection(cwd, target, { keepTranscript: true });
+    const actual = await openWorkspaceConnection(cwd, target, { keepTranscript: true });
+    if (actual && actual !== target) {
+      connectionId = actual;
+      primeConnectionSnapshot(actual);
+      useShell.getState().bindWorkspaceConnection(workspace.id, actual);
+    }
   } catch (error) {
     useShell.getState().closeWorkspace(workspace.id);
     throw error;
   }
   const started = useWorkspace.getState().connectionId;
-  if (started && started !== target) restoreProjectRoute(cwd, started);
+  if (started && started !== connectionId) restoreProjectRoute(cwd, started);
   enforceConnectionBudget();
-  if (options?.prompt) await sendPrompt({ type: "prompt", message: options.prompt }, target, false);
-  return target;
+  if (options?.prompt) await sendPrompt({ type: "prompt", message: options.prompt }, connectionId, false);
+  return connectionId;
 }
 
 /** 一个共享的控制器：组件只拿它的动作，不各自起一份副作用。 */
