@@ -81,9 +81,19 @@ export function looksLikePath(raw: string) {
   if (/^[~./\\]+$/.test(trimmed)) return false; // `.`, `..`, `~/`
   const name = baseName(trimmed.replace(/[/\\]+$/, ""));
   if (!name || name.startsWith("-")) return false;
-  // The rule: a file name with an extension. A trailing slash is a directory.
-  return FILE_EXTENSIONS.has(extensionOf(name)) || /[/\\]$/.test(trimmed);
+  // The rule: a file name with an extension, a trailing slash for a directory,
+  // or a name-shaped token that might still turn out to be a folder (`src`).
+  // A token that resolves to neither stays plain code, so widening this costs a
+  // directory listing and never invents a chip.
+  return (
+    FILE_EXTENSIONS.has(extensionOf(name)) ||
+    /[/\\]$/.test(trimmed) ||
+    (!extensionOf(name) && NAME_TOKEN.test(name))
+  );
 }
+
+/** `src`, `src-tauri`, `docs_old`: a folder name, not a sentence or a flag. */
+const NAME_TOKEN = /^[A-Za-z_][\w.-]*$/;
 
 const dirCache = new Map<string, DirEntry[]>();
 
@@ -187,11 +197,14 @@ async function resolveUncached(trimmed: string, cwd: string, home: string): Prom
     if (direct) return direct;
     if (/[/\\]$/.test(trimmed)) return null;
   } else {
-    // A bare name: the index is the only thing that can place it.
+    // A bare name: the index places files, and a listing places folders — a
+    // reply that says `src` means the folder, and one that says `utils` means
+    // nothing at all.
     const index = await workspaceIndex(cwd);
     const found = index.byName.get(clean);
     if (found) return { path: found, isDir: false };
-    return null;
+    const folder = await probe(join(cwd, clean));
+    return folder?.isDir ? folder : null;
   }
 
   // A partial path — `components/Button.tsx` for `src/components/Button.tsx`.

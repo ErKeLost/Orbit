@@ -64,7 +64,10 @@ function LoginDialog({ initial, name, onClose, onComplete }: { initial: Provider
 }
 
 export function SubscriptionAccounts({ onChanged, disabled }: { onChanged: () => void; disabled: boolean }) {
-  const accounts = useQuery({ queryKey: ["provider-auth"], queryFn: listProviderAuth, staleTime: 10_000 });
+  // 每次进入供应商页都会重新拉一次登录状态，而 `listProviderAuth` 是一次
+  // `node provider-auth.js list` 子进程（实测 240–270 ms 纯 CPU）。账户状态变化很慢，
+  // 缓存久一点，用户真要刷新时「刷新账户」按钮随时可用。
+  const accounts = useQuery({ queryKey: ["provider-auth"], queryFn: listProviderAuth, staleTime: 5 * 60_000 });
   const [session, setSession] = useState<{ initial: ProviderLogin; name: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [logout, setLogout] = useState<ProviderAuth | null>(null);

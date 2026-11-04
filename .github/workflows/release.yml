@@ -191,7 +191,21 @@ jobs:
           # Nothing downstream noticed, because no step ever launched the package.
           # Install the real artifact and require it to stay alive.
           sudo apt-get install -y xvfb dbus-x11 xauth
-          sudo apt-get install -y ./src-tauri/target/release/bundle/deb/*.deb
+          deb=(src-tauri/target/release/bundle/deb/*.deb)
+          test -f "${deb[0]}"
+          for file in provider-auth.js index.js terminal.js cli.js; do
+            dpkg-deb -c "${deb[0]}" | grep -q "pi-runtime/${file}" || {
+              echo "Linux package is missing pi-runtime/${file}" >&2
+              dpkg-deb -c "${deb[0]}" | grep pi-runtime | head -40 >&2
+              exit 1
+            }
+          done
+          sudo apt-get install -y "${deb[0]}"
+          test -f /usr/lib/Orbit/resources/pi-runtime/provider-auth.js || {
+            echo "Installed package did not place provider-auth.js" >&2
+            ls -la /usr/lib/Orbit/resources/pi-runtime >&2 || true
+            exit 1
+          }
           set +e
           dbus-run-session -- xvfb-run -a /usr/bin/orbit > /tmp/orbit-start.log 2>&1 &
           app=$!

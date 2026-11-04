@@ -752,6 +752,13 @@
   color: color-mix(in srgb, var(--color-content) 45%, transparent);
 }
 
+/* 大供应商有 300+ 个模型：列表按页铺开，这一行是“继续往下”的入口。 */
+.provider-model-more {
+  display: flex;
+  justify-content: center;
+  padding: 10px 12px;
+}
+
 .provider-models-empty svg {
   width: 20px;
   height: 20px;

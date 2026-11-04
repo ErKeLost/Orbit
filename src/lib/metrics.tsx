@@ -17,9 +17,14 @@ export function MetricsSync(){
  const cwd=useWorkspace(s=>s.cwd),connectionId=useWorkspace(s=>s.connectionId)
  const visible=usePageVisible()
  const online=useWorkspace(s=>s.connection==='online')
+ // 轮询节奏跟着回合走。空转时 `get_state` 从 2 s 放到 10 s，`/gui-observe` 从 5 s
+ // 放到 20 s：后者在扩展里要现拼整份 systemPrompt（几十 KB）再 JSON.stringify
+ // 走 stdio，是空闲时最贵的一次周期性工作，而空闲时它几乎不会变。
+ // 回合是否在跑由事件驱动（`agent_start`/`agent_end`），轮询只是兜底。
+ const running=useWorkspace(s=>s.transcript.running)
  const target=connectionId||cwd
  // 回到会话（或重连）时一律重新读一次：provider 刚换过的话，缓存里那份是旧的。
- const state=useQuery({queryKey:['pi','live-state',target],queryFn:()=>requestWithRecovery<RpcSessionState>({type:'get_state'},30000,target),enabled:online&&visible&&Boolean(target),refetchInterval:2000,staleTime:0,refetchOnMount:'always'})
+ const state=useQuery({queryKey:['pi','live-state',target],queryFn:()=>requestWithRecovery<RpcSessionState>({type:'get_state'},30000,target),enabled:online&&visible&&Boolean(target),refetchInterval:running?2000:10000,staleTime:0,refetchOnMount:'always'})
  const capabilities=useQuery({queryKey:['pi','capabilities',target],queryFn:()=>requestWithRecovery<{commands:{name:string}[]}>({type:'get_commands'},30000,target),enabled:online&&Boolean(target)})
  // 会话正在换（new/switch/clone/fork）时让开：`/gui-observe` 会落在马上就要作废的
  // 会话上，pi 会把它当过期扩展 ctx 拒掉。换完下一轮 5 秒定时自己会补上。
@@ -31,7 +36,7 @@ export function MetricsSync(){
    return true
   },
   enabled:online&&visible&&Boolean(target)&&!!capabilities.data?.commands.some(c=>c.name==='gui-observe'),
-  refetchInterval:5000,
+  refetchInterval:running?5000:20000,
   // 心跳每 5 秒自己重来一次，而且掉线时 requestWithRecovery 已经在重连了：
   // react-query 再退避重试只会把一次抖动拖成好几秒，让用户看见一条本会消失的报错。
   retry:false,

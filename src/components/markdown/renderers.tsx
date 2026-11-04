@@ -14,6 +14,10 @@ import { MarkdownLink, Pre } from "../CodeBlock";
 import { PathChip } from "../PathChip";
 import { MarkdownTable } from "./MarkdownTable";
 import { handleMarkdownFragmentClick } from "./markdownFragments";
+import { MarkdownFileLink, filePathFromHref } from "./MarkdownFileLink";
+import { navigatesWebview } from "../../lib/link-safety";
+import { MarkdownImage } from "./MarkdownMedia";
+import { ExternalLinkContent, plainTextOf } from "./MarkdownLinkFavicon";
 
 function selectableText(children: ReactNode) {
   return Children.map(children, (child) =>
@@ -105,10 +109,42 @@ export function createMarkdownComponents(settleDelay: number): Components {
           </a>
         );
       }
+      // 指向文件的链接画成带类型图标的 chip，和 t3code 一样：蓝色下划线是给
+      // 网页的，文件该看起来像文件。
+      if (filePathFromHref(href)) {
+        return <MarkdownFileLink href={href}>{children}</MarkdownFileLink>;
+      }
+      // `data:` / `blob:` / `file:` 这类链接点了会把整个 webview 换成那份文档，
+      // 应用就回不来了（XML 类型的目标还会直接显示浏览器解析错误页）。画成不可点的
+      // 文字，把原地址留在 title 上，至少能看出来它指向什么。
+      if (navigatesWebview(href ?? "")) {
+        return <span className="text-content/60" title={href}>{children}</span>;
+      }
+      const plainText = plainTextOf(children);
+      const external = Boolean(href && /^https?:\/\//i.test(href));
       return (
         <MarkdownLink href={href} {...props}>
-          {children}
+          {external ? (
+            <ExternalLinkContent href={href} plainText={plainText}>
+              {children}
+            </ExternalLinkContent>
+          ) : (
+            children
+          )}
         </MarkdownLink>
+      );
+    },
+    img: function MarkdownImg({ node, src, alt, title }) {
+      const properties = (node as { properties?: Record<string, unknown> } | undefined)?.properties;
+      const markdownTitle = properties?.dataMarkdownTitle;
+      const standalone = properties?.dataStandalone === true;
+      return (
+        <MarkdownImage
+          src={typeof src === "string" ? src : undefined}
+          alt={alt ?? ""}
+          title={typeof markdownTitle === "string" ? markdownTitle : title}
+          standalone={standalone}
+        />
       );
     },
     code: function MarkdownCode({ node, className, children, ...props }) {

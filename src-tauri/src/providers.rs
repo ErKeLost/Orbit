@@ -840,7 +840,10 @@ pub async fn list_provider_profiles(app: AppHandle) -> Result<Value, String> {
     let default_provider = settings.get("defaultProvider").and_then(Value::as_str);
     let default_model = settings.get("defaultModel").and_then(Value::as_str);
     let store = load_provider_store(&dir).unwrap_or_else(|_| json!({"providers": {}}));
-    let native = crate::provider_auth::query(app, "list", None).await?;
+    // A missing login helper must not hide keys already stored in auth.json.
+    // Package updates replace /usr/lib/Orbit; they must not be treated as a
+    // credential reset. OAuth discovery can fail closed; API keys cannot.
+    let native = crate::provider_auth::query(app, "list", None).await.unwrap_or_else(|_| json!({"profiles": []}));
     let native_profiles = native["profiles"].as_array().cloned().unwrap_or_default();
     let mut ids = std::collections::BTreeSet::new();
     ids.extend(native_profiles.iter().filter_map(|profile| profile["id"].as_str().map(str::to_owned)));

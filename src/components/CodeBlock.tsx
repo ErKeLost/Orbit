@@ -13,6 +13,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { FileTypeIcon } from "../features/shell/FileTypeIcon";
 import { useShell } from "../features/shell/shellStore";
 import { highlightToHtml, peekHtml } from "../lib/highlight";
+import { navigatesWebview } from "../lib/link-safety";
 import type { RenderOptions } from "beautiful-mermaid";
 
 /**
@@ -92,6 +93,28 @@ async function renderVega(source: string, mode: "vega" | "vega-lite") {
 }
 
 /** SVG 围栏走 <img>，不把外部 SVG 直接注入文档。 */
+/**
+ * ```svg 围栏。用 blob URL 而不是 `data:image/svg+xml;utf8,…`：
+ *
+ * * data URL 的 `;utf8` 不是合法 charset 参数，能不能出图全看引擎心情；
+ * * 它本身**就是一份 XML 文档**——一旦这个地址被当作文档打开（拖拽、右键、
+ *   或者被渲染成链接），非良构的 SVG 会直接变成浏览器的 XML 解析错误页；
+ * * blob 的 MIME 是明确的 `image/svg+xml`，`<img>` 解码失败也只是空图，
+ *   不会有任何东西跑到文档层去。
+ */
+const SvgDiagram = memo<{ svg: string }>(({ svg }) => {
+  const [url, setUrl] = useState("");
+  useEffect(() => {
+    const next = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [svg]);
+  // 第一帧还没有地址：占位保持和图片一样的布局，避免上下跳。
+  return url
+    ? <img className="markdown-diagram-svg" alt="" src={url} />
+    : <div className="markdown-diagram-svg" />;
+});
+
 const SVG_BLOCKED = /<script[\s>]/i;
 
 const Diagram = memo<{ code: string; language: string }>(({ code, language }) => {
@@ -133,7 +156,7 @@ const Diagram = memo<{ code: string; language: string }>(({ code, language }) =>
     );
   }
   if (diagramKey(language) === "svg") {
-    return <img className="markdown-diagram-svg" alt="" src={`data:image/svg+xml;utf8,${encodeURIComponent(svg)}`} />;
+    return <SvgDiagram svg={svg} />;
   }
   return <div className="markdown-diagram" dangerouslySetInnerHTML={{ __html: svg }} />;
 });
@@ -274,6 +297,11 @@ export function MarkdownLink({
     return <span className={`md-chip is-mention ${className}`.trim()}>{children}</span>;
   }
   const external = Boolean(href && /^https?:\/\//.test(href));
+  // 非 http(s) 的协议一律不渲染成可导航的 `<a>`：`data:`/`blob:`/`file:` 点下去
+  // 会把应用自己的 webview 换成那份文档（XML 目标就是浏览器解析错误页）。
+  if (!external && href && navigatesWebview(href)) {
+    return <span className={`md-chip ${className}`.trim()} title={href}>{children}</span>;
+  }
   const attrs = external ? { target: "_blank" as const, rel: "noreferrer" } : {};
   return (
     <a

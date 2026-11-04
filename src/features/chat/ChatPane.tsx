@@ -95,6 +95,24 @@ function useFrameStream() {
   return view;
 }
 
+/** 扩展状态 -> 单行字符串：选择器按值比较，内容不变就不重渲。 */
+function extensionStatusLine(statuses: Record<string, string>): string {
+  const rows: string[] = [];
+  for (const [key, value] of Object.entries(statuses)) {
+    if (key.startsWith("gui-") || !value) continue;
+    rows.push(`${key}\u0000${value}`);
+  }
+  return rows.join("\u0001");
+}
+
+function extensionStatusRows(line: string): [string, string][] {
+  if (!line) return [];
+  return line.split("\u0001").map((row) => {
+    const at = row.indexOf("\u0000");
+    return [row.slice(0, at), row.slice(at + 1)] as [string, string];
+  });
+}
+
 /** Orbit's `EmptySession`: the galaxy backdrop with the composer centered on it. */
 function EmptySession({ cwd, onSubmitted }: { cwd: string; onSubmitted: () => void }) {
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
@@ -147,7 +165,10 @@ export function ChatPane({
   const project = useWorkspace((state) => state.cwd);
   const runtimeTarget = useWorkspace((state) => state.runtimeTarget);
   const agents = useWorkspace((state) => state.agents);
-  const statuses = useWorkspace((state) => state.statuses);
+  // 只把「非 gui- 的扩展状态」拼成一个字符串交给选择器：`statuses` 整个对象每
+  // 5 秒会被 `gui-runtime`（含整份 systemPrompt）换掉一次，直接订阅对象会让整块
+  // 会话面（transcript + composer）白重渲一遍。
+  const extensionStatuses = useWorkspace((state) => extensionStatusLine(state.statuses));
   const connection = useWorkspace((state) => state.connection);
   const transcript = useFrameStream();
   const busy = transcript.running || transcript.submitted;
@@ -360,7 +381,7 @@ export function ChatPane({
         <TranscriptJumpToBottom visibility={jumpVisibility} onJump={jumpToBottom} />
         <TranscriptSelectionMenu selection={textSelection} onDismiss={dismissTextSelection} />
       </div>
-      {Object.entries(statuses).flatMap(([key, value]) => (!key.startsWith("gui-") && value ? [<div key={key} className="extension-status">{key}: {value}</div>] : []))}
+      {extensionStatusRows(extensionStatuses).map(([key, value]) => <div key={key} className="extension-status">{key}: {value}</div>)}
       {/* Sending anchors the turn to the top instead of pinning to the bottom. */}
       <Composer onSubmitted={onSubmitted ?? noop} paneId={paneId} />
     </>,

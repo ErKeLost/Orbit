@@ -70,6 +70,23 @@ export function outputMimeFor(inputMime: string): "image/png" | "image/jpeg" {
 
 export type PreparedImage = { blob: Blob; mimeType: string; name: string; width: number; height: number; recoded: boolean };
 
+/**
+ * 矢量格式：不重编码。
+ *
+ * canvas 只能吐位图，把 SVG 交给它等于先把矢量栅格化、再声称这是一张位图；而
+ * `name` 还叫 `x.svg` 的话，落盘后就是「`.svg` 后缀 + 位图字节」。之后任何按扩展名
+ * 决定 MIME 的地方（asset 协议、`<img>`、内嵌浏览器）都会拿 `image/svg+xml` 去解析
+ * 一段不是 XML 的字节——正好是那个 XML 解析错误页。
+ */
+const VECTOR_MIMES = new Set(["image/svg+xml"]);
+
+/** 重编码之后名字必须跟着变成新格式，别让后缀替字节撒谎。 */
+function renameForMime(name: string, mimeType: string): string {
+  const extension = mimeType === "image/jpeg" ? "jpg" : "png";
+  const stem = name.replace(/\.[^./\\]+$/, "") || "图片";
+  return `${stem}.${extension}`;
+}
+
 /** The pixel work, injected so the decisions above can be tested without it. */
 export type ImageCodec = {
   /** Intrinsic size, without keeping the decoded bitmap around. */
@@ -93,6 +110,7 @@ export async function prepareImageAttachment(
     // the user meant to send; keep it whole rather than refusing it here.
     return { ...base, blob: file.blob, width: 0, height: 0, recoded: false };
   }
+  if (VECTOR_MIMES.has(mimeType)) return { ...base, blob: file.blob, ...size, recoded: false };
   if (!shouldReencode({ ...size, bytes: file.size })) {
     return { ...base, blob: file.blob, ...size, recoded: false };
   }
@@ -103,7 +121,7 @@ export async function prepareImageAttachment(
   if (encoded.blob.size > MAX_ATTACHMENT_BYTES) {
     throw new Error(`${base.name} 压缩后仍有 ${(encoded.blob.size / 1024 / 1024).toFixed(1)} MB，超过 ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB`);
   }
-  return { ...base, blob: encoded.blob, mimeType: encoded.mimeType, ...size, recoded: true };
+  return { ...base, blob: encoded.blob, mimeType: encoded.mimeType, name: renameForMime(base.name, encoded.mimeType), ...size, recoded: true };
 }
 
 /** The real one: `createImageBitmap` where it exists, a DOM canvas otherwise. */

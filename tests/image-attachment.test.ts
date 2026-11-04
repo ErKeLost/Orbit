@@ -163,6 +163,28 @@ describe("preparing an attachment", () => {
     await expect(prepareImageAttachment(file, codec)).rejects.toThrow("超过 8 MB")
   })
 
+  test("leaves an SVG alone: the canvas cannot give back a vector", async () => {
+    // SVG 交给 canvas 只会变糊，而且回来的是位图——名字还叫 `.svg` 的话，落盘后
+    // 后缀就在替字节撒谎；之后按扩展名取 MIME 的地方会拿 `image/svg+xml` 去解析
+    // 一段不是 XML 的字节，用户看到的是浏览器的 XML 解析错误页。
+    const svg = { name: "hero.svg", type: "image/svg+xml", size: 5_000_000, blob: blob(5_000_000, "image/svg+xml") }
+    const { codec, calls } = fakeCodec()
+    const prepared = await prepareImageAttachment(svg, codec)
+    expect(calls.rescale).toBe(0)
+    expect(prepared.recoded).toBe(false)
+    expect(prepared.blob).toBe(svg.blob)
+    expect(prepared.mimeType).toBe("image/svg+xml")
+    expect(prepared.name).toBe("hero.svg")
+  })
+
+  test("renames when it changes the format, so the suffix cannot lie", async () => {
+    const heic = { name: "IMG_9.heic", type: "image/heic", size: 5_000_000, blob: blob(5_000_000, "image/heic") }
+    const prepared = await prepareImageAttachment(heic, fakeCodec().codec)
+    expect(prepared.recoded).toBe(true)
+    expect(prepared.mimeType).toBe("image/jpeg")
+    expect(prepared.name).toBe("IMG_9.jpg")
+  })
+
   test("keeps the frame inside what the host will read", () => {
     // The host reads with tungstenite's defaults: 16 MiB per frame. base64 is a
     // third larger than the bytes it carries, so the cap has to leave room for

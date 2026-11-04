@@ -20,7 +20,9 @@ export function useMetrics() {
   const runtime = useMemo<RuntimeInfo | null>(() => {
     try { return runtimeText ? JSON.parse(runtimeText) as RuntimeInfo : null; } catch { return null; }
   }, [runtimeText]);
+  // 同上：空闲时把统计轮询放宽，回合进行中保持 2 s。
+  const running = useWorkspace(state => state.transcript.running);
   const visible = usePageVisible();
-  const stats = useQuery({ queryKey: ["pi", "live-stats", connectionId || cwd, sessionId], queryFn: () => requestWithRecovery<Stats>({ type: "get_session_stats" }, 30000, connectionId || cwd), enabled: online && visible, refetchInterval: 2000 });
+  const stats = useQuery({ queryKey: ["pi", "live-stats", connectionId || cwd, sessionId], queryFn: () => requestWithRecovery<Stats>({ type: "get_session_stats" }, 30000, connectionId || cwd), enabled: online && visible, refetchInterval: running ? 2000 : 10000 });
   return { stats: stats.data, runtime, error: stats.error, updatedAt: stats.dataUpdatedAt, online };
 }

@@ -84,6 +84,9 @@ fn mime_for_extension(extension: &str) -> Option<&'static str> {
         "gif" => Some("image/gif"),
         "webp" => Some("image/webp"),
         "bmp" => Some("image/bmp"),
+        // 笔记那条路（`features/notes/noteImages.ts`）一直收 SVG，拖拽这条却漏了：
+        // 同一个文件从笔记能进、从对话进不来，用户看到的是「这不是图片」。
+        "svg" => Some("image/svg+xml"),
         _ => None,
     }
 }

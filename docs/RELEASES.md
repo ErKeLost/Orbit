@@ -6,6 +6,60 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.32
+
+A performance release, with two correctness fixes found while measuring.
+
+Providers no longer imports the `@lobehub/icons` barrel: that entry point is
+1.9 MB across 351 providers and evaluating it cost ~300 ms of main thread and
+~140 MB of RSS every time the page mounted. Brand marks come from ~30 direct
+component imports instead, so the provider page's chunk went from 1.4 MB
+(260 KB gzip) to 124 KB (25 KB gzip) and no longer drags the barrel in at all.
+The model catalog is cached per provider for five minutes with in-flight
+deduplication, the login-state helper (one `node` process, 240–270 ms of CPU per
+call) is cached for five minutes instead of ten seconds, and clicking a provider
+renders its saved models immediately instead of disabling the whole sidebar
+while a subprocess answers. The model list pages at 60 rows with memoised rows
+and a deferred search, and `ProviderSettings` is split into
+`ProviderBrowser` / `ProviderEditorDialog` / `ProviderModelList` with the
+activate/save chains moved into `provider-actions.ts`.
+
+Entering Settings no longer mounts a hidden `CommandsPanel` — the overlay panels
+were falling through `panelComponent`'s default branch, so every visit loaded
+that chunk, asked Pi for the command list, and rendered it invisibly.
+
+The chat surface stops re-rendering during streaming where it did not need to:
+the composer subscribed to the whole `messages` array (new identity every ~32 ms)
+just to derive a turn key, `ChatPane` and `WorkspaceRoots` subscribed to the
+whole `statuses` record (replaced every 5 s by `gui-runtime`, which carries the
+entire system prompt), and the empty-session galaxy kept a 25 fps loop alive at
+0×0. Idle polling backs off as well: `/gui-observe` goes from 5 s to 20 s and the
+`get_state` / session-stats polls from 2 s to 10 s while no turn is running;
+turn state itself is event-driven, so this only removes spinning.
+
+Markdown links and media follow the t3code rules more closely: a link that lands
+on a file is drawn as a file-type chip that opens the editor (with `#L12` line
+ranges kept), a bare folder name such as `src` resolves to a chip only when a
+directory listing confirms it, `![…](…)` dispatches on extension to `<video>`, an
+audio player, or a PDF surface instead of always producing a broken image, and
+web links carry their site's favicon when it is already cached locally.
+
+Two ways an `.svg` could misrepresent its bytes are closed. Dragging an SVG into
+the composer works (the Rust image MIME table was missing `svg`, while the notes
+path always accepted it), and an oversized vector is no longer rasterised into a
+`.svg`-named JPEG: SVGs skip re-encoding, and a re-encode that changes format
+renames the file to match. A ```` ```svg ```` fence now becomes a blob URL rather
+than a `data:image/svg+xml;utf8,…` URL, which was both an invalid charset
+parameter and the app's only self-made XML document.
+
+Links can no longer replace the app's webview. Only `http(s):` and `mailto:` were
+intercepted, so a markdown link to `data:`, `blob:`, `file:`, `asset:`, or
+`orbitartifact:` navigated the whole window to that document — and an
+XML-typed target that fails to parse shows the engine's own parsing error page
+(`error on line 1 at column 2: StartTag: invalid element name`) with no way back.
+Those anchors now render as non-clickable text and the capture-phase handler
+refuses the navigation.
+
 ## v1.0.31
 
 Chat markdown is rendered by `react-markdown` on a pipeline ported from t3code

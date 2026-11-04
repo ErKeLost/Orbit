@@ -11,8 +11,20 @@ const bun = process.env.ORBIT_BUN_PATH
   || (process.env.BUN_INSTALL ? resolve(process.env.BUN_INSTALL, "bin", process.platform === "win32" ? "bun.exe" : "bun") : "bun");
 const marker = resolve(output, "package.json");
 const current = existsSync(marker) ? JSON.parse(readFileSync(marker, "utf8")) : null;
-const buildFormat = 6;
+const buildFormat = 7;
 const runtimeSource = resolve(root, "scripts/pi-runtime");
+const requiredRuntimeFiles = ["cli.js", "index.js", "provider-auth.js", "terminal.js", "codemode-worker.js"];
+
+function assertRuntimeBundle() {
+  const missing = requiredRuntimeFiles.filter(name => {
+    const file = resolve(output, name);
+    return !existsSync(file);
+  });
+  if (missing.length) {
+    console.error(`Pi runtime 缺少必须打进安装包的文件: ${missing.join(", ")}`);
+    process.exit(1);
+  }
+}
 const sourceHash = createHash("sha256");
 for (const file of readdirSync(runtimeSource).sort()) {
   sourceHash.update(file).update(readFileSync(resolve(runtimeSource, file)));
@@ -43,7 +55,8 @@ for (const name of ["playwright-core", "ws"]) {
   mkdirSync(dirname(destination), { recursive: true });
   cpSync(resolve(root, "node_modules", name), destination, { recursive: true, dereference: true });
 }
-if (current?.version === packageJson.version && current?.buildFormat === buildFormat && current?.sourceDigest === sourceDigest && existsSync(resolve(output, "cli.js")) && existsSync(resolve(output, "index.js")) && existsSync(resolve(output, "provider-auth.js")) && existsSync(resolve(output, "terminal.js")) && existsSync(resolve(output, "codemode-worker.js"))) {
+if (current?.version === packageJson.version && current?.buildFormat === buildFormat && current?.sourceDigest === sourceDigest && requiredRuntimeFiles.every(name => existsSync(resolve(output, name)))) {
+  assertRuntimeBundle();
   verifyCodemode();
   process.exit(0);
 }
@@ -111,6 +124,7 @@ mkdirSync(quickjsTarget, { recursive: true });
 cpSync(resolve(quickjsPackage, "package.json"), resolve(quickjsTarget, "package.json"));
 cpSync(resolve(quickjsPackage, "quickjs.wasm"), resolve(quickjsTarget, "quickjs.wasm"));
 
+assertRuntimeBundle();
 verifyCodemode();
 
-writeFileSync(marker, `${JSON.stringify({ name: "orbit-pi-runtime", private: true, type: "module", version: packageJson.version, buildFormat, sourceDigest }, null, 2)}\n`);
+writeFileSync(marker, `${JSON.stringify({ name: "orbit-pi-runtime", private: true, type: "module", version: packageJson.version, buildFormat, sourceDigest, files: requiredRuntimeFiles }, null, 2)}\n`);

@@ -11,6 +11,9 @@ const SessionsPage = lazy(() => import("../features/settings/pages/SessionsPage"
 const TreePanel = lazy(() => import("./panels/TreePanel").then((module) => ({ default: module.TreePanel })));
 const ChangesPanel = lazy(() => import("./panels/ChangesPanel").then((module) => ({ default: module.ChangesPanel })));
 
+/** 这些整页界面由 `App` 自己画在旁边（设置/收件箱/搜索/自动化），`Panel` 里不该有内容。 */
+const OVERLAY_PANELS = new Set<PanelName>(["settings", "inbox", "search", "automations"]);
+
 function panelComponent(panel: PanelName) {
   if (panel === "commands") return <CommandsPanel />;
   if (panel === "mobile-access") return <MobileAccessPanel />;
@@ -30,6 +33,10 @@ export function Panel() {
   // 语音页常驻在 App 层，不归 Panel 管。这里必须**整块返回 null**（而不是渲染一个空
   // 的 flex-1 容器）：否则它会和语音页平分高度，球就被挤到下半区去。
   if (panel === "voice") return null;
+  // 整页 overlay 同理，而且更糟：以前它们会落到 `panelComponent` 的兜底、把
+  // `CommandsPanel` 挂起来——看不见，却要加载 chunk、发一次 `get_commands` RPC、
+  // 再把整份命令列表渲染一遍。这就是“一进设置页就卡”的主要来源。
+  if (OVERLAY_PANELS.has(panel)) return null;
   // Notes is a two-pane surface with its own scrolling; it wants the full
   // bleed instead of the constrained settings column.
   const fullBleed = panel === "notes" || panel === "artifacts";

@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useWorkspace } from "../../lib/store";
-import { workspaceExtraRootList } from "../../lib/workspace-roots";
+import { WORKSPACE_STATUS, workspaceExtraRootList } from "../../lib/workspace-roots";
 import { useProjects } from "../../lib/projects";
 import { Folder } from "../../shared/ui/icons";
 
@@ -14,11 +14,13 @@ import { Folder } from "../../shared/ui/icons";
  * 编辑项目 roots 后立刻可见，不等下一次同步。
  */
 export function WorkspaceRoots({ projectFolder }: { projectFolder: string; disabled?: boolean }) {
-  const statuses = useWorkspace((state) => state.statuses);
+  // 只订阅真正参与计算的那一条状态：整个 `statuses` 对象每 5 秒都会换引用
+  // （`gui-runtime` 里带着整份 systemPrompt），订阅对象等于每 5 秒白重渲一次。
+  const workspaceStatus = useWorkspace((state) => state.statuses[WORKSPACE_STATUS] ?? "");
   const projects = useProjects((state) => state.projects);
   const roots = useMemo(
-    () => workspaceExtraRootList(projectFolder, statuses, projects),
-    [projectFolder, statuses, projects],
+    () => workspaceExtraRootList(projectFolder, workspaceStatus ? { [WORKSPACE_STATUS]: workspaceStatus } : {}, projects),
+    [projectFolder, workspaceStatus, projects],
   );
   if (!projectFolder || roots.length === 0) return null;
   return (

@@ -155,6 +155,12 @@ export function GalaxyDotBackground({
         raf = 0;
         return;
       }
+      // 面板被收起来时（切到设置/收件箱、或整块 `hidden`）这块是 0×0：继续跑
+      // 25 fps 只是白烧定时器与合成器。尺寸回来时 ResizeObserver 会重新 start()。
+      if (width <= 0 || height <= 0) {
+        raf = 0;
+        return;
+      }
       raf = requestAnimationFrame(draw);
       if (time - lastFrame < FRAME_MS) return;
       lastFrame = time;

@@ -1,4 +1,4 @@
-import { useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import {
   listProviderProfiles,
@@ -6,202 +6,35 @@ import {
   probeProviderModels,
   saveProvider,
   deleteProvider,
-  syncProviderModels,
   queryClient,
-  connect,
-  disconnect,
-  request,
-  refresh,
-  persistDefaultModel,
   imageConfig,
   saveImageConfig,
-  expectModel,
-  settleModel,
   type ModelEffort,
   type ProviderModel,
   type ProviderProfile,
 } from "../lib/rpc";
 import { report } from "../lib/rpc";
-import { Button, Disclosure, Input, Select, Toggle } from "../shared/ui/controls";
+import { Button } from "../shared/ui/controls";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./Dialog";
 import { useWorkspace } from "../lib/store";
-import { ModelLogo, ModelModalities } from "./ModelMeta";
-import { formatContextLength, modelDisplayName, modelModalities } from "../lib/model-meta";
 import { toast as gooeyToast } from "../shared/ui/toast";
 import { Icon } from "./Icon";
-import { ModelProvider, ProviderIcon } from "@lobehub/icons";
+import { ProviderMark } from "./ProviderLogo";
+import { ProviderBrowser } from "../features/providers/ProviderBrowser";
+import { presets, type Preset } from "../features/providers/presets";
+import { ProviderEditorDialog } from "../features/providers/ProviderEditorDialog";
+import { initialForm, type ProviderFormState } from "../features/providers/provider-form";
 import { SubscriptionAccounts } from "../features/providers/SubscriptionAccounts";
 import { MagpieGateway } from "../features/providers/MagpieGateway";
 import { PiRuntimeConfiguration } from "../features/providers/PiRuntimeConfiguration";
+import { ProviderModelList } from "../features/providers/ProviderModelList";
+import { cachedCatalog, forgetCatalog, loadCatalog, rememberCatalog } from "../features/providers/provider-catalog";
+import { saveAndActivate, syncAndActivate } from "../features/providers/provider-actions";
 import "../styles/provider-page.css";
 
-const apiTypes = [
-  "openai-completions",
-  "openai-responses",
-  "anthropic-messages",
-  "google-generative-ai",
-  "azure-openai-responses",
-  "mistral-conversations",
-] as const;
-
-const contextOptions = [32000, 64000, 128000, 200000, 256000, 400000, 512000, 1000000, 2000000].map(value => ({ value: String(value), label: `${formatContextLength(value)} · ${value.toLocaleString("en-US")} tokens` }));
-const effortLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-
-const presets = [
-  { id: "openrouter", name: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1", api: "openai-completions" },
-  { id: "vercel-ai-gateway", name: "Vercel AI Gateway", baseUrl: "https://ai-gateway.vercel.sh/v1", api: "openai-completions" },
-  { id: "openai", name: "OpenAI", baseUrl: "https://api.openai.com/v1", api: "openai-completions" },
-  { id: "anthropic", name: "Anthropic / Claude", baseUrl: "https://api.anthropic.com/v1", api: "anthropic-messages" },
-] as const;
-
-const knownProviderIcons = new Set<string>(Object.values(ModelProvider));
-const providerIconAliases: Record<string, string> = {
-  anthropicclaude: "anthropic",
-  claude: "anthropic",
-  openaiapi: "openai",
-  chatgpt: "openai",
-  googleai: "google",
-  geminiai: "google",
-  azureopenai: "azure",
-  amazonbedrock: "bedrock",
-  awsbedrock: "bedrock",
-  togetherai: "together",
-  deepseekapi: "deepseek",
-  bigmodel: "zhipu",
-  zhipuai: "zhipu",
-  智谱: "zhipu",
-  alibabadashscope: "bailian",
-  dashscope: "bailian",
-  阿里云: "bailian",
-  siliconflow: "siliconcloud",
-  硅基流动: "siliconcloud",
-  vercel: "vercel",
-  volcengine: "volcengine",
-  火山引擎: "volcengine",
-  arkcode: "volcengine",
-  moonshotai: "moonshot",
-  kimi: "moonshot",
-};
-const monochromeProviderIcons = new Set(["anthropic", "openai", "vercel", "vercelaigateway", "moonshot", "ollama"]);
-
-/** No logo means one letter, not an abbreviation: "T" reads as a mark, "TA" reads as a typo. */
-function fallbackProviderMark(id: string, name?: string) {
-  const label = (name || id).trim();
-  const initial = label.match(/[A-Za-z0-9]|[\u3400-\u9fff]/)?.[0] ?? "P";
-  // FNV-1a: the previous `hash * 31` put three of six sample ids on the same
-  // tone, which reads as a bug when the letter is the only differentiator.
-  let hash = 2166136261;
-  for (const char of id) { hash ^= char.charCodeAt(0); hash = Math.imul(hash, 16777619); }
-  return <span className="provider-fallback-mark" data-tone={(hash >>> 0) % 4}>{initial.toUpperCase()}</span>;
-}
-
-function ProviderMark({ id, name }: { id: string; name?: string }) {
-  const resolve = (value: string) => {
-    const key = value.toLowerCase().replace(/[\s._\-/]+/g, "");
-    return providerIconAliases[key] ?? (knownProviderIcons.has(key) ? key : null);
-  };
-  const iconId = resolve(id) ?? resolve(name ?? "");
-  return <span className="provider-brand-mark" aria-hidden="true">{iconId
-    ? <ProviderIcon provider={iconId} type={monochromeProviderIcons.has(iconId) ? "mono" : "color"} size={19} />
-    : fallbackProviderMark(id, name)}</span>;
-}
-
-function ProviderFieldLabel({ icon, children }: { icon: string; children: string }) {
-  return <span className="provider-field-label"><Icon name={icon} />{children}</span>;
-}
-
-/** The header shows the host, not the whole URL: the URL is a row in the card. */
 function baseUrlHost(value?: string) {
   if (!value) return null;
   try { return new URL(value).host; } catch { return value; }
-}
-
-/** One search field for both panes: same control, same clear affordance. */
-function ProviderSearch({ value, onChange, placeholder, className = "", ariaLabel }: { value: string; onChange: (value: string) => void; placeholder: string; className?: string; ariaLabel: string }) {
-  return (
-    <label className={`provider-search ${className}`.trim()}>
-      <Icon name="search" />
-      <Input aria-label={ariaLabel} value={value} onChange={event => onChange(event.target.value)} placeholder={placeholder} />
-      {value ? <button type="button" aria-label="清除搜索" onClick={() => onChange("")}><Icon name="x" /></button> : null}
-    </label>
-  );
-}
-
-const display = (value: unknown) => {
-  if (value === undefined || value === null || value === "") return "接口未返回";
-  if (Array.isArray(value)) return value.length ? value.join(", ") : "接口返回空数组";
-  if (typeof value === "object") return JSON.stringify(value, null, 2);
-  return String(value);
-};
-
-const formatPricing = (pricing?: Record<string, number>) => {
-  if (!pricing) return undefined;
-  const parts = Object.entries(pricing).filter(([, value]) => typeof value === "number");
-  return parts.length ? parts.map(([key, value]) => `$${value}/M ${key}`).join(" · ") : undefined;
-};
-
-function ModelDetails({ model, onUse, disabled, imageDefault, effort, onEffortChange, native = false }: { model: ProviderModel; onUse: () => void; disabled: boolean; native?: boolean; effort?: ModelEffort; onEffortChange: (next?: ModelEffort) => void; imageDefault?: { currentId: string; onUse: (model: ProviderModel) => void } }) {
-  // Image-only providers have no chat model to switch to: the row's job is to
-  // pick the model the generate_image tool uses.
-  if (imageDefault) return (
-    <div className="provider-model-details">
-      <dl className="provider-meta-grid">
-        <div><dt>ID</dt><dd>{display(model.id)}</dd></div>
-        <div><dt>名称</dt><dd>{display(modelDisplayName(model))}</dd></div>
-        <div><dt>用途</dt><dd>图片生成（generate_image）</dd></div>
-      </dl>
-      <Button variant="outline" className="provider-use-model" disabled={disabled || imageDefault.currentId === model.id} onClick={() => imageDefault.onUse(model)}>
-        <Icon name={imageDefault.currentId === model.id ? "check" : "image-plus"} />
-        {imageDefault.currentId === model.id ? "当前图片默认模型" : "设为图片默认模型"}
-      </Button>
-    </div>
-  );
-  const inputs = modelModalities(model, "input");
-  const outputs = modelModalities(model, "output");
-  const levels = effort?.levels ?? [];
-  const detected = Object.keys(model.thinking_levels ?? {}).filter(level => (model.thinking_levels ?? {})[level] != null);
-  return (
-    <div className="provider-model-details">
-      <dl className="provider-meta-grid">
-        <div><dt>ID</dt><dd>{display(model.id)}</dd></div>
-        <div><dt>名称</dt><dd>{display(modelDisplayName(model))}</dd></div>
-        <div><dt>上下文长度</dt><dd>{display(model.context_window)}</dd></div>
-        <div><dt>最大输出</dt><dd>{display(model.max_output_tokens)}</dd></div>
-        <div><dt>输入类型</dt><dd>{display(inputs)}</dd></div>
-        <div><dt>输出类型</dt><dd>{display(outputs)}</dd></div>
-        <div><dt>端点类型</dt><dd>{display(model.raw?.supported_endpoint_types)}</dd></div>
-        <div><dt>Thinking / reasoning</dt><dd>{display(model.reasoning)}</dd></div>
-        <div><dt>支持参数</dt><dd>{display(model.raw?.supported_parameters)}</dd></div>
-        <div><dt>价格（美元 / 百万 tokens）</dt><dd>{formatPricing(model.pricing)}</dd></div>
-      </dl>
-      {!native && <div className="provider-model-effort">
-        <div className="provider-model-effort-head">
-          <strong>支持的 Effort 档位</strong>
-          <small>{detected.length ? `接口返回：${detected.join("、")}` : "接口未返回档位，可手动指定"}</small>
-        </div>
-        <div className="provider-effort-options" role="group" aria-label={`${model.id} 支持的 Effort 档位`}>
-          {effortLevels.map(level => {
-            const on = levels.includes(level);
-            return <button key={level} type="button" role="checkbox" aria-checked={on} aria-label={level} title={on ? `取消 ${level}` : `启用 ${level}`} disabled={disabled} onClick={() => {
-              const next = effortLevels.filter(value => value === level ? !on : levels.includes(value));
-              const keepDefault = effort?.default && next.some(value => value === effort.default) ? effort.default : undefined;
-              onEffortChange(next.length || keepDefault ? { levels: [...next], default: keepDefault } : undefined);
-            }}>{level}</button>;
-          })}
-        </div>
-        {levels.length > 0 ? (
-          <label className="provider-model-effort-default"><span>切换到该模型时使用</span>
-            <Select label="默认 Effort" value={effort?.default ?? ""} options={[{ value: "", label: "保持 Pi 当前档位" }, ...levels.map(value => ({ value, label: value }))]} onChange={value => onEffortChange({ levels, default: value || undefined })} />
-          </label>
-        ) : <small className="provider-model-effort-hint">未选择时沿用模型自身的能力。</small>}
-      </div>}
-      {native && <p>支持的 Effort：{detected.join("、") || "由 Pi 管理"}</p>}
-      <Button variant="outline" className="provider-use-model" disabled={disabled} onClick={onUse}><Icon name="check" />使用此模型</Button>
-      <Disclosure title={<span className="provider-disclosure-title"><Icon name="file-script" />接口原始元数据</span>}>
-        <pre className="provider-raw-metadata">{JSON.stringify(model.raw, null, 2)}</pre>
-      </Disclosure>
-    </div>
-  );
 }
 
 export function ProviderSettings() {
@@ -221,40 +54,6 @@ export function ProviderSettings() {
   </div>;
 }
 
-type ProviderFormState = {
-  provider: string;
-  name: string;
-  baseUrl: string;
-  modelsUrl: string;
-  api: (typeof apiTypes)[number];
-  apiKey: string;
-  defaultModelId: string;
-  authHeader: boolean;
-  contextWindow: string;
-  modelEfforts: Record<string, ModelEffort>;
-  models: ProviderModel[];
-  search: string;
-  busy: "save" | "probe" | "use" | null;
-};
-
-function initialForm(profile?: ProviderProfile): ProviderFormState {
-  return {
-    provider: profile?.id ?? "",
-    name: profile?.name ?? "",
-    baseUrl: profile?.baseUrl ?? "",
-    modelsUrl: profile?.modelsUrl ?? "",
-    api: (profile?.api as (typeof apiTypes)[number]) || "openai-completions",
-    apiKey: "",
-    defaultModelId: profile?.defaultModel ?? "",
-    authHeader: profile?.authHeader !== false,
-    contextWindow: profile?.contextWindow ? String(profile.contextWindow) : "",
-    modelEfforts: profile?.modelEfforts ?? {},
-    models: profile?.models ?? [],
-    search: "",
-    busy: null,
-  };
-}
-
 function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQueryResult<ProviderProfile[]>; initialProfile?: ProviderProfile }) {
   const cwd = useWorkspace((state) => state.cwd);
   const online = useWorkspace((state) => state.connection === "online");
@@ -268,19 +67,18 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
   const [switchingProviderId, setSwitchingProviderId] = useState<string | null>(null);
   const [deletingProfile, setDeletingProfile] = useState<ProviderProfile | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const { provider, name, baseUrl, modelsUrl, api, apiKey, defaultModelId, authHeader, contextWindow, modelEfforts, models, search, busy } = form;
+  // 搜索词不进表单 reducer：它只影响列表，不该带着整张表单和目录一起重渲。
+  const [search, setSearch] = useState("");
+  const { provider, name, baseUrl, modelsUrl, api, apiKey, defaultModelId, authHeader, contextWindow, modelEfforts, models, busy } = form;
   const providerDefaults = { contextWindow: contextWindow ? Number(contextWindow) : undefined, modelEfforts };
   const effortFor = (id: string) => modelEfforts[id];
-  function setEffortFor(id: string, next?: ModelEffort) {
+  // 稳定引用：行是 memo 的，effort 回调用同一个函数，打字时 300 行才不会全量重渲。
+  const setEffortFor = useCallback((id: string, next?: ModelEffort) => {
     const rest = { ...modelEfforts };
     if (next && (next.levels.length > 0 || next.default)) rest[id] = next;
     else delete rest[id];
     update({ modelEfforts: rest });
-  }
-  async function applyEffort(level?: string) {
-    const validLevel = effortLevels.find(value => value === level);
-    if (validLevel) await request({ type: "set_thinking_level", level: validLevel }, 30_000, cwd);
-  }
+  }, [modelEfforts]);
 
   const selected = profiles.data?.find((item) => item.id === editingProfileId);
   const mergeConfiguredModels = (catalog: ProviderModel[]) => {
@@ -299,11 +97,15 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
     if (!profile || switchingProviderId || running) return;
     lastSelectedProfileId.current = id;
     setEditingProfileId(id);
-    update({ ...initialForm(profile), provider: id });
+    setSearch("");
+    // 先用已保存的目录把详情渲染出来，再去后台核对：以前这一步会把整个侧边栏
+    // `disabled` 住，等一个 Node 凭据进程 + 一次网络请求，体感就是“点一下整页死住”。
+    const cached = cachedCatalog(id);
+    update({ ...initialForm(profile), provider: id, models: cached ?? profile.models ?? [] });
+    if (cached) return;
     setSwitchingProviderId(id);
     try {
-      const catalog = await listProviderModels(id);
-      update({ models: Array.isArray(catalog.data) ? catalog.data : [] });
+      update({ models: await loadCatalog(id) });
     } catch (error) {
       gooeyToast.warning("模型目录刷新失败，显示已保存的模型", { description: error instanceof Error ? error.message : String(error), showTimestamp: false });
     } finally { setSwitchingProviderId(null); }
@@ -316,38 +118,18 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
     // 切换前真正在用的那份：失败时要回滚到它（不是被意图盖过的那份）。
     const previous = useWorkspace.getState().state;
     try {
-      const synced = await syncProviderModels(id);
-      // 目标模型可能要看 Pi 的可用列表，但 provider 的默认模型已经知道；先贴上去，
-      // 后面的 `disconnect` + `connect`（停掉 Pi、重新起进程、恢复会话）要好几秒，
-      // 那几秒里 chip 不能还写着上一个 provider。
-      const intended = selected.defaultModel ?? synced.firstModelId;
-      if (intended) expectModel(cwd, { provider: id, id: intended });
-      if (online) await disconnect();
-      await connect(cwd);
-      const available = await request<{ models: { provider: string; id: string }[] }>({ type: "get_available_models" }, 30_000, cwd);
-      const choices = available.models.filter(model => model.provider === id);
-      const target = choices.find(model => model.id === selected.defaultModel) ?? choices.find(model => model.id === synced.firstModelId) ?? choices[0];
-      if (!target) throw new Error(`${selected.name || id} 没有可用模型，请检查配置`);
-      expectModel(cwd, { provider: id, id: target.id });
-      await request({ type: "set_model", provider: id, modelId: target.id }, 30_000, cwd);
-      await applyEffort(selected.modelEfforts?.[selected.defaultModel ?? ""]?.default);
-      const [current] = await Promise.all([refresh(cwd), persistDefaultModel(id, target.id)]);
-      if (current.model?.provider !== id || current.model.id !== target.id) {
-        // Pi 说的就是真话：把被意图盖过的那份换成它。
-        settleModel(cwd, current);
-        throw new Error("Pi 没有确认 Provider 切换");
-      }
-      settleModel(cwd);
-      update({ defaultModelId: target.id });
+      const activated = await syncAndActivate(
+        { provider: id, label: selected.name || id, defaultModel: selected.defaultModel, modelEfforts: selected.modelEfforts },
+        { cwd, online },
+        previous,
+      );
+      update({ defaultModelId: activated.modelId });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["pi", "models", cwd] }),
         profiles.refetch(),
       ]);
-      gooeyToast.success("已应用 Provider 配置", { description: `${selected.name || id} · ${target.id}`, showTimestamp: false });
-    } catch (error) {
-      settleModel(cwd, previous ?? undefined);
-      report(error);
-    } finally { setSwitchingProviderId(null); }
+      gooeyToast.success("已应用 Provider 配置", { description: `${selected.name || id} · ${activated.modelId}`, showTimestamp: false });
+    } catch (error) { report(error); } finally { setSwitchingProviderId(null); }
   }
 
   function closeEditor() {
@@ -364,13 +146,13 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
     setEditorOpen(true);
   }
 
-  function applyPreset(preset: (typeof presets)[number]) {
+  function applyPreset(preset: Preset) {
     setEditingProfileId(null);
     update({ ...initialForm(), provider: preset.id, name: preset.name, baseUrl: preset.baseUrl, modelsUrl: `${preset.baseUrl}/models`, api: preset.api });
     gooeyToast.info(`已填入 ${preset.name} 官方端点`, { showTimestamp: false });
   }
 
-  function openPreset(preset: (typeof presets)[number]) {
+  function openPreset(preset: Preset) {
     applyPreset(preset);
     setEditorOpen(true);
   }
@@ -404,46 +186,20 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
   async function save() {
     update({ busy: "save" });
     try {
-      const result = await saveProvider({ provider: provider.trim(), name: name.trim() || undefined, baseUrl: baseUrl.trim(), modelsUrl: modelsUrl.trim() || undefined, api, apiKey: apiKey.trim() || undefined, authHeader, ...providerDefaults });
-      lastSelectedProfileId.current = result.id;
-      setEditingProfileId(result.id);
-      update({ provider: result.id, apiKey: "" });
-      let synced: Awaited<ReturnType<typeof syncProviderModels>> = { provider: result.id, count: 0, previous: 0 };
-      try {
-        synced = await syncProviderModels(result.id);
-      } catch (syncError) {
-        if (!defaultModelId.trim()) throw new Error(`Provider 已保存，但同步到 Pi 失败：${syncError instanceof Error ? syncError.message : String(syncError)}`);
-        gooeyToast.warning("Provider 已保存，使用手动模型 ID", { description: syncError instanceof Error ? syncError.message : String(syncError), showTimestamp: false });
-      }
-      let switchedModel: { provider: string; id: string } | null = null;
-      try {
-        const preferredModelId = defaultModelId.trim() || synced.firstModelId;
-        if (preferredModelId) await persistDefaultModel(result.id, preferredModelId);
-        if (online) await disconnect();
-        await connect(cwd);
-        const available = await request<{ models: { provider: string; id: string }[] }>({ type: "get_available_models" }, 30_000, cwd);
-        const firstModel = available.models.find((model) => model.provider === result.id && model.id === preferredModelId)
-          ?? available.models.find((model) => model.provider === result.id);
-        if (firstModel) {
-          await request({ type: "set_model", provider: firstModel.provider, modelId: firstModel.id }, 30_000, cwd);
-          await applyEffort(modelEfforts[firstModel.id]?.default);
-          const current = await refresh(cwd);
-          if (current.model?.provider !== firstModel.provider || current.model?.id !== firstModel.id) {
-            throw new Error(`Pi 仍在使用 ${current.model?.provider ?? "未知 Provider"}/${current.model?.id ?? "未知模型"}`);
-          }
-          await persistDefaultModel(firstModel.provider, firstModel.id);
-          switchedModel = firstModel;
-        } else {
-          throw new Error(`Pi 没有加载 ${result.id} 的可用模型`);
-        }
-      } catch (activationError) {
-        await disconnect().catch(() => undefined);
-        throw new Error(`Provider 已保存，但 Pi 未能启用：${activationError instanceof Error ? activationError.message : String(activationError)}`);
-      }
-      gooeyToast.success("Provider 已保存", { description: switchedModel ? `${synced.count} 个模型 · 默认 ${switchedModel.id}` : defaultModelId.trim() ? `默认 ${defaultModelId.trim()}` : `${synced.count} 个模型已写入 Pi`, showTimestamp: false });
+      const saved = await saveAndActivate({
+        payload: { provider: provider.trim(), name: name.trim() || undefined, baseUrl: baseUrl.trim(), modelsUrl: modelsUrl.trim() || undefined, api, apiKey: apiKey.trim() || undefined, authHeader, ...providerDefaults },
+        manualModelId: defaultModelId,
+        context: { cwd, online },
+        onSyncFailure: message => gooeyToast.warning("Provider 已保存，使用手动模型 ID", { description: message, showTimestamp: false }),
+      });
+      lastSelectedProfileId.current = saved.id;
+      setEditingProfileId(saved.id);
+      update({ provider: saved.id, apiKey: "" });
+      gooeyToast.success("Provider 已保存", { description: saved.modelId ? `${saved.count} 个模型 · 默认 ${saved.modelId}` : defaultModelId.trim() ? `默认 ${defaultModelId.trim()}` : `${saved.count} 个模型已写入 Pi`, showTimestamp: false });
+      forgetCatalog(saved.id);
       await queryClient.invalidateQueries({ queryKey: ["pi", "models", cwd] });
       const refreshed = await profiles.refetch();
-      const savedProfile = refreshed.data?.find(item => item.id === result.id);
+      const savedProfile = refreshed.data?.find(item => item.id === saved.id);
       if (savedProfile) update(initialForm(savedProfile));
       setEditorOpen(false);
     } catch (error) { report(error); } finally { update({ busy: null }); }
@@ -456,6 +212,7 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
         ? await listProviderModels(selected.id)
         : await probeProviderModels(provider.trim(), baseUrl.trim(), api, apiKey.trim() || undefined, authHeader, modelsUrl.trim() || undefined, providerDefaults.contextWindow);
       const next = Array.isArray(catalog.data) ? catalog.data : [];
+      rememberCatalog(provider.trim(), next);
       update({ models: mergeConfiguredModels(next) }); gooeyToast.success(`已加载 ${next.length} 个模型`, { description: "模型目录已更新", showTimestamp: false });
     } catch (error) { report(error); } finally { update({ busy: null }); }
   }
@@ -465,23 +222,14 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
     const previous = useWorkspace.getState().state;
     try {
       if (!selected?.native) await saveProvider({ provider: provider.trim(), name: name.trim() || undefined, baseUrl: baseUrl.trim(), modelsUrl: modelsUrl.trim() || undefined, api, apiKey: apiKey.trim() || undefined, authHeader, ...providerDefaults });
-      await syncProviderModels(provider.trim());
-      // 重连要好几秒，先把要用的模型贴上（同「应用配置」）。
-      expectModel(cwd, { provider: provider.trim(), id: model.id });
-      if (online) await disconnect();
-      await connect(cwd);
-      await request({ type: "set_model", provider: provider.trim(), modelId: model.id }, 30_000, cwd);
-      await applyEffort(modelEfforts[model.id]?.default);
-      const current = await refresh(cwd);
-      if (current.model?.provider !== provider.trim() || current.model?.id !== model.id) {
-        settleModel(cwd, current);
-        throw new Error("Pi 没有确认模型切换");
-      }
-      settleModel(cwd);
-      await persistDefaultModel(provider.trim(), model.id);
+      await syncAndActivate(
+        { provider: provider.trim(), defaultModel: model.id, firstModelId: model.id, modelEfforts },
+        { cwd, online },
+        previous,
+      );
       update({ apiKey: "", defaultModelId: model.id }); gooeyToast.success("模型已切换", { description: `${provider.trim()} / ${model.id}`, showTimestamp: false });
       await profiles.refetch();
-    } catch (error) { settleModel(cwd, previous ?? undefined); report(error); } finally { update({ busy: null }); }
+    } catch (error) { report(error); } finally { update({ busy: null }); }
   }
 
   const imageSettings = useQuery({ queryKey: ["pi", "image-config"], queryFn: imageConfig });
@@ -496,23 +244,30 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
       gooeyToast.success("已设为图片默认模型", { description: model.id, showTimestamp: false });
     } catch (error) { report(error); }
   }
-  const visibleModels = useMemo(() => models.filter((model) => `${model.id} ${modelDisplayName(model)}`.toLowerCase().includes(search.toLowerCase())), [models, search]);
-  const selectDefaultModel = (id: string) => update({ defaultModelId: id });
+  // 行是 `memo` 的：把总是新引用的回调变成稳定引用，否则每次重渲都等于全量重渲。
+  const applyModelRef = useRef(applyModel);
+  const setDefaultImageModelRef = useRef(setDefaultImageModel);
+  useEffect(() => {
+    applyModelRef.current = applyModel;
+    setDefaultImageModelRef.current = setDefaultImageModel;
+  });
+  const useChatModel = useCallback((model: ProviderModel) => { void applyModelRef.current(model); }, []);
+  const useImageModel = useCallback((model: ProviderModel) => { void setDefaultImageModelRef.current(model); }, []);
   return (
     <section className="provider-settings provider-settings-editor">
-      <aside className="provider-browser" aria-label="已添加的 Provider">
-        <ProviderSearch ariaLabel="搜索供应商" placeholder="搜索供应商" value={providerSearch} onChange={setProviderSearch} />
-        <div className="provider-browser-list">
-          <div className="provider-browser-group"><span>已添加</span><span>{savedProviders.length}</span></div>
-          <nav aria-label="已添加的 Provider">
-            {visibleProviders.map(item => <button key={item.id} type="button" className="provider-browser-item" aria-current={editingProfileId === item.id ? "true" : undefined} disabled={Boolean(switchingProviderId) || running} onClick={() => void selectProvider(item.id)}><ProviderMark id={item.id} name={item.name} /><span className="provider-browser-name">{item.name || item.id}</span><span className="provider-browser-count">{item.models?.length ?? 0}</span></button>)}
-            {!savedProviders.length && <p className="provider-browser-empty">还没有添加 Provider。</p>}
-          </nav>
-          {defaultPresets.length > 0 && <><div className="provider-browser-group"><span>模板</span><span>{defaultPresets.length}</span></div><nav aria-label="默认 Provider">{availablePresets.map(preset => <button key={preset.id} type="button" className="provider-browser-item provider-browser-preset" onClick={() => openPreset(preset)}><ProviderMark id={preset.id} /><span className="provider-browser-name">{preset.name}</span><span className="provider-browser-add-mark"><Icon name="plus" /></span></button>)}</nav></>}
-          {savedProviders.length > 0 && !visibleProviders.length && !availablePresets.length && <p className="provider-browser-empty">没有匹配的 Provider。</p>}
-        </div>
-        <Button variant="ghost" className="provider-browser-add" onClick={newProvider}><Icon name="plus" />新增 Provider</Button>
-      </aside>
+      <ProviderBrowser
+        search={providerSearch}
+        onSearchChange={setProviderSearch}
+        savedProviders={savedProviders}
+        visibleProviders={visibleProviders}
+        availablePresets={availablePresets}
+        templateCount={defaultPresets.length}
+        editingId={editingProfileId}
+        switchingId={switchingProviderId}
+        onSelect={id => void selectProvider(id)}
+        onOpenPreset={openPreset}
+        onNew={newProvider}
+      />
 
       <div className="provider-detail">
         {selected ? <>
@@ -547,38 +302,38 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
                 {!imageProvider ? <Button variant="outline" disabled={!!busy} onClick={() => void probe()}><Icon name="refresh-cw" />{busy === "probe" ? "刷新中…" : "刷新模型"}</Button> : null}
               </header>
             {imageProvider && <p className="provider-models-note">这些模型供 generate_image 使用。图片工具的端点、模型与密钥在「设置 → Pi 能力 → 图片模型 → 端点」里配置，不读取这里的 Base URL。</p>}
-            <ProviderSearch className="provider-model-search" ariaLabel="搜索模型名称或 ID" placeholder="搜索模型名称或 ID" value={search} onChange={value => update({ search: value })} />
-            <div className="provider-model-list">
-              {visibleModels.map(model => { const inputs = modelModalities(model, "input"); const outputs = modelModalities(model, "output"); return <Disclosure key={model.id} title={<span className="provider-model-title"><span className="provider-model-name"><ModelLogo modelId={model.id} size={19} /><strong>{modelDisplayName(model)}</strong>{selected?.defaultModel === model.id && <span className="provider-model-default">默认</span>}{model.type === "image" && <span className="provider-model-badge">图片</span>}</span>{typeof model.context_window === "number" ? (<span className="provider-model-context">{formatContextLength(model.context_window)}<small> tokens</small></span>) : null}<ModelModalities values={inputs} />{inputs?.length && outputs?.length ? <span className="provider-model-arrow" aria-hidden>→</span> : null}<ModelModalities values={outputs} /></span>}><ModelDetails model={model} native={selected.native} disabled={imageProvider ? !!busy : (!!busy || running || !cwd)} onUse={() => void applyModel(model)} onEffortChange={next => setEffortFor(model.id, next)} effort={effortFor(model.id)} imageDefault={imageProvider ? { currentId: currentImageModel, onUse: model => void setDefaultImageModel(model) } : undefined} /></Disclosure>; })}
-              {!models.length && <div className="provider-models-empty"><Icon name="cursor-magic-selection" /><strong>还没有模型目录</strong><p>刷新模型后会在这里显示可用模型。</p></div>}
-              {models.length > 0 && !visibleModels.length && <div className="provider-models-empty"><p>没有匹配的模型。</p></div>}
-            </div>
+            <ProviderModelList
+              models={models}
+              search={search}
+              onSearchChange={setSearch}
+              native={Boolean(selected.native)}
+              disabled={imageProvider ? !!busy : (!!busy || running || !cwd)}
+              imageProvider={imageProvider}
+              currentImageModel={currentImageModel}
+              defaultModelId={selected.defaultModel}
+              effortFor={effortFor}
+              onUse={useChatModel}
+              onEffortChange={setEffortFor}
+              onUseImage={useImageModel}
+            />
             </section>
           </div>
         </> : <div className="provider-detail-empty"><Icon name="bot" /><h2>添加 Provider</h2><p>新增后，供应商和模型会显示在这里。</p><Button variant="default" onClick={newProvider}><Icon name="plus" />新增 Provider</Button></div>}
       </div>
 
-      <Dialog open={editorOpen} onOpenChange={(open: boolean) => { if (open) setEditorOpen(true); else closeEditor(); }}>
-        <DialogContent className="provider-editor-dialog">
-          <DialogHeader><DialogTitle>{editingProfileId ? "编辑 Provider" : "新增 Provider"}</DialogTitle><DialogDescription>配置端点、模型与凭据。保存后会同步到 Pi。</DialogDescription></DialogHeader>
-          <div className="provider-dialog-body">
-            {!editingProfileId && <div className="provider-presets"><span>快速填入</span>{presets.map(preset => <Button key={preset.id} variant="outline" onClick={() => applyPreset(preset)}><ProviderMark id={preset.id} />{preset.name}</Button>)}</div>}
-            <div className="provider-dialog-grid">
-              <label><ProviderFieldLabel icon="id-card">Provider ID</ProviderFieldLabel><Input value={provider} onChange={event => update({ provider: event.target.value })} placeholder="例如 my-gateway" aria-invalid={Boolean(providerConflict)} />{providerConflict && <small className="provider-field-error">该 ID 已存在，请选择已添加的 Provider。</small>}</label>
-              <label><ProviderFieldLabel icon="file">显示名称</ProviderFieldLabel><Input value={name} onChange={event => update({ name: event.target.value })} placeholder="例如 Team Gateway" /></label>
-              <label><ProviderFieldLabel icon="link">Base URL</ProviderFieldLabel><Input value={baseUrl} onChange={event => update({ baseUrl: event.target.value })} placeholder="https://example.com/v1" /></label>
-              <label><ProviderFieldLabel icon="search">模型列表接口</ProviderFieldLabel><Input value={modelsUrl} onChange={event => update({ modelsUrl: event.target.value })} placeholder="留空则使用 Base URL/models" /></label>
-              <label><ProviderFieldLabel icon="globe">API 类型</ProviderFieldLabel><Select label="API 类型" value={api} options={apiTypes.map(item => ({ value: item, label: item }))} onChange={value => update({ api: value as (typeof apiTypes)[number] })} /></label>
-              <label><ProviderFieldLabel icon="cursor-magic-selection">默认模型</ProviderFieldLabel><Select label="默认模型目录" value={defaultModelId} options={[{ value: "", label: "保存后使用首个模型" }, ...models.map(model => ({ value: model.id, label: modelDisplayName(model) }))]} onChange={selectDefaultModel} /></label>
-              <label><ProviderFieldLabel icon="id-card">模型 ID</ProviderFieldLabel><Input value={defaultModelId} onChange={event => update({ defaultModelId: event.target.value })} placeholder="也可手动输入模型 ID" spellCheck={false} /></label>
-              <label><ProviderFieldLabel icon="file">回退上下文长度</ProviderFieldLabel><Select label="回退上下文长度" value={contextWindow} options={[{ value: "", label: "未设置（默认 128,000 tokens）" }, ...contextOptions, ...(contextWindow && !contextOptions.some(option => option.value === contextWindow) ? [{ value: contextWindow, label: `${Number(contextWindow).toLocaleString()} tokens` }] : [])]} onChange={value => update({ contextWindow: value })} /><small>接口未返回时使用；未设置时按 128,000 tokens。</small></label>
-              <label><ProviderFieldLabel icon="key">API Key</ProviderFieldLabel><Input type="password" value={apiKey} onChange={event => update({ apiKey: event.target.value })} disabled={selected?.isOAuth} placeholder={selected?.isOAuth ? "已登录订阅，退出账户后才能改用 API Key" : selected?.hasApiKey ? "已保存，留空保持不变" : "输入服务商 API Key"} autoComplete="off" /></label>
-            </div>
-            <div className="provider-dialog-auth"><div><strong>发送认证请求头</strong><p>关闭后，模型服务请求不会附带 API Key。</p></div><Toggle label="发送 API 认证请求头" on={authHeader} onChange={value => update({ authHeader: value })} /></div>
-          </div>
-          <DialogFooter><Button variant="outline" onClick={closeEditor}>取消</Button><Button variant="outline" disabled={!!busy || !provider.trim() || !baseUrl.trim() || Boolean(providerConflict)} onClick={() => void probe()}>{busy === "probe" ? "正在查询…" : "测试连接"}</Button><Button variant="default" disabled={!!busy || !provider.trim() || !baseUrl.trim() || Boolean(providerConflict)} onClick={() => void save()}>{busy === "save" ? "正在保存并同步…" : "保存并同步"}</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ProviderEditorDialog
+        open={editorOpen}
+        onClose={closeEditor}
+        editingProfileId={editingProfileId}
+        form={form}
+        update={update}
+        selected={selected}
+        conflict={Boolean(providerConflict)}
+        busy={busy}
+        onSave={() => void save()}
+        onProbe={() => void probe()}
+        onPreset={applyPreset}
+      />
 
       <Dialog open={Boolean(deletingProfile)} onOpenChange={(open: boolean) => { if (!open && !deleting) setDeletingProfile(null); }}>
         <DialogContent className="provider-delete-dialog" showCloseButton={false}>

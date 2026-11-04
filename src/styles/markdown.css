@@ -118,17 +118,191 @@
 /* ---- 行内元素 ------------------------------------------------------ */
 
 /* markdown 里的图片默认按行内排：README 会把几个按钮图并成一行，块级会把它们
-   摞起来。 */
+   摞起来。尺寸跟 t3code 一致：最长 30rem、最高 30rem，其余按原比例。 */
 .chat-markdown img {
   display: inline-block;
-  max-width: 100%;
+  max-width: min(100%, 30rem);
+  max-height: 30rem;
+  height: auto;
+  object-fit: contain;
   border-radius: 10px;
 }
 
-/* 单独占一行的截图属于内容主体，不该跟着上一行文字挤在一起。 */
-.chat-markdown img[data-standalone] {
+/* 单独占一行的截图属于内容主体，不跟着上一行文字挤在一起。 */
+.chat-markdown img[data-standalone],
+.chat-markdown video[data-standalone] {
   display: block;
   margin: 0.65rem 0;
+}
+
+/* 视频嵌在正文里：有控件、有边界，和图片同一套圆角。 */
+.chat-markdown video.md-media {
+  display: inline-block;
+  max-width: min(100%, 30rem);
+  max-height: 30rem;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-content) 6%, transparent);
+  vertical-align: middle;
+}
+
+/* 音频没有画面，只给一行播放器：播放键、文件名、时长，和 t3code 的形态一致。 */
+.chat-markdown .md-audio {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.6rem 0.2rem 0.35rem;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-content) 4%, transparent);
+  vertical-align: middle;
+}
+
+.chat-markdown .md-audio audio {
+  display: none;
+}
+
+.chat-markdown .md-audio-play {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  cursor: pointer;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-content) 8%, transparent);
+  color: var(--link-color);
+}
+
+.chat-markdown .md-audio-play:hover {
+  background: color-mix(in srgb, var(--color-content) 14%, transparent);
+}
+
+.chat-markdown .md-audio-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.chat-markdown .md-audio-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8125rem;
+  color: var(--link-color);
+}
+
+.chat-markdown .md-audio-duration {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  color: color-mix(in srgb, var(--color-content) 50%, transparent);
+}
+
+/* 取不到字节的媒体不留破图：说清楚哪一张、为什么没有。 */
+.chat-markdown .md-media-unavailable {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid color-mix(in srgb, var(--color-content) 12%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-content) 4%, transparent);
+  color: color-mix(in srgb, var(--color-content) 55%, transparent);
+  font-size: 0.75rem;
+}
+
+.chat-markdown .md-media-unavailable-icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+/* 链接前面的站点图标。用 vertical-align 而不是 inline-flex 包住整条链接，
+   否则长 URL 会变成一个不能折行的整体。 */
+.chat-markdown .md-link-nowrap {
+  white-space: nowrap;
+}
+
+.chat-markdown .md-link-icon {
+  display: inline-flex;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  margin-inline: 0.25em 0.2em;
+  align-items: center;
+  justify-content: center;
+  vertical-align: -0.125em;
+}
+
+.chat-markdown .md-link-icon-image {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+.chat-markdown .md-link-icon-fallback {
+  opacity: 0.4;
+}
+
+/* 文件 chip：文件闸与行内代码路径共用。带文件类型图标、带边框、用强调色淡染，
+   点是能打开的，不是一段代码。 */
+.chat-markdown .md-file-chip,
+.chat-markdown a.md-file-chip {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.3em;
+  padding-inline: 0.4em;
+  border: 1px solid color-mix(in srgb, var(--link-color) 32%, transparent);
+  border-radius: 0.4em;
+  background: color-mix(in srgb, var(--link-color) 11%, transparent);
+  color: color-mix(in srgb, var(--link-color) 32%, var(--color-content));
+  font: inherit;
+  font-weight: 500;
+  line-height: 1.5;
+  text-decoration: none;
+  vertical-align: middle;
+  cursor: pointer;
+  transition: background-color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.chat-markdown .md-file-chip:hover,
+.chat-markdown a.md-file-chip:hover {
+  border-color: color-mix(in srgb, var(--link-color) 48%, transparent);
+  background: color-mix(in srgb, var(--link-color) 17%, transparent);
+  background-image: none;
+  text-decoration: none;
+}
+
+.chat-markdown .md-file-chip:focus-visible,
+.chat-markdown a.md-file-chip:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--link-color) 55%, transparent);
+  outline-offset: 1px;
+}
+
+.chat-markdown .md-file-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-markdown .md-file-chip-line {
+  flex: none;
+  color: color-mix(in srgb, var(--link-color) 55%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 行内代码一旦变成 chip，就不该再叠一层代码框：选中的是文件，不是"一段代码"。 */
+.chat-markdown :not(pre) > code:has(> .md-file-chip) {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  overflow-wrap: normal;
 }
 
 .chat-markdown a {

@@ -160,11 +160,14 @@ export function automationScheduleLabel(automation: Pick<Automation, "scheduleKi
   return `${AUTOMATION_WEEKDAYS[automation.dayOfWeek] ?? "每周"} ${time}`;
 }
 
+// 这些 formatter 构造一次要几毫秒；列表每次重渲都新建一遍（每条自动化 3 个）是纯浪费。
+const WEEKDAY_FORMAT = new Intl.DateTimeFormat("zh-CN", { weekday: "long" });
+const HOUR_MINUTE_FORMAT = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+const RELATIVE_FORMAT = new Intl.RelativeTimeFormat("zh-CN", { numeric: "auto" });
+
 export function nextRunPreview(at: number): string {
   const date = new Date(at);
-  const day = new Intl.DateTimeFormat("zh-CN", { weekday: "long" }).format(date);
-  const time = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
-  return `下次运行：${day} ${time}`;
+  return `下次运行：${WEEKDAY_FORMAT.format(date)} ${HOUR_MINUTE_FORMAT.format(date)}`;
 }
 
 /** Relative "in 3 hours" style label for a run timestamp. */
@@ -172,9 +175,8 @@ export function relativeFromNow(at: number, now = Date.now()): string {
   const delta = at - now;
   const minutes = Math.round(delta / 60_000);
   if (Math.abs(minutes) < 1) return "刚刚";
-  const formatter = new Intl.RelativeTimeFormat("zh-CN", { numeric: "auto" });
-  if (Math.abs(minutes) < 60) return formatter.format(minutes, "minute");
+  if (Math.abs(minutes) < 60) return RELATIVE_FORMAT.format(minutes, "minute");
   const hours = Math.round(minutes / 60);
-  if (Math.abs(hours) < 24) return formatter.format(hours, "hour");
-  return formatter.format(Math.round(hours / 24), "day");
+  if (Math.abs(hours) < 24) return RELATIVE_FORMAT.format(hours, "hour");
+  return RELATIVE_FORMAT.format(Math.round(hours / 24), "day");
 }

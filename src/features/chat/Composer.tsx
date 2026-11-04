@@ -321,7 +321,11 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
     if (wasRunning.current && !running) setSettleSeq((value) => value + 1);
     wasRunning.current = running;
   }, [running]);
-  const turnKey = transcriptTurn(useWorkspace((state) => state.transcript.messages));
+  // 选择器返回的是字符串，不是 messages 数组：流式回复每 ~32 ms 换掉一次
+  // `transcript.messages` 的引用，若把数组交给 `Object.is` 比较，整个 Composer
+  // （草稿编辑器、调色板、按钮、猜测逻辑）每帧都要重渲一遍——而 turnKey
+  // 只在新回合开始 / 结束时才变。
+  const turnKey = useWorkspace((state) => transcriptTurn(state.transcript.messages));
   const draftRef = useRef<DraftHandle>(null);
   // 回合结束把光标交回输入框：读完就能直接接着打字，不用先点一下。触发点就是
   // 上面那个「真的结束」的计数，所以每一轮只聚焦一次；`focusedSettle` 记住已处理

@@ -11,11 +11,27 @@ let icon: ModelIconComponent | null = null;
 let loading: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
+/** 首个 `ModelLogo` 挂在首屏 composer 上；直接 `import()` 会让这 1.6 MB 和首帧抢
+ *  主线程。空闲时再取，槽位继续用占位尺寸顶着。 */
+const whenIdle: (run: () => void) => void = typeof requestIdleCallback === "function"
+  ? (run) => { requestIdleCallback(run, { timeout: 2000 }); }
+  : (run) => { setTimeout(run, 300); };
+
 function load() {
   if (icon || loading) return;
-  loading = import("@lobehub/icons").then((mod) => {
-    icon = mod.ModelIcon as unknown as ModelIconComponent;
-    for (const listener of listeners) listener();
+  loading = new Promise<void>((resolve) => {
+    whenIdle(() => {
+      void import("@lobehub/icons").then((mod) => {
+        icon = mod.ModelIcon as unknown as ModelIconComponent;
+        for (const listener of listeners) listener();
+        resolve();
+      }, (error) => {
+        // 图标是装饰：加载失败就让槽位继续空着，不影响任何交互。
+        console.warn("[icons] 模型图标加载失败", error);
+        loading = null;
+        resolve();
+      });
+    });
   });
 }
 

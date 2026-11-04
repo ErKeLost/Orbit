@@ -1,4 +1,5 @@
 import type { ComponentPropsWithoutRef } from "react";
+import { FileTypeIcon } from "../features/shell/FileTypeIcon";
 import { useShell } from "../features/shell/shellStore";
 import { useWorkspace } from "../lib/store";
 import { splitLocation, useWorkspacePath } from "../lib/markdown-paths";
@@ -25,6 +26,7 @@ export function PathChip({ node: _node, className, children, ...rest }: Componen
   if (!hit || text == null) return <code className={className} {...rest}>{children}</code>;
 
   const { text: withoutLine, line } = splitLocation(text);
+  const basename = hit.path.split(/[\\/]/).filter(Boolean).at(-1) ?? hit.path;
 
   return (
     <code className={className} {...rest}>
@@ -32,16 +34,20 @@ export function PathChip({ node: _node, className, children, ...rest }: Componen
        * One button over the whole path, not just the file name: the leading
        * directories are part of what you are being offered, and a click on
        * `src/lib/` that does nothing reads as broken.
+       *
+       * The icon is the same file-type glyph the tree and tabs use, so a path
+       * says what it is before it is read: a `.json` is not a `.png`.
        */}
       <button
         type="button"
-        title={hit.path}
+        title={line != null ? `${hit.path}:${line}` : hit.path}
         aria-label={`打开 ${hit.path}`}
-        onClick={() => openFile(hit.path, { pin: true })}
-        className="inline cursor-pointer rounded-[4px] bg-accent/15 px-1 font-[inherit] text-accent transition-colors hover:bg-accent/25 focus-visible:bg-accent/25 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent/50"
+        onClick={() => openFile(hit.path, { pin: true, ...(hit.isDir ? { isDir: true } : {}) })}
+        className="md-file-chip"
       >
-        {withoutLine}
-        {line != null ? <span className="text-accent/55">:{line}</span> : null}
+        <FileTypeIcon name={basename} isDir={hit.isDir} size={13} />
+        <span className="md-file-chip-label">{withoutLine}</span>
+        {line != null ? <span className="md-file-chip-line">:{line}</span> : null}
       </button>
     </code>
   );

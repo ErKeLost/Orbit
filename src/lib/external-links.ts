@@ -13,8 +13,7 @@
 //   the user's real browser and cancel the panel's own click.
 import { isTauri } from '@tauri-apps/api/core'
 import { openUrl } from '@tauri-apps/plugin-opener'
-
-const EXTERNAL_SCHEMES = /^(https?:|mailto:)/i
+import { navigatesWebview, opensExternally } from './link-safety'
 
 export function installExternalLinkHandler(): void {
   if (!isTauri()) return
@@ -22,7 +21,16 @@ export function installExternalLinkHandler(): void {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     const anchor = (event.target as Element | null)?.closest?.('a[href]')
     const href = anchor?.getAttribute('href') ?? ''
-    if (!anchor || !EXTERNAL_SCHEMES.test(href)) return
+    if (!anchor) return
+    // 任何「会把 webview 换成另一份文档」的链接都要拦：换掉之后应用就没了。
+    // 带 XML MIME 的目标（例如 `data:image/svg+xml,…`）解析失败时，用户看到的是
+    // 浏览器自带的 XML 解析错误页，而不是任何应用内的东西。见 `lib/link-safety`。
+    if (navigatesWebview(href)) {
+      event.preventDefault()
+      event.stopPropagation()
+      return
+    }
+    if (!opensExternally(href)) return
     if (isPanelLink(anchor, href)) return
     event.preventDefault()
     event.stopPropagation()
