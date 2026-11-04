@@ -71,3 +71,19 @@ jobs:
           releaseDraft: true
           uploadUpdaterJson: true
           uploadUpdaterSignatures: true
+          args: "--bundles deb,rpm"
+
+      # The release workflow's Linux job installs this package and requires it
+      # to stay alive; a repair that skipped that would upload an unverified
+      # binary and look green. The script is taken from `main` because the tag
+      # being repaired predates its fix (that is why the repair exists).
+      - name: Fetch shared verification script
+        run: |
+          git fetch --depth 1 origin main
+          git checkout FETCH_HEAD -- scripts/verify-linux-package.sh
+          bash -n scripts/verify-linux-package.sh
+
+      - name: Verify packaged Linux build starts
+        run: |
+          sudo apt-get install -y xvfb dbus-x11 xauth
+          bash scripts/verify-linux-package.sh
