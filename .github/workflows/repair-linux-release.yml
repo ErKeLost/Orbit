@@ -43,6 +43,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.98.1
+      - name: Free disk space
+        # Same reason as the release workflow: deb + rpm + target do not fit on a
+        # hosted image that still carries the Android SDK, .NET and GHC.
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+
       - name: Install native dependencies
         run: |
           sudo apt-get update

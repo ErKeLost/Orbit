@@ -113,6 +113,20 @@ jobs:
 
       # 每个 macOS 目标都在 matrix 里声明，没有额外一步。
 
+      - name: Free disk space
+        if: matrix.name == 'Linux x86_64'
+        # Orbit bundles CEF, Node and the Pi runtime, so a .deb alone is ~200 MB
+        # and the release needs deb + rpm + the whole target tree at once. The
+        # hosted image ships an Android SDK, .NET, GHC and cached Docker images
+        # this job never touches; with the rust-cache restored, bundling rpm ran
+        # out of disk (os error 28) after the .deb had already been written.
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+
       - name: Install Linux build dependencies
         if: matrix.name == 'Linux x86_64'
         run: |
