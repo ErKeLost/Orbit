@@ -8,8 +8,8 @@ const FENCE = "```";
  * 语言标签缺失的代码围栏走 CodeFrame 的纯文本分支：头部（图标/纯文本/复制）
  * + `<pre><code>` 一体。回归点：
  *  - 内容只渲染一次，且在 .markdown-code-shell 框内（曾出现过内容落到框外的报告）；
- *  - `<pre>` 带 stream-block 类（Streamdown 的透明度动画目标），保证
- *    orbit-theme.css 里 `.markdown-static .stream-block` 的可见性覆盖命得中。
+ *  - `<pre>` 落在框内，没有被外层的 `overflow`/滚动容器挤出去；
+ *  - 未完成的围栏不会因为增量解析而重复一遍正文。
  */
 test("language-less fence keeps content inside the frame, exactly once", () => {
   const html = renderToStaticMarkup(
@@ -22,5 +22,4 @@ test("language-less fence keeps content inside the frame, exactly once", () => {
   expect(html.split("[pi-gui]").length - 1).toBe(1);
   const preIndex = html.indexOf("<pre", shellStart);
   expect(preIndex).toBeGreaterThan(shellStart);
-  expect(html.slice(preIndex, preIndex + 60)).toContain("stream-block");
 });

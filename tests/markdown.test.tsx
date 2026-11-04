@@ -7,12 +7,13 @@ await preloadMath();
 const FENCE = "```";
 
 describe("shared Markdown renderer", () => {
-  test("renders GFM tables and KaTeX through LobeHub Streamdown", () => {
+  test("renders GFM tables and KaTeX through the shared markdown pipeline", () => {
     const html = renderToStaticMarkup(
       <Markdown content={"| Item | Value |\n| --- | --- |\n| math | $x^2$ |"} />,
     );
 
     expect(html).toContain("<table>");
+    expect(html).toContain("md-table-scroll");
     expect(html).toContain('class="katex"');
     expect(html).toContain("markdown-static");
     expect(html).toContain("agent-markdown");
@@ -26,11 +27,34 @@ describe("shared Markdown renderer", () => {
     expect(html).toContain("is-streaming");
   });
 
-  test("animates streaming words with the current fade duration", () => {
+  test("streaming renders plain markdown without word-level smoothing", () => {
     const html = renderToStaticMarkup(<Markdown content="live trail" animated />);
 
-    expect(html.match(/class="stream-char"/g)).toHaveLength(2);
-    expect(html).toContain("animation-duration: 180ms");
+    expect(html).toContain("is-streaming");
+    expect(html).toContain('data-streaming=""');
+    expect(html).not.toContain('class="stream-char"');
+    expect(html).toContain("live trail");
+  });
+
+  test("renders GitHub alerts instead of a literal marker", () => {
+    const html = renderToStaticMarkup(<Markdown content={"> [!WARNING]\n> careful"} />);
+
+    expect(html).toContain("md-alert-warning");
+    expect(html).not.toContain("[!WARNING]");
+    expect(html).toContain("careful");
+  });
+
+  test("gives headings fragment ids and keeps the anchor in the page", () => {
+    const html = renderToStaticMarkup(<Markdown content={"## Install\n\n[jump](#install)"} />);
+
+    expect(html).toContain('id="user-content-install"');
+    expect(html).toContain('href="#install"');
+  });
+
+  test("tags inline code so a file name can become a chip", () => {
+    const html = renderToStaticMarkup(<Markdown content={"run `vite build` now"} />);
+
+    expect(html).toContain("data-inline-code");
   });
 
   test("renders fenced code as a pre block before Shiki upgrades it", () => {

@@ -1,0 +1,395 @@
+/*
+ * 聊天 markdown 的外观。逐条移植自 t3code `apps/web/src/index.css` 的
+ * `.chat-markdown` 段（见 t3code/ submodule），只把它的 token 换成了 Orbit 的：
+ *
+ *   --contrast-foreground      → --color-content
+ *   --contrast-border          → --color-stroke / content 10%
+ *   --muted                    → content 6%
+ *   --info-foreground          → --link-color
+ *
+ * 位置在 index.css 的最后，所以同优先级的旧 `.agent-markdown` 规则会被覆盖；
+ * 更具体的旧规则（`.agent-markdown.is-streaming …`）继续有效。
+ */
+
+.chat-markdown {
+  overflow-wrap: anywhere;
+}
+
+.chat-markdown > :first-child {
+  margin-top: 0;
+}
+
+.chat-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-markdown p,
+.chat-markdown ul,
+.chat-markdown ol,
+.chat-markdown blockquote,
+.chat-markdown .md-table,
+.chat-markdown details {
+  margin: 0.65rem 0;
+}
+
+/* ---- 标题 ---------------------------------------------------------- */
+
+.chat-markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: 1.25rem 0 0.5rem;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-content);
+  scroll-margin-top: 1.5rem;
+}
+
+.chat-markdown h1 {
+  font-size: 1.25rem;
+}
+
+.chat-markdown h2 {
+  font-size: 1.125rem;
+}
+
+.chat-markdown h3 {
+  font-size: 1rem;
+}
+
+.chat-markdown :is(h4, h5, h6) {
+  font-size: 0.875rem;
+}
+
+.chat-markdown h6 {
+  color: color-mix(in srgb, var(--color-content) 60%, transparent);
+}
+
+/* ---- 列表 ---------------------------------------------------------- */
+
+.chat-markdown ul {
+  /* 多层 ol 里的 ul 不能继承外层的 gutter：--list-gutter 是可继承的自定义属性。 */
+  --list-gutter: 1.25rem;
+  padding-inline-start: 1.25rem;
+  list-style-type: disc;
+}
+
+/* ol 的 gutter 由渲染层按最长序号用内联 style 加宽（否则 list-style-position:
+   outside 会把多位数的 marker 画到 padding 外面）；这里同时复位，避免嵌套的
+   ol 继承外层的宽度。 */
+.chat-markdown ol {
+  --list-gutter: 1.25rem;
+  padding-inline-start: var(--list-gutter, 1.25rem);
+  list-style-type: decimal;
+}
+
+.chat-markdown ol > li::marker {
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-markdown ul ul {
+  list-style-type: circle;
+}
+
+.chat-markdown ul ul ul {
+  list-style-type: square;
+}
+
+.chat-markdown ol ol {
+  list-style-type: lower-alpha;
+}
+
+.chat-markdown ol ol ol {
+  list-style-type: lower-roman;
+}
+
+.chat-markdown li + li {
+  margin-top: 0.25rem;
+}
+
+/* GitHub 任务列表：checkbox 顶替 list marker。 */
+.chat-markdown li.task-list-item {
+  list-style-type: none;
+}
+
+.chat-markdown li.task-list-item input[type="checkbox"] {
+  margin-block: 0 0.15em;
+  margin-inline: calc(-1 * var(--list-gutter, 1.25rem)) 0.35em;
+  vertical-align: middle;
+}
+
+/* ---- 行内元素 ------------------------------------------------------ */
+
+/* markdown 里的图片默认按行内排：README 会把几个按钮图并成一行，块级会把它们
+   摞起来。 */
+.chat-markdown img {
+  display: inline-block;
+  max-width: 100%;
+  border-radius: 10px;
+}
+
+/* 单独占一行的截图属于内容主体，不该跟着上一行文字挤在一起。 */
+.chat-markdown img[data-standalone] {
+  display: block;
+  margin: 0.65rem 0;
+}
+
+.chat-markdown a {
+  color: var(--link-color);
+  text-decoration: none;
+}
+
+.chat-markdown a:not(:has(img)):hover,
+.chat-markdown a:not(:has(img)):focus-visible {
+  background-image: radial-gradient(circle, currentcolor 0.75px, transparent 1px);
+  background-position: left bottom;
+  background-repeat: repeat-x;
+  background-size: 4px 2px;
+}
+
+.chat-markdown hr {
+  margin: 1.1rem 0;
+  border: 0;
+  border-top: 1px solid var(--color-stroke);
+}
+
+.chat-markdown :not(pre) > code {
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 0.375rem;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  background: color-mix(in srgb, var(--color-content) 6%, transparent);
+  padding: 0.1rem 0.35rem;
+  color: var(--color-content);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+/* 引用块：2px 竖线 + 缩进，颜色继承正文。 */
+.chat-markdown blockquote {
+  border-inline-start: 2px solid color-mix(in srgb, var(--color-content) 35%, transparent);
+  padding-inline-start: 0.8rem;
+  color: inherit;
+}
+
+/* GitHub alerts（`> [!NOTE]`）：边框 + 彩色标题行，和 t3code 一致的语义。 */
+.chat-markdown .md-alert {
+  padding-inline-start: 0.75rem;
+  border-inline-start-width: 2px;
+}
+
+.chat-markdown .md-alert-note {
+  border-inline-start-color: color-mix(in srgb, #3b82f6 70%, transparent);
+}
+
+.chat-markdown .md-alert-tip {
+  border-inline-start-color: color-mix(in srgb, #10b981 70%, transparent);
+}
+
+.chat-markdown .md-alert-important {
+  border-inline-start-color: color-mix(in srgb, #a855f7 70%, transparent);
+}
+
+.chat-markdown .md-alert-warning {
+  border-inline-start-color: color-mix(in srgb, #f59e0b 70%, transparent);
+}
+
+.chat-markdown .md-alert-caution {
+  border-inline-start-color: color-mix(in srgb, #ef4444 70%, transparent);
+}
+
+.chat-markdown .md-alert-title {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin: 0 0 0.25rem;
+  font-weight: 600;
+  font-size: 0.8125rem;
+}
+
+.chat-markdown .md-alert-note .md-alert-title {
+  color: #60a5fa;
+}
+
+.chat-markdown .md-alert-tip .md-alert-title {
+  color: #34d399;
+}
+
+.chat-markdown .md-alert-important .md-alert-title {
+  color: #c084fc;
+}
+
+.chat-markdown .md-alert-warning .md-alert-title {
+  color: #fbbf24;
+}
+
+.chat-markdown .md-alert-caution .md-alert-title {
+  color: #f87171;
+}
+
+:where(html.theme-light) .chat-markdown :is(.md-alert-note, .md-alert-tip, .md-alert-important, .md-alert-warning, .md-alert-caution) .md-alert-title {
+  filter: brightness(0.72) saturate(1.4);
+}
+
+/* ---- 代码块 -------------------------------------------------------- */
+
+.chat-markdown pre {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 0.75rem;
+  background: color-mix(in srgb, var(--color-content) 6%, transparent);
+  padding: 0.8rem 0.9rem;
+  scrollbar-width: thin;
+}
+
+.chat-markdown pre code {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* Orbit 自己的围栏外壳（.markdown-code-shell / .code-block）在这个 pre 之上：
+   它已经有边框和头部，pre 只负责内容。 */
+.chat-markdown .code-block {
+  border-radius: 10px;
+}
+
+.chat-markdown .code-block pre {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 0.6rem 0.75rem;
+}
+
+/* 流式时新到的一段文字/代码不是“跳”出来的：它淡入一次。@starting-style 只对元素
+   首次插入生效，规则又限定在 data-streaming 上，所以重开一段已经写完的回答不会
+   重播。只动 opacity，一次性，不改布局。 */
+@media (prefers-reduced-motion: no-preference) {
+  .chat-markdown[data-streaming] > * {
+    transition: opacity 600ms ease-out;
+
+    @starting-style {
+      opacity: 0;
+    }
+  }
+}
+
+/* ---- 表格 ---------------------------------------------------------- */
+
+.chat-markdown .md-table-scroll {
+  overflow-x: auto;
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 10px;
+}
+
+.chat-markdown table {
+  display: table;
+  width: 100%;
+  min-width: max-content;
+  border: 0;
+  border-collapse: collapse;
+  overflow-wrap: normal;
+  word-break: normal;
+  font-size: 0.75rem;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+  padding: 0.45rem 0.75rem;
+  border: 0;
+  text-align: start;
+}
+
+.chat-markdown thead th {
+  border-bottom: 1px solid color-mix(in srgb, var(--color-content) 12%, transparent);
+  padding-block: 0.55rem;
+  background: color-mix(in srgb, var(--color-content) 4%, transparent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chat-markdown tbody td {
+  border-bottom: 1px solid color-mix(in srgb, var(--color-content) 8%, transparent);
+}
+
+.chat-markdown tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.chat-markdown .md-table-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 0.25rem;
+}
+
+.chat-markdown .md-table-copy {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: color-mix(in srgb, var(--color-content) 45%, transparent);
+  cursor: pointer;
+}
+
+.chat-markdown .md-table-copy:hover {
+  background: color-mix(in srgb, var(--color-content) 8%, transparent);
+  color: var(--color-content);
+}
+
+/* ---- details / summary -------------------------------------------- */
+
+.chat-markdown details {
+  border: 1px solid color-mix(in srgb, var(--color-content) 10%, transparent);
+  border-radius: 10px;
+  padding: 0.5rem 0.75rem;
+  background: color-mix(in srgb, var(--color-content) 3%, transparent);
+}
+
+.chat-markdown summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.8125rem;
+}
+
+.chat-markdown details[open] summary {
+  margin-bottom: 0.35rem;
+}
+
+/* ---- 脚注 ---------------------------------------------------------- */
+
+.chat-markdown section[data-footnotes] {
+  margin-top: 1.25rem;
+  border-top: 1px solid var(--color-stroke);
+  padding-top: 0.75rem;
+  color: color-mix(in srgb, var(--color-content) 60%, transparent);
+  font-size: 0.75rem;
+}
+
+.chat-markdown section[data-footnotes] ol {
+  margin: 0;
+}
+
+.chat-markdown section[data-footnotes] li + li {
+  margin-top: 0.35rem;
+}
+
+.chat-markdown a[data-footnote-ref],
+.chat-markdown a[data-footnote-backref] {
+  display: inline-flex;
+  min-width: 1rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.25rem;
+  text-decoration: none;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+
+/* 公式块自己管溢出，别让 pre 的横向滚动套在公式上。 */
+.chat-markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: 0.5rem 0;
+}

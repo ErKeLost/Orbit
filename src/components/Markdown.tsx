@@ -1,16 +1,27 @@
-import { Streamdown, preprocessLaTeX } from "@lobehub/streamdown";
-import { Children, createElement, memo, useMemo, useSyncExternalStore, type ComponentPropsWithoutRef, type ElementType, type ReactNode } from "react";
-import remarkGfm from "remark-gfm";
+import { memo, useMemo, useSyncExternalStore } from "react";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import type { PluggableList } from "unified";
 import { remarkMentions } from "../lib/remark-mentions";
-import { MarkdownLink, Pre } from "./CodeBlock";
-import { PathChip } from "./PathChip";
-import { isLowPerf } from "../lib/perf-tier";
+import { createMarkdownComponents } from "./markdown/renderers";
+import { rehypeHeadingIds } from "./markdown/markdownFragments";
+import {
+  MARKDOWN_REHYPE_PLUGINS,
+  MARKDOWN_REMARK_PLUGINS,
+  MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+} from "../shared/lib/markdown/pipeline";
+import { createIncrementalMarkdownPlugin } from "../shared/lib/markdown/incremental";
+import { normalizeLatexDelimiters } from "../shared/lib/markdown/latex";
 
 /**
- * KaTeX (~950 KB with its CSS and mhchem) loads the first time a reply
- * actually contains math, the same "after first paint" rule Orbit applies
- * to its heavy assets. Plain replies never pay for it.
+ * Markdown 渲染：react-markdown + t3code 那套 remark/rehype 管线
+ * （`shared/lib/markdown/pipeline.ts`，逐条移植自 t3code submodule）。
+ *
+ * 与之前的 Streamdown 相比，换来的是可控：围栏语言、行内 code 的 path chip、
+ * GitHub alert、表格外壳、标题锚点都由我们自己的 components map 决定，流式
+ * 期间走增量解析而不是每个 token 重解析整篇。
+ *
+ * KaTeX（含 CSS 与 mhchem，约 950 KB）仍然只在回复里真的出现公式时才加载，
+ * 纯文本回答不为它付任何代价。
  */
 type MathPlugins = { remark: PluggableList; rehype: PluggableList };
 let math: MathPlugins | null = null;
@@ -39,86 +50,74 @@ function subscribeMath(onChange: () => void) {
 
 const mathSnapshot = () => math;
 const MATH_PATTERN = /\$\$|\\\[|\\\(|(^|[^\\$])\$[^\s$][^$\n]*\$/;
+/** 流式增量解析只在文档里已经有围栏时才有意义；没有围栏的短回答直接整篇解析。 */
+const FENCE_PATTERN = /(?:^|\n) {0,3}(?:`{3}|~{3})/;
 
-/** Exported for tests and SSR: resolves once KaTeX has been loaded. */
+/** 导出让测试与 SSR 等到 KaTeX 到位。 */
 export function preloadMath() {
   loadMath();
   return mathLoading ?? Promise.resolve();
 }
 
-const baseRemark: PluggableList = [remarkGfm, remarkMentions];
-
-function selectableText(children: ReactNode) {
-  return Children.map(children, (child) => (typeof child === "string" ? <span className="md-selectable-text">{child}</span> : child));
+/** `file:` 指向本地文件（PathChip 之外的兜底），其余交给 react-markdown 自己的白名单。 */
+function urlTransform(url: string) {
+  return /^file:/i.test(url) ? url : defaultUrlTransform(url);
 }
 
-function selectableElement<T extends ElementType>(tag: T) {
-  return ({ node: _node, children, ...props }: ComponentPropsWithoutRef<T> & { node?: unknown }) =>
-    createElement(tag, props, selectableText(children));
-}
-
-const textComponents = {
-  p: selectableElement("p"),
-  li: selectableElement("li"),
-  h1: selectableElement("h1"),
-  h2: selectableElement("h2"),
-  h3: selectableElement("h3"),
-  h4: selectableElement("h4"),
-  h5: selectableElement("h5"),
-  h6: selectableElement("h6"),
-  td: selectableElement("td"),
-  th: selectableElement("th"),
-};
-
-/**
- * Markdown keeps Orbit's renderer (LobeHub Streamdown + remark + the Shiki
- * `Pre` block) and takes Orbit's typography through `.agent-markdown`.
- */
-export const Markdown = memo(function Markdown({ content, animated = false, className = "", links = "external" }: { content: string; animated?: boolean; className?: string; links?: "external" | "panel" }) {
+export const Markdown = memo(function Markdown({
+  content,
+  animated = false,
+  className = "",
+  links = "external",
+  lineBreaks = false,
+}: {
+  content: string;
+  animated?: boolean;
+  className?: string;
+  links?: "external" | "panel";
+  lineBreaks?: boolean;
+}) {
   const settleDelay = animated ? 180 : 0;
   const hasMath = MATH_PATTERN.test(content);
   const plugins = useSyncExternalStore(subscribeMath, mathSnapshot, mathSnapshot);
   if (hasMath && !plugins) loadMath();
-  const remarkPlugins = useMemo(() => (hasMath && plugins ? [...baseRemark, ...plugins.remark] : baseRemark), [hasMath, plugins]);
-  const rehypePlugins = useMemo(() => (hasMath && plugins ? plugins.rehype : []), [hasMath, plugins]);
-  const components = useMemo(
-    () => ({
-      ...textComponents,
-      a: MarkdownLink,
-      // A file name in inline code becomes something you can open. Fenced code
-      // arrives here as a `<code>` with a `language-*` class and newlines in
-      // it, so the chip keeps its hands off anything that is not a single
-      // inline token.
-      code: ({ node: _node, className, children, ...props }: ComponentPropsWithoutRef<"code"> & { node?: unknown }) =>
-        className || (typeof children === "string" && children.includes("\n")) ? (
-          <code className={className} {...props}>{children}</code>
-        ) : (
-          <PathChip className={className} {...props}>{children}</PathChip>
-        ),
-      pre: (props: Parameters<typeof Pre>[0]) => <Pre {...props} settleDelay={settleDelay} />,
-    }),
-    [settleDelay],
-  );
+
+  const source = hasMath ? normalizeLatexDelimiters(content) : content;
+  // 增量解析的缓存必须活过重渲染，所以插件实例按「数学插件是否已在管线里」稳定化：
+  // 数学插件是异步装上的，装上前缓存下来的树没有公式，必须换一份。
+  const incremental = useMemo(() => createIncrementalMarkdownPlugin(), [plugins]);
+
+  const remarkPlugins = useMemo(() => {
+    const base = lineBreaks ? MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : MARKDOWN_REMARK_PLUGINS;
+    const list: PluggableList = [remarkMentions, ...base];
+    if (hasMath && plugins) list.unshift(...plugins.remark);
+    if (animated && FENCE_PATTERN.test(source)) list.push(incremental);
+    return list;
+  }, [animated, hasMath, incremental, lineBreaks, plugins, source]);
+
+  const rehypePlugins = useMemo(() => {
+    const list: PluggableList = [...MARKDOWN_REHYPE_PLUGINS, rehypeHeadingIds];
+    if (hasMath && plugins) list.push(...plugins.rehype);
+    return list;
+  }, [hasMath, plugins]);
+
+  const components = useMemo(() => createMarkdownComponents(settleDelay), [settleDelay]);
 
   return (
     <div
-      // Where the links in this content should open. Left as a data attribute
-      // rather than a prop on `MarkdownLink` on purpose: `a: MarkdownLink` above
-      // has to stay one stable component or every re-render would remount every
-      // anchor on the page. The click handler reads the surface off the DOM.
+      // 链接该开在哪个表面：data 属性而不是 prop，`a` 组件才能保持稳定身份。
       data-link-surface={links}
-      className={`agent-markdown min-w-0 font-sans text-sm leading-6 ${className} ${animated ? "is-streaming" : "markdown-static"}`.trim()}
+      data-streaming={animated ? "" : undefined}
+      className={`agent-markdown chat-markdown min-w-0 font-sans text-sm leading-6 ${className} ${animated ? "is-streaming" : "markdown-static"}`.trim()}
     >
-      <Streamdown
-        content={content}
+      <ReactMarkdown
         remarkPlugins={remarkPlugins}
         rehypePlugins={rehypePlugins}
-        latexGuard={hasMath}
-        preprocess={hasMath ? preprocessLaTeX : undefined}
-        granularity="word"
-        smoothing={isLowPerf ? "silky" : "balanced"}
+        urlTransform={urlTransform}
         components={components}
-      />
+      >
+        {source}
+      </ReactMarkdown>
     </div>
   );
 });

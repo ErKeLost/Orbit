@@ -8,5 +8,6 @@
 @import "./styles/model-picker.css";
 @import "./styles/orbit.css";
 @import "./styles/model-menu.css";
-@source "../node_modules/streamdown/dist/*.js";
-@source "../node_modules/@streamdown/code/dist/*.js";
+/* 聊天 markdown 的外观，必须排在 orbit.css 之后：它按 t3code 的 .chat-markdown
+   覆盖同优先级的 .agent-markdown 规则。 */
+@import "./styles/markdown.css";
