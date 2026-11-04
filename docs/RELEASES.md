@@ -6,6 +6,15 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.29
+
+The Debian package no longer depends on `nodejs (>= 22.19.0)`. Orbit runs the
+Node it bundles, and on Debian the dependency made the package uninstallable on
+any system without Node.js 22.19 — Ubuntu 24.04 ships 18, so
+`apt-get install ./Orbit_*.deb` failed with unmet dependencies. That is what the
+packaged-start check in the release job hit after the AppImage stopped blocking
+the job. RPM was already free of it.
+
 ## v1.0.28
 
 Same app as v1.0.27; the release pipeline is what changed. Three releases in a
@@ -153,11 +162,12 @@ into the same process.
 
 Linux publishes an AppImage, a Debian package, and an RPM package. The native
 CEF desktop runtime requires GTK 4.14 or newer; Linux builds use Ubuntu 24.04. Release
-artifacts include Node.js via `scripts/sync-node-runtime.mjs`. RPM packages do
-not require an external Node.js package: the previous `nodejs >= 22.19.0`
-string was encoded as a literal capability name, causing Fedora updates to
-fail dependency checks even when a suitable Node.js was installed. Debian
-packages currently retain their additional system Node.js dependency.
+artifacts include Node.js via `scripts/sync-node-runtime.mjs`, and neither
+package names an external Node.js dependency any more: the `nodejs >= 22.19.0`
+string was encoded as a literal capability name on Fedora, and on Debian it made
+the package uninstallable on any distribution without Node.js 22.19 (Ubuntu
+24.04 ships 18) — which is exactly what the packaged-start check hit. The app
+runs the Node it bundles.
 
 Fedora KDE Plasma users can install the `.rpm` or run the AppImage. The pinned
 Tauri updater supports AppImage, DEB, and RPM updates. RPM installation runs
