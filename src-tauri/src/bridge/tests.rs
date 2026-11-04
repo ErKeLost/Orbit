@@ -96,6 +96,22 @@ fn project_pi_resolution_uses_bundle_entrypoint_when_both_builds_exist() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn configured_pi_executable_receives_the_environment_during_version_probe() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = temporary_root("configured-pi");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("pi");
+    fs::write(&path, "#!/bin/sh\n[ \"$PI_TEST_PROFILE\" = 'profile-a' ] || exit 1\nprintf '1.5.0\\n'\n").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+    let settings = crate::pi_runtime_settings::PiRuntimeSettings { binary_path:path.to_string_lossy().into_owned(), environment:vec![crate::pi_runtime_settings::EnvironmentVariable{name:"PI_TEST_PROFILE".into(),value:"profile-a".into(),sensitive:false,value_redacted:false}],..Default::default() };
+    assert!(pi_is_executable(&path));
+    assert_eq!(pi_version(Path::new("unused-node"), &path, true, &settings).as_deref(), Some("1.5.0"));
+    assert!(pi_version(Path::new("unused-node"), &path, true, &crate::pi_runtime_settings::PiRuntimeSettings::default()).is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn pi_diagnostics_are_bounded_redacted_and_ignore_secrets() {
     let home = PathBuf::from("/Users/example");

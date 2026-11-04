@@ -4053,7 +4053,7 @@ dependencies = [
 
 [[package]]
 name = "orbit"
-version = "1.0.29"
+version = "1.0.30"
 dependencies = [
  "aes-gcm",
  "apple-cf",
@@ -4080,6 +4080,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "shell-words",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",

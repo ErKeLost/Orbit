@@ -2,6 +2,7 @@ import { useMemo, useReducer, useRef, useState } from "react";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import {
   listProviderProfiles,
+  listProviderModels,
   probeProviderModels,
   saveProvider,
   deleteProvider,
@@ -29,6 +30,9 @@ import { formatContextLength, modelDisplayName, modelModalities } from "../lib/m
 import { toast as gooeyToast } from "../shared/ui/toast";
 import { Icon } from "./Icon";
 import { ModelProvider, ProviderIcon } from "@lobehub/icons";
+import { SubscriptionAccounts } from "../features/providers/SubscriptionAccounts";
+import { MagpieGateway } from "../features/providers/MagpieGateway";
+import { PiRuntimeConfiguration } from "../features/providers/PiRuntimeConfiguration";
 import "../styles/provider-page.css";
 
 const apiTypes = [
@@ -136,7 +140,7 @@ const formatPricing = (pricing?: Record<string, number>) => {
   return parts.length ? parts.map(([key, value]) => `$${value}/M ${key}`).join(" · ") : undefined;
 };
 
-function ModelDetails({ model, onUse, disabled, imageDefault, effort, onEffortChange }: { model: ProviderModel; onUse: () => void; disabled: boolean; effort?: ModelEffort; onEffortChange: (next?: ModelEffort) => void; imageDefault?: { currentId: string; onUse: (model: ProviderModel) => void } }) {
+function ModelDetails({ model, onUse, disabled, imageDefault, effort, onEffortChange, native = false }: { model: ProviderModel; onUse: () => void; disabled: boolean; native?: boolean; effort?: ModelEffort; onEffortChange: (next?: ModelEffort) => void; imageDefault?: { currentId: string; onUse: (model: ProviderModel) => void } }) {
   // Image-only providers have no chat model to switch to: the row's job is to
   // pick the model the generate_image tool uses.
   if (imageDefault) return (
@@ -170,7 +174,7 @@ function ModelDetails({ model, onUse, disabled, imageDefault, effort, onEffortCh
         <div><dt>支持参数</dt><dd>{display(model.raw?.supported_parameters)}</dd></div>
         <div><dt>价格（美元 / 百万 tokens）</dt><dd>{formatPricing(model.pricing)}</dd></div>
       </dl>
-      <div className="provider-model-effort">
+      {!native && <div className="provider-model-effort">
         <div className="provider-model-effort-head">
           <strong>支持的 Effort 档位</strong>
           <small>{detected.length ? `接口返回：${detected.join("、")}` : "接口未返回档位，可手动指定"}</small>
@@ -190,7 +194,8 @@ function ModelDetails({ model, onUse, disabled, imageDefault, effort, onEffortCh
             <Select label="默认 Effort" value={effort?.default ?? ""} options={[{ value: "", label: "保持 Pi 当前档位" }, ...levels.map(value => ({ value, label: value }))]} onChange={value => onEffortChange({ levels, default: value || undefined })} />
           </label>
         ) : <small className="provider-model-effort-hint">未选择时沿用模型自身的能力。</small>}
-      </div>
+      </div>}
+      {native && <p>支持的 Effort：{detected.join("、") || "由 Pi 管理"}</p>}
       <Button variant="outline" className="provider-use-model" disabled={disabled} onClick={onUse}><Icon name="check" />使用此模型</Button>
       <Disclosure title={<span className="provider-disclosure-title"><Icon name="file-script" />接口原始元数据</span>}>
         <pre className="provider-raw-metadata">{JSON.stringify(model.raw, null, 2)}</pre>
@@ -201,8 +206,19 @@ function ModelDetails({ model, onUse, disabled, imageDefault, effort, onEffortCh
 
 export function ProviderSettings() {
   const profiles = useQuery({ queryKey: ["provider-profiles"], queryFn: listProviderProfiles, staleTime: 10_000 });
+  const running = useWorkspace(state => state.transcript.running);
   const initialProfile = profiles.data?.find((profile) => profile.isDefault) ?? profiles.data?.[0];
-  return <ProviderSettingsEditor key={initialProfile?.id ?? "new-provider"} profiles={profiles} initialProfile={initialProfile} />;
+  const changed = () => {
+    void profiles.refetch();
+    void queryClient.invalidateQueries({ queryKey: ["pi", "models"] });
+  };
+  return <div className="provider-settings-page">
+    <PiRuntimeConfiguration onSaved={() => { changed(); void queryClient.invalidateQueries({ queryKey: ["provider-auth"] }); }} />
+    <SubscriptionAccounts onChanged={changed} disabled={running} />
+    <MagpieGateway key={profiles.data?.find(profile => profile.id === "magpie")?.baseUrl ?? "new-magpie"} profile={profiles.data?.find(profile => profile.id === "magpie")} onChanged={changed} disabled={running} />
+    {profiles.error && <p role="alert" className="provider-field-error">{String(profiles.error)}</p>}
+    <ProviderSettingsEditor key={initialProfile?.id ?? "new-provider"} profiles={profiles} initialProfile={initialProfile} />
+  </div>;
 }
 
 type ProviderFormState = {
@@ -286,7 +302,7 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
     update({ ...initialForm(profile), provider: id });
     setSwitchingProviderId(id);
     try {
-      const catalog = await probeProviderModels(id, profile.baseUrl ?? "", profile.api ?? "openai-completions", undefined, profile.authHeader !== false, profile.modelsUrl || undefined, profile.contextWindow);
+      const catalog = await listProviderModels(id);
       update({ models: Array.isArray(catalog.data) ? catalog.data : [] });
     } catch (error) {
       gooeyToast.warning("模型目录刷新失败，显示已保存的模型", { description: error instanceof Error ? error.message : String(error), showTimestamp: false });
@@ -436,7 +452,9 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
   async function probe() {
     update({ busy: "probe" });
     try {
-      const catalog = await probeProviderModels(provider.trim(), baseUrl.trim(), api, apiKey.trim() || undefined, authHeader, modelsUrl.trim() || undefined, providerDefaults.contextWindow);
+      const catalog = selected?.native
+        ? await listProviderModels(selected.id)
+        : await probeProviderModels(provider.trim(), baseUrl.trim(), api, apiKey.trim() || undefined, authHeader, modelsUrl.trim() || undefined, providerDefaults.contextWindow);
       const next = Array.isArray(catalog.data) ? catalog.data : [];
       update({ models: mergeConfiguredModels(next) }); gooeyToast.success(`已加载 ${next.length} 个模型`, { description: "模型目录已更新", showTimestamp: false });
     } catch (error) { report(error); } finally { update({ busy: null }); }
@@ -446,7 +464,7 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
     update({ busy: "use" });
     const previous = useWorkspace.getState().state;
     try {
-      await saveProvider({ provider: provider.trim(), name: name.trim() || undefined, baseUrl: baseUrl.trim(), modelsUrl: modelsUrl.trim() || undefined, api, apiKey: apiKey.trim() || undefined, authHeader, ...providerDefaults });
+      if (!selected?.native) await saveProvider({ provider: provider.trim(), name: name.trim() || undefined, baseUrl: baseUrl.trim(), modelsUrl: modelsUrl.trim() || undefined, api, apiKey: apiKey.trim() || undefined, authHeader, ...providerDefaults });
       await syncProviderModels(provider.trim());
       // 重连要好几秒，先把要用的模型贴上（同「应用配置」）。
       expectModel(cwd, { provider: provider.trim(), id: model.id });
@@ -498,25 +516,25 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
 
       <div className="provider-detail">
         {selected ? <>
-          <header className="provider-detail-header"><span className="provider-detail-mark"><ProviderMark id={selected.id} name={selected.name} /></span><div className="provider-detail-title"><h2>{selected.name || selected.id}{activeProvider === selected.id ? <span className="provider-status">当前使用</span> : <span className="provider-status" data-tone="muted">已添加</span>}</h2><p>{models.length} 个{imageProvider ? "图片模型" : "模型"}{baseUrlHost(selected.baseUrl) ? <> · <code title={selected.baseUrl}>{baseUrlHost(selected.baseUrl)}</code></> : null}{switchingProviderId === selected.id ? " · 处理中…" : ""}</p></div><div className="provider-detail-actions"><Button variant="outline" disabled={Boolean(switchingProviderId)} onClick={() => setEditorOpen(true)}><Icon name="pencil" />编辑配置</Button>{!imageProvider && <Button variant="default" disabled={Boolean(switchingProviderId) || running} onClick={() => void applySelectedProvider()}><Icon name="check" />{switchingProviderId === selected.id ? "应用中…" : "应用配置"}</Button>}<Button variant="ghost" className="provider-delete-button" size="icon" title="删除配置" disabled={Boolean(switchingProviderId)} onClick={() => confirmDelete(selected)}><Icon name="trash" /></Button></div></header>
+          <header className="provider-detail-header"><span className="provider-detail-mark"><ProviderMark id={selected.id} name={selected.name} /></span><div className="provider-detail-title"><h2>{selected.name || selected.id}{activeProvider === selected.id ? <span className="provider-status">当前使用</span> : <span className="provider-status" data-tone="muted">已添加</span>}</h2><p>{models.length} 个{imageProvider ? "图片模型" : "模型"}{baseUrlHost(selected.baseUrl) ? <> · <code title={selected.baseUrl}>{baseUrlHost(selected.baseUrl)}</code></> : null}{switchingProviderId === selected.id ? " · 处理中…" : ""}</p></div><div className="provider-detail-actions">{!selected.native && <Button variant="outline" disabled={Boolean(switchingProviderId)} onClick={() => setEditorOpen(true)}><Icon name="pencil" />编辑配置</Button>}{!imageProvider && <Button variant="default" disabled={Boolean(switchingProviderId) || running} onClick={() => void applySelectedProvider()}><Icon name="check" />{switchingProviderId === selected.id ? "应用中…" : "应用配置"}</Button>}{!selected.native && <Button variant="ghost" className="provider-delete-button" size="icon" title="删除配置" disabled={Boolean(switchingProviderId)} onClick={() => confirmDelete(selected)}><Icon name="trash" /></Button>}</div></header>
           <div className="provider-detail-content">
             <section className="provider-card">
               <header className="provider-card-head">
                 <div>
                   <h3>基础配置</h3>
-                  <p>配置 API 访问凭据与连接选项。</p>
+                  <p>{selected.native ? "账户与模型由 Pi 原生管理。" : "配置 API 访问凭据与连接选项。"}</p>
                 </div>
               </header>
               <div className="provider-card-rows">
                 <div className="provider-row">
                   <span className="provider-row-label">基础 URL</span>
-                  <code className="provider-row-value" title={selected.baseUrl}>{selected.baseUrl || "未配置"}</code>
-                  <span className="provider-connection-note"><Icon name="shield" />{selected.hasApiKey ? "凭据已保存在本地" : "未保存 API Key"}</span>
+                  <code className="provider-row-value" title={selected.baseUrl}>{selected.baseUrl || (selected.native ? "Pi 原生端点" : "未配置")}</code>
+                  <span className="provider-connection-note"><Icon name="shield" />{selected.isOAuth ? "订阅已登录 · 自动续期" : selected.hasApiKey ? "凭据已保存在本地" : "未保存 API Key"}</span>
                 </div>
                 <div className="provider-row">
-                  <span className="provider-row-label">API Key</span>
-                  <code className="provider-row-value">{selected.hasApiKey ? "••••••••••••••••" : "未设置"}</code>
-                  <span className="provider-connection-note">在「编辑配置」中更新</span>
+                  <span className="provider-row-label">{selected.isOAuth ? "账户认证" : "API Key"}</span>
+                  <code className="provider-row-value">{selected.isOAuth ? "OAuth" : selected.hasApiKey ? "••••••••••••••••" : "未设置"}</code>
+                  <span className="provider-connection-note">{selected.native ? "在上方订阅与账户中管理" : "在「编辑配置」中更新"}</span>
                 </div>
               </div>
             </section>
@@ -531,7 +549,7 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
             {imageProvider && <p className="provider-models-note">这些模型供 generate_image 使用。图片工具的端点、模型与密钥在「设置 → Pi 能力 → 图片模型 → 端点」里配置，不读取这里的 Base URL。</p>}
             <ProviderSearch className="provider-model-search" ariaLabel="搜索模型名称或 ID" placeholder="搜索模型名称或 ID" value={search} onChange={value => update({ search: value })} />
             <div className="provider-model-list">
-              {visibleModels.map(model => { const inputs = modelModalities(model, "input"); const outputs = modelModalities(model, "output"); return <Disclosure key={model.id} title={<span className="provider-model-title"><span className="provider-model-name"><ModelLogo modelId={model.id} size={19} /><strong>{modelDisplayName(model)}</strong>{selected?.defaultModel === model.id && <span className="provider-model-default">默认</span>}{model.type === "image" && <span className="provider-model-badge">图片</span>}</span>{typeof model.context_window === "number" ? (<span className="provider-model-context">{formatContextLength(model.context_window)}<small> tokens</small></span>) : null}<ModelModalities values={inputs} />{inputs?.length && outputs?.length ? <span className="provider-model-arrow" aria-hidden>→</span> : null}<ModelModalities values={outputs} /></span>}><ModelDetails model={model} disabled={imageProvider ? !!busy : (!!busy || running || !cwd)} onUse={() => void applyModel(model)} onEffortChange={next => setEffortFor(model.id, next)} effort={effortFor(model.id)} imageDefault={imageProvider ? { currentId: currentImageModel, onUse: model => void setDefaultImageModel(model) } : undefined} /></Disclosure>; })}
+              {visibleModels.map(model => { const inputs = modelModalities(model, "input"); const outputs = modelModalities(model, "output"); return <Disclosure key={model.id} title={<span className="provider-model-title"><span className="provider-model-name"><ModelLogo modelId={model.id} size={19} /><strong>{modelDisplayName(model)}</strong>{selected?.defaultModel === model.id && <span className="provider-model-default">默认</span>}{model.type === "image" && <span className="provider-model-badge">图片</span>}</span>{typeof model.context_window === "number" ? (<span className="provider-model-context">{formatContextLength(model.context_window)}<small> tokens</small></span>) : null}<ModelModalities values={inputs} />{inputs?.length && outputs?.length ? <span className="provider-model-arrow" aria-hidden>→</span> : null}<ModelModalities values={outputs} /></span>}><ModelDetails model={model} native={selected.native} disabled={imageProvider ? !!busy : (!!busy || running || !cwd)} onUse={() => void applyModel(model)} onEffortChange={next => setEffortFor(model.id, next)} effort={effortFor(model.id)} imageDefault={imageProvider ? { currentId: currentImageModel, onUse: model => void setDefaultImageModel(model) } : undefined} /></Disclosure>; })}
               {!models.length && <div className="provider-models-empty"><Icon name="cursor-magic-selection" /><strong>还没有模型目录</strong><p>刷新模型后会在这里显示可用模型。</p></div>}
               {models.length > 0 && !visibleModels.length && <div className="provider-models-empty"><p>没有匹配的模型。</p></div>}
             </div>
@@ -554,7 +572,7 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
               <label><ProviderFieldLabel icon="cursor-magic-selection">默认模型</ProviderFieldLabel><Select label="默认模型目录" value={defaultModelId} options={[{ value: "", label: "保存后使用首个模型" }, ...models.map(model => ({ value: model.id, label: modelDisplayName(model) }))]} onChange={selectDefaultModel} /></label>
               <label><ProviderFieldLabel icon="id-card">模型 ID</ProviderFieldLabel><Input value={defaultModelId} onChange={event => update({ defaultModelId: event.target.value })} placeholder="也可手动输入模型 ID" spellCheck={false} /></label>
               <label><ProviderFieldLabel icon="file">回退上下文长度</ProviderFieldLabel><Select label="回退上下文长度" value={contextWindow} options={[{ value: "", label: "未设置（默认 128,000 tokens）" }, ...contextOptions, ...(contextWindow && !contextOptions.some(option => option.value === contextWindow) ? [{ value: contextWindow, label: `${Number(contextWindow).toLocaleString()} tokens` }] : [])]} onChange={value => update({ contextWindow: value })} /><small>接口未返回时使用；未设置时按 128,000 tokens。</small></label>
-              <label><ProviderFieldLabel icon="key">API Key</ProviderFieldLabel><Input type="password" value={apiKey} onChange={event => update({ apiKey: event.target.value })} placeholder={selected?.hasApiKey ? "已保存，留空保持不变" : "输入服务商 API Key"} autoComplete="off" /></label>
+              <label><ProviderFieldLabel icon="key">API Key</ProviderFieldLabel><Input type="password" value={apiKey} onChange={event => update({ apiKey: event.target.value })} disabled={selected?.isOAuth} placeholder={selected?.isOAuth ? "已登录订阅，退出账户后才能改用 API Key" : selected?.hasApiKey ? "已保存，留空保持不变" : "输入服务商 API Key"} autoComplete="off" /></label>
             </div>
             <div className="provider-dialog-auth"><div><strong>发送认证请求头</strong><p>关闭后，模型服务请求不会附带 API Key。</p></div><Toggle label="发送 API 认证请求头" on={authHeader} onChange={value => update({ authHeader: value })} /></div>
           </div>

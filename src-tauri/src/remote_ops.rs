@@ -629,9 +629,9 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
             gui_settings::save_request_budget(required(&args, "settings")?)
         }
         "list_provider_models" => {
-            json(providers::list_provider_models(text(&args, "provider")?).await?)
+            json(providers::list_provider_models(app.clone(), text(&args, "provider")?).await?)
         }
-        "list_provider_profiles" => json(providers::list_provider_profiles().await?),
+        "list_provider_profiles" => json(providers::list_provider_profiles(app.clone()).await?),
         "probe_provider_models" => json(
             providers::probe_provider_models(
                 text(&args, "provider")?,
@@ -661,10 +661,10 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
         ),
         "delete_provider" => json(providers::delete_provider(text(&args, "provider")?)?),
         "sync_provider_models" => {
-            json(providers::sync_provider_models(text(&args, "provider")?).await?)
+            json(providers::sync_provider_models(app.clone(), text(&args, "provider")?).await?)
         }
         "set_default_model" => json(
-            providers::set_default_model(text(&args, "provider")?, text(&args, "modelId")?)?,
+            providers::set_default_model(app.clone(), text(&args, "provider")?, text(&args, "modelId")?).await?,
         ),
         "get_project_trust_mode" => json(gui_settings::get_project_trust_mode()?),
         "set_project_trust_mode" => json(gui_settings::set_project_trust_mode(text(&args, "mode")?)?),

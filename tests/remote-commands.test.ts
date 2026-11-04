@@ -60,6 +60,17 @@ function dispatchedCommands(): string[] {
  * about *the device the phone is holding*, or about the pairing host itself.
  */
 const EXCLUDED: Record<string, string> = {
+  list_provider_auth: "local Provider settings and account management; remote setup is not exposed",
+  logout_provider: "local Provider settings and account management; remote setup is not exposed",
+  start_provider_login: "local Provider settings and account management; remote setup is not exposed",
+  provider_login_status: "local Provider settings and account management; remote setup is not exposed",
+  answer_provider_login: "local Provider settings and account management; remote setup is not exposed",
+  cancel_provider_login: "local Provider settings and account management; remote setup is not exposed",
+  magpie_status: "local Provider settings and account management; remote setup is not exposed",
+  connect_magpie: "local Provider settings and account management; remote setup is not exposed",
+  get_pi_runtime_settings: "local Pi process configuration; remote environment management is not exposed",
+  save_pi_runtime_settings: "local executable, arguments and private process environment",
+  probe_pi_runtime: "tests an executable on this desktop without creating a session",
   runtime_environment: "the phone's own runtime boundary; it decides the routing",
   mobile_update_probe: "checks this phone's APK",
   mobile_update_install: "installs on this phone",

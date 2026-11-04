@@ -67,6 +67,9 @@ jobs:
       - name: Build the frontend
         run: bun run build
 
+      - name: Verify packaged Provider authentication and terminal environment
+        run: bun run test:providers
+
   rust:
     name: Rust
     runs-on: macos-15

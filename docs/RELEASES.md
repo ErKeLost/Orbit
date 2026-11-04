@@ -6,6 +6,28 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.30
+
+Providers now separates local Pi process configuration from model endpoints and
+accounts. Configure the Pi executable, literal launch arguments, and environment
+variables on this computer, check the runtime, then save or reconnect the current
+workspace. Sensitive variables are stored separately and return only a redacted
+state to the UI; saving an unchanged secret preserves its value. The same
+configuration reaches new Pi processes, account helpers, and the native terminal.
+
+The bundled Pi runtime is upgraded to 1.5.0. Its nine OAuth login methods are
+available in Orbit, including browser callbacks, device codes, cancellation, and
+sign-out. Existing OAuth credentials cannot be overwritten by an API-key save.
+Native model defaults no longer require placeholder custom model entries.
+
+Magpie gateways can be connected from Providers. Models retain their native
+Responses, Anthropic Messages, or Chat Completions transport, supported effort
+levels, and adaptive thinking where required. Allowance cards show cached quota
+readings from Magpie. Magpie remains separately installed and owns its accounts
+and routing groups. These new settings and account controls are local-only.
+
+See [PROVIDERS.md](PROVIDERS.md) for configuration and verification details.
+
 ## v1.0.29
 
 The Debian package no longer depends on `nodejs (>= 22.19.0)`. Orbit runs the

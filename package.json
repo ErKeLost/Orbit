@@ -1,7 +1,7 @@
 {
   "name": "orbit",
   "private": true,
-  "version": "1.0.29",
+  "version": "1.0.30",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,9 @@
     "lint": "oxlint src scripts tests src-tauri/resources",
     "preview": "vite preview",
     "tauri": "node scripts/tauri.mjs",
-    "check": "tsc -b && bun run check:subagents && bun run check:computer-use && bun run check:browser-use && bun run check:voice && bun run lint",
+    "check": "tsc -b && bun run check:providers && bun run check:subagents && bun run check:computer-use && bun run check:browser-use && bun run check:voice && bun run lint",
+    "check:providers": "tsc -p tsconfig.providers.json",
+    "test:providers": "node scripts/check-provider-auth.mjs",
     "check:subagents": "tsc -p tsconfig.subagents.json",
     "check:computer-use": "node scripts/sync-computer-use.mjs && tsc -p tsconfig.computer-use.json",
     "check:browser-use": "tsc -p tsconfig.browser-use.json",
@@ -38,7 +40,7 @@
     "@codemirror/search": "^6.7.2",
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.43.13",
-    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
     "@hugeicons/core-free-icons": "4.3.0",
     "@hugeicons/react": "1.1.10",
     "@iconify-json/catppuccin": "^1.2.17",

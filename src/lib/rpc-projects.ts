@@ -4,7 +4,7 @@ import { invoke } from "./native";
 import { useWorkspace } from "./store";
 import { runRemoteHostOperation } from "./remote-runtime";
 import { activeTarget, request } from "./rpc-core";
-import { mobileRuntime, native, workspaceBackend } from "./runtime";
+import { desktopRuntime, mobileRuntime, native, workspaceBackend } from "./runtime";
 
 /** Rust commands that are not connection state: providers, models, MCP,
  *  settings, image and speech configuration, computer-use. */
@@ -17,12 +17,33 @@ export type ProviderModel={
   input_modalities?:string[]
   output_modalities?:string[]
   reasoning?:boolean
-  thinking_levels?:Record<string,string>
+  thinking_levels?:Record<string,string|null>
   pricing?:Record<string,number>
   raw?:Record<string,unknown>
 }
 export type ModelEffort={levels:string[];default?:string}
-export type ProviderProfile={id:string;name?:string;baseUrl?:string;modelsUrl?:string;api?:string;authHeader?:boolean;contextWindow?:number;modelEfforts?:Record<string,ModelEffort>;isDefault:boolean;defaultModel?:string;models?:ProviderModel[];hasApiKey:boolean;modelCount:number}
+export type PiEnvironmentVariable={name:string;value:string;sensitive:boolean;valueRedacted?:boolean}
+export type PiRuntimeSettings={binaryPath:string;launchArgs:string;environment:PiEnvironmentVariable[]}
+export type PiRuntimeSettingsView={driver:'pi';environment:'local';config:PiRuntimeSettings}
+export async function getPiRuntimeSettings():Promise<PiRuntimeSettingsView> { if(!desktopRuntime()) throw new Error('Pi 运行配置只在本机管理'); return invoke('get_pi_runtime_settings') }
+export async function savePiRuntimeSettings(config:PiRuntimeSettings):Promise<PiRuntimeSettingsView> { if(!desktopRuntime()) throw new Error('Pi 运行配置只在本机管理'); return invoke('save_pi_runtime_settings',{config}) }
+export async function probePiRuntime(config:PiRuntimeSettings):Promise<{ok:boolean;pi:string;version:string;source:string}> { if(!desktopRuntime()) throw new Error('Pi 运行配置只在本机管理'); return invoke('probe_pi_runtime',{config}) }
+export type ProviderProfile={id:string;name?:string;baseUrl?:string;modelsUrl?:string;api?:string;authHeader?:boolean;contextWindow?:number;modelEfforts?:Record<string,ModelEffort>;isDefault:boolean;defaultModel?:string;models?:ProviderModel[];hasApiKey:boolean;authType?:string;isOAuth?:boolean;native?:boolean;modelCount:number}
+/** Redacted credentials: raw OAuth tokens stay in Pi's auth.json. */
+export type ProviderAuth={id:string;name:string;type?:string;configured:boolean;oauth:boolean;expiresAt?:number;isSubscription:boolean}
+export type ProviderLoginPrompt={type:'text'|'secret'|'manual_code'|'select';message:string;placeholder?:string;options?:{id:string;label:string;description?:string}[]}
+export type ProviderLogin={id:string;provider:string;status:'running'|'done'|'error'|'cancelled';error?:string;auth_url?:{url:string;instructions?:string};device_code?:{userCode:string;verificationUri:string};progress?:{message:string};info?:{message:string;links?:{url:string;label?:string}[]};prompt?:{id:string;prompt:ProviderLoginPrompt}}
+export type MagpieQuotaWindow={name?:string;used?:number;remaining?:number;resetsAt?:string;display?:string}
+export type MagpieQuota={provider?:string;name?:string;kind?:string;plan?:string;user?:string;windows?:MagpieQuotaWindow[];error?:string;readAt?:string;asOf?:string}
+export type MagpieStatus={root:string;reachable:boolean;modelCount:number;catalog:{data:ProviderModel[]};quotas:{data?:MagpieQuota[];error?:string}}
+export async function listProviderAuth():Promise<ProviderAuth[]> { if(!desktopRuntime()) throw new Error('订阅账户请在电脑端管理'); return invoke<ProviderAuth[]>('list_provider_auth') }
+export async function loginProvider(provider:string):Promise<ProviderLogin> { if(!desktopRuntime()) throw new Error('订阅登录请在电脑端完成'); return invoke('start_provider_login',{provider}) }
+export async function providerLoginStatus(id:string):Promise<ProviderLogin> { return invoke('provider_login_status',{id}) }
+export async function answerProviderLogin(id:string,promptId:string,value:string):Promise<void> { return invoke('answer_provider_login',{id,promptId,value}) }
+export async function cancelProviderLogin(id:string):Promise<void> { return invoke('cancel_provider_login',{id}) }
+export async function logoutProvider(provider:string):Promise<{id:string;loggedOut:boolean}> { if(!desktopRuntime()) throw new Error('订阅账户请在电脑端管理'); return invoke('logout_provider',{provider}) }
+export async function magpieStatus(root?:string,apiKey?:string):Promise<MagpieStatus> { if(!desktopRuntime()) throw new Error('Magpie 请在电脑端配置'); return invoke('magpie_status',{root:root||null,apiKey:apiKey||null}) }
+export async function connectMagpie(root?:string,apiKey?:string):Promise<{root:string;provider:string;synced:{provider:string;count:number;firstModelId?:string}}> { if(!desktopRuntime()) throw new Error('Magpie 请在电脑端配置'); return invoke('connect_magpie',{root:root||null,apiKey:apiKey||null}) }
 export async function listProviderModels(provider:string):Promise<{data:ProviderModel[]}> { if(!workspaceBackend()) throw new Error('模型目录设置请在电脑端修改'); return invoke<{data:ProviderModel[]}>('list_provider_models',{provider}) }
 export async function listProjectFiles(project=useWorkspace.getState().cwd):Promise<string[]> { if(mobileRuntime())return runRemoteHostOperation<string[]>({name:'project.files',cwd:project});if(!native)throw new Error('文件索引需要桌面应用');return invoke<string[]>('list_project_files',{cwd:project}) }
 export async function listProviderProfiles():Promise<ProviderProfile[]> { if(!workspaceBackend()) throw new Error('Provider 配置请在电脑端修改'); return invoke<ProviderProfile[]>('list_provider_profiles') }

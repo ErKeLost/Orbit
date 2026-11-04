@@ -264,7 +264,8 @@ export const REQUEST_BUDGET_STATUS='gui-request-budget'
 /** 补全超过这个长度就说明模型没听指令，宁可不显示也不画一屏幽灵文字。 */
 export const SUGGEST_MAX_CHARS=160
 export const VIRTUAL_MODEL_API_ID='pi-virtual'
-export const MEDIA_DIR=join(homedir(),'.pi/agent/orbit-media')
+const AGENT_DIR=process.env.PI_CODING_AGENT_DIR||join(homedir(),'.pi/agent')
+export const MEDIA_DIR=join(AGENT_DIR,'orbit-media')
 const MCP_NAMESPACE_PREFIX='mcp__'
 export type MediaModelInfo={provider:string;id:string;name?:string;available:boolean;input:string[]}
 export type McpServerInfo={name:string;source:'extension'|'mcp.json';transport:'stdio'|'http'|'unknown';exposure?:string;description?:string;enabled?:boolean;tools:string[];extensionPath?:string}
@@ -616,7 +617,7 @@ function parseKinds(value:unknown):Record<string,MediaKindSpec>{
   return out
 }
 
-const IMAGE_CONFIG_PATH=join(homedir(),'.pi/agent/image.json')
+const IMAGE_CONFIG_PATH=join(AGENT_DIR,'image.json')
 /** Preferences written by 设置 → Pi 1.0 能力 → 图片模型. */
 function readImageSettings():ImageSettings{
   try{return resolveImageSettings(JSON.parse(readFileSync(IMAGE_CONFIG_PATH,'utf8')))}
@@ -827,10 +828,10 @@ export function validateCall(settings:ImageSettings,kind:string,modelId:string,i
   return null
 }
 
-const MODELS_CONFIG_PATH=join(homedir(),'.pi/agent/models.json')
-const AUTH_CONFIG_PATH=join(homedir(),'.pi/agent/auth.json')
-const WEB_SEARCH_CONFIG_PATH=join(homedir(),'.pi/agent/web-search.json')
-const REQUEST_BUDGET_CONFIG_PATH=join(homedir(),'.pi/agent/request-budget.json')
+const MODELS_CONFIG_PATH=join(AGENT_DIR,'models.json')
+const AUTH_CONFIG_PATH=join(AGENT_DIR,'auth.json')
+const WEB_SEARCH_CONFIG_PATH=join(AGENT_DIR,'web-search.json')
+const REQUEST_BUDGET_CONFIG_PATH=join(AGENT_DIR,'request-budget.json')
 
 function readJsonFile(path:string):unknown{
   try{return JSON.parse(readFileSync(path,'utf8'))}catch{return null}

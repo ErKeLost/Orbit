@@ -17,6 +17,7 @@ export default defineConfig({
       "src/features/shell/**/*.test.tsx",
       "src/features/artifacts/**/*.test.tsx",
       "src/features/voice/**/*.test.ts",
+      "src/features/providers/**/*.test.tsx",
       "src/components/**/*.test.tsx",
     ],
     environment: "happy-dom",

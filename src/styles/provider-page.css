@@ -11,6 +11,68 @@
       model list, 30px for a search field.
    ========================================================================== */
 
+.provider-settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.provider-account-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  padding: 0 16px 12px;
+  gap: 0 24px;
+}
+
+.provider-account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid color-mix(in srgb, var(--color-content) 7%, transparent);
+}
+
+.provider-account strong { font-size: 12px; font-weight: 500; }
+.provider-account small { display: block; margin-top: 4px; }
+.provider-account small, .provider-gateway-status small {
+  color: color-mix(in srgb, var(--color-content) 55%, transparent);
+  font-size: 11px;
+}
+
+.provider-gateway-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  padding: 0 16px 16px;
+}
+.provider-gateway-form > label { display: flex; flex: 1 1 220px; flex-direction: column; gap: 7px; font-size: 12px; }
+.provider-gateway-status { padding: 0 16px 16px; font-size: 12px; }
+.provider-quota { padding: 10px 0; border-top: 1px solid color-mix(in srgb, var(--color-content) 7%, transparent); }
+.provider-quota-window { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding-top: 7px; }
+.provider-quota-window meter { width: 100px; }
+.provider-login-content { display: flex; flex-direction: column; align-items: start; gap: 12px; }
+.provider-auth-url { max-width: 100%; max-height: 80px; overflow: auto; overflow-wrap: anywhere; font-size: 11px; }
+.provider-device-code { font-size: 20px; user-select: all; letter-spacing: .06em; }
+.provider-login-prompt { display: flex; width: 100%; flex-direction: column; align-items: start; gap: 10px; }
+.provider-login-prompt input { width: 100%; }
+.provider-magpie > .provider-field-error { padding: 0 16px 16px; }
+.provider-magpie a { color: var(--color-accent); font-size: 12px; }
+
+.provider-runtime-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; padding: 0 16px 16px; }
+.provider-runtime-fields label { display: flex; flex-direction: column; gap: 7px; font-size: 12px; }
+.provider-runtime-fields small, .provider-runtime-note, .provider-runtime-environment-head p { font-size: 11px; color: color-mix(in srgb, var(--color-content) 55%, transparent); }
+.provider-runtime-environment { border-top: 1px solid color-mix(in srgb, var(--color-content) 7%, transparent); padding: 16px; }
+.provider-runtime-environment-head, .provider-runtime-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+.provider-runtime-environment-head p { margin-top: 4px; }
+.provider-environment-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 12px; }
+.provider-environment-row > input { flex: 1 1 180px; width: 0; }
+.provider-env-sensitive { display: flex; align-items: center; gap: 7px; font-size: 11px; }
+.provider-runtime-note { margin-top: 12px; }
+.provider-runtime-footer { padding: 0 16px 16px; flex-wrap: wrap; }
+.provider-runtime-footer > p { overflow-wrap: anywhere; min-width: 0; flex: 1 1 220px; }
+
 .provider-settings {
   display: grid;
   grid-template-columns: 264px minmax(0, 1fr);

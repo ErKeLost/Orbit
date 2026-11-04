@@ -147,11 +147,8 @@ pub async fn pi_oneshot(app: AppHandle, cwd: String, prompt: String) -> Result<S
     {
         let path = project(&cwd)?;
         let runtime = RuntimePaths::resolve(&app, &path)?;
-        let pi = runtime.pi.clone();
-        let node = runtime.node.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            let output = Command::new(&node)
-                .arg(&pi)
+            let output = runtime.command()
                 .args([
                     "--print",
                     "--no-session",
@@ -324,18 +321,21 @@ pub async fn pi_connect(
         // macOS: start Pi through Orbit's disclaim launcher so the stable
         // Orbit Agent runtime, not Orbit itself, owns Accessibility (see
         // disclaim.rs). Falls back to a direct spawn if the path is unknown.
+        let launch_program = if runtime.pi_executable { &pi } else { &node };
         #[cfg(target_os = "macos")]
         let mut command = match std::env::current_exe() {
             Ok(orbit) => {
                 let mut command = Command::new(orbit);
-                command.arg(crate::disclaim::FLAG).arg(&node);
+                command.arg(crate::disclaim::FLAG).arg(launch_program);
                 command
             }
-            Err(_) => Command::new(&node),
+            Err(_) => Command::new(launch_program),
         };
         #[cfg(not(target_os = "macos"))]
-        let mut command = Command::new(&node);
-        command.arg(&pi).args(["--mode", "rpc", "--offline"]);
+        let mut command = Command::new(launch_program);
+        if !runtime.pi_executable { command.arg(&pi); }
+        runtime.apply_environment(&mut command);
+        command.args(&runtime.launch_args).args(["--mode", "rpc", "--offline"]);
         command
             .arg("--extension")
             .arg(&runtime.extension)
@@ -442,9 +442,16 @@ pub async fn open_pi_terminal(
     {
         let path = project(&cwd)?;
         let runtime = RuntimePaths::resolve(&app, &path)?;
-        let pi = runtime.pi;
-        let node = runtime.node;
-        let mut arguments = Vec::new();
+        let pi = runtime.pi.clone();
+        let node = runtime.node.clone();
+        let mut arguments = vec![
+            runtime.resources_dir.join("pi-runtime/terminal.js").to_string_lossy().into_owned(),
+            crate::pi_runtime_settings::settings_dir()?.to_string_lossy().into_owned(),
+            path.to_string_lossy().into_owned(),
+            if runtime.pi_executable { pi.clone() } else { node.clone() }.to_string_lossy().into_owned(),
+        ];
+        if !runtime.pi_executable { arguments.push(pi.to_string_lossy().into_owned()); }
+        arguments.extend(runtime.launch_args.clone());
         if let Some(session) = session {
             arguments.extend(["--session".to_string(), session]);
         }
@@ -461,10 +468,9 @@ pub async fn open_pi_terminal(
                 .collect::<Vec<_>>()
                 .join(" ");
             let script = format!(
-                "Set-Location -LiteralPath {}; & {} {} {}",
+                "Set-Location -LiteralPath {}; & {} {}",
                 powershell_quote(&path.to_string_lossy()),
                 powershell_quote(&node.to_string_lossy()),
-                powershell_quote(&pi.to_string_lossy()),
                 suffix
             );
             Command::new("cmd.exe")
@@ -493,10 +499,9 @@ pub async fn open_pi_terminal(
                 .collect::<Vec<_>>()
                 .join(" ");
             let command = format!(
-                "cd -- {} && {} {} {}",
+                "cd -- {} && {} {}",
                 shell_quote(&path.to_string_lossy()),
                 shell_quote(&node.to_string_lossy()),
-                shell_quote(&pi.to_string_lossy()),
                 suffix
             );
 

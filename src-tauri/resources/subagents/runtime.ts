@@ -202,7 +202,8 @@ function currentPiInvocation(args: string[]): { command: string; args: string[] 
   const configuredNode = process.env.ORBIT_PI_NODE_PATH
   const configuredPi = process.env.ORBIT_PI_CLI_PATH
   if (configuredNode && configuredPi && existsSync(configuredNode) && existsSync(configuredPi)) {
-    return { command: configuredNode, args: [configuredPi, ...args] }
+    const executable = process.env.ORBIT_PI_EXECUTABLE === "1"
+    return { command: executable ? configuredPi : configuredNode, args: executable ? args : [configuredPi, ...args] }
   }
 
   // Development and direct-extension execution still have the bridge's

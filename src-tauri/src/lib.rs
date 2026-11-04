@@ -33,6 +33,9 @@ mod gui_settings;
 mod mcp;
 mod pi_session;
 mod providers;
+mod provider_auth;
+mod pi_runtime_settings;
+mod magpie;
 mod sessions;
 mod sessions_cmd;
 mod history;
@@ -250,6 +253,7 @@ pub fn run() {
             Ok(())
         })
         .manage(bridge::Bridge::default())
+        .manage(provider_auth::ProviderAuthHost::default())
         .manage(remote::RemoteHost::default())
         .manage(power::KeepAwake::new())
         .manage(pty_term::PtyHost::new())
@@ -261,8 +265,19 @@ pub fn run() {
             runtime::runtime_environment,
             power::set_keep_awake,
             providers::discover,
+            pi_runtime_settings::get_pi_runtime_settings,
+            pi_runtime_settings::save_pi_runtime_settings,
+            pi_runtime_settings::probe_pi_runtime,
             providers::list_provider_models,
             providers::list_provider_profiles,
+            provider_auth::list_provider_auth,
+            provider_auth::logout_provider,
+            provider_auth::start_provider_login,
+            provider_auth::provider_login_status,
+            provider_auth::answer_provider_login,
+            provider_auth::cancel_provider_login,
+            magpie::magpie_status,
+            magpie::connect_magpie,
             providers::probe_provider_models,
             providers::save_provider,
             providers::delete_provider,

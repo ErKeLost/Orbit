@@ -40,6 +40,11 @@ fn home_dir() -> Result<PathBuf, String> {
 /// 与 SDK `getAgentDir()` 一致：尊重 `PI_CODING_AGENT_DIR`（支持 ~ 前缀），
 /// 否则 `~/.pi/agent`。
 pub(crate) fn agent_dir() -> Result<PathBuf, String> {
+    if let Some(path) = crate::pi_runtime_settings::configured_agent_dir()? { return Ok(path); }
+    ambient_agent_dir()
+}
+
+pub(crate) fn ambient_agent_dir() -> Result<PathBuf, String> {
     if let Some(value) = std::env::var_os(ENV_AGENT_DIR).filter(|v| !v.is_empty()) {
         let path = PathBuf::from(value);
         if path.as_os_str() == "~" {

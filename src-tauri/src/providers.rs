@@ -267,12 +267,14 @@ fn normalize_provider_model(item: &Value) -> ModelMeta {
         context_window: item
             .get("context_length")
             .or_else(|| item.get("context_window"))
+            .or_else(|| item.get("max_input_tokens"))
             .and_then(Value::as_u64),
         max_output_tokens: item
             .get("max_output_tokens")
             .or_else(|| item.get("max_tokens"))
             .and_then(Value::as_u64),
         input_modalities: meta_modalities(item, "input")
+            .or_else(|| meta_strings(item.get("modalities").and_then(|value| value.get("input"))))
             .or_else(|| meta_modalities_from_tags(item, "input")),
         output_modalities: meta_modalities(item, "output")
             .or_else(|| meta_modalities_from_tags(item, "output")),
@@ -303,6 +305,27 @@ fn normalize_provider_model(item: &Value) -> ModelMeta {
                     .map(|level| (level.clone(), level))
                     .collect(),
             );
+        }
+    }
+    // Magpie's live catalog uses a compact list of `{ effort }` objects rather
+    // than Pi's `reasoning.supported_efforts` shape. Keep this normalization
+    // here so every catalog consumer sees the same thinking-level contract.
+    if meta.thinking_levels.is_none() {
+        if let Some(levels) = item
+            .get("supported_reasoning_levels")
+            .and_then(Value::as_array)
+            .map(|levels| {
+                levels
+                    .iter()
+                    .filter_map(|entry| entry.get("effort").and_then(Value::as_str))
+                    .filter(|level| !level.is_empty())
+                    .map(|level| (level.to_string(), level.to_string()))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|levels| !levels.is_empty())
+        {
+            meta.reasoning = Some(true);
+            meta.thinking_levels = Some(levels);
         }
     }
     meta
@@ -516,9 +539,13 @@ async fn normalized_model_catalog(
     context_window: Option<u64>,
 ) -> Result<Value, String> {
     let raw = fetch_model_catalog(base_url, models_url, api_key, api, auth_header).await?;
-    let dev = modelsdev_catalog().await;
+    let dev = if provider == crate::magpie::PROVIDER_ID { None } else { modelsdev_catalog().await };
+    Ok(normalize_catalog(&raw, dev.as_ref(), provider, base_url, context_window))
+}
+
+pub(crate) fn normalize_catalog(raw: &Value, dev: Option<&Value>, provider: &str, base_url: &str, context_window: Option<u64>) -> Value {
     let Some(items) = raw.get("data").and_then(Value::as_array) else {
-        return Ok(raw);
+        return raw.clone();
     };
     let mut data = Vec::with_capacity(items.len());
     for item in items {
@@ -526,26 +553,28 @@ async fn normalized_model_catalog(
             continue;
         };
         let mut meta = normalize_provider_model(item);
-        let context = meta.context_window.filter(|value| *value > 0).or(context_window).unwrap_or(128000);
         if let Some(entry) = dev
-            .as_ref()
             .and_then(|dev| modelsdev_lookup(dev, provider, base_url, id))
         {
             merge_meta(&mut meta, normalize_modelsdev_model(entry));
         }
-        meta.context_window = Some(context);
+        meta.context_window = Some(meta.context_window.filter(|value| *value > 0).or(context_window).unwrap_or(128000));
         let mut entry = meta.to_json();
         entry["id"] = Value::from(id);
+        if provider == crate::magpie::PROVIDER_ID {
+            let anthropic = item["native_endpoints"].as_array().is_some_and(|endpoints| endpoints.iter().any(|endpoint| endpoint == "/v1/messages") && !endpoints.iter().any(|endpoint| endpoint == "/v1/responses"));
+            if let Some(levels) = crate::magpie::thinking_levels(item, anthropic) { entry["thinking_levels"] = levels; }
+        }
         entry["raw"] = item.clone();
         data.push(entry);
     }
-    Ok(json!({"object": "list", "data": data}))
+    json!({"object": "list", "data": data})
 }
 
 /// 规范条目 → Pi models.json 模型条目（sync 用）。Pi 会据此驱动上下文窗口与 token 预算。
-fn pi_model_from_meta(entry: &Value) -> Option<Value> {
+pub(crate) fn pi_model_from_meta(entry: &Value, provider: &str, provider_base_url: Option<&str>) -> Option<Value> {
     let id = entry.get("id").and_then(Value::as_str)?.to_string();
-    let mut model = json!({"id": id});
+    let mut model = json!({"id": id.clone()});
     if let Some(name) = entry.get("name").and_then(Value::as_str) {
         model["name"] = Value::from(name);
     }
@@ -599,6 +628,9 @@ fn pi_model_from_meta(entry: &Value) -> Option<Value> {
         }
         model["cost"] = Value::Object(cost);
     }
+    if provider == crate::magpie::PROVIDER_ID {
+        crate::magpie::apply_transport(&mut model, &entry["raw"], provider_base_url);
+    }
     Some(model)
 }
 
@@ -638,7 +670,7 @@ fn provider_store_path(dir: &std::path::Path) -> PathBuf {
     dir.join("pi-gui-providers.json")
 }
 
-fn load_provider_store(dir: &std::path::Path) -> Result<Value, String> {
+pub(crate) fn load_provider_store(dir: &std::path::Path) -> Result<Value, String> {
     let path = provider_store_path(dir);
     if path.exists() {
         read_json_file(path, "Orbit Provider 配置")
@@ -647,8 +679,14 @@ fn load_provider_store(dir: &std::path::Path) -> Result<Value, String> {
     }
 }
 
-fn write_provider_store(dir: &std::path::Path, store: &Value) -> Result<(), String> {
-    write_private_json(&provider_store_path(dir), store)
+pub(crate) fn write_provider_store(dir: &std::path::Path, store: &Value) -> Result<(), String> {
+    // Old Orbit versions duplicated keys here. Every new write removes those
+    // copies; auth.json is the only credential source.
+    let mut store = store.clone();
+    if let Some(entries) = store["providers"].as_object_mut() {
+        for entry in entries.values_mut().filter_map(Value::as_object_mut) { entry.remove("apiKey"); }
+    }
+    write_private_json(&provider_store_path(dir), &store)
 }
 
 /// Write, or clear, one provider's key in Pi's `auth.json`.
@@ -663,13 +701,41 @@ fn write_provider_store(dir: &std::path::Path, store: &Value) -> Result<(), Stri
 /// deleting the provider is for.
 pub(crate) fn store_provider_api_key(provider: &str, api_key: Option<&str>) -> Result<(), String> {
     let dir = agent_dir()?;
-    fs::create_dir_all(&dir).map_err(|e| format!("无法创建 Pi 配置目录：{e}"))?;
+    store_provider_api_key_in(&dir, provider, api_key)
+}
+
+fn ensure_api_key_editable(auth: &Value, provider: &str) -> Result<(), String> {
+    if auth_type(auth, provider) == Some("oauth") {
+        return Err("该 Provider 已使用 OAuth 订阅登录；请先在「订阅与账户」中退出，再改用 API Key".into());
+    }
+    Ok(())
+}
+
+fn store_provider_api_key_in(dir: &std::path::Path, provider: &str, api_key: Option<&str>) -> Result<(), String> {
+    fs::create_dir_all(dir).map_err(|e| format!("无法创建 Pi 配置目录：{e}"))?;
     let auth_path = dir.join("auth.json");
+    // Pi's proper-lockfile uses this same directory. Respect its lock so an
+    // API-key save cannot erase a simultaneous OAuth refresh for another id.
+    let lock_path = dir.join("auth.json.lock");
+    let mut acquired = false;
+    for _ in 0..100 {
+        match fs::create_dir(&lock_path) {
+            Ok(()) => { acquired = true; break; }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => std::thread::sleep(Duration::from_millis(20)),
+            Err(error) => return Err(format!("无法锁定 Pi 凭据文件：{error}")),
+        }
+    }
+    if !acquired { return Err("Pi 正在更新凭据，请稍后重试".into()); }
+    struct CredentialLock(PathBuf);
+    impl Drop for CredentialLock { fn drop(&mut self) { let _ = fs::remove_dir(&self.0); } }
+    let _lock = CredentialLock(lock_path);
     let mut auth = if auth_path.exists() {
         read_json_file(auth_path.clone(), "Pi auth.json")?
     } else {
         json!({})
     };
+    if !auth.is_object() { return Err("Pi auth.json 不是对象".into()); }
+    ensure_api_key_editable(&auth, provider)?;
     match api_key.map(str::trim).filter(|key| !key.is_empty()) {
         Some(key) => {
             auth[provider] = json!({"type":"api_key","key":key});
@@ -690,6 +756,12 @@ pub(crate) fn stored_api_key(auth: &Value, provider: &str) -> Option<String> {
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn auth_type<'a>(auth: &'a Value, provider: &str) -> Option<&'a str> {
+    auth.get(provider)
+        .and_then(|entry| entry.get("type"))
+        .and_then(Value::as_str)
 }
 
 fn supported_api(api: &str) -> bool {
@@ -718,9 +790,13 @@ pub async fn discover(app: AppHandle) -> Result<Value, String> {
 /// Query the OpenAI-compatible provider catalog configured in Pi's own files.
 /// The API key is read and used only inside this process and is never returned.
 #[tauri::command]
-pub async fn list_provider_models(provider: String) -> Result<Value, String> {
+pub async fn list_provider_models(app: AppHandle, provider: String) -> Result<Value, String> {
     let dir = agent_dir()?;
-    let models = read_json_file(dir.join("models.json"), "Pi models.json")?;
+    let models = read_json_file(dir.join("models.json"), "Pi models.json").unwrap_or_else(|_| json!({"providers": {}}));
+    let auth = read_json_file(dir.join("auth.json"), "Pi auth.json").unwrap_or_else(|_| json!({}));
+    if auth_type(&auth, &provider) == Some("oauth") || models["providers"].get(&provider).is_none() {
+        return crate::provider_auth::query(app, "catalog", Some(provider)).await;
+    }
     let provider_config = models
         .get("providers")
         .and_then(|items| items.get(&provider))
@@ -754,7 +830,7 @@ pub async fn list_provider_models(provider: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn list_provider_profiles() -> Result<Value, String> {
+pub async fn list_provider_profiles(app: AppHandle) -> Result<Value, String> {
     let dir = agent_dir()?;
     let models = read_json_file(dir.join("models.json"), "Pi models.json")
         .unwrap_or_else(|_| json!({"providers": {}}));
@@ -764,7 +840,10 @@ pub async fn list_provider_profiles() -> Result<Value, String> {
     let default_provider = settings.get("defaultProvider").and_then(Value::as_str);
     let default_model = settings.get("defaultModel").and_then(Value::as_str);
     let store = load_provider_store(&dir).unwrap_or_else(|_| json!({"providers": {}}));
+    let native = crate::provider_auth::query(app, "list", None).await?;
+    let native_profiles = native["profiles"].as_array().cloned().unwrap_or_default();
     let mut ids = std::collections::BTreeSet::new();
+    ids.extend(native_profiles.iter().filter_map(|profile| profile["id"].as_str().map(str::to_owned)));
     if let Some(providers) = models.get("providers").and_then(Value::as_object) {
         ids.extend(providers.keys().cloned());
     }
@@ -774,9 +853,12 @@ pub async fn list_provider_profiles() -> Result<Value, String> {
     let profiles = ids.into_iter().map(|id| {
         let config = models.get("providers").and_then(|items| items.get(&id)).unwrap_or(&Value::Null);
         let saved = store.get("providers").and_then(|items| items.get(&id)).unwrap_or(&Value::Null);
+        let native_profile = native_profiles.iter().find(|profile| profile["id"] == id);
+        let native = auth_type(&auth, &id) == Some("oauth") || config.get("baseUrl").is_none();
+        let profile_models = if native { native_profile.and_then(|profile| profile.get("models")) } else { config.get("models") };
         json!({
             "id": id,
-            "name": saved.get("name").and_then(Value::as_str).or_else(|| config.get("name").and_then(Value::as_str)),
+            "name": saved.get("name").and_then(Value::as_str).or_else(|| config.get("name").and_then(Value::as_str)).or_else(|| native_profile.and_then(|profile| profile["name"].as_str())),
             "baseUrl": saved.get("baseUrl").and_then(Value::as_str).or_else(|| config.get("baseUrl").and_then(Value::as_str)),
             "modelsUrl": saved.get("modelsUrl").and_then(Value::as_str).or_else(|| config.get("modelsUrl").and_then(Value::as_str)),
             "api": saved.get("api").and_then(Value::as_str).or_else(|| config.get("api").and_then(Value::as_str)),
@@ -785,9 +867,12 @@ pub async fn list_provider_profiles() -> Result<Value, String> {
             "modelEfforts": saved.get("modelEfforts"),
             "isDefault": default_provider == Some(id.as_str()),
             "defaultModel": if default_provider == Some(id.as_str()) { default_model } else { saved.get("defaultModel").and_then(Value::as_str) },
-            "models": config.get("models").cloned().unwrap_or_else(|| Value::Array(Vec::new())),
+            "models": profile_models.cloned().unwrap_or_else(|| Value::Array(Vec::new())),
+            "native": native && native_profile.is_some(),
             "hasApiKey": stored_api_key(&auth, &id).is_some(),
-            "modelCount": config.get("models").and_then(Value::as_array).map(Vec::len).unwrap_or(0)
+            "authType": auth_type(&auth, &id),
+            "isOAuth": auth_type(&auth, &id) == Some("oauth"),
+            "modelCount": profile_models.and_then(Value::as_array).map(Vec::len).unwrap_or(0)
         })
     }).collect::<Vec<_>>();
     Ok(Value::Array(profiles))
@@ -877,6 +962,11 @@ pub async fn save_provider(
     }
     let dir = agent_dir()?;
     fs::create_dir_all(&dir).map_err(|e| format!("无法创建 Pi 配置目录：{e}"))?;
+    if api_key.as_deref().is_some_and(|key| !key.trim().is_empty()) {
+        let auth_path = dir.join("auth.json");
+        let auth = if auth_path.exists() { read_json_file(auth_path, "Pi auth.json")? } else { json!({}) };
+        ensure_api_key_editable(&auth, &provider)?;
+    }
     let path = dir.join("models.json");
     let mut config = if path.exists() {
         read_json_file(path.clone(), "Pi models.json")?
@@ -927,10 +1017,6 @@ pub async fn save_provider(
         .get_mut("providers")
         .and_then(Value::as_object_mut)
         .ok_or("Provider 配置缺少 providers 对象")?;
-    let previous_key = providers
-        .get(&provider)
-        .and_then(|value| value.get("apiKey"))
-        .cloned();
     let previous_default_model = providers
         .get(&provider)
         .and_then(|value| value.get("defaultModel"))
@@ -942,14 +1028,6 @@ pub async fn save_provider(
     let mut entry = json!({"name":name,"baseUrl":base_url.trim_end_matches('/'),"modelsUrl":normalized_models_url,"api":api,"authHeader":auth_header});
     entry["contextWindow"] = json!(context_window);
     entry["modelEfforts"] = model_efforts;
-    if let Some(key) = api_key
-        .as_ref()
-        .filter(|value| !value.trim().is_empty())
-        .map(|value| Value::from(value.as_str()))
-        .or(previous_key)
-    {
-        entry["apiKey"] = key;
-    }
     if let Some(model) = previous_default_model {
         entry["defaultModel"] = model;
     }
@@ -971,6 +1049,7 @@ pub fn delete_provider(provider: String) -> Result<Value, String> {
     let settings_path = settings_path(&dir);
     let mut models = models_path.exists().then(|| read_json_file(models_path.clone(), "Pi models.json")).transpose()?;
     let mut auth = auth_path.exists().then(|| read_json_file(auth_path.clone(), "Pi auth.json")).transpose()?;
+    if let Some(auth) = &auth { ensure_api_key_editable(auth, &provider)?; }
     let mut store = load_provider_store(&dir)?;
     let mut settings = settings_path.exists().then(|| read_json_file(settings_path.clone(), "Pi settings.json")).transpose()?;
     let models_removed = models.as_mut().and_then(|value| value.get_mut("providers")).and_then(Value::as_object_mut).and_then(|items| items.remove(&provider)).is_some();
@@ -991,8 +1070,7 @@ pub fn delete_provider(provider: String) -> Result<Value, String> {
             .map_err(|e| format!("写入 Pi models.json 失败：{e}"))?;
     }
     if auth_removed {
-        fs::write(&auth_path, serde_json::to_string_pretty(&auth).map_err(|e| e.to_string())? + "\n")
-            .map_err(|e| format!("写入 Pi auth.json 失败：{e}"))?;
+        store_provider_api_key(&provider, None)?;
     }
     if store_removed { write_provider_store(&dir, &store)?; }
     if default_removed {
@@ -1003,8 +1081,8 @@ pub fn delete_provider(provider: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn sync_provider_models(provider: String) -> Result<Value, String> {
-    let catalog = list_provider_models(provider.clone()).await?;
+pub async fn sync_provider_models(app: AppHandle, provider: String) -> Result<Value, String> {
+    let catalog = list_provider_models(app, provider.clone()).await?;
     let remote = catalog
         .get("data")
         .and_then(Value::as_array)
@@ -1015,7 +1093,12 @@ pub async fn sync_provider_models(provider: String) -> Result<Value, String> {
     }
     let dir = agent_dir()?;
     let path = dir.join("models.json");
-    let mut config = read_json_file(path.clone(), "Pi models.json")?;
+    let mut config = read_json_file(path.clone(), "Pi models.json").unwrap_or_else(|_| json!({"providers":{}}));
+    let auth = read_json_file(dir.join("auth.json"), "Pi auth.json").unwrap_or_else(|_| json!({}));
+    if auth_type(&auth, &provider) == Some("oauth") || config["providers"].get(&provider).is_none() {
+        return Ok(json!({"provider":provider,"count":remote.len(),"previous":remote.len(),"firstModelId":remote.first().and_then(|model| model["id"].as_str())}));
+    }
+    let provider_base_url = config["providers"][&provider]["baseUrl"].as_str().map(str::to_owned);
     let provider_config = config
         .get_mut("providers")
         .and_then(Value::as_object_mut)
@@ -1030,7 +1113,7 @@ pub async fn sync_provider_models(provider: String) -> Result<Value, String> {
     let defaults = &store["providers"][&provider];
     let models = remote
         .iter()
-        .filter_map(pi_model_from_meta)
+        .filter_map(|entry| pi_model_from_meta(entry, &provider, provider_base_url.as_deref()))
         .map(|mut model| { apply_provider_defaults(&mut model, defaults); model })
         .collect::<Vec<_>>();
     if models.is_empty() {
@@ -1087,6 +1170,10 @@ fn set_default_model_in(
         .map_err(|e| format!("写入 Pi 自定义模型失败：{e}"))?;
     }
 
+    persist_model_selection(dir, provider, model_id)
+}
+
+fn persist_model_selection(dir: &std::path::Path, provider: String, model_id: String) -> Result<Value, String> {
     let path = settings_path(dir);
     let mut settings = if path.exists() {
         read_json_file(path.clone(), "Pi settings.json")?
@@ -1112,13 +1199,57 @@ fn set_default_model_in(
 }
 
 #[tauri::command]
-pub fn set_default_model(provider: String, model_id: String) -> Result<Value, String> {
-    set_default_model_in(&agent_dir()?, provider, model_id)
+pub async fn set_default_model(app: AppHandle, provider: String, model_id: String) -> Result<Value, String> {
+    let dir = agent_dir()?;
+    if !valid_provider_id(&provider) || model_id.trim().is_empty() {
+        return Err("Provider 和模型 ID 不能为空".into());
+    }
+    let models = read_json_file(dir.join("models.json"), "Pi models.json").unwrap_or_else(|_| json!({}));
+    let auth = read_json_file(dir.join("auth.json"), "Pi auth.json").unwrap_or_else(|_| json!({}));
+    if auth_type(&auth, &provider) == Some("oauth") || models["providers"].get(&provider).is_none() {
+        let catalog = crate::provider_auth::query(app, "catalog-stored", Some(provider.clone())).await?;
+        if !catalog["data"].as_array().is_some_and(|items| items.iter().any(|item| item["id"] == model_id)) {
+            return Err("Pi 没有返回这个 Provider 的模型".into());
+        }
+        return persist_model_selection(&dir, provider, model_id);
+    }
+    set_default_model_in(&dir, provider, model_id)
 }
 
 #[cfg(test)]
 mod default_model_tests {
     use super::*;
+
+    #[test]
+    fn key_edits_preserve_oauth_and_other_credentials() {
+        let dir = std::env::temp_dir().join(format!("orbit-auth-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("auth.json");
+        let original = json!({"anthropic":{"type":"oauth","access":"test-access","refresh":"test-refresh","expires":1},"other":{"type":"api_key","key":"old"}});
+        write_private_json(&path, &original).unwrap();
+        assert!(store_provider_api_key_in(&dir, "anthropic", Some("replacement")).is_err());
+        assert!(store_provider_api_key_in(&dir, "anthropic", None).is_err());
+        assert_eq!(read_json_file(path.clone(), "auth").unwrap(), original);
+        store_provider_api_key_in(&dir, "other", Some("new")).unwrap();
+        let changed = read_json_file(path.clone(), "auth").unwrap();
+        assert_eq!(changed["anthropic"], original["anthropic"]);
+        assert_eq!(changed["other"]["key"], "new");
+        assert!(!dir.join("auth.json.lock").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn native_defaults_do_not_create_custom_models_and_store_has_no_keys() {
+        let dir = std::env::temp_dir().join(format!("orbit-native-model-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        write_provider_store(&dir, &json!({"providers":{"custom":{"apiKey":"legacy-secret","defaultModel":"a"}}})).unwrap();
+        persist_model_selection(&dir, "anthropic".into(), "native-model".into()).unwrap();
+        assert!(!dir.join("models.json").exists());
+        let store = load_provider_store(&dir).unwrap();
+        assert!(store["providers"]["custom"].get("apiKey").is_none());
+        assert_eq!(store["providers"]["custom"]["defaultModel"], "a");
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn persists_default_model_without_losing_other_settings() {
@@ -1358,7 +1489,7 @@ mod metadata_tests {
             "reasoning": true,
             "pricing": {"input": 1.0, "output": 3.2, "cacheRead": 0.2, "cacheWrite": 0.0}
         });
-        let model = pi_model_from_meta(&entry).unwrap();
+        let model = pi_model_from_meta(&entry, "test", None).unwrap();
         assert_eq!(model["id"], "glm-5");
         assert_eq!(model["name"], "GLM-5");
         assert_eq!(model["contextWindow"], 204800);
@@ -1371,7 +1502,7 @@ mod metadata_tests {
         );
         // thinking_levels 非空时开启 reasoning 并写入映射
         let entry = json!({"id": "m", "reasoning": false, "thinking_levels": {"low": "low", "high": "high"}});
-        let model = pi_model_from_meta(&entry).unwrap();
+        let model = pi_model_from_meta(&entry, "test", None).unwrap();
         assert_eq!(model["reasoning"], true);
         assert_eq!(model["thinkingLevelMap"]["high"], "high");
     }
@@ -1384,7 +1515,7 @@ mod metadata_tests {
             "max_output_tokens": 0,
             "input_modalities": ["text", "image"]
         });
-        let model = pi_model_from_meta(&entry).unwrap();
+        let model = pi_model_from_meta(&entry, "test", None).unwrap();
         assert!(model.get("contextWindow").is_none());
         assert!(model.get("maxTokens").is_none());
     }

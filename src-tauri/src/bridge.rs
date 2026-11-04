@@ -293,17 +293,35 @@ fn pi_path_for_project(
     Ok((pi_path()?, "global"))
 }
 
-fn pi_version(node: &std::path::Path, pi: &std::path::Path) -> Option<String> {
-    let output = Command::new(node).arg(pi).arg("--version").output().ok()?;
-    if !output.status.success() {
-        return None;
+fn pi_version(node: &Path, pi: &Path, executable: bool, settings: &crate::pi_runtime_settings::PiRuntimeSettings) -> Option<String> {
+    let mut command = Command::new(if executable { pi } else { node });
+    if !executable { command.arg(pi); }
+    settings.apply_environment(&mut command);
+    crate::hide_window_console(&mut command);
+    let mut child = command.arg("--version").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if child.try_wait().ok()?.is_some() { break; }
+        if std::time::Instant::now() >= deadline { let _ = child.kill(); let _ = child.wait(); return None; }
+        thread::sleep(std::time::Duration::from_millis(25));
     }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(ToOwned::to_owned)
+    let output = child.wait_with_output().ok()?;
+    if !output.status.success() { return None; }
+    String::from_utf8_lossy(&output.stdout).split_whitespace()
+        .map(|word| word.trim_start_matches('v'))
+        .find(|word| word.split('.').count() == 3 && word.split('.').all(|part| part.parse::<u32>().is_ok()))
+        .map(str::to_string)
 }
+
+fn pi_is_executable(path: &Path) -> bool {
+    use std::io::Read;
+    if path.extension().is_some_and(|extension| ["js", "mjs", "cjs"].iter().any(|value| extension == *value)) { return false; }
+    let mut prefix = Vec::new();
+    if let Ok(file) = fs::File::open(path) { let _ = file.take(256).read_to_end(&mut prefix); }
+    let first_line = String::from_utf8_lossy(&prefix).lines().next().unwrap_or("").to_string();
+    !(first_line.starts_with("#!") && first_line.contains("node"))
+}
+
 fn node_version(node: &Path) -> Result<String, String> {
     const REQUIRED: (u32, u32) = (22, 19);
     let output = Command::new(node)
@@ -368,6 +386,9 @@ pub(crate) struct RuntimePaths {
     pub(crate) node_version: String,
     pub(crate) pi: PathBuf,
     pub(crate) pi_source: &'static str,
+    pub(crate) pi_executable: bool,
+    pub(crate) launch_args: Vec<String>,
+    pub(crate) settings: crate::pi_runtime_settings::PiRuntimeSettings,
     pub(crate) pi_version: String,
     pub(crate) node_modules: PathBuf,
     pub(crate) extension: PathBuf,
@@ -375,8 +396,13 @@ pub(crate) struct RuntimePaths {
 
 impl RuntimePaths {
     pub(crate) fn resolve(app: &AppHandle, cwd: &Path) -> Result<Self, String> {
+        Self::resolve_with_settings(app, cwd, crate::pi_runtime_settings::load()?)
+    }
+
+    pub(crate) fn resolve_with_settings(app: &AppHandle, cwd: &Path, settings: crate::pi_runtime_settings::PiRuntimeSettings) -> Result<Self, String> {
         let home = home_dir()?;
-        let agent_dir = home.join(".pi/agent");
+        let agent_dir = settings.agent_dir()?;
+        let launch_args = settings.arguments()?;
         let sessions_dir = agent_dir.join("sessions");
         // `resource_dir()` is unavailable in some Tauri dev runners (it
         // returns the opaque `unknown path` error). Resolve the same directory
@@ -389,15 +415,21 @@ impl RuntimePaths {
         let host_node = bundled_node_path(app)?;
         let node_version = node_version(&host_node)?;
         let node = orbit_process_node(host_node.clone(), app, &node_version)?;
-        let (pi, pi_source) = pi_path_for_project(Some(app), cwd)?;
-        if pi_source != "bundled" {
-            return Err("Orbit 内置 Pi runtime 缺失，请重新安装应用".into());
-        }
+        let (pi, pi_source) = if let Some(configured) = settings.resolved_binary()? {
+            (configured, "configured")
+        } else {
+            let (pi, source) = pi_path_for_project(Some(app), cwd)?;
+            if source != "bundled" { return Err("Orbit 内置 Pi runtime 缺失，请重新安装应用".into()); }
+            (pi, source)
+        };
+        let pi_executable = pi_is_executable(&pi);
         let node_modules = resources_dir.join("node_modules");
         let extension = resources_dir.join("gui-extension.ts");
         for (path, label) in [
             (&pi, "Pi CLI"),
             (&resources_dir.join("pi-runtime/index.js"), "Pi SDK"),
+            (&resources_dir.join("pi-runtime/provider-auth.js"), "Provider authentication helper"),
+            (&resources_dir.join("pi-runtime/terminal.js"), "Private terminal launcher"),
             (&extension, "GUI extension"),
             (
                 &resources_dir.join("context-payload.ts"),
@@ -435,8 +467,8 @@ impl RuntimePaths {
         // from connecting; the feature reports its own unavailable state when
         // the user actually enables it.
         require_dir(&node_modules, "Node modules")?;
-        let pi_version = pi_version(&node, &pi)
-            .ok_or_else(|| "Orbit 内置 Pi runtime 无法启动，请重新安装应用".to_string())?;
+        let pi_version = pi_version(&node, &pi, pi_executable, &settings)
+            .ok_or_else(|| "Pi 无法启动或未在 10 秒内返回有效版本，请检查可执行文件配置".to_string())?;
         Ok(Self {
             home,
             agent_dir,
@@ -447,10 +479,27 @@ impl RuntimePaths {
             node_version,
             pi,
             pi_source,
+            pi_executable,
+            launch_args,
+            settings,
             pi_version,
             node_modules,
             extension,
         })
+    }
+
+    pub(crate) fn command(&self) -> Command {
+        let mut command = Command::new(if self.pi_executable { &self.pi } else { &self.node });
+        if !self.pi_executable { command.arg(&self.pi); }
+        self.apply_environment(&mut command);
+        crate::hide_window_console(&mut command);
+        command
+    }
+
+    pub(crate) fn apply_environment(&self, command: &mut Command) {
+        self.settings.apply_environment(command);
+        command.env("PI_CODING_AGENT_DIR", &self.agent_dir)
+            .env("ORBIT_PI_EXECUTABLE", if self.pi_executable { "1" } else { "0" });
     }
 
     pub(crate) fn diagnostics(&self, cwd: &Path) -> Value {
@@ -668,13 +717,21 @@ pub(crate) fn read_json_file(path: PathBuf, label: &str) -> Result<Value, String
 /// 才是更糟的那种“成功”。
 pub(crate) fn write_private_json(path: &Path, value: &Value) -> Result<(), String> {
     let text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
-    fs::write(path, text + "\n").map_err(|e| format!("写入 {} 失败：{e}", path.display()))?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(|e| format!("写入 {} 失败：{e}", path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))
             .map_err(|e| format!("设置 {} 权限失败：{e}", path.display()))?;
     }
+    file.write_all((text + "\n").as_bytes()).map_err(|e| format!("写入 {} 失败：{e}", path.display()))?;
     Ok(())
 }
 

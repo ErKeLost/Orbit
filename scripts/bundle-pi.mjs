@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, cpSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, cpSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -10,7 +11,13 @@ const bun = process.env.ORBIT_BUN_PATH
   || (process.env.BUN_INSTALL ? resolve(process.env.BUN_INSTALL, "bin", process.platform === "win32" ? "bun.exe" : "bun") : "bun");
 const marker = resolve(output, "package.json");
 const current = existsSync(marker) ? JSON.parse(readFileSync(marker, "utf8")) : null;
-const buildFormat = 5;
+const buildFormat = 6;
+const runtimeSource = resolve(root, "scripts/pi-runtime");
+const sourceHash = createHash("sha256");
+for (const file of readdirSync(runtimeSource).sort()) {
+  sourceHash.update(file).update(readFileSync(resolve(runtimeSource, file)));
+}
+const sourceDigest = sourceHash.digest("hex");
 
 /** The sandbox compiles this wasm at runtime; it must sit where the bundled
  * runtime's createRequire can resolve `quickjs-wasi/quickjs.wasm`. */
@@ -36,7 +43,7 @@ for (const name of ["playwright-core", "ws"]) {
   mkdirSync(dirname(destination), { recursive: true });
   cpSync(resolve(root, "node_modules", name), destination, { recursive: true, dereference: true });
 }
-if (current?.version === packageJson.version && current?.buildFormat === buildFormat && existsSync(resolve(output, "cli.js")) && existsSync(resolve(output, "index.js")) && existsSync(resolve(output, "codemode-worker.js"))) {
+if (current?.version === packageJson.version && current?.buildFormat === buildFormat && current?.sourceDigest === sourceDigest && existsSync(resolve(output, "cli.js")) && existsSync(resolve(output, "index.js")) && existsSync(resolve(output, "provider-auth.js")) && existsSync(resolve(output, "terminal.js")) && existsSync(resolve(output, "codemode-worker.js"))) {
   verifyCodemode();
   process.exit(0);
 }
@@ -46,8 +53,10 @@ mkdirSync(output, { recursive: true });
 
 const result = spawnSync(bun, [
   "build",
-  resolve(packageRoot, "dist/cli.js"),
-  resolve(packageRoot, "dist/index.js"),
+  resolve(root, "scripts/pi-runtime/cli.ts"),
+  resolve(root, "scripts/pi-runtime/index.ts"),
+  resolve(root, "scripts/pi-runtime/provider-auth.ts"),
+  resolve(root, "scripts/pi-runtime/terminal.ts"),
   "--target=node",
   "--format=esm",
   "--splitting",
@@ -104,4 +113,4 @@ cpSync(resolve(quickjsPackage, "quickjs.wasm"), resolve(quickjsTarget, "quickjs.
 
 verifyCodemode();
 
-writeFileSync(marker, `${JSON.stringify({ name: "orbit-pi-runtime", private: true, type: "module", version: packageJson.version, buildFormat }, null, 2)}\n`);
+writeFileSync(marker, `${JSON.stringify({ name: "orbit-pi-runtime", private: true, type: "module", version: packageJson.version, buildFormat, sourceDigest }, null, 2)}\n`);
