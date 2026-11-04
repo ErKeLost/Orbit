@@ -6,6 +6,29 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.31
+
+Chat markdown is rendered by `react-markdown` on a pipeline ported from t3code
+(the `t3code` submodule); `@lobehub/streamdown` is gone. The reader-visible
+differences: GitHub alerts (`> [!NOTE]`, `[!WARNING]`, …) draw a colored note
+instead of a literal marker, headings carry `#anchor` ids and an in-page jump
+scrolls instead of navigating the hash route, tables get their own scroll shell
+and a copy action, and a list continuation line that CommonMark would have
+turned into an indented code block stays prose. Inline code keeps its chip and
+file-path behavior, and fenced code still goes through Orbit's own Shiki frame
+with mermaid, Graphviz, ECharts, and Vega rendering.
+
+While a response streams, completed fenced blocks are parsed once and cached, so
+a long answer with code no longer re-parses the whole document for every token.
+Word-by-word smoothing is removed: text arrives at token granularity and each
+new block fades in once. Formulas still load KaTeX lazily on the first reply that
+contains math.
+
+The port lives in `src/shared/lib/markdown/` (pipeline, incremental parser, LaTeX
+delimiters) and `src/components/markdown/` (component map, table shell, fragment
+anchors), with its look in `src/styles/markdown.css` and its theme tokens mapped
+to Orbit's `--color-content` set.
+
 ## v1.0.30
 
 Providers now separates local Pi process configuration from model endpoints and
