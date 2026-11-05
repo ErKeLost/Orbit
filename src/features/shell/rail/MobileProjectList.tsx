@@ -3,7 +3,7 @@ import { useWorkspace } from "../../../lib/store";
 import { useProjects } from "../../../lib/projects";
 import { activeProjects, derivedProjectColor, mergeProjects, projectColor, sortPinnedFirst, type Project } from "../../../lib/projects";
 import { prettyCwd } from "../../../shared/lib/paths";
-import { Check, Folder, Loader, Plus } from "../../../shared/ui/icons";
+import { Check, Folder, Loader, MessageSquare, Plus } from "../../../shared/ui/icons";
 import { report } from "../../../lib/rpc";
 import { useWorkspaceTabs } from "../use-workspace-tabs";
 import { NAV, RailAction } from "../project/ProjectRail";
@@ -27,6 +27,7 @@ export function MobileProjectList({ onNavigate }: { onNavigate?: () => void }) {
   const cwd = useWorkspace((state) => state.cwd);
   const panel = useWorkspace((state) => state.panel);
   const workspaceMode = useWorkspace((state) => state.workspaceMode);
+  const homeDir = useWorkspace((state) => state.homeDir);
   const [opening, setOpening] = useState("");
   const [picker, setPicker] = useState(false);
   const list = useMemo(
@@ -46,10 +47,43 @@ export function MobileProjectList({ onNavigate }: { onNavigate?: () => void }) {
     }
   }
 
+  /** 「主目录」和电脑上那个是同一个范围：不加项目表，也不当成项目。 */
+  async function openHome() {
+    if (!homeDir) return;
+    setOpening(homeDir);
+    try {
+      await tabs.openScope(homeDir, "home");
+      onNavigate?.();
+    } catch (error) {
+      report(error);
+    } finally {
+      setOpening("");
+    }
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <p className="shrink-0 px-3 pb-1 pt-2 text-[11px] font-medium tracking-wide text-content/40">电脑上的项目</p>
       <ul className="flex min-h-0 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1.5 pb-4">
+        {homeDir ? (
+          <li>
+            <button
+              type="button"
+              onClick={() => void openHome()}
+              className={`rail-row flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm font-medium leading-tight hover:bg-content/10 ${
+                workspaceMode === "home" ? "text-content" : "text-content/70"
+              }`}
+            >
+              {opening === homeDir ? (
+                <Loader className="size-4 shrink-0 animate-spin" strokeWidth={1.75} />
+              ) : (
+                <MessageSquare className="size-4 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden />
+              )}
+              <span className="min-w-0 flex-1 truncate">主目录</span>
+              {workspaceMode === "home" ? <Check className="size-3.5 shrink-0 text-accent" strokeWidth={1.75} /> : null}
+            </button>
+          </li>
+        ) : null}
         {list.map((project) => (
           <li key={project.path}>
             <ProjectRow

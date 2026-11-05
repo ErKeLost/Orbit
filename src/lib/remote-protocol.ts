@@ -181,6 +181,16 @@ export type RemoteHostSnapshot = {
   serverTime: number
   theme?: RemoteTheme
   machineName?: string
+  /**
+   * The desktop user's home directory.
+   *
+   * The phone renders the same 「主目录」 scope as the desktop, and the only
+   * thing that separates home from a project is this path: a Pi worker started
+   * in the home directory is the home scope, not a project named after the
+   * account. Older Hosts omit it and the phone keeps treating a differently
+   * spelled home as a project.
+   */
+  home?: string
   connections: RemoteConnection[]
   /** The desktop's project registry, as last published by its window. */
   projects?: RemoteProject[]
@@ -274,7 +284,7 @@ export function isRemoteProject(value: unknown): value is RemoteProject {
 }
 
 export function isRemoteHostSnapshot(value: unknown): value is RemoteHostSnapshot {
-  if (!record(value) || value.protocol !== REMOTE_PROTOCOL || typeof value.serverTime !== "number" || (value.theme !== undefined && !isRemoteTheme(value.theme)) || (value.machineName !== undefined && !stringValue(value.machineName)) || !Array.isArray(value.connections)) return false
+  if (!record(value) || value.protocol !== REMOTE_PROTOCOL || typeof value.serverTime !== "number" || (value.theme !== undefined && !isRemoteTheme(value.theme)) || (value.machineName !== undefined && !stringValue(value.machineName)) || (value.home !== undefined && !stringValue(value.home)) || !Array.isArray(value.connections)) return false
   if (value.projects !== undefined && (!Array.isArray(value.projects) || !value.projects.every(isRemoteProject))) return false
   if (value.commands !== undefined && (!Array.isArray(value.commands) || !value.commands.every(stringValue))) return false
   return value.connections.every(connection => record(connection) && stringValue(connection.id) && stringValue(connection.cwd))

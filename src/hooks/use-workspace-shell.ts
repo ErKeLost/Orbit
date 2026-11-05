@@ -12,7 +12,7 @@ import { restoreRemoteHost } from "../lib/remote-host";
 import { restorePersistentState } from "../lib/persistent";
 import { toast as gooeyToast } from "../shared/ui/toast";
 import { findRemoteConnection, type RemoteConnection, type RemoteHostSnapshot } from "../lib/remote-protocol";
-import { useWorkspace } from "../lib/store";
+import { useWorkspace, type WorkspaceMode } from "../lib/store";
 import { CHAT_PANE_ID, useShell } from "../features/shell/shellStore";
 import { useWorkspaceTabs } from "../features/shell/use-workspace-tabs";
 import { pressed } from "../lib/keybindings";
@@ -31,6 +31,37 @@ function preferredRemoteConnection(snapshot: RemoteHostSnapshot, connectionId?: 
     ?? (fallbackToFirst ? snapshot.connections[0] : undefined);
 }
 
+/**
+ * Take the facts the Host owns into the store, and return its home directory.
+ *
+ * `home` is the one that decides whether the phone is looking at 「主目录」 or at
+ * a project. The phone has no discovery of its own (it would describe Android's
+ * filesystem, which Pi never sees), so without this field it knew no home at
+ * all: a Pi worker started in the user's home directory rendered as a project
+ * named after the account, and every scope was forced into project mode.
+ */
+function adoptRemoteSnapshot(snapshot: RemoteHostSnapshot): string {
+  const home = snapshot.home ?? "";
+  const adopt: Partial<ReturnType<typeof useWorkspace.getState>> = {
+    ...(snapshot.theme ? { remoteTheme: snapshot.theme } : {}),
+    ...(snapshot.machineName ? { remoteMachineName: snapshot.machineName } : {}),
+    ...(home ? { homeDir: home } : {}),
+  };
+  if (Object.keys(adopt).length > 0) useWorkspace.getState().set(adopt);
+  return home;
+}
+
+/** Which scope a desktop connection belongs to: its home directory is 「主目录」. */
+function scopeFor(cwd: string, home: string): WorkspaceMode {
+  return home && normalizeProjectPath(cwd) === normalizeProjectPath(home) ? "home" : "project";
+}
+
+/** `snapshot.connections` without the home scope: it is not a project. */
+function projectPaths(paths: readonly string[], home: string): string[] {
+  const root = home ? normalizeProjectPath(home) : "";
+  return paths.filter(path => !root || normalizeProjectPath(path) !== root);
+}
+
 export function useWorkspaceBootstrap() {
   const runtimeTarget = useWorkspace(state => state.runtimeTarget);
   const [pairing, setPairing] = useState<PairingState>(() => ({ uri: storedPairingUri(), required: false, connecting: false, error: null }));
@@ -45,8 +76,11 @@ export function useWorkspaceBootstrap() {
     try {
       const workspace = useWorkspace.getState();
       const snapshot = await remoteHostSnapshot();
-      if (snapshot.theme || snapshot.machineName) useWorkspace.getState().set({ ...(snapshot.theme ? { remoteTheme: snapshot.theme } : {}), ...(snapshot.machineName ? { remoteMachineName: snapshot.machineName } : {}) });
-      useProjects.getState().add(snapshot.connections.map(item => item.cwd));
+      const home = adoptRemoteSnapshot(snapshot);
+      // A live worker in the desktop's home directory is the home scope, not a
+      // project: listing it would put 「erkelost」 in the rail as if the user had
+      // opened their account folder as a project.
+      useProjects.getState().add(projectPaths(snapshot.connections.map(item => item.cwd), home));
       // `fallbackToFirst: false` matters: a phone that was in a project must not
       // silently land in whichever connection happens to be first after a
       // reconnect. Prefer the exact connection, then the project it was in (and
@@ -59,11 +93,11 @@ export function useWorkspaceBootstrap() {
         // `connectRemoteConnection` keeps its transcript instead of replacing it
         // with the skeleton. Coming back from another app is the most common
         // thing a phone does, and it must not look like a cold start.
-        await connectRemoteConnection(connection, workspace.workspaceMode, { recovery: true });
+        await connectRemoteConnection(connection, scopeFor(connection.cwd, home), { recovery: true });
       } else {
-        const target = workspace.cwd || snapshot.projects?.[0]?.path;
+        const target = workspace.cwd || snapshot.projects?.[0]?.path || home;
         if (!target) throw new Error("电脑端当前没有可用的 Pi 连接，请先在电脑打开工作区");
-        await connect(target, workspace.workspaceMode);
+        await connect(target, scopeFor(target, home));
       }
       setPairing(current => ({ ...current, connecting: false, required: false, error: null }));
       setRemoteRevision(value => value + 1);
@@ -105,23 +139,29 @@ export function useWorkspaceBootstrap() {
         onError: error => { if (!remoteReady.current) useWorkspace.getState().set({ error: error.message }); },
       });
       remoteReady.current = true;
-      if (snapshot.theme || snapshot.machineName) useWorkspace.getState().set({ ...(snapshot.theme ? { remoteTheme: snapshot.theme } : {}), ...(snapshot.machineName ? { remoteMachineName: snapshot.machineName } : {}) });
+      const home = adoptRemoteSnapshot(snapshot);
       // Pairing must not require the desktop to already have a project open.
       // If the Host has registry projects but no live connection, open the first
       // one the way a tap on the phone's rail would; the workspace pointer then
-      // follows the same path as every later switch.
+      // follows the same path as every later switch. With no project at all the
+      // phone lands in 「主目录」, which is where a desktop without projects is.
       const savedId = localStorage.getItem("orbit.remote.connection.v1");
       const connection = preferredRemoteConnection(snapshot, savedId ?? undefined, useWorkspace.getState().cwd);
-      const projects = [...snapshot.connections.map(item => item.cwd), ...(snapshot.projects ?? []).map(project => project.path)];
+      const projects = [
+        ...projectPaths(snapshot.connections.map(item => item.cwd), home),
+        ...(snapshot.projects ?? []).map(project => project.path),
+      ];
       useProjects.getState().add(projects);
       if (connection) {
-        useWorkspace.getState().set({ runtimeTarget: "mobile", cwd: connection.cwd, connectionId: connection.id, workspaceMode: "project", error: null });
-        await connectRemoteConnection(connection);
+        const mode = scopeFor(connection.cwd, home);
+        useWorkspace.getState().set({ runtimeTarget: "mobile", cwd: connection.cwd, connectionId: connection.id, workspaceMode: mode, error: null });
+        await connectRemoteConnection(connection, mode);
       } else {
-        const target = snapshot.projects?.[0]?.path;
+        const target = snapshot.projects?.[0]?.path || home;
         if (!target) throw new Error("电脑端还没有项目，请先在电脑上打开一个项目");
-        useWorkspace.getState().set({ runtimeTarget: "mobile", cwd: target, connectionId: "", workspaceMode: "project", error: null });
-        await connect(target, "project");
+        const mode = scopeFor(target, home);
+        useWorkspace.getState().set({ runtimeTarget: "mobile", cwd: target, connectionId: "", workspaceMode: mode, error: null });
+        await connect(target, mode);
       }
       setPairing(current => ({ ...current, uri, connecting: false, required: false, error: null }));
       setRemoteRevision(value => value + 1);

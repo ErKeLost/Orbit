@@ -1092,6 +1092,11 @@ mod desktop {
                     "serverTime": unix_millis(),
                     "theme": app.state::<RemoteHost>().theme(),
                     "machineName": app.state::<RemoteHost>().info().map(|info| info.machine_name).unwrap_or_else(|| "Orbit Desktop".into()),
+                    // The phone needs this to tell 「主目录」 from a project, exactly
+                    // as the desktop does. Without it the home connection looked
+                    // like a project named after the user's account, and the
+                    // phone forced it into project mode.
+                    "home": crate::bridge::home_dir().map(|path| path.to_string_lossy().into_owned()).ok(),
                     "connections": app.state::<Bridge>().connections(),
                     "projects": app.state::<RemoteHost>().projects(),
                     // What this Host will answer. Advertised rather than

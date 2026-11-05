@@ -224,8 +224,12 @@ export async function connect(cwd:string,workspaceMode:WorkspaceMode=useWorkspac
  if(!native&&!mobileRuntime())throw new Error('请在桌面应用中选择项目')
  if(mobileRuntime()){
   const connection=await resolveWorkspaceConnection(cwd)
-  await connectRemoteConnection(connection,workspaceMode)
-  if(workspaceMode==='project')await syncConfiguredProjectRoots(cwd)
+  // 电脑端的主目录就是「主目录」，哪怕调用方（项目列表、会话恢复）说的是 project：
+  // 手机以前没有主页这个概念，整条主目录连接都被当成一个叫用户名的项目。
+  const home=useWorkspace.getState().homeDir
+  const mode:WorkspaceMode=home&&normalizeProjectPath(connection.cwd)===normalizeProjectPath(home)?'home':workspaceMode
+  await connectRemoteConnection(connection,mode)
+  if(mode==='project')await syncConfiguredProjectRoots(cwd)
   return
  }
  cwd=normalizeProjectPath(cwd)
