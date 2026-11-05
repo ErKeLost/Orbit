@@ -39,6 +39,17 @@ The chat surface also stops doing per-frame work that was not per-frame:
 new identity on every streaming token — `source` left the dependency list in
 favour of the boolean it was only used to compute.
 
+File paths, `@` mentions and links now follow the accent colour. They used the
+theme's own link blue, so a yellow accent left every path chip, every `@file`
+mention and every markdown link blue — the chat read as two applications at
+once. `PathChip`'s own comment says the chip is drawn in "the theme's accent";
+this makes that true. The accent is not used raw, because it is picked as a
+surface colour: `#f59e0b` as text on the light theme is 1.9:1. Each use is mixed
+with the body colour instead (32% for chips, 55% for mentions and the composer's
+`@` tokens, and a per-theme mix for `--link-color`), which keeps the hue and puts
+the result back in the readable range — verified at 5.2:1 for amber on light and
+10.7:1 on dark. With no custom accent nothing changes at all.
+
 Two structural candidates are documented but deliberately unchanged, because
 they change how the app looks or ships: the `transparent: true` window with
 native vibrancy (t3code's Electron window is opaque), and the `mask-image` on the

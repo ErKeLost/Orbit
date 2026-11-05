@@ -5,6 +5,16 @@
  */
 
 :root {
+  /*
+   * 文件 / 引用 chip 的强调色。设计上它一直是「主题的强调色」（`PathChip` 的
+   * 注释就是这么写的），但实现用的是 `--link-color`，也就是主题自带的那抹蓝：
+   * 换成黄色主题以后，正文里的路径和 @引用还是蓝的，读起来像另一个应用。
+   *
+   * 有用户强调色就跟着走，没有就还是链接色，默认观感不变。用法处一律把它和
+   * `--color-content` 混过（见 markdown.css 的 32% 和下面的 55%），因为强调色
+   * 本身是给色块用的：纯 #f59e0b 当浅色主题的文字只有 1.9:1。
+   */
+  --chip-accent: var(--user-accent-color, var(--link-color));
   --font-chat: var(--font-sans);
   --composer-max-width: 56rem;
   /* `env()` is the cutout on Android, not the status bar; `--android-inset-*`
@@ -12,6 +22,28 @@
      alone leaves the title bar under the clock on some phone. */
   --safe-top: max(env(safe-area-inset-top, 0px), var(--android-inset-top, 0px));
   --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--android-inset-bottom, 0px));
+}
+
+/*
+ * 链接也跟着强调色走。`--link-color` 是主题自带的那抹蓝：用户把强调色换成
+ * 黄色以后，正文里的链接、编辑器里的路径链接、音频名、artifact 里的链接都还是
+ * 蓝的。这里按主题各和正文色混一道——强调色本身是给色块用的，纯 #f59e0b 当
+ * 浅色主题的文字只有 1.9:1——色相留着，亮度落在能读的范围里。
+ */
+html.has-user-accent {
+  --link-color: color-mix(
+    in srgb,
+    var(--user-accent-color) 55%,
+    var(--color-content)
+  );
+}
+
+html.has-user-accent.theme-light {
+  --link-color: color-mix(
+    in srgb,
+    var(--user-accent-color) 45%,
+    var(--color-content)
+  );
 }
 
 /* Native text selection stays on for chat, file and settings bodies. */
@@ -835,6 +867,20 @@ html[data-page-visible="false"] * {
   background: color-mix(in srgb, var(--color-mention) 15%, transparent);
   color: var(--color-mention);
   font-style: normal;
+}
+
+/* 有用户强调色时，@引用也跟着走——黄色主题里留一抹主题蓝，读起来像另一个应用。
+   这里不直接写 `color: var(--user-accent-color)`：强调色是给色块用的，纯
+   #f59e0b 当浅色主题的文字只有 1.9:1，所以和正文色混一道再上。 */
+html.has-user-accent .agent-markdown .md-chip.is-mention {
+  background: color-mix(in srgb, var(--user-accent-color) 15%, transparent);
+  color: color-mix(in srgb, var(--user-accent-color) 55%, var(--color-content));
+}
+
+/* 输入框里的 @引用（ComposerHighlight 的 `text-mention`）用同一个颜色，
+   否则正文里的 chip 变黄了、正在打字的那个 @ 还是蓝的。 */
+html.has-user-accent .text-mention {
+  color: color-mix(in srgb, var(--user-accent-color) 55%, var(--color-content));
 }
 
 .tool-image-frame {

@@ -256,10 +256,10 @@
   align-items: center;
   gap: 0.3em;
   padding-inline: 0.4em;
-  border: 1px solid color-mix(in srgb, var(--link-color) 32%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chip-accent) 32%, transparent);
   border-radius: 0.4em;
-  background: color-mix(in srgb, var(--link-color) 11%, transparent);
-  color: color-mix(in srgb, var(--link-color) 32%, var(--color-content));
+  background: color-mix(in srgb, var(--chip-accent) 11%, transparent);
+  color: color-mix(in srgb, var(--chip-accent) 32%, var(--color-content));
   font: inherit;
   font-weight: 500;
   line-height: 1.5;
@@ -271,15 +271,15 @@
 
 .chat-markdown .md-file-chip:hover,
 .chat-markdown a.md-file-chip:hover {
-  border-color: color-mix(in srgb, var(--link-color) 48%, transparent);
-  background: color-mix(in srgb, var(--link-color) 17%, transparent);
+  border-color: color-mix(in srgb, var(--chip-accent) 48%, transparent);
+  background: color-mix(in srgb, var(--chip-accent) 17%, transparent);
   background-image: none;
   text-decoration: none;
 }
 
 .chat-markdown .md-file-chip:focus-visible,
 .chat-markdown a.md-file-chip:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--link-color) 55%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--chip-accent) 55%, transparent);
   outline-offset: 1px;
 }
 
@@ -292,7 +292,7 @@
 
 .chat-markdown .md-file-chip-line {
   flex: none;
-  color: color-mix(in srgb, var(--link-color) 55%, transparent);
+  color: color-mix(in srgb, var(--chip-accent) 55%, transparent);
   font-variant-numeric: tabular-nums;
 }
 
