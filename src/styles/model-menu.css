@@ -142,6 +142,24 @@ html[data-theme="light"] .composer-model-row.active {
   text-align: center;
 }
 
+.composer-model-error {
+  color: var(--color-danger, color-mix(in srgb, red 60%, var(--color-content)));
+}
+
+.composer-model-retry {
+  display: block;
+  margin: 8px auto 0;
+  padding: 2px 10px;
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--color-content);
+  background: color-mix(in srgb, var(--color-content) 10%, transparent);
+}
+
+.composer-model-retry:hover {
+  background: color-mix(in srgb, var(--color-content) 16%, transparent);
+}
+
 .composer-model-groups {
   padding: 4px 6px 8px;
 }

@@ -73,7 +73,11 @@ function ModelPickerImpl() {
   const groups = useMemo(() => {
     const query = search.trim().toLowerCase();
     // Searching spans every provider; without a query we stay in the active one.
-    const pool = query ? allModels : providerModels;
+    // When there is no active provider at all — a worker that reported no model
+    // (Pi's `get_state.model` is optional) or a model this catalog never listed —
+    // filtering by it would show an empty menu and read as 「模型加载不出来」.
+    // The catalog is still the right answer there: list everything.
+    const pool = query || providerModels.length === 0 ? allModels : providerModels;
     const visible = pool.filter((model) => !query || `${model.name ?? ""} ${model.id} ${model.provider}`.toLowerCase().includes(query));
     const byProvider = new Map<string, Model[]>();
     for (const model of visible) byProvider.set(model.provider, [...(byProvider.get(model.provider) ?? []), model]);
@@ -131,7 +135,17 @@ function ModelPickerImpl() {
         aria-haspopup="dialog"
         disabled={!online || streaming}
         onMouseDown={(event) => event.preventDefault()}
-        onClick={() => (open ? dismiss() : setOpen(true))}
+        onClick={() => {
+          if (open) {
+            dismiss();
+            return;
+          }
+          // A catalog fetched while the worker was still starting (or across a
+          // reconnect) stays failed until something asks again; the menu is the
+          // one place the user can ask.
+          if (models.isError || allModels.length === 0) void models.refetch();
+          setOpen(true);
+        }}
         className={`flex h-6.5 shrink-0 items-center gap-1 rounded-md px-1.5 disabled:opacity-40 ${
           open ? "bg-selection text-content" : "bg-selection text-content hover:bg-selection-hover"
         }`}
@@ -181,7 +195,18 @@ function ModelPickerImpl() {
               </section>
             ))}
             {groups.length === 0 ? (
-              <p className="composer-model-empty">{search.trim() ? `没有匹配“${search.trim()}”的模型` : "这个 Provider 还没有模型目录"}</p>
+              <p className={`composer-model-empty ${models.isError ? "composer-model-error" : ""}`}>
+                {search.trim()
+                  ? `没有匹配“${search.trim()}”的模型`
+                  : models.isError
+                    ? `模型目录没有取到：${models.error instanceof Error ? models.error.message : String(models.error)}`
+                    : models.isFetching
+                      ? "正在从 Pi 读取模型目录…"
+                      : "Pi 还没有报告任何可用模型"}
+                {!search.trim() && (models.isError || allModels.length === 0) ? (
+                  <button type="button" className="composer-model-retry" onClick={() => void models.refetch()}>重试</button>
+                ) : null}
+              </p>
             ) : null}
           </div>
           {availableLevels.length > 1 ? (
