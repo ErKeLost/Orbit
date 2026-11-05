@@ -50,6 +50,43 @@ with the body colour instead (32% for chips, 55% for mentions and the composer's
 the result back in the readable range — verified at 5.2:1 for amber on light and
 10.7:1 on dark. With no custom accent nothing changes at all.
 
+A menu opened from a control inside a dialog painted underneath the dialog. It
+portals to `document.body`, so its layer was compared with the whole app (80)
+instead of with the surface it came from (90): an open select looked clipped,
+with only the part past the dialog's bottom edge visible and the footer drawn
+over it. The surface that raises the bar now publishes a `PopoverLayerOffset`
+and `Popover` adds it, so a flyout above its own parent menu keeps working at any
+depth; `ModalPanel` and the mobile drawer are the two surfaces that publish one.
+
+The model menu now explains an empty or failed catalog instead of rendering
+nothing. Pi's `get_state.model` is optional, so a worker that reported no model
+left the picker filtering by a provider that matched nothing, with no way to ask
+again. An empty provider pool falls back to the whole catalog, the empty state
+says whether it is still fetching, failed (with the message) or empty, and both
+of the last two get a retry; opening the menu refetches when the catalog is
+missing.
+
+The phone now knows the desktop's home directory, and 「主目录」 is a scope there
+rather than a project named after the account. The Host publishes `home` in its
+snapshot, the phone adopts it, filters it out of the project registry, decides
+home-vs-project from the path, and offers a 主目录 row in the project list; a
+phone with no projects lands there instead of erroring. Older Hosts keep the old
+behaviour.
+
+Computer Use can now reach targets the accessibility tree exposes without an
+action, which is where WebView list rows used to end a run as `blocked`. Three
+narrow, post-verified routes: geometric candidates for rows whose label is named
+by the goal (capped at three, always escalated, one extra capture per screen),
+pointer coordinates converted through the window origin and screenshot scale
+instead of sending raw screen coordinates, and a clipboard paste after an
+accessibility write was ignored (Chromium answers those with success and changes
+nothing). A wait that changed nothing twice withholds `reobserve`, and a `done`
+refused twice withholds `done`, so the chooser has to act or say it is blocked —
+a live run had spent eleven decisions repeating `done`. A readable web tree with
+no advertised action is named in the context as Chromium's ~2s accessibility
+activation debounce, and the driver's `delivery`/`retry` pair is cross-checked so
+contradictory fields report `unknown` instead of the convenient one.
+
 Two structural candidates are documented but deliberately unchanged, because
 they change how the app looks or ships: the `transparent: true` window with
 native vibrancy (t3code's Electron window is opaque), and the `mask-image` on the
