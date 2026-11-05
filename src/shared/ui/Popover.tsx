@@ -1,4 +1,5 @@
 import { NativePopupHost } from "./NativePopupHost";
+import { PopoverLayerOffset } from "./PopoverLayer";
 import {
   useCallback,
   useContext,
@@ -238,6 +239,9 @@ function WebPopover({
 }: Props) {
   const frame = useRef<HTMLDivElement | null>(null);
   const surface = useRef<HTMLDivElement | null>(null);
+  // A dialog raises every popover opened inside it above its own surface; see
+  // `PopoverLayer`. Zero everywhere else, so the ordinary scale is unchanged.
+  const layerOffset = useContext(PopoverLayerOffset);
   const [position, setPosition] = useState<PopoverPosition | null>(null);
   const anchorRef = useRef(anchor);
   anchorRef.current = anchor;
@@ -344,7 +348,8 @@ function WebPopover({
     <div
       ref={frame}
       data-popover-side={position?.side ?? side}
-      style={{ ...placed, zIndex: layer }}
+      data-dialog-popover={layerOffset ? "" : undefined}
+      style={{ ...placed, zIndex: layer + layerOffset }}
       className={bare ? undefined : `${FRAME} ${rounded}`}
     >
       {bare ? null : <GlassBackdrop />}
@@ -356,6 +361,7 @@ function WebPopover({
           else if (ref) ref.current = el;
         }}
         data-popover-side={position?.side ?? side}
+        data-dialog-popover={layerOffset ? "" : undefined}
         style={{
           ...(contentMaxHeight != null ? { maxHeight: contentMaxHeight } : {}),
           transformOrigin: origin(position?.side ?? side, align),

@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useWorkspace } from "../../../lib/store";
 import { changeSession, report } from "../../../lib/rpc";
 import { LAYER } from "../../../shared/lib/layers";
+import { DIALOG_POPOVER_OFFSET, PopoverLayerOffset } from "../../../shared/ui/PopoverLayer";
 import { Plus, Settings, SlidersHorizontal, X, MessageMultiple, PanelLeft, AppWindow, ChevronLeft } from "../../../shared/ui/icons";
 import { ChatPane } from "../../chat/ChatPane";
 import { SettingsView } from "../../settings/SettingsView";
@@ -147,54 +148,58 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
 
       {drawer
         ? createPortal(
-            <div className="fixed inset-0" style={{ zIndex: LAYER.dialog }}>
-              <div className="mobile-scrim absolute inset-0 bg-black/45" data-open="true" onClick={() => setDrawer(false)} />
-              <aside className="mobile-drawer sidebar-glass absolute inset-y-0 left-0 flex flex-col border-r border-stroke shadow-2xl" data-open="true">
-                <div className="flex h-11 shrink-0 items-center gap-1 border-b border-stroke px-2">
-                  <div role="tablist" className="flex min-w-0 flex-1 items-center gap-px">
-                    {(["sessions", "projects"] as const).map((tab) => (
+            // The drawer is a dialog-layer surface: a menu opened from a row in
+            // here has to paint above it, not inside the page behind it.
+            <PopoverLayerOffset.Provider value={DIALOG_POPOVER_OFFSET}>
+              <div className="fixed inset-0" style={{ zIndex: LAYER.dialog }}>
+                <div className="mobile-scrim absolute inset-0 bg-black/45" data-open="true" onClick={() => setDrawer(false)} />
+                <aside className="mobile-drawer sidebar-glass absolute inset-y-0 left-0 flex flex-col border-r border-stroke shadow-2xl" data-open="true">
+                  <div className="flex h-11 shrink-0 items-center gap-1 border-b border-stroke px-2">
+                    <div role="tablist" className="flex min-w-0 flex-1 items-center gap-px">
+                      {(["sessions", "projects"] as const).map((tab) => (
+                        <button
+                          key={tab}
+                          type="button"
+                          role="tab"
+                          aria-selected={drawerTab === tab}
+                          onClick={() => setDrawerTab(tab)}
+                          className={`flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md text-[12px] ${drawerTab === tab ? "bg-selection text-content" : "text-content/50"}`}
+                        >
+                          {tab === "sessions" ? <MessageMultiple className="size-3.5" strokeWidth={1.75} /> : <SlidersHorizontal className="size-3.5" strokeWidth={1.75} />}
+                          {tab === "sessions" ? "会话" : "项目"}
+                        </button>
+                      ))}
+                    </div>
+                    <TitleIconButton label="关闭导航" onClick={() => setDrawer(false)}>
+                      <X className="size-4" strokeWidth={1.75} />
+                    </TitleIconButton>
+                  </div>
+                  <div className="flex min-h-0 flex-1 flex-col [&>aside]:!w-full [&>aside]:border-r-0 [&>nav]:!w-full [&>nav]:border-r-0">
+                    {panel === "settings" ? (
+                      <div className="flex min-h-0 flex-1 flex-col"><SettingsNav /></div>
+                    ) : drawerTab === "sessions" ? (
+                      <SessionSidebar visible railVisible onSearch={onSearch} />
+                    ) : (
+                      // 「项目」页就是项目：一行一个，点一下切过去。抽屉里不需要
+                      // 第二份会话列表。
+                      <MobileProjectList onNavigate={() => setDrawer(false)} />
+                    )}
+                  </div>
+                  {panel !== "settings" ? (
+                    <div className="flex shrink-0 border-t border-stroke p-2">
                       <button
-                        key={tab}
                         type="button"
-                        role="tab"
-                        aria-selected={drawerTab === tab}
-                        onClick={() => setDrawerTab(tab)}
-                        className={`flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md text-[12px] ${drawerTab === tab ? "bg-selection text-content" : "text-content/50"}`}
+                        onClick={() => useWorkspace.getState().set({ panel: "settings", settingsPage: "general" })}
+                        className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-content/60 hover:bg-content/10 hover:text-content"
                       >
-                        {tab === "sessions" ? <MessageMultiple className="size-3.5" strokeWidth={1.75} /> : <SlidersHorizontal className="size-3.5" strokeWidth={1.75} />}
-                        {tab === "sessions" ? "会话" : "项目"}
+                        <Settings className="size-4 opacity-70" strokeWidth={1.75} />
+                        <span className="text-sm font-medium">Settings</span>
                       </button>
-                    ))}
-                  </div>
-                  <TitleIconButton label="关闭导航" onClick={() => setDrawer(false)}>
-                    <X className="size-4" strokeWidth={1.75} />
-                  </TitleIconButton>
-                </div>
-                <div className="flex min-h-0 flex-1 flex-col [&>aside]:!w-full [&>aside]:border-r-0 [&>nav]:!w-full [&>nav]:border-r-0">
-                  {panel === "settings" ? (
-                    <div className="flex min-h-0 flex-1 flex-col"><SettingsNav /></div>
-                  ) : drawerTab === "sessions" ? (
-                    <SessionSidebar visible railVisible onSearch={onSearch} />
-                  ) : (
-                    // 「项目」页就是项目：一行一个，点一下切过去。抽屉里不需要
-                    // 第二份会话列表。
-                    <MobileProjectList onNavigate={() => setDrawer(false)} />
-                  )}
-                </div>
-                {panel !== "settings" ? (
-                  <div className="flex shrink-0 border-t border-stroke p-2">
-                    <button
-                      type="button"
-                      onClick={() => useWorkspace.getState().set({ panel: "settings", settingsPage: "general" })}
-                      className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-content/60 hover:bg-content/10 hover:text-content"
-                    >
-                      <Settings className="size-4 opacity-70" strokeWidth={1.75} />
-                      <span className="text-sm font-medium">Settings</span>
-                    </button>
-                  </div>
-                ) : null}
-              </aside>
-            </div>,
+                    </div>
+                  ) : null}
+                </aside>
+              </div>
+            </PopoverLayerOffset.Provider>,
             document.body,
           )
         : null}
