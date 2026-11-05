@@ -71,10 +71,12 @@ export type WindowState = {
   truncated: boolean
   totalElementCount: number
   screenshot?: Screenshot
+  /** The window rectangle in screen coordinates (snake_case on the wire). */
+  windowBounds?: { x: number; y: number; w: number; h: number }
   raw: Record<string, unknown>
 }
 
-export type ActionEffect = "confirmed" | "unverifiable" | "suspected_noop" | "partial" | "refused"
+export type ActionEffect = "confirmed" | "unverifiable" | "suspected_noop" | "partial" | "refused" | "unknown"
 
 export type Escalation = { recommended: "px" | "page" | "foreground"; reason?: string }
 
@@ -347,6 +349,13 @@ export function normalizeWindowState(value: Record<string, unknown>): WindowStat
         base64: pngBase64,
       }
       : undefined,
+    windowBounds: (() => {
+      const bounds = value.window_bounds as Record<string, unknown> | undefined
+      if (!bounds) return undefined
+      const values = [bounds.x, bounds.y, bounds.width, bounds.height]
+      if (values.some(item => typeof item !== "number" || !Number.isFinite(item))) return undefined
+      return { x: Number(bounds.x), y: Number(bounds.y), w: Number(bounds.width), h: Number(bounds.height) }
+    })(),
     raw: value,
   }
 }
@@ -371,9 +380,36 @@ function normalizeElement(element: any): CuaElement {
   }
 }
 
+/**
+ * The delivery verdict the driver reported for an action.
+ *
+ * agent-desktop derives `retry` from `delivery` and refuses an inconsistent
+ * pair (`actions/delivery_semantics.rs`). The same rule is applied here: when
+ * the driver's own two fields contradict each other, neither is trusted and the
+ * verdict is `unknown` rather than the more convenient of the two.
+ */
+export function deliveryEffect(value: Record<string, unknown>): ActionEffect | undefined {
+  const disposition = value.disposition
+  if (!disposition || typeof disposition !== "object") {
+    return typeof value.effect === "string" ? value.effect as ActionEffect : undefined
+  }
+  const { delivery, retry } = disposition as { delivery?: unknown; retry?: unknown }
+  const expectedRetry = delivery === "not_delivered" ? "safe" : delivery === "unknown" ? "unknown" : "unsafe"
+  if (typeof delivery === "string" && typeof retry === "string" && retry !== expectedRetry) return "unknown"
+  switch (delivery) {
+    case "delivered_verified": return "confirmed"
+    case "delivered_unverified":
+    case "delivery_uncertain": return "unverifiable"
+    case "not_delivered": return "refused"
+    case "unknown": return "unknown"
+    default:
+      return typeof value.effect === "string" ? value.effect as ActionEffect : "unknown"
+  }
+}
+
 export function normalizeAction(result: ToolResult): ActionResult {
   const value = result.value
-  const effect = typeof value.effect === "string" ? value.effect as ActionEffect : undefined
+  const effect = deliveryEffect(value)
   const escalationRaw = value.escalation && typeof value.escalation === "object" ? value.escalation as Record<string, unknown> : undefined
   const recommended = escalationRaw?.recommended
   const escalation: Escalation | undefined = recommended === "px" || recommended === "page" || recommended === "foreground"

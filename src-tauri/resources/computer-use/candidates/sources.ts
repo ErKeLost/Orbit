@@ -4,6 +4,7 @@ import { elementLabel, editableElements } from "../cua/observation.ts"
 import type { CuaCandidate, CuaObservation, VisualRegion } from "../cua/types.ts"
 import { hasPress, hasShowMenu, isActionable, isTextRole, roleClass } from "./roles.ts"
 import { isRisky } from "./policy.ts"
+import { geometricCandidates, pointerPoint } from "./geometry.ts"
 
 /**
  * Candidate sources.
@@ -71,7 +72,7 @@ export function buildCandidates(observation: CuaObservation, context: BuildConte
     const rung = candidate.identity ? context.escalate?.get(candidate.identity) : undefined
     // The pointer rung is capture-bound, so the twin needs the capture the
     // coordinates were read from, not just the frame.
-    const twin = escalatedTwin(candidate, rung, { windowId: context.windowId, pid: context.pid, frame, captureId: observation.captureId })
+    const twin = escalatedTwin(candidate, rung, { windowId: context.windowId, pid: context.pid, frame, captureId: observation.captureId, windowBounds: observation.windowBounds, screenshot: observation.screenshot })
     if (twin) push(twin)
   }
 
@@ -185,6 +186,11 @@ export function buildCandidates(observation: CuaObservation, context: BuildConte
   // for a step, and only for regions whose text matches the goal exactly.
   if (context.visual) candidates.push(...buildVisualCandidates(context.visual, context))
 
+  // Geometric fallback: rows the tree proves exist but exposes no action for.
+  // Built from the observation's own capture, and only when a label on the row
+  // is named by the goal; see geometry.ts for why the rules are this narrow.
+  if (!context.readOnly) candidates.push(...geometricCandidates(observation, context.goal, context.readOnly))
+
   // Reserved. Their ids are the contract's; always last.
   push({ id: "done", description: "every part of the goal is visibly satisfied on this screen right now; finish the task", source: null, operation: "done", tool: null, args: {}, label: "完成", legacyOperation: "DONE" })
   push({ id: "reobserve", description: "read the window again; nothing is changed (use when the screen is still loading or the last action's effect is not visible yet)", source: null, operation: "reobserve", tool: null, args: {}, label: "重新观察", legacyOperation: "WAIT" })
@@ -213,7 +219,7 @@ export function buildCandidates(observation: CuaObservation, context: BuildConte
  *   delivered is worse than no candidate: it spends the chooser's turn on a
  *   certain refusal, so the px twin is dropped instead.
  */
-export function escalatedTwin(candidate: CuaCandidate, rung: EscalationRung | undefined, geometry: { windowId: number; pid: number; frame?: CuaElementLike["frame"]; captureId?: string }): CuaCandidate | undefined {
+export function escalatedTwin(candidate: CuaCandidate, rung: EscalationRung | undefined, geometry: { windowId: number; pid: number; frame?: CuaElementLike["frame"]; captureId?: string; windowBounds?: { x: number; y: number; w: number; h: number }; screenshot?: { width: number; height: number } }): CuaCandidate | undefined {
   if (!rung || !ESCALATABLE_OPERATIONS.has(candidate.operation)) return undefined
   if (rung === "foreground") {
     return {
@@ -233,8 +239,9 @@ export function escalatedTwin(candidate: CuaCandidate, rung: EscalationRung | un
     // worse than no candidate, because it spends the chooser's turn and the
     // escalation ladder then has nothing left to offer.
     if (!frame || !geometry.captureId) return undefined
-    const x = Math.round(frame.x + frame.w / 2)
-    const y = Math.round(frame.y + frame.h / 2)
+    // Screen coordinates are not click coordinates: convert through the
+    // window origin and the screenshot scale, or the pointer lands elsewhere.
+    const { x, y } = pointerPoint(frame, { windowBounds: geometry.windowBounds, screenshot: geometry.screenshot })
     const args = { ...candidate.args } as Record<string, unknown>
     delete args.element_token
     return {

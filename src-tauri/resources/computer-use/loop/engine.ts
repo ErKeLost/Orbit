@@ -6,9 +6,11 @@ import { noteDroppedCandidates, observe } from "../cua/observation.ts"
 import type { CuaCandidate, CuaObservation, VisualRegion } from "../cua/types.ts"
 import { applyPolicy, boundCandidates } from "../candidates/policy.ts"
 import { buildCandidates, indexByIdentity } from "../candidates/sources.ts"
+import { wantsGeometry } from "../candidates/geometry.ts"
 import { chooseAction, isRetryableChoiceError, type JevChoice, type JevChoiceInput } from "../choice/jev.ts"
 import { captureVisionImage, type VisionImage } from "../vision/image.ts"
 import { RepeatBrake, StallTracker } from "./stall.ts"
+import { beginPaste } from "./paste.ts"
 import { validateTaskInput, type GuiTaskEvent, type GuiTaskFailure, type GuiTaskInput, type GuiTaskMetrics, type GuiTaskResult, type GuiTaskStatus, type GuiTaskTrace } from "../gui-task-contract.ts"
 
 /** Predicted probability for finishing without an explicit done round trip. */
@@ -64,6 +66,18 @@ const DRIVER_FAILURES: Record<string, { stage: GuiTaskFailure["stage"]; branch?:
 /** Operations whose delivery changes the visible interface. */
 const CHANGE_OPERATIONS = new Set<CuaCandidate["operation"]>(["click", "double_click", "right_click", "type_text", "set_value", "press_key", "hotkey", "menu"])
 const RE_OBSERVE_WAIT_MS = 400
+/** How long a reobserve blocks waiting for the screen to actually change. */
+const DEFAULT_WAIT_FOR_CHANGE_MS = 2_500
+
+/** Overridable so a test can watch a wait finish without paying for it. */
+function waitForChangeMs(): number {
+  const raw = Number(process.env.ORBIT_CU_WAIT_MS)
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_WAIT_FOR_CHANGE_MS
+}
+/** Waits without a change before reobserve is withheld for this screen. */
+const MAX_FRUITLESS_WAITS = 2
+/** Rejected `done` claims on one screen before done is withheld. */
+const MAX_DONE_REJECTIONS = 2
 const MAX_OBSERVE_RETRIES = 2
 /** Below this the previous choice was uncertain, so a screenshot is worth its cost. */
 const VISION_CONFIDENCE_FLOOR = 0.6
@@ -127,6 +141,17 @@ export async function runCuaTask(
   const approvedEscalations = new Set<string>()
   const repeat = new RepeatBrake(2)
   const stall = new StallTracker()
+  /** Screens that already paid for the one extra capture geometric candidates need. */
+  const captureAttempted = new Set<string>()
+  /** Consecutive waits that produced no change; reset by any delivered action. */
+  let reobserves = 0
+  let reobserveWithheld = false
+  /** Targets that already used the clipboard route once this run. */
+  const pasted = new Set<string>()
+  /** Rejected `done` claims on one screen: a chooser that keeps insisting is stuck. */
+  let doneRejections = 0
+  let doneScreen = ""
+  let doneWithheld = false
   let actions = 0
   let decisions = 0
   let appLaunched = false
@@ -260,8 +285,10 @@ export async function runCuaTask(
     if (actions >= input.budget.maxActions) return finish("max_actions", observation)
     if (decisions >= input.budget.maxDecisions) return finish("max_decisions", observation)
 
-    // Candidates: built here, filtered here, bounded here.
-    const observed = observation
+    // Candidates: built here, filtered here, bounded here. `observed` is the
+    // observation the offer set is built from; it is replaced when the extra
+    // capture for geometric candidates succeeds.
+    let observed = observation
     const visual = visualFallback && !visualUsed && !visualUnavailable
       ? await readVisualRegions(driver, observed).catch(error => {
           // The perception extension is absent, not broken: stop paying for a
@@ -292,10 +319,30 @@ export async function runCuaTask(
         quarantined,
         triedHere,
         repeatedTargets: repeat.blocked,
+        reobserveAllowed: !reobserveWithheld,
+        doneAllowed: !doneWithheld,
       })
       return boundCandidates(policyCandidates)
     }
     let bound = buildOffers(false)
+    // A screen whose only visible targets expose no action leaves the chooser
+    // with nothing to pick, which is how WebView list rows used to end a run.
+    // Geometric candidates can address them, but they need the capture the
+    // coordinates were measured in — one extra screenshot on this exact screen,
+    // never on every turn.
+    if (wantsGeometry(observed, input.goal, Boolean(input.readOnly)) && !observed.captureId && !captureAttempted.has(observed.fingerprint)) {
+      captureAttempted.add(observed.fingerprint)
+      try {
+        const captured = await observeWithRetry(driver, { pid, windowId, includeScreenshot: true }, remaining(), signal)
+        observation = captured
+        observed = captured
+        const geometric = buildOffers(false)
+        if (geometric.offered.some(candidate => candidate.id.startsWith("geo."))) {
+          history.push("no actionable candidate names this goal; captured the window once and offered pointer candidates for the rows the accessibility tree exposes without an action")
+        }
+        bound = geometric
+      } catch { /* a capture that fails must not fail the run */ }
+    }
     // A capped offer set hides targets the window really has, so the scroll
     // candidates must exist. They are built in a second pass because only the
     // first one knows that the cap bit.
@@ -307,7 +354,10 @@ export async function runCuaTask(
     }
     const executable = offered.filter(candidate => candidate.tool)
     if (executable.length === 0) {
-      return finish("blocked", observation, lastNoEffect ? `no usable candidate remains; ${lastNoEffect}` : "no usable candidate on this screen")
+      const renderer = observation.rendererInactive
+        ? "; web content is readable but no element advertises an action (Chromium applies accessibility writes after a ~2s activation debounce), so the app may still have controls that are not addressable yet"
+        : ""
+      return finish("blocked", observation, (lastNoEffect ? `no usable candidate remains; ${lastNoEffect}` : "no usable candidate on this screen") + renderer)
     }
 
     const decisionStarted = performance.now()
@@ -381,6 +431,16 @@ export async function runCuaTask(
           + `${image ? " (a screenshot was attached, so the vision floor applies)" : ""}; done stays available next turn`,
         )
         entry.outcome = "done_rejected_low_confidence"
+        // Insisting on `done` without the evidence for it is the completion-side
+        // version of a wait loop: the live 汽水音乐 run spent eleven decisions
+        // repeating it. Withheld after two rejections on the same screen, so the
+        // chooser has to act or say it is blocked.
+        if (doneScreen !== observation.fingerprint) { doneScreen = observation.fingerprint; doneRejections = 0 }
+        doneRejections += 1
+        if (doneRejections >= MAX_DONE_REJECTIONS) {
+          doneWithheld = true
+          history.push(`done was rejected ${doneRejections} times on this screen and is now withheld; act on the screen or stop`)
+        }
         // Deliberately NOT added to triedHere. Policy withholds tried
         // candidates, and a screen that has stopped changing is the very shape
         // of a finished goal: excluding done here turned a false success into a
@@ -392,9 +452,18 @@ export async function runCuaTask(
       return finish("done", observation)
     }
     if (selected.operation === "reobserve") {
-      entry.outcome = "reobserved"
-      history.push("reobserve")
-      await delay(Math.min(RE_OBSERVE_WAIT_MS, remaining()), undefined, { signal }).catch(() => undefined)
+      // agent-desktop's rule is that a wait is a condition, not a sleep: block
+      // until the screen actually differs, and only then report back. Waiting
+      // twice on a screen that never moves is a dead end, so the candidate is
+      // withheld afterwards and the chooser has to act or abstain.
+      const changed = await waitForChange(driver, observation, Math.min(waitForChangeMs(), remaining()), signal)
+      reobserves += 1
+      entry.outcome = changed ? "reobserved_changed" : "reobserved_unchanged"
+      history.push(changed ? "reobserve: the screen changed while waiting" : "reobserve: the screen did not change while waiting")
+      if (!changed && reobserves >= MAX_FRUITLESS_WAITS) {
+        reobserveWithheld = true
+        history.push(`the screen has not moved across ${reobserves} waits; reobserve is withheld, so choose an action or stop`)
+      }
       continue
     }
 
@@ -429,6 +498,7 @@ export async function runCuaTask(
       actions++
       const key = selected.identity ?? selected.id
       performedSteps[key] = (performedSteps[key] ?? 0) + 1
+      reobserves = 0
       entry.outcome = normalized.effect ?? "delivered"
       lastAction = { operation: selected.legacyOperation, delivery: normalized.effect }
       if (selected.slotId) {
@@ -488,7 +558,42 @@ export async function runCuaTask(
     metrics.settleMs += performance.now() - settleStarted
     if (!after) return finish("needs_review", before, "delivery could not be verified: the successor observation failed")
 
-    const verified = verifyStep(selected, before, after, input)
+    let verified = verifyStep(selected, before, after, input)
+    // ---- the paste route ---------------------------------------------------
+    // A field can answer an accessibility write with success and keep its old
+    // value: Chromium and Electron inputs do exactly that. The value write is
+    // then not a text route but a no-op, so the text goes in the way a person
+    // would put it there — clipboard plus the paste shortcut — and the same
+    // read-back decides whether it landed.
+    if (verified.failed && selected.slotId && selected.elementToken && input.textSlots) {
+      const slot = input.textSlots.find(item => item.id === selected.slotId)
+      const targetIdentity = selected.identity ?? selected.id
+      const role = before.elements.find(element => element.elementToken === selected.elementToken)?.role ?? ""
+      if (slot && !input.readOnly && !pasted.has(targetIdentity) && !/secure/i.test(role)) {
+        pasted.add(targetIdentity)
+        let session: Awaited<ReturnType<typeof beginPaste>> | undefined
+        try {
+          session = await beginPaste(driver, { elementToken: selected.elementToken, text: slot.value, pid, windowId })
+          actions++
+          const pastedAfter = await observeWithRetry(driver, { pid, windowId }, remaining(), signal).catch(() => undefined)
+          const pastedVerdict = pastedAfter ? verifyStep(selected, before, pastedAfter, input) : { failed: true, note: "the successor observation failed after the paste" }
+          if (pastedAfter && !pastedVerdict.failed) {
+            after = pastedAfter
+            verified = pastedVerdict
+            entry.outcome = "delivered_by_paste"
+            entry.note = entry.note ? `${entry.note}; the value write did not apply, so the text was pasted and read back` : "the value write did not apply, so the text was pasted and read back"
+            history.push(`text ${slot.id}: the accessibility write left the field unchanged, so the clipboard route was used and read back`)
+          } else {
+            history.push(`text ${slot.id}: the clipboard route did not change the field either (${pastedVerdict.note ?? "no effect"})`)
+            entry.note = entry.note ? `${entry.note}; the paste route did not apply it either` : "the paste route did not apply it either"
+          }
+        } catch (error) {
+          history.push(`text ${slot.id}: the clipboard route failed (${safeError(error)})`)
+        } finally {
+          await session?.restore()
+        }
+      }
+    }
     entry.changed = !sameLines(before.signature, after.signature)
     if (verified.note) entry.note = entry.note ? `${entry.note}; ${verified.note}` : verified.note
     if (verified.failed) {
@@ -515,8 +620,13 @@ export async function runCuaTask(
     if (typeof choice.completesGoal === "number" && choice.completesGoal >= COMPLETION_THRESHOLD && entry.changed && !verified.failed) {
       const undelivered = (input.textSlots ?? []).filter(slot => !usedSlotIds.has(slot.id))
       if (!undelivered.length) {
-        goalVerified = true
-        entry.outcome = `${entry.outcome ?? "delivered"}; goal_verified_by_prediction`
+        // The screen changed and the chooser predicted completion, which is a
+        // prediction, not an observation: agent-desktop's rule is that a
+        // successful action proves nothing about the UI, so this must not be
+        // reported as verified. The run still ends, because the alternative is
+        // spending the rest of the budget on a step the chooser already took.
+        entry.outcome = `${entry.outcome ?? "delivered"}; completed_by_prediction`
+        entry.note = "the screen changed and the chooser predicted completion, but nothing in the successor observation proves the goal"
         return finish("done", after)
       }
     }
@@ -549,7 +659,27 @@ function isNotInstalled(error: unknown): boolean {
   return /not[\s_-]*installed|unknown tool|no such tool/i.test(safeError(error))
 }
 
-async function observeWithRetry(driver: CuaDriver, target: { pid: number; windowId: number }, timeoutMs: number, signal?: AbortSignal): Promise<CuaObservation> {
+/**
+ * Block until the window's tree differs from `before`, or the deadline passes.
+ *
+ * The point is to spend a turn productively: a fixed sleep either returns too
+ * early (the app was still working) or wastes the whole turn. Returns whether
+ * anything changed, so the caller can stop offering a wait that keeps failing.
+ */
+async function waitForChange(driver: CuaDriver, before: CuaObservation, timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    await delay(Math.min(300, Math.max(50, deadline - Date.now())), undefined, { signal }).catch(() => undefined)
+    if (signal?.aborted) return false
+    try {
+      const current = await observe(driver, { pid: before.pid, windowId: before.windowId, timeoutMs: 6_000 })
+      if (current.fingerprint !== before.fingerprint) return true
+    } catch { /* a read that fails is not a change; keep waiting */ }
+  }
+  return false
+}
+
+async function observeWithRetry(driver: CuaDriver, target: { pid: number; windowId: number; includeScreenshot?: boolean }, timeoutMs: number, signal?: AbortSignal): Promise<CuaObservation> {
   let lastError: unknown
   for (let attempt = 0; attempt <= MAX_OBSERVE_RETRIES; attempt++) {
     try {
@@ -583,9 +713,15 @@ export function verifyStep(candidate: CuaCandidate, before: CuaObservation, afte
     if (!target) {
       return { failed: false, note: `the target field is no longer on screen, so the prepared ${slot.id} text cannot be confirmed here` }
     }
-    const holds = typeof target.value === "string" && target.value.includes(slot.value)
+    // A field that holds the value twice satisfied a substring check: the earlier
+    // write landed and a later one appended. The field must hold exactly the
+    // prepared text, which is the same rule agent-desktop's paste read-back uses.
+    const holds = typeof target.value === "string" && target.value.trim() === slot.value.trim()
     if (holds) return { failed: false, note: `verified: the target field now holds the prepared ${slot.id} text` }
-    return { failed: true, note: "the target field does not contain the prepared text" }
+    if (/secure/i.test(target.role ?? "")) {
+      return { failed: true, note: "the target is a secure field, so its value is not read back and cannot be confirmed here" }
+    }
+    return { failed: true, note: "the target field does not hold exactly the prepared text" }
   }
   if (sameLines(before.signature, after.signature) && before.fingerprint === after.fingerprint) {
     return { failed: true, note: "the interface did not change after the action" }

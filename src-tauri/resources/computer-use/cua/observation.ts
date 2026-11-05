@@ -39,7 +39,7 @@ export async function observe(driver: CuaDriver, input: ObserveInput): Promise<C
   const overlay = detectOverlay(elements)
   const lines = elements.map(describeElement)
   const signature = elements.map(describeElementSignature)
-  const context = buildContext(raw, elements, lines, { degraded, overlay, complete: raw.elementsComplete })
+  const context = buildContext(raw, elements, lines, { degraded, overlay, complete: raw.elementsComplete, rendererInactive: rendererActionsInactive(elements) })
   return {
     pid: input.pid,
     windowId: input.windowId,
@@ -52,6 +52,8 @@ export async function observe(driver: CuaDriver, input: ObserveInput): Promise<C
     snapshotId: raw.snapshotId,
     captureId: raw.captureId,
     screenshot: raw.screenshot ? { width: raw.screenshot.width, height: raw.screenshot.height } : undefined,
+    windowBounds: raw.windowBounds,
+    rendererInactive: rendererActionsInactive(elements) || undefined,
     context,
     lines,
     signature,
@@ -60,6 +62,22 @@ export async function observe(driver: CuaDriver, input: ObserveInput): Promise<C
     ...(degradedReason ? { degradedReason } : {}),
     capturedAt: Date.now(),
   }
+}
+
+/**
+ * A readable web tree whose actions are not active yet.
+ *
+ * Chromium enters a limited accessibility mode when an AX role is first read,
+ * and its enhanced mode takes about two seconds to apply
+ * (`docs/solutions/runtime-errors/chromium-readable-tree-with-inactive-ax-actions.md`).
+ * The tree then lists elements whose actions do nothing, which is indistinguishable
+ * from "this app exposes no action" unless it is named. Detected generically:
+ * web content is present, yet not one element advertises a press.
+ */
+export function rendererActionsInactive(elements: readonly CuaElement[]): boolean {
+  const web = elements.filter(element => element.inWebContent)
+  if (web.length === 0) return false
+  return !elements.some(element => element.actions.some(action => /^AXPress$/i.test(action)))
 }
 
 /**
@@ -130,7 +148,7 @@ function buildContext(
   raw: { appName: string; windowTitle: string; totalElementCount: number; elementsComplete: boolean },
   elements: readonly CuaElement[],
   lines: readonly string[],
-  facts: { degraded: boolean; overlay?: string; complete: boolean; dropped?: number },
+  facts: { degraded: boolean; overlay?: string; complete: boolean; dropped?: number; rendererInactive?: boolean },
 ): string {
   const header = [
     `app=${raw.appName}`,
@@ -139,6 +157,9 @@ function buildContext(
     facts.dropped ? `dropped=${facts.dropped} candidates (the offer-set cap hid targets; scroll to reveal them)` : undefined,
     facts.degraded ? "degraded=ax_window_unresolved (the accessibility surface for this window is not resolvable right now)" : undefined,
     facts.overlay ? `overlay=${facts.overlay} (Escape closes it)` : undefined,
+    facts.rendererInactive
+      ? "renderer=web content is readable but no element advertises an action; Chromium applies accessibility writes after a ~2s activation debounce, so a semantic action here can answer success and change nothing — read the field back, or use the clipboard/pointer route"
+      : undefined,
   ].filter(Boolean).join("\n")
   return `${header}\nelements:\n${lines.join("\n")}`
 }

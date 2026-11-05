@@ -33,6 +33,14 @@ export type PolicyContext = {
   triedHere: ReadonlySet<string>
   /** Identities chosen too often in a row; the repeat brake. */
   repeatedTargets: ReadonlySet<string>
+  /**
+   * False once waiting on this screen has repeatedly produced no change. A
+   * wait that cannot reveal anything is not an option the chooser may keep
+   * taking; it has to act or stop.
+   */
+  reobserveAllowed?: boolean
+  /** False once `done` has been refused on this screen without new evidence. */
+  doneAllowed?: boolean
 }
 
 export function applyPolicy(candidates: readonly CuaCandidate[], context: PolicyContext): CuaCandidate[] {
@@ -44,6 +52,8 @@ export function applyPolicy(candidates: readonly CuaCandidate[], context: Policy
     if (candidate.risky && !riskAllowed) return false
     if (candidate.identity && context.quarantined.has(candidate.identity)) return false
     if (candidate.identity && context.repeatedTargets.has(candidate.identity)) return false
+    if (candidate.operation === "reobserve" && context.reobserveAllowed === false) return false
+    if (candidate.operation === "done" && context.doneAllowed === false) return false
     if (!candidate.slotId && context.triedHere.has(candidate.id) && candidate.operation !== "reobserve") return false
     return true
   })

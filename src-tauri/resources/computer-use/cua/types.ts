@@ -80,6 +80,19 @@ export type CuaObservation = {
   snapshotId?: string
   captureId?: string
   screenshot?: { width: number; height: number }
+  /**
+   * The window's rectangle in screen coordinates. Element frames are reported
+   * in that space, while a pointer click is addressed in window-local
+   * screenshot pixels, so every coordinate needs this rectangle (and the
+   * screenshot scale) to be delivered where the element actually is.
+   */
+  windowBounds?: { x: number; y: number; w: number; h: number }
+  /**
+   * Web content is readable but no element advertises an action. Chromium
+   * applies accessibility writes after an activation debounce, so this is a
+   * state to name, not a claim that the app has no controls.
+   */
+  rendererInactive?: boolean
   /** Compact table handed to the chooser. */
   context: string
   /** The readable table rows, one per element, each prefixed with its

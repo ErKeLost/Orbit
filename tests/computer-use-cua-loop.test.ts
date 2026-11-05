@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { describeElement, describeElementSignature, detectOverlay, stripMenuBar } from "../src-tauri/resources/computer-use/cua/observation.ts"
+import { describeElement, describeElementSignature, detectOverlay, rendererActionsInactive, stripMenuBar } from "../src-tauri/resources/computer-use/cua/observation.ts"
+import { deliveryEffect } from "../src-tauri/resources/computer-use/cua/driver.ts"
 import { roleClass } from "../src-tauri/resources/computer-use/candidates/roles.ts"
 import { buildCandidates, escalatedTwin, menuPath } from "../src-tauri/resources/computer-use/candidates/sources.ts"
 import { applyPolicy, boundCandidates, isRisky, MAX_EXECUTABLE_CANDIDATES } from "../src-tauri/resources/computer-use/candidates/policy.ts"
@@ -117,6 +118,33 @@ describe("observation shaping", () => {
     // that just became checked reads as "nothing happened".
     expect(describeElementSignature(first)).toContain("selected")
     expect(describeElementSignature(element({ elementIndex: 7, role: "AXButton", label: "保存", actions: ["AXPress"], enabled: false }))).toContain("disabled")
+  })
+})
+
+describe("renderer activation and delivery semantics", () => {
+  test("a readable web tree with no press capability is named, not read as an empty app", () => {
+    const web = [
+      element({ elementIndex: 1, role: "AXStaticText", label: "蓝", inWebContent: true, actions: ["AXShowMenu", "AXScrollToVisible"] }),
+      element({ elementIndex: 2, role: "AXStaticText", label: "石白其", inWebContent: true, actions: ["AXShowMenu"] }),
+    ]
+    expect(rendererActionsInactive(web)).toBe(true)
+    // One pressable control means the renderer's actions are live.
+    expect(rendererActionsInactive([...web, element({ elementIndex: 3, role: "AXButton", label: "播放", actions: ["AXPress"], inWebContent: true })])).toBe(false)
+    // Native trees are not judged by this rule at all.
+    expect(rendererActionsInactive([element({ elementIndex: 4, role: "AXStaticText", label: "标题", actions: [] })])).toBe(false)
+  })
+
+  test("the delivery verdict is derived from disposition, and an inconsistent pair is unknown", () => {
+    expect(deliveryEffect({ disposition: { delivery: "delivered_verified", retry: "unsafe" } })).toBe("confirmed")
+    expect(deliveryEffect({ disposition: { delivery: "delivered_unverified", retry: "unsafe" } })).toBe("unverifiable")
+    expect(deliveryEffect({ disposition: { delivery: "delivery_uncertain", retry: "unsafe" } })).toBe("unverifiable")
+    expect(deliveryEffect({ disposition: { delivery: "not_delivered", retry: "safe" } })).toBe("refused")
+    expect(deliveryEffect({ disposition: { delivery: "unknown", retry: "unknown" } })).toBe("unknown")
+    // Contradiction: a delivery that claims nothing landed but also that a retry is unsafe.
+    expect(deliveryEffect({ disposition: { delivery: "not_delivered", retry: "unsafe" } })).toBe("unknown")
+    // No disposition: fall back to the driver's own effect, and to unknown when absent.
+    expect(deliveryEffect({ effect: "confirmed" })).toBe("confirmed")
+    expect(deliveryEffect({})).toBeUndefined()
   })
 })
 
@@ -848,6 +876,123 @@ describe("cua loop", () => {
     })
     expect(confirms).toBe(1)
     expect(result.status).toBe("done")
+  })
+
+  test("a wait that never changes anything is withheld, so the loop cannot spin on it", async () => {
+    // agent-desktop treats a wait as a condition, not a sleep; a wait that
+    // produced no change twice must stop being an option.
+    process.env.ORBIT_CU_WAIT_MS = "40"
+    const elements = [element({ elementIndex: 1, role: "AXButton", label: "播放", actions: ["AXPress"], elementToken: "s1:1" })]
+    const driver = fakeDriver(() => elements)
+    const offered: string[][] = []
+    const result = await runCuaTask({ goal: "播放", target: { app: "Demo" }, budget: { maxActions: 5, maxDecisions: 6, maxDurationMs: 20_000 } } as GuiTaskInput, {
+      driver,
+      decide: async ({ candidates }) => {
+        offered.push(candidates.map(candidate => candidate.operation))
+        const wait = candidates.find(candidate => candidate.operation === "reobserve")
+        const id = wait?.id ?? "abstain"
+        return { selectedId: id, confidence: 0.9, probabilities: { [id]: 1 }, model: "fake", latencyMs: 0, usage: { inputTokens: 0, outputTokens: 0 } }
+      },
+    })
+    delete process.env.ORBIT_CU_WAIT_MS
+    expect(result.status).toBe("blocked")
+    expect(offered).toHaveLength(3)
+    expect(offered[0]).toContain("reobserve")
+    expect(offered[2]).not.toContain("reobserve")
+  })
+
+  test("text that the accessibility write did not apply goes in by paste, and the clipboard is put back", async () => {
+    // The Chromium/Electron shape: the write is acknowledged, the field keeps
+    // its old value. agent-desktop's route is clipboard + paste, verified by a
+    // read-back, with the borrowed clipboard restored afterwards.
+    let field = element({ elementIndex: 60, role: "AXTextField", label: "搜索", actions: ["AXPress"], elementToken: "s1:60", value: "" })
+    const calls: Array<{ tool: string; args: Record<string, unknown> }> = []
+    let pasted = false
+    const driver = {
+      transport: "cli",
+      listTools: async () => [],
+      listApps: async () => [{ name: "Demo", pid: 1, running: true, active: true }],
+      listWindows: async () => [{ windowId: 2, title: "Demo", pid: 1, onScreen: true }],
+      getWindowState: async () => ({ appName: "Demo", windowTitle: "Demo", pid: 1, windowId: 2, snapshotId: "s1", elements: [field], elementsComplete: true, truncated: false, totalElementCount: 1, raw: {} }) as WindowState,
+      callTool: async (tool: string, args: Record<string, unknown> = {}) => {
+        calls.push({ tool, args })
+        if (tool === "type_text") return { value: { effect: "unverifiable", disposition: { delivery: "delivered_unverified", retry: "unsafe" } }, text: "", images: [], isError: false }
+        if (tool === "clipboard_read") return { value: { text: "原来的剪贴板" }, text: "", images: [], isError: false }
+        if (tool === "clipboard_write") {
+          if (args.text === "蓝") { pasted = true; field = { ...field, value: "蓝" } }
+          return { value: {}, text: "", images: [], isError: false }
+        }
+        if (tool === "hotkey") return { value: { effect: "unverifiable", disposition: { delivery: "delivered_unverified", retry: "unsafe" } }, text: "", images: [], isError: false }
+        return { value: {}, text: "", images: [], isError: false }
+      },
+      dispose: async () => undefined,
+    } as unknown as CuaDriver
+    const result = await runCuaTask({ goal: "搜索蓝", target: { app: "Demo" }, budget: { maxActions: 5, maxDecisions: 5, maxDurationMs: 20_000 }, textSlots: [{ id: "q", value: "蓝", description: "搜索关键词" }] } as GuiTaskInput, {
+      driver,
+      decide: async ({ candidates }) => {
+        const type = candidates.find(candidate => candidate.operation === "type_text")
+        const id = type?.id ?? "done"
+        return { selectedId: id, confidence: 0.9, probabilities: { [id]: 1 }, model: "fake", latencyMs: 0, usage: { inputTokens: 0, outputTokens: 0 } }
+      },
+    })
+    const tools = calls.map(call => call.tool)
+    expect(tools).toContain("type_text")
+    expect(tools).toContain("clipboard_write")
+    const paste = calls.find(call => call.tool === "hotkey")
+    expect(paste?.args.keys).toEqual(["cmd", "v"])
+    // The borrowed clipboard comes back, and only after the read-back.
+    const writes = calls.filter(call => call.tool === "clipboard_write").map(call => call.args.text)
+    expect(writes).toEqual(["蓝", "原来的剪贴板"])
+    expect(pasted).toBe(true)
+    expect(result.status).toBe("done")
+    expect(result.trace.some(step => step.outcome === "delivered_by_paste")).toBe(true)
+  })
+
+  test("a secure field is never read back or pasted into", async () => {
+    const field = element({ elementIndex: 61, role: "AXSecureTextField", label: "密码", actions: ["AXPress"], elementToken: "s1:61", value: "" })
+    const calls: string[] = []
+    const driver = {
+      transport: "cli",
+      listTools: async () => [],
+      listApps: async () => [{ name: "Demo", pid: 1, running: true, active: true }],
+      listWindows: async () => [{ windowId: 2, title: "Demo", pid: 1, onScreen: true }],
+      getWindowState: async () => ({ appName: "Demo", windowTitle: "Demo", pid: 1, windowId: 2, snapshotId: "s1", elements: [field], elementsComplete: true, truncated: false, totalElementCount: 1, raw: {} }) as WindowState,
+      callTool: async (tool: string) => {
+        calls.push(tool)
+        return { value: { effect: "unverifiable", disposition: { delivery: "delivered_unverified", retry: "unsafe" } }, text: "", images: [], isError: false }
+      },
+      dispose: async () => undefined,
+    } as unknown as CuaDriver
+    await runCuaTask({ goal: "填密码", target: { app: "Demo" }, budget: { maxActions: 4, maxDecisions: 4, maxDurationMs: 20_000 }, textSlots: [{ id: "p", value: "s3cret", description: "密码" }] } as GuiTaskInput, {
+      driver,
+      decide: async ({ candidates }) => {
+        const type = candidates.find(candidate => candidate.operation === "type_text")
+        const id = type?.id ?? "abstain"
+        return { selectedId: id, confidence: 0.9, probabilities: { [id]: 1 }, model: "fake", latencyMs: 0, usage: { inputTokens: 0, outputTokens: 0 } }
+      },
+    })
+    expect(calls).not.toContain("clipboard_write")
+    expect(calls).not.toContain("hotkey")
+  })
+
+  test("a chooser that keeps claiming done without evidence loses the option", async () => {
+    const elements = [element({ elementIndex: 1, role: "AXButton", label: "播放", actions: ["AXPress"], elementToken: "s1:1" })]
+    const driver = fakeDriver(() => elements)
+    const doneOffered: boolean[] = []
+    const result = await runCuaTask({ goal: "播放这首歌", target: { app: "Demo" }, budget: { maxActions: 5, maxDecisions: 8, maxDurationMs: 20_000 } } as GuiTaskInput, {
+      driver,
+      decide: async ({ candidates }) => {
+        doneOffered.push(candidates.some(candidate => candidate.operation === "done"))
+        const done = candidates.find(candidate => candidate.operation === "done")
+        const id = done?.id ?? "abstain"
+        // Low confidence: the claim is refused every time it is made.
+        return { selectedId: id, confidence: 0.1, probabilities: { [id]: 1 }, model: "fake", latencyMs: 0, usage: { inputTokens: 0, outputTokens: 0 } }
+      },
+    })
+    expect(result.status).toBe("blocked")
+    expect(doneOffered[0]).toBe(true)
+    // Two rejections, then the third call no longer sees done at all.
+    expect(doneOffered[2]).toBe(false)
   })
 
   test("a capped offer set says so and still offers scrolling", async () => {
