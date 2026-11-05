@@ -6,6 +6,46 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.33
+
+A performance release for the chat surface, measured against t3code rather than
+guessed at. The comparison and what is still open live in `docs/PERF.md`.
+
+Long sessions no longer keep every turn in the DOM. Past 80 groups (about 40
+exchanges) the transcript mounts the most recent 40 and puts a "显示更早的 40 段"
+button at the top; expanding restores `scrollTop` by the height delta, so the
+reader's view does not move. The window is decided once per mount or per session
+switch, which means history never disappears from under someone reading it, and
+sessions under the threshold render exactly as before. `PromptOutline` already
+derived from the DOM and documents that it stays correct when the list is paged.
+This is the conservative version of what t3code's virtualised timeline buys: not
+per-row windowing (chat rows vary too much in height to swap in and out safely),
+but fewer than a hundred rows instead of several hundred.
+
+Two performance escape hatches turned out never to have been connected.
+`perf-tier.ts` wrote `data-perf` while the stylesheet gated on
+`[data-perf-tier="low"]`, so nothing the low-end tier claimed to do had ever
+happened; the tier now really stops the shimmer, the thinking pulse, the tool
+spinner and the typing dots, freezes the empty-session galaxy to one static
+frame, and drops macOS vibrancy — which requires a non-opaque window — back to an
+opaque one. `html[data-page-visible="false"] *` had existed for several releases
+with nothing writing the attribute, so a backgrounded window kept compositing
+every decorative animation; visibility is now published on `<html>`. A regression
+guard fails the build if a stylesheet gate ever loses its writer again.
+
+The chat surface also stops doing per-frame work that was not per-frame:
+`TerminalDock`, `PromptOutline` and the jump-to-bottom control are memoised
+(their props were already stable), and the markdown plugin array no longer gets a
+new identity on every streaming token — `source` left the dependency list in
+favour of the boolean it was only used to compute.
+
+Two structural candidates are documented but deliberately unchanged, because
+they change how the app looks or ships: the `transparent: true` window with
+native vibrancy (t3code's Electron window is opaque), and the `mask-image` on the
+transcript scroller, which in WebKit is a common source of scroll jank for the
+sake of a 2.5rem bottom fade. Both are one-line experiments with a procedure in
+`docs/PERF.md`.
+
 ## v1.0.32
 
 A performance release, with two correctness fixes found while measuring.
