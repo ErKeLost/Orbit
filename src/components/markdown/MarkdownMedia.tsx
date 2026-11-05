@@ -228,11 +228,12 @@ function MediaElement({
       className="md-media"
       src={src ?? undefined}
       alt={alt}
-      title={title}
+      title={size ? undefined : title}
       loading="lazy"
       decoding="async"
       data-standalone={standalone ? "" : undefined}
       style={size?.height ? { width: size.width, height: "auto" } : size ? { maxWidth: size.width } : undefined}
+      // `"=320x"` 是尺寸提示，不是给鼠标悬停看的文案。
       onError={() => setFailed(true)}
     />
   );
