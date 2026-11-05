@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore, memo } from "react";
 import { ChevronDown } from "../../shared/ui/icons";
 
 /** Scroll events update the button without rerendering the session pane. */
@@ -24,7 +24,7 @@ export function useTranscriptJumpVisibility() {
   return visibility;
 }
 
-export function TranscriptJumpToBottom({
+export const TranscriptJumpToBottom = memo(function TranscriptJumpToBottom({
   visibility,
   onJump,
 }: {
@@ -47,4 +47,4 @@ export function TranscriptJumpToBottom({
       </button>
     </div>
   );
-}
+});

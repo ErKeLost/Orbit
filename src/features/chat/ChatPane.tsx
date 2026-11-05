@@ -95,6 +95,14 @@ function useFrameStream() {
   return view;
 }
 
+/**
+ * 长会话默认挂载的最后若干段，以及每点一次「显示更早」多放的段数。
+ * 一段是 `groupDisplayMessages` 的一组（一条提问，或者一次连续回答），所以
+ * 40 段大约是 20 轮对话，够撑满一屏还多。
+ */
+const TRANSCRIPT_WINDOW = 40;
+const TRANSCRIPT_PAGE = 40;
+
 /** 扩展状态 -> 单行字符串：选择器按值比较，内容不变就不重渲。 */
 function extensionStatusLine(statuses: Record<string, string>): string {
   const rows: string[] = [];
@@ -177,7 +185,7 @@ export function ChatPane({
   const userTurns = useMemo(() => transcript.messages.reduce((count, item) => (item.message.role === "user" ? count + 1 : count), 0), [transcript.messages]);
   const lastUserId = userTurns > 0 ? String(userTurns) : null;
   const jumpVisibility = useTranscriptJumpVisibility();
-  const { scroller: ref, scrollerEl, setScroller, jumpToBottom } = useConversationScroll({
+  const { scroller: ref, scrollerEl, setScroller, jumpToBottom, following } = useConversationScroll({
     lastUserId,
     content: transcript.messages,
     busy,
@@ -187,6 +195,8 @@ export function ChatPane({
   // is a new visit: it uses the true transcript height so the latest reply sits
   // near the composer instead of a hole of empty space (Orbit `anchorTurn`).
   const [anchorTurn, setAnchorTurn] = useState(busy);
+  // `null` = 默认窗口（最近 TRANSCRIPT_WINDOW 段）；展开后是一个绝对下标。
+  const [windowStart, setWindowStart] = useState<number | null>(null);
   const seenUserTurns = useRef(userTurns);
   if (userTurns !== seenUserTurns.current) {
     // 只有「多了一条提示」才是发送；切会话/重连 hydrate 一次换进整段历史不算。
@@ -265,7 +275,12 @@ export function ChatPane({
   const activity = agents && (agents.active.length > 0 || agents.recent.length > 0) ? <AgentActivityFeed snapshot={agents} onOpenAgent={openAgent} /> : undefined;
 
   const activeGroup = groups.findIndex((group) => group.indexes.includes(transcript.active));
-  const lastAssistant = [...groups].reverse().find((group) => group.items[0]?.message.role !== "user");
+  const lastAssistant = (() => {
+    for (let index = groups.length - 1; index >= 0; index -= 1) {
+      if (groups[index].items[0]?.message.role !== "user") return groups[index];
+    }
+    return undefined;
+  })();
   // 最后一条 assistant 消息自带的错误已由轮内（AssistantTurn）渲染；底部横幅
   // 只展示不属于任何轮的错误（如 extension_error），避免同一个错误出现两次。
   const lastMessageError = useMemo(() => {
@@ -281,6 +296,49 @@ export function ChatPane({
   const anchorFrom = anchorTurn
     ? groups.reduce((found, group, index) => (group.items[0]?.message.role === "user" ? index : found), -1)
     : -1;
+
+  /* ------------------------------------------------------------ windowing */
+  // 长会话只挂载最近的一段。t3code 的 MessagesTimeline 用虚拟列表解决的是同
+  // 一件事：几百段的 DOM 让滚动、布局、逐段的 ResizeObserver 全部变成 O(段数)。
+  // 这里不做逐项虚拟化（聊天行高度差异太大，闪进闪出的风险高），只做
+  // 按段展开：默认最近 TRANSCRIPT_WINDOW 段，顶部按钮每次往前放一段。
+  //
+  // 判定只做一次：这一次挂载既然已经按「全量」渲染，就一路全量到底——读到一半
+  // 被抽掉上面几百行，阅读位置会跳。切换会话 / 重新打开时才重新判定，而历史
+  // 会话本来就是在打开时就走窗口的那一类。
+  const windowRef = useRef<boolean | null>(null);
+  if (windowRef.current === null && groups.length > 0) {
+    windowRef.current = groups.length > TRANSCRIPT_WINDOW + TRANSCRIPT_PAGE;
+  }
+  const windowed = windowRef.current === true;
+  const autoStart = Math.max(0, groups.length - TRANSCRIPT_WINDOW);
+  // 展开之后窗口从展开点继续往后长，新消息不会把它推回去。
+  const start = windowed ? Math.min(windowStart ?? autoStart, autoStart) : 0;
+  const pendingScrollTop = useRef<number | null>(null);
+  const showEarlier = useCallback(() => {
+    // 先记住展开前的总高度，DOM 提交后把差值补回 scrollTop：读者眼里内容
+    // 一动不动，只是上面多出了几段。
+    pendingScrollTop.current = scrollerEl?.scrollHeight ?? null;
+    setWindowStart(Math.max(0, start - TRANSCRIPT_PAGE));
+  }, [scrollerEl, start]);
+  useLayoutEffect(() => {
+    const el = scrollerEl;
+    const before = pendingScrollTop.current;
+    if (before == null || !el) return;
+    pendingScrollTop.current = null;
+    // 贴着底的时候不必补：新内容在视口上方，下一次贴底就把位置收回来了。
+    if (following.current) return;
+    el.scrollTop += el.scrollHeight - before;
+  }, [start, scrollerEl, following]);
+  // 换会话时重新判定窗口，并清掉上一条会话的展开偏移。只认真正的切换：
+  // 挂载时再清一次会让第一次渲染的判定白做（并且多一帧全量渲染的可能）。
+  const lastSession = useRef(sessionFile);
+  useLayoutEffect(() => {
+    if (lastSession.current === sessionFile) return;
+    lastSession.current = sessionFile;
+    windowRef.current = null;
+    setWindowStart(null);
+  }, [sessionFile]);
 
   // A sent prompt rises from the upper screen into its anchored spot at the
   // top. On mount this only plays for a session's first send.
@@ -338,6 +396,17 @@ export function ChatPane({
       activity={group === lastAssistant ? activity : undefined}
     />
   );
+  const earlier = start > 0 ? (
+    <div className="flex justify-center px-4 pb-1 pt-2">
+      <button
+        type="button"
+        onClick={showEarlier}
+        className="rounded-full border border-stroke/60 bg-content/4 px-3 py-1 font-sans text-[12px] text-content/55 hover:bg-content/8 hover:text-content/80"
+      >
+        显示更早的 {Math.min(TRANSCRIPT_PAGE, start)} 段（之前还有 {start} 段）
+      </button>
+    </div>
+  ) : null;
 
   return sheet(
     <>
@@ -356,14 +425,15 @@ export function ChatPane({
               reserves a pane of height (`transcript-turn-anchor`), so a prompt
               sent with the transcript pinned to the bottom sits at the top. */}
           <div data-transcript-content className="mx-auto flex w-full min-w-0 max-w-4xl flex-col gap-1 pb-8">
-            {anchorFrom < 0 ? (
+            {earlier}
+            {anchorFrom < start ? (
               <>
-                {groups.map(renderGroup)}
+                {groups.slice(start).map((group, offset) => renderGroup(group, start + offset))}
                 {waiting ? <InitialWorking label={runningLabel} startedAt={transcript.turnStartedAt} /> : null}
               </>
             ) : (
               <>
-                {groups.slice(0, anchorFrom).map(renderGroup)}
+                {groups.slice(start, anchorFrom).map((group, offset) => renderGroup(group, start + offset))}
                 {/* The running turn holds its prompt, answer and status line, and
                     is stretched to a pane (`.transcript-turn-anchor`). Pinned to
                     the bottom, that pane-tall turn shows the prompt at its top

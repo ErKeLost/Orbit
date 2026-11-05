@@ -4,6 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from './lib/rpc'
 import { installExternalLinkHandler } from './lib/external-links'
 import { installPerfLog } from './lib/perf-log'
+import { installPageVisibility } from './lib/page-visibility'
 import { warmHighlight } from './lib/highlight'
 import './lib/perf-tier'
 import { Providers } from './components/Providers'
@@ -13,6 +14,7 @@ import './index.css'
 document.title = import.meta.env.DEV ? 'Workspace · DEV (HMR)' : 'Workspace'
 installExternalLinkHandler()
 installPerfLog()
+installPageVisibility()
 
 // 语音页是最重的一个 lazy chunk（three.js + R3F）。等首屏闲下来再把它拉下来，
 // 否则第一次点侧栏「语音」会先看到一块空白，chunk 到了才是球——那就是"闪一下"。

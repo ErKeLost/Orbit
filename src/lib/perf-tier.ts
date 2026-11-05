@@ -19,5 +19,10 @@ function detect(): PerfTier {
 export const perfTier: PerfTier = detect();
 export const isLowPerf = perfTier === "low";
 
-// CSS 侧通过 [data-perf="low"] 关掉无限循环动画等重绘源。
-if (typeof document !== "undefined") document.documentElement.dataset.perf = perfTier;
+// CSS 侧的降级规则挂在 `[data-perf-tier="low"]` 上（styles/orbit.css）。
+// 这里曾经写成 `data-perf`，于是低配档只改了 JS、样式一条都没命中——降级开关
+// 一直是空转的。两个都写，旧覆盖脚本按 `data-perf` 读也还能用。
+if (typeof document !== "undefined") {
+  document.documentElement.dataset.perfTier = perfTier;
+  document.documentElement.dataset.perf = perfTier;
+}

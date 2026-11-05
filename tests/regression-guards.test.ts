@@ -222,3 +222,26 @@ describe("browser column ownership", () => {
     expect(dock).toContain("hidden={tab.path !== shown?.path}")
   })
 })
+
+describe("performance escape hatches", () => {
+  test("every data-* attribute the stylesheet gates effects on is actually written", () => {
+    // `html[data-perf-tier="low"]` and `html[data-page-visible="false"]` both
+    // existed for a release while nothing wrote the attribute: the low-end
+    // stylesheet never applied and a backgrounded window kept every decorative
+    // animation running. A gate nobody sets is worse than no gate, because it
+    // reads like the work is done.
+    const styles = filesUnder("src/styles", ".css").map(file => readFileSync(file, "utf8")).join("\n")
+    const gated = new Set([...styles.matchAll(/html\[(data-[a-z-]+)=/g)].map(match => match[1]!))
+
+    const written = new Set<string>()
+    for (const file of SOURCES) {
+      const source = readFileSync(file, "utf8")
+      for (const match of source.matchAll(/dataset\.([a-zA-Z]+)\s*=/g)) {
+        written.add(`data-${match[1]!.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}`)
+      }
+      for (const match of source.matchAll(/setAttribute\(\s*["'](data-[a-z-]+)["']/g)) written.add(match[1]!)
+    }
+
+    expect({ missing: [...gated].filter(attribute => !written.has(attribute)) }).toEqual({ missing: [] })
+  })
+})

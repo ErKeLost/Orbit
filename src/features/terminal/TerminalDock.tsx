@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { invoke } from "../../lib/native";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { MenuItem, PointMenu } from "../../shared/ui/controls";
@@ -91,7 +91,11 @@ type Tab = { id: string; label: string; cwd: string };
  * a tab strip whose trailing controls are new-terminal / move / hide, and every
  * terminal kept mounted (only the active one visible).
  */
-export function TerminalDock({ cwd, open }: { cwd: string; open: boolean }) {
+/**
+ * 终端船坞挂在会话面上，而会话面在流式期间每帧重渲一次。它自己的状态（标签、
+ * 尺寸、菜单）和 shell store 的订阅足以驱动它重渲，父组件的帧不该带着它一起跑。
+ */
+export const TerminalDock = memo(function TerminalDock({ cwd, open }: { cwd: string; open: boolean }) {
   const side = useShell((state) => state.terminalPosition);
   const setSide = useShell((state) => state.setTerminalPosition);
   const size = useShell((state) => state.terminalSize);
@@ -338,4 +342,4 @@ export function TerminalDock({ cwd, open }: { cwd: string; open: boolean }) {
       </span>
     </section>
   );
-}
+});

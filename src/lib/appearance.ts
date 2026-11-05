@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { setTheme as setNativeTheme } from "@tauri-apps/api/app";
 import { nativeThemePreference, themeColor, type ResolvedTheme } from "./theme";
+import { isLowPerf } from "./perf-tier";
 
 /**
  * Orbit's appearance model, ported: one hue, one saturation, one dark
@@ -125,11 +126,23 @@ type AppearanceState = {
 /** macOS native vibrancy, the same path Orbit uses (has-native-glass). */
 async function applyNativeGlass(state: Pick<AppearanceState, "scheme" | "blur" | "bodyGlass" | "sidebarOpacity">) {
   const root = document.documentElement;
-  const eligible = state.scheme === "dark" && IS_MAC_RUNTIME;
+  // 低配档不挂原生活体模糊：带 vibrancy 的窗口必须是非不透明窗口，合成器要把
+  // 每一帧的内容和背后的桌面混合一次（Electron 版 t3code 用的就是不透明窗口）。
+  const eligible = state.scheme === "dark" && IS_MAC_RUNTIME && !isLowPerf;
   root.classList.toggle("has-native-glass", eligible);
   root.classList.toggle("glass-body", eligible && state.bodyGlass);
   root.style.setProperty("--sidebar-blur", `${state.blur}px`);
-  if (!eligible) return;
+  if (!eligible) {
+    // 从深色切到浅色（或降级）时把已经挂上的 effect 撤掉，否则窗口会一直带着
+    // 一层没人看得见、但一直在算的模糊。
+    if (!glassApplied) return;
+    glassApplied = false;
+    try {
+      const { getCurrentWindow } = await import("@tauri-apps/api/window");
+      await getCurrentWindow().setEffects({ effects: [] });
+    } catch { /* 没有 effect API（非 macOS / 旧版） */ }
+    return;
+  }
   try {
     const { getCurrentWindow, Effect, EffectState } = await import("@tauri-apps/api/window");
     await getCurrentWindow().setEffects({
@@ -137,12 +150,15 @@ async function applyNativeGlass(state: Pick<AppearanceState, "scheme" | "blur" |
       state: EffectState.FollowsWindowActiveState,
       radius: state.blur,
     });
+    glassApplied = true;
   } catch {
     root.classList.remove("has-native-glass", "glass-body");
   }
 }
 
 const IS_MAC_RUNTIME = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+/** 窗口上是否真的挂着 vibrancy，撤掉时不必再发一次 IPC。 */
+let glassApplied = false;
 
 function applyToDocument(state: Pick<AppearanceState, "scheme" | "hue" | "saturation" | "darkLightness" | "sidebarOpacity" | "accent" | "diffPalette" | "blur" | "bodyGlass">) {
   const root = document.documentElement;

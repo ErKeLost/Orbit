@@ -517,6 +517,19 @@ html[data-perf-tier="low"] .shimmer-text {
   background: none;
 }
 
+/*
+ * 低配档把「为了好看而一直在重绘」的东西停掉：流式期间同时跑着 shimmer、
+ * 呼吸的思考行、转圈的虚线环和打字点，每一个都是自己的一层渐变重绘。读起来
+ * 仍然是「在动」——文字照样到达，只是不再为动效付每帧的账。
+ */
+html[data-perf-tier="low"] .zen-thinking-pulse,
+html[data-perf-tier="low"] .zen-tool-spin,
+html[data-perf-tier="low"] .agent-chat-typing-dot,
+html[data-perf-tier="low"] .agent-feed-shimmer {
+  animation: none;
+}
+
+/* 后台窗口别画：合成器不用为看不见的像素跑动画。 */
 html[data-page-visible="false"] * {
   animation-play-state: paused !important;
 }

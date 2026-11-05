@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { memo, useEffect, useRef, useState, type RefObject } from "react";
 import { Popover } from "../../shared/ui/Popover";
 
 /**
@@ -23,7 +23,12 @@ function samePrompts(a: readonly Prompt[], b: readonly Prompt[]): boolean {
   return true;
 }
 
-export function PromptOutline({ scope }: { scope: RefObject<HTMLElement | null> }) {
+/**
+ * "每帧都重渲一次" 的租约：会话面在流式期间每帧重渲一次，而这条轨道只依赖
+ * 提示行的增删和自己的滚动位置。`memo` 把它的重渲收回到 `scope` 变化、或者它
+ * 自己的 state 变化（observer / scroll）的时候。
+ */
+export const PromptOutline = memo(function PromptOutline({ scope }: { scope: RefObject<HTMLElement | null> }) {
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [hover, setHover] = useState<{ id: string; y: number } | null>(null);
@@ -156,4 +161,4 @@ export function PromptOutline({ scope }: { scope: RefObject<HTMLElement | null> 
       })()}
     </div>
   );
-}
+});

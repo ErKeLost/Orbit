@@ -86,14 +86,18 @@ export const Markdown = memo(function Markdown({
   // 增量解析的缓存必须活过重渲染，所以插件实例按「数学插件是否已在管线里」稳定化：
   // 数学插件是异步装上的，装上前缓存下来的树没有公式，必须换一份。
   const incremental = useMemo(() => createIncrementalMarkdownPlugin(), [plugins]);
+  // 布尔值进依赖，而不是 `source` 本身：流式时它每个 token 都换一次引用，
+  // 把它写进依赖等于每帧都判一次新数组（连带 react-markdown 重建管线）。
+  // 围栏出现之后这个布尔值就一直为 true，插件列表跟着稳定下来。
+  const streamingFence = animated && FENCE_PATTERN.test(source);
 
   const remarkPlugins = useMemo(() => {
     const base = lineBreaks ? MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : MARKDOWN_REMARK_PLUGINS;
     const list: PluggableList = [remarkMentions, ...base];
     if (hasMath && plugins) list.unshift(...plugins.remark);
-    if (animated && FENCE_PATTERN.test(source)) list.push(incremental);
+    if (streamingFence) list.push(incremental);
     return list;
-  }, [animated, hasMath, incremental, lineBreaks, plugins, source]);
+  }, [hasMath, incremental, lineBreaks, plugins, streamingFence]);
 
   const rehypePlugins = useMemo(() => {
     const list: PluggableList = [...MARKDOWN_REHYPE_PLUGINS, rehypeHeadingIds];

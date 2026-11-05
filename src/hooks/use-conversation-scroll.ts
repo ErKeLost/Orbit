@@ -232,7 +232,9 @@ export function useConversationScroll({
 
   useTurnScrollAnchor(scrollerEl, stickToBottom, rememberScroll);
 
-  return { scroller, scrollerEl, setScroller, jumpToBottom } as const;
+  // `following` 让调用方知道读者是不是贴在底部：只有不在底部时才需要替他们
+  // 保持阅读位置（例如往视口上方补几段历史）。
+  return { scroller, scrollerEl, setScroller, jumpToBottom, following: stickToBottom } as const;
 }
 
 /**

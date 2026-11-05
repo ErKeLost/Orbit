@@ -20,6 +20,7 @@ import {
   type GalaxyMote,
   type GalaxyStar,
 } from "./galaxyDots";
+import { isLowPerf } from "../../lib/perf-tier";
 
 /**
  * The artwork, lossless and 1280×720. It is never shown as a picture: it is
@@ -106,6 +107,9 @@ export function GalaxyDotBackground({
     let ready = false;
 
     const still = window.matchMedia("(prefers-reduced-motion: reduce)");
+    // 低配档等同「减少动态效果」：只落一帧静态图，不再 25fps 重绘整块画布。
+    // 首页是唯一挂着这块画布的地方，但它同时也是用户停最久的界面。
+    const stillMotion = () => still.matches || isLowPerf;
 
     const layout = () => {
       const rect = root.getBoundingClientRect();
@@ -167,7 +171,7 @@ export function GalaxyDotBackground({
 
       // Reduced motion: the plate sits at home and holds a fixed brightness,
       // which is exactly the still frame the star layer holds as well.
-      const motion = !still.matches;
+      const motion = !stillMotion();
       const clock = motion ? time : 0;
 
       drift = galaxyDrift(clock, motion, float, pointer);
