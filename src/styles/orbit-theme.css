@@ -656,7 +656,13 @@ html.has-chat-background.chat-background-effect-ready.chat-background-gradient-b
 
 /* Fade scrolling content at the bottom viewport edge. */
 .sidebar-session-scroll,
-.transcript-composer-fade .agent-transcript {
+/*
+ * 底部 2.5rem 的渐隐。mask 挂在这层**不滚动**的包裹上，不是滚动容器本身：
+ * 放在 scroller 上时，mask 层要跟着 scrollTop 一起重算，Chromium/WebKit 都可能
+ * 退成非合成滚动（滚动时整块重绘）。包裹层不动，滚动就还是纯位移。
+ * 包裹层没有自己的背景，所以视觉与之前完全一致。
+ */
+.transcript-scroll-fade {
   --scroll-bottom-mask: linear-gradient(
     to bottom,
     #000,

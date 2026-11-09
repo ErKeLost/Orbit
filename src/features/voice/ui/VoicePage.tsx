@@ -78,7 +78,7 @@ function CallControl({
   );
 }
 
-export function VoicePage() {
+export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
   const voice = useVoiceAgent();
   const orbColors = useOrbColors();
   const { state } = voice;
@@ -119,6 +119,9 @@ export function VoicePage() {
             // 默认 100ms 的 resize 防抖会让首帧画在默认 300×150 的缓冲上，看起来是
             // 一次"抖一下"。这个容器尺寸是固定的，不需要防抖。
             resizeDebounce={0}
+            // 语音页常驻挂载（保住 WebGL 上下文），但看不见的时候不该继续 60fps
+            // 画这颗球：那是合成器上一直在跑的额外一层。
+            paused={!visible}
             colors={orbColors}
             agentState={agentState}
             volumeMode="manual"
@@ -161,7 +164,7 @@ export function VoicePage() {
         </div>
         <div className={active ? "relative w-40" : "relative w-64"}>
           <LiveWaveform
-            active={active && state !== "thinking"}
+            active={visible && active && state !== "thinking"}
             level={state === "speaking" ? voice.outputLevel : voice.level}
             processing={voice.starting}
             mode="static"

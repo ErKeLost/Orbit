@@ -43,6 +43,7 @@ export const KEYBINDINGS: KeybindingRow[] = [
   { command: "Voice: Toggle", default: `${MOD}+Shift+KeyM`, label: "语音输入 开始 / 结束", when: "首页或会话输入框" },
   { command: "Voice: Start", default: "", label: "开始语音输入", when: "首页或会话输入框" },
   { command: "Voice: Stop", default: "", label: "结束语音输入", when: "首页或会话输入框" },
+  { command: "App: Perf HUD", default: `${MOD}+Shift+KeyP`, label: "性能面板（帧率 / 停顿）", when: "Always" },
 ];
 
 export type KeybindingOverride = { disabled?: boolean; shortcut?: string };

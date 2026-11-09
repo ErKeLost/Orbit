@@ -195,6 +195,16 @@ export function ChatPane({
   // is a new visit: it uses the true transcript height so the latest reply sits
   // near the composer instead of a hole of empty space (Orbit `anchorTurn`).
   const [anchorTurn, setAnchorTurn] = useState(busy);
+  // 切标签/切会话时 ChatPane 会重挂：长会话的 markdown 解析 + 布局是几百毫秒到
+  // 几秒的一整块同步工作，卡在这一帧里就连标签栏的高亮都画不出来。第一帧只画
+  // 骨架，把真正的正文放到下一轮 task 里的 transition 中渲染：React 可以把这棵
+  // 大树分片安排，中间的帧照样画（占位条还在动、点别的标签也有反馈），而不是
+  // 整机“卡成 ppt”。挂载后不再变，流式渲染不受影响。
+  const [heavyReady, setHeavyReady] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => startTransition(() => setHeavyReady(true)), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
   // `null` = 默认窗口（最近 TRANSCRIPT_WINDOW 段）；展开后是一个绝对下标。
   const [windowStart, setWindowStart] = useState<number | null>(null);
   const seenUserTurns = useRef(userTurns);
@@ -372,7 +382,8 @@ export function ChatPane({
   );
 
   // 会话还没到：骨架屏占位，不要停在旧会话的内容上再突然换掉。
-  if (transcript.loading) {
+  // 首帧（切换后的那一帧）也只有长会话才画骨架：短会话直接出正文，不闪。
+  if (transcript.loading || (!heavyReady && groups.length > 12)) {
     return sheet(
       <>
         <ChatBackground />
@@ -420,7 +431,10 @@ export function ChatPane({
         </div>
       ) : null}
       <div className="@container relative min-h-0 flex-1 transcript-composer-fade">
-        <div ref={setScroller} className="agent-transcript h-full overflow-y-auto overscroll-none font-mono text-[13px] leading-5 [overflow-anchor:none]">
+        {/* 底部渐隐的 mask 放在这层静态包裹上，而不是滚动容器本身：mask 层不用
+            跟着 scrollTop 重算，滚动仍然是合成器上的纯位移（PERF.md 候选 #2）。 */}
+        <div className="transcript-scroll-fade h-full">
+          <div ref={setScroller} className="agent-transcript h-full overflow-y-auto overscroll-none font-mono text-[13px] leading-5 [overflow-anchor:none]">
           {/* Orbit's chat transcript: top-aligned content whose newest turn
               reserves a pane of height (`transcript-turn-anchor`), so a prompt
               sent with the transcript pinned to the bottom sits at the top. */}
@@ -445,6 +459,7 @@ export function ChatPane({
               </>
             )}
             {transcript.error && !transcript.running && transcript.error !== lastMessageError ? <ErrorRow error={transcript.error} /> : null}
+          </div>
           </div>
         </div>
         <PromptOutline scope={ref} />

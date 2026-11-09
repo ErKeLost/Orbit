@@ -24,6 +24,7 @@ import { sendRemotePiCommand } from "./remote-runtime";
 import type { RemoteJson } from "./remote-protocol";
 import { mobileRuntime } from "./runtime";
 import { isStaleExtensionContextError } from "./extension-errors";
+import { perfSpan } from "./perf-monitor";
 
 export const queryClient=new QueryClient({defaultOptions:{queries:{retry:false,refetchOnWindowFocus:false,staleTime:15000,gcTime:120000}}})
 
@@ -353,7 +354,9 @@ export async function refresh(target=activeTarget()){
 type CachedTranscript = { transcript: Transcript; /** `${size}:${mtimeMs}` when the snapshot was taken. */ stamp?: string; /** pi 在快照那一刻的 messageCount；对不上就不能直接用（叶路径/运行时消息）。 */ count?: number; /** 快照之后又收到过事件：文件戳不再代表缓存。 */ dirty: boolean }
 const transcriptCache = new Map<string, CachedTranscript>()
 // 画像已经不带宽带了（图片是引用），多留几条才对得上“多会话并行”。
-const TRANSCRIPT_CACHE_LIMIT = 6
+// 6 条太窄：开着十几个会话时，来回切一次就把上一次的缓存挤掉，于是每次切都
+// 重读一遍会话文件。transcript 里图片已经是路径/引用，多留几条的成本很小。
+const TRANSCRIPT_CACHE_LIMIT = 16
 /** 会话文件戳：切换会话时用它判断内存里的 transcript 还能不能直接用。 */
 const fileStamp = (stamp: { size: number; mtimeMs: number }) => `${stamp.size}:${stamp.mtimeMs}`
 // 这两条都只在本机有意义：手机没有这台机器的磁盘，也没有 transcript 缓存。
@@ -378,8 +381,19 @@ export async function sessionProject(sessionPath: string, leaf?: string) {
  * 已有的干净条目只要文件戳没变就原样返回，悬停与打开都不会重复读盘。
  */
 export type PrimedProjection = { transcript: Transcript; count: number }
-export async function primeProjection(sessionPath: string): Promise<PrimedProjection | undefined> {
- if (!sessionPath || mobileRuntime()) return undefined
+/** 同一个会话文件同时只读一次：悬停预取和真正的打开会撞在同一毫秒。 */
+const projectionsInFlight = new Map<string, Promise<PrimedProjection | undefined>>()
+export function primeProjection(sessionPath: string): Promise<PrimedProjection | undefined> {
+ if (!sessionPath || mobileRuntime()) return Promise.resolve(undefined)
+ const running = projectionsInFlight.get(sessionPath)
+ if (running) return running
+ const task = readProjection(sessionPath).finally(() => {
+  if (projectionsInFlight.get(sessionPath) === task) projectionsInFlight.delete(sessionPath)
+ })
+ projectionsInFlight.set(sessionPath, task)
+ return task
+}
+async function readProjection(sessionPath: string): Promise<PrimedProjection | undefined> {
  const existing = transcriptCache.get(sessionPath)
  if (existing?.dirty) return undefined
  if (existing) {
@@ -399,7 +413,55 @@ export async function primeProjection(sessionPath: string): Promise<PrimedProjec
 
 /** 鼠标悬停时预取一条会话（同一个 `history::project`）。 */
 export function prefetchSession(sessionPath: string) {
- void primeProjection(sessionPath).catch(() => undefined)
+  if (!sessionPath) return
+  // 悬停意图：指针扫过一个列表时会连发十几个 pointerenter，每一个都去读一遍
+  // 会话 JSONL（大的几百 MB）再加一个 hydrate，主线程就会一顿一顿的。只给
+  // “停下来”的那一条预取，而且一次只预取一条。
+  hoverPath = sessionPath
+  if (hoverTimer) clearTimeout(hoverTimer)
+  hoverTimer = setTimeout(() => {
+    hoverTimer = undefined
+    enqueuePrefetch(hoverPath)
+  }, PREFETCH_HOVER_MS)
+}
+
+const PREFETCH_HOVER_MS = 220
+const PREFETCH_QUEUE_LIMIT = 2
+let hoverTimer: ReturnType<typeof setTimeout> | undefined
+let hoverPath = ""
+let prefetching = false
+const prefetchQueue: string[] = []
+
+function enqueuePrefetch(sessionPath: string) {
+  if (!sessionPath || mobileRuntime()) return
+  // 已经有干净缓存（文件戳没变）就不用再走一次读盘 + hydrate。
+  const cached = transcriptCache.get(sessionPath)
+  if (cached && !cached.dirty) return
+  if (prefetchQueue.includes(sessionPath)) return
+  prefetchQueue.push(sessionPath)
+  // 扫过一长串会话时只保留最近的两条，不排队几十个读盘任务。
+  while (prefetchQueue.length > PREFETCH_QUEUE_LIMIT) prefetchQueue.shift()
+  void drainPrefetch()
+}
+
+async function drainPrefetch() {
+  if (prefetching) return
+  prefetching = true
+  try {
+    while (prefetchQueue.length) {
+      const next = prefetchQueue.shift()!
+      const span = perfSpan("prefetch-session", next.split(/[\\/]/).at(-1))
+      try {
+        await primeProjection(next)
+      } catch {
+        // 预取失败不影响任何东西：真正打开时会再读一次。
+      } finally {
+        span.end()
+      }
+    }
+  } finally {
+    prefetching = false
+  }
 }
 function rememberTranscript(sessionPath: string | undefined, transcript: Transcript, stamp?: string, count?: number) {
  if (!sessionPath) return
@@ -420,6 +482,8 @@ export function forgetCachedTranscript(sessionPath: string) { transcriptCache.de
  * 消息、压缩投影任一不同，这里就会对不上，于是调用方退回 `get_messages`。
  */
 async function adoptProjection(id: string, sessionFile: string, messageCount: number): Promise<boolean> {
+ const span = perfSpan('adopt-projection', sessionFile.split(/[\\/]/).at(-1))
+ try {
  const projection = await sessionProject(sessionFile).catch(() => undefined)
  if (!projection || !projection.exact || projection.count !== messageCount) return false
  const transcript = hydrate(projection.messages)
@@ -427,6 +491,7 @@ async function adoptProjection(id: string, sessionFile: string, messageCount: nu
  const current = await sessionStamp(sessionFile).catch(() => undefined)
  rememberTranscript(sessionFile, transcript, current ? fileStamp(current) : undefined, projection.count)
  return true
+ } finally { span.end() }
 }
 
 /**
@@ -442,8 +507,24 @@ async function adoptProjection(id: string, sessionFile: string, messageCount: nu
  * `get_state`（pi 自己加载会话，169 MB 要 0.9s）之前先把历史画出来，等 pi 的
  * messageCount 回来再确认。
  */
-export async function loadMessages(target=activeTarget(),hintSessionPath?:string){
+/**
+ * 同一条连接同时只能有一次历史装载。
+ *
+ * 切换会话、`agent_settled`、重连回来的 `get_state` 都会叫它：并发两次大会话的
+ * 装载就是两份 `get_messages` 的峰值内存叠在一起（169 MB 的会话在 pi 里是几十万
+ * 条 JSON 对象），那是真正会把整台机器拖进 swap 的东西。后来的调用直接等前一次。
+ */
+const loadsInFlight=new Map<string,Promise<void>>()
+export function loadMessages(target=activeTarget(),hintSessionPath?:string):Promise<void>{
  const id=route(target)
+ const running=loadsInFlight.get(id)
+ if(running)return running
+ const task=runLoadMessages(id,hintSessionPath).finally(()=>{if(loadsInFlight.get(id)===task)loadsInFlight.delete(id)})
+ loadsInFlight.set(id,task)
+ return task
+}
+async function runLoadMessages(id:string,hintSessionPath?:string){
+ const span=perfSpan('load-history',hintSessionPath?hintSessionPath.split(/[\\/]/).at(-1):id)
  loadingConnections.add(id)
  try{
   if(hintSessionPath){
@@ -482,6 +563,7 @@ export async function loadMessages(target=activeTarget(),hintSessionPath?:string
   throw error
  }finally{
   loadingConnections.delete(id)
+  span.end()
  }
 }
 /** 这条连接的历史消息是否正在加载（供切面时决定要不要收骨架屏）。 */

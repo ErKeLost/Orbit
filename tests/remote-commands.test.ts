@@ -156,6 +156,9 @@ const EXCLUDED: Record<string, string> = {
   artifacts_get: "reads the desktop's app_data; the phone has no copy of that store",
   artifacts_upsert: "writes the desktop's app_data; the phone has no copy of that store",
   artifacts_delete: "writes the desktop's app_data; the phone has no copy of that store",
+  // 历史图片落盘后返回本机路径：手机的相册不在这个文件系统里，它仍然走
+  // `session_image`（base64），所以这条命令不需要镜像。
+  session_image_file: "returns a path on this machine's disk; the phone reads session_image instead",
   // quick composer 是一个桌面窗口（全局快捷键 + 无边框小窗），手机上不存在这个形状。
   quick_toggle: "shows a desktop-only window; the phone has no global shortcut",
   quick_hide: "hides a desktop-only window",

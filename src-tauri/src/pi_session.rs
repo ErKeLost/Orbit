@@ -179,6 +179,14 @@ pub async fn pi_oneshot(app: AppHandle, cwd: String, prompt: String) -> Result<S
     }
 }
 
+/// 一行 JSON 里是否可能有内联图片。字节串扫描比先解析再递归找便宜得多，所以
+/// 大多数流式事件（没有图片）只付一次扫描的代价。
+#[cfg(desktop)]
+fn contains_image_marker(line: &[u8]) -> bool {
+    const NEEDLE: &[u8] = b"\"image\"";
+    line.windows(NEEDLE.len()).any(|window| window == NEEDLE)
+}
+
 /// Pi's stdout pump: JSONL in, one Channel message per batch out.
 ///
 /// 历史里的图片落盘后换成路径：桌面 webview 不该为它们付 169 MB 的 IPC 和内存
@@ -214,6 +222,13 @@ fn pi_reader_loop(
                     crate::remote::publish_pi_event(&remote_app, &remote_project, &value);
                     if let Some(dir) = media_dir.as_deref() {
                         crate::media::offload_history(&mut value, dir);
+                        // 活事件里的图片也要落盘。之前只处理 `get_messages`，于是
+                        // 一场 computer-use 会话的每张截图都以 base64 留在 transcript
+                        // 里（一张 5MB，一百张就是 500MB 的 JS 堆），越跑越卡。
+                        // 先用原始字节粗筛，避免对每条流式事件都走一次全量遍历。
+                        if contains_image_marker(&record) {
+                            crate::media::offload_live_images(&mut value, dir);
+                        }
                     }
                     if is_pi_burst_event(&value) {
                         // BufReader 里还有没读完的整行，说明这一波还没结束，

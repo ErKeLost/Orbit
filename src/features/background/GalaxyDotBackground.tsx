@@ -21,6 +21,7 @@ import {
   type GalaxyStar,
 } from "./galaxyDots";
 import { isLowPerf } from "../../lib/perf-tier";
+import { isDegraded } from "../../lib/perf-monitor";
 
 /**
  * The artwork, lossless and 1280×720. It is never shown as a picture: it is
@@ -86,7 +87,8 @@ export function GalaxyDotBackground({
     let raf = 0;
     let lastFrame = 0;
     let rgb = contentRgb(root);
-    let pattern: CanvasPattern | null = null;
+    /** 静态网格层：布局时画一次，之后每帧只 blit，不再全屏描边。 */
+    let grid: HTMLCanvasElement | null = null;
     let stars: GalaxyStar[] = [];
     let drift: GalaxyDrift = { x: 0, y: 0 };
     let float = { x: true, y: true };
@@ -95,6 +97,12 @@ export function GalaxyDotBackground({
     let width = 0;
     let height = 0;
     let nextMeteor = 0;
+    /** 元素是否在视口里（首页被滚出屏幕后不再画）。 */
+    let visible = true;
+    /** 静态档（低配 / 减少动态效果 / 已降级）只画一帧。 */
+    let stillPainted = false;
+    /** 布局算出来的矩形：指针移动时不再每次 getBoundingClientRect()。 */
+    let bounds = { left: 0, top: 0, width: 0, height: 0 };
 
     // Drawn one pixel per CSS pixel, not per device pixel: the plate only ever
     // lands on whole pixels, so nearest-neighbour keeps every square exactly
@@ -113,7 +121,12 @@ export function GalaxyDotBackground({
 
     const layout = () => {
       const rect = root.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return;
+      bounds = { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+      if (rect.width <= 0 || rect.height <= 0) {
+        width = 0;
+        height = 0;
+        return;
+      }
       width = rect.width;
       height = rect.height;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -123,6 +136,23 @@ export function GalaxyDotBackground({
       canvas.style.height = `${height}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.imageSmoothingEnabled = false;
+      stillPainted = false;
+
+      // 网格层：整块画一次。之前是每帧对全屏 fillRect 一次 6px 的 CanvasPattern，
+      // 相当于每帧把整块画布重新描一遍边。
+      const nextGrid = document.createElement("canvas");
+      nextGrid.width = canvas.width;
+      nextGrid.height = canvas.height;
+      const gridCtx = nextGrid.getContext("2d");
+      if (gridCtx) {
+        gridCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const tile = galaxyGridPattern(gridCtx, rgb, { ...GALAXY_INK, ...ink });
+        if (tile) {
+          gridCtx.fillStyle = tile;
+          gridCtx.fillRect(0, 0, width, height);
+          grid = nextGrid;
+        }
+      }
 
       motes = createMotes(width, height);
       meteors.length = 0;
@@ -151,11 +181,10 @@ export function GalaxyDotBackground({
         stars = stamp.stars;
         float = stamp.float;
       }
-      pattern = galaxyGridPattern(ctx, rgb, { ...GALAXY_INK, ...ink });
     };
 
     const draw = (time: number) => {
-      if (document.hidden) {
+      if (document.hidden || !visible) {
         raf = 0;
         return;
       }
@@ -165,27 +194,37 @@ export function GalaxyDotBackground({
         raf = 0;
         return;
       }
-      raf = requestAnimationFrame(draw);
-      if (time - lastFrame < FRAME_MS) return;
-      lastFrame = time;
+      // Reduced motion / 低配 / 运行时降级 / 窗口在后台：只落一帧静态图，然后
+      // 彻底停下。之前这里每 40ms 把同一张静态图重画一遍，正好和「省电」相反。
+      const focused = typeof document.hasFocus === "function" ? document.hasFocus() : true;
+      const motion = !stillMotion() && !isDegraded() && focused;
+      if (motion) {
+        raf = requestAnimationFrame(draw);
+        if (time - lastFrame < FRAME_MS) return;
+        lastFrame = time;
+        stillPainted = false;
+      } else if (stillPainted) {
+        raf = 0;
+        return;
+      }
 
-      // Reduced motion: the plate sits at home and holds a fixed brightness,
-      // which is exactly the still frame the star layer holds as well.
-      const motion = !stillMotion();
       const clock = motion ? time : 0;
 
       drift = galaxyDrift(clock, motion, float, pointer);
       ctx.clearRect(0, 0, width, height);
       ctx.imageSmoothingEnabled = false;
-      if (pattern) {
+      if (grid) {
         ctx.globalAlpha = 1;
-        ctx.fillStyle = pattern;
-        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(grid, 0, 0, width, height);
       }
       drawGalaxyPlate(ctx, plate, drift, galaxyBreath(clock, motion));
       paintGalaxySweep(ctx, clock, width, height);
       paintGalaxyStars(ctx, stars, motion ? time : 180, rgb, ink, drift);
-      if (!motion) return;
+      if (!motion) {
+        stillPainted = true;
+        raf = 0;
+        return;
+      }
 
       if (time >= nextMeteor) {
         const headings = meteorBurst(METEOR_BURST);
@@ -201,7 +240,7 @@ export function GalaxyDotBackground({
     };
 
     const start = () => {
-      if (raf) return;
+      if (raf || document.hidden || !visible || width <= 0 || height <= 0) return;
       lastFrame = 0;
       raf = requestAnimationFrame(draw);
     };
@@ -217,20 +256,46 @@ export function GalaxyDotBackground({
 
     const onVisible = () => {
       if (document.hidden) return;
+      stillPainted = false;
       start();
     };
     document.addEventListener("visibilitychange", onVisible);
     still.addEventListener("change", onVisible);
+    // 窗口在后台（但没最小化）时也停：全屏画布 25fps 一直在往合成器送新纹理。
+    const onFocus = () => {
+      stillPainted = false;
+      start();
+    };
+    window.addEventListener("focus", onFocus);
+
+    // 首页被滚出视口 / 面板藏起来时别再画：25fps 的全屏画布在后台是纯浪费。
+    const intersection =
+      typeof IntersectionObserver === "function"
+        ? new IntersectionObserver(
+            (entries) => {
+              visible = entries.some((entry) => entry.isIntersecting);
+              if (visible) {
+                stillPainted = false;
+                start();
+              } else if (raf) {
+                cancelAnimationFrame(raf);
+                raf = 0;
+              }
+            },
+            { rootMargin: "96px" },
+          )
+        : null;
+    intersection?.observe(root);
 
     // A few pixels of give under the cursor. The pane itself is
     // `pointer-events-none`, so this watches the window and only reads the
-    // position; nothing re-renders.
+    // cached rectangle — 之前每次 pointermove 都 getBoundingClientRect()，
+    // 那是一次强制布局，鼠标一扫就是 120Hz 的同步 reflow。
     const onPointerMove = (event: globalThis.PointerEvent) => {
-      const rect = root.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return;
+      if (!visible || stillMotion() || isDegraded() || bounds.width <= 0 || bounds.height <= 0) return;
       pointer = {
-        x: Math.max(-1, Math.min(1, ((event.clientX - rect.left) / rect.width) * 2 - 1)),
-        y: Math.max(-1, Math.min(1, ((event.clientY - rect.top) / rect.height) * 2 - 1)),
+        x: Math.max(-1, Math.min(1, ((event.clientX - bounds.left) / bounds.width) * 2 - 1)),
+        y: Math.max(-1, Math.min(1, ((event.clientY - bounds.top) / bounds.height) * 2 - 1)),
       };
     };
     window.addEventListener("pointermove", onPointerMove, { passive: true });
@@ -242,12 +307,18 @@ export function GalaxyDotBackground({
     resizeObserver.observe(root);
 
     // Light/dark flips the ink colour, so the whole plate has to be re-stamped.
+    // 主题切换会一次改多个属性：合并到下一帧，只重刷一次整块画布。
+    let themeFrame = 0;
     const themeObserver = new MutationObserver(() => {
-      const next = contentRgb(root);
-      if (next === rgb) return;
-      rgb = next;
-      layout();
-      onVisible();
+      if (themeFrame) return;
+      themeFrame = requestAnimationFrame(() => {
+        themeFrame = 0;
+        const next = contentRgb(root);
+        if (next === rgb) return;
+        rgb = next;
+        layout();
+        onVisible();
+      });
     });
     themeObserver.observe(document.documentElement, {
       attributes: true,
@@ -256,7 +327,10 @@ export function GalaxyDotBackground({
 
     return () => {
       cancelAnimationFrame(raf);
+      if (themeFrame) cancelAnimationFrame(themeFrame);
       image.onload = null;
+      intersection?.disconnect();
+      window.removeEventListener("focus", onFocus);
       window.removeEventListener("pointermove", onPointerMove);
       document.removeEventListener("visibilitychange", onVisible);
       still.removeEventListener("change", onVisible);

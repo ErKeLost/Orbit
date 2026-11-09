@@ -566,6 +566,36 @@ html[data-page-visible="false"] * {
   animation-play-state: paused !important;
 }
 
+/*
+ * 运行时自动降级（`lib/perf-monitor.ts`）。和低配档同一组规则，但由真实帧率
+ * 触发：可见状态下连续 5 秒帧率低于刷新率的 55%，就把「为了好看一直在重绘」
+ * 的东西停掉，并把窗口退回不透明（vibrancy 要求整窗非不透明，每一帧都要和
+ * 桌面混合——这是「只有我这一个 app 卡、整台电脑也跟着卡」的结构性原因）。
+ * 只降一次，不会来回抖；重启应用即恢复。
+ */
+html[data-perf-degraded="1"] .shimmer-text {
+  animation: none;
+  color: color-mix(in srgb, var(--color-content) 60%, transparent);
+  background: none;
+}
+
+html[data-perf-degraded="1"] .zen-thinking-pulse,
+html[data-perf-degraded="1"] .zen-tool-spin,
+html[data-perf-degraded="1"] .agent-chat-typing-dot,
+html[data-perf-degraded="1"] .agent-feed-shimmer,
+html[data-perf-degraded="1"] .animate-spin {
+  animation: none;
+}
+
+/* 不透明窗口能走合成的快路；降级时把透明/半透明的底全部压实。 */
+html[data-perf-degraded="1"],
+html[data-perf-degraded="1"] body,
+html[data-perf-degraded="1"] .workspace-background,
+html[data-perf-degraded="1"] .body-glass,
+html[data-perf-degraded="1"] .sidebar-glass {
+  background: var(--color-background-base);
+}
+
 /* The file pane is the whole surface: no card frame around its code. */
 .file-view .code-change {
   margin: 0;

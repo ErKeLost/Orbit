@@ -9,6 +9,9 @@ import { invalidateWatchedFiles } from "../../files/model/fileWatch";
 import { changedFilePaths, sameDiffIndex } from "../model/gitChanges";
 
 const GIT_POLL_MS = 2000;
+/** 连续几轮都没变化之后，把轮询间隔拉长到 10s：空闲时不再每 2 秒起两个 git 进程。 */
+const GIT_IDLE_MS = 10_000;
+const GIT_IDLE_AFTER = 2;
 
 type Entry = {
   index: GitDiffIndex | null;
@@ -31,17 +34,26 @@ function start(cwd: string): Entry {
   let cancelled = false;
   let inFlight = false;
   let pending = false;
+  let idlePolls = 0;
+  let timer = 0;
   const entry: Entry = {
     index: null,
     listeners: new Set(),
     stop: () => {
       cancelled = true;
-      window.clearInterval(timer);
-      window.removeEventListener("focus", onResume);
-      document.removeEventListener("visibilitychange", onResume);
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", onWake);
+      document.removeEventListener("visibilitychange", onWake);
       unsubGit();
       entries.delete(cwd);
     },
+  };
+
+  const nextDelay = () => (idlePolls >= GIT_IDLE_AFTER ? GIT_IDLE_MS : GIT_POLL_MS);
+  const schedule = () => {
+    if (cancelled) return;
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => void tick(), nextDelay());
   };
 
   const publish = (next: GitDiffIndex | null) => {
@@ -60,13 +72,18 @@ function start(cwd: string): Entry {
       const next = await gitDiffIndex(cwd);
       if (cancelled) return;
       const prev = entry.index;
-      if (sameDiffIndex(prev, next)) return;
+      if (sameDiffIndex(prev, next)) {
+        idlePolls += 1;
+        return;
+      }
+      idlePolls = 0;
       publish(next);
       if (prev) {
         invalidateWatchedFiles(changedFilePaths(prev, next));
         notifyGitChanged();
       }
     } catch {
+      idlePolls += 1;
       if (!cancelled) publish(null);
     } finally {
       inFlight = false;
@@ -77,15 +94,25 @@ function start(cwd: string): Entry {
     }
   };
 
-  const onResume = () => {
-    if (!document.hidden) void load();
+  /** 用户回到窗口 / git 被外部改动：立刻查一次，并回到快节奏。 */
+  const onWake = () => {
+    if (document.hidden) return;
+    idlePolls = 0;
+    void load();
+    schedule();
+  };
+
+  const tick = async () => {
+    if (cancelled) return;
+    if (!document.hidden) await load();
+    schedule();
   };
 
   void load();
-  const timer = window.setInterval(onResume, GIT_POLL_MS);
-  window.addEventListener("focus", onResume);
-  document.addEventListener("visibilitychange", onResume);
-  const unsubGit = subscribeGitChanged(onResume);
+  schedule();
+  window.addEventListener("focus", onWake);
+  document.addEventListener("visibilitychange", onWake);
+  const unsubGit = subscribeGitChanged(onWake);
   return entry;
 }
 

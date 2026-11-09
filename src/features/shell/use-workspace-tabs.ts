@@ -25,6 +25,7 @@ import {
 } from "../../lib/rpc";
 import { CHAT_PANE_ID, HOME_WORKSPACE_ID, isHomeWorkspace, projectWorkspaceTabs, useShell, type WorkspaceTab } from "./shellStore";
 import { createTabTransitions } from "./tab-transitions";
+import { perfSpan } from "../../lib/perf-monitor";
 
 /**
  * 切换期间的登记表：正在显示的面（`工作区:范围` 去重）、正在启动的连接（target
@@ -91,8 +92,15 @@ async function show(id: string) {
   // 范围还没确定（bootstrap 之前）时不启动进程，否则会拿空 cwd 去连。
   if (!workspace || !workspace.cwd) return;
   const key = `${id}:${workspace.cwd}`;
-  // 同一帧里重复显示同一个面 → 同一份 in-flight promise，不会白起两条 pi 进程。
-  return transitions.show(key, () => runShow(id, workspace.cwd));
+  // 切标签 / 切会话 / 切项目都从这里进：量整条路径（含挂载会话面、读历史、
+  // 起 pi 进程），HUD 的「最近操作」里能直接看到哪一步慢。
+  const span = perfSpan("switch-surface", workspace.cwd.split(/[\\/]/).filter(Boolean).at(-1));
+  try {
+    // 同一帧里重复显示同一个面 → 同一份 in-flight promise，不会白起两条 pi 进程。
+    return await transitions.show(key, () => runShow(id, workspace.cwd));
+  } finally {
+    span.end();
+  }
 }
 
 async function runShow(id: string, cwd: string) {
@@ -326,6 +334,8 @@ function promoteHome() {
  * 已经开着的会话切到原标签页，不开第二个。
  */
 async function openSession(session: Pick<Session, "path"> & { cwd?: string }) {
+  const span = perfSpan("open-session", session.path.split(/[\\/]/).at(-1));
+  try {
   const shell = useShell.getState();
   const owner = connectionOwningSession(session.path);
   const existing = shell.workspaces.find((item) =>
@@ -395,6 +405,9 @@ async function openSession(session: Pick<Session, "path"> & { cwd?: string }) {
   const openedSession = connectionSnapshot(connectionId)?.state?.sessionFile;
   if (openedSession) useShell.getState().updateWorkspace(workspace.id, { sessionPath: openedSession });
   enforceConnectionBudget();
+  } finally {
+    span.end();
+  }
 }
 
 /** ⌘D / ⌘⇧D: split a session pane and open a new session in it. */

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { setTheme as setNativeTheme } from "@tauri-apps/api/app";
 import { nativeThemePreference, themeColor, type ResolvedTheme } from "./theme";
 import { isLowPerf } from "./perf-tier";
+import { isDegraded, onPerfDegrade } from "./perf-monitor";
 
 /**
  * Orbit's appearance model, ported: one hue, one saturation, one dark
@@ -90,7 +91,9 @@ function readBlur() {
 }
 
 function readBodyGlass() {
-  return (read(BODY_GLASS_KEY) ?? "true") !== "false";
+  // 默认关闭：窗口玻璃要求窗口非不透明，macOS 合成器每帧都要和桌面混合，
+  // 这是「整台电脑跟着卡」的结构性成本。需要时在设置里打开，外观与以前一样。
+  return read(BODY_GLASS_KEY) === "true";
 }
 
 type AppearanceState = {
@@ -128,9 +131,12 @@ async function applyNativeGlass(state: Pick<AppearanceState, "scheme" | "blur" |
   const root = document.documentElement;
   // 低配档不挂原生活体模糊：带 vibrancy 的窗口必须是非不透明窗口，合成器要把
   // 每一帧的内容和背后的桌面混合一次（Electron 版 t3code 用的就是不透明窗口）。
-  const eligible = state.scheme === "dark" && IS_MAC_RUNTIME && !isLowPerf;
+  // 运行时自动降级（perf-monitor 量到持续低帧率）也一样撤掉。
+  // 而且默认就是关闭的：`bodyGlass` 是「窗口玻璃」的总开关，只有打开它才会挂
+  // vibrancy / 让侧栏半透明。
+  const eligible = state.scheme === "dark" && IS_MAC_RUNTIME && !isLowPerf && !isDegraded() && state.bodyGlass;
   root.classList.toggle("has-native-glass", eligible);
-  root.classList.toggle("glass-body", eligible && state.bodyGlass);
+  root.classList.toggle("glass-body", eligible);
   root.style.setProperty("--sidebar-blur", `${state.blur}px`);
   if (!eligible) {
     // 从深色切到浅色（或降级）时把已经挂上的 effect 撤掉，否则窗口会一直带着
@@ -159,6 +165,31 @@ async function applyNativeGlass(state: Pick<AppearanceState, "scheme" | "blur" |
 const IS_MAC_RUNTIME = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 /** 窗口上是否真的挂着 vibrancy，撤掉时不必再发一次 IPC。 */
 let glassApplied = false;
+
+/**
+ * 量到持续低帧率时立刻把 vibrancy 撤掉，不等下一次主题变化。
+ *
+ * 整窗活体模糊是「整个电脑跟着卡」的结构性成本：窗口必须非不透明，合成器每帧
+ * 都要和桌面混合。装饰动画一停，这条混合链上的重算频率也跟着降下来。
+ */
+let degradeHooked = false;
+function hookPerfDegrade() {
+  if (degradeHooked || typeof window === "undefined") return;
+  degradeHooked = true;
+  onPerfDegrade(() => {
+    document.documentElement.classList.remove("has-native-glass", "glass-body");
+    if (!glassApplied) return;
+    glassApplied = false;
+    void import("@tauri-apps/api/window")
+      .then(async ({ getCurrentWindow }) => {
+        await getCurrentWindow().setEffects({ effects: [] });
+      })
+      .catch(() => {
+        /* 没有 effect API（非 macOS / 旧版） */
+      });
+  });
+}
+hookPerfDegrade();
 
 function applyToDocument(state: Pick<AppearanceState, "scheme" | "hue" | "saturation" | "darkLightness" | "sidebarOpacity" | "accent" | "diffPalette" | "blur" | "bodyGlass">) {
   const root = document.documentElement;
@@ -259,7 +290,7 @@ export const useAppearance = create<AppearanceState>((set, get) => ({
   },
   restoreDefaults: () => {
     for (const key of [HUE_KEY, SATURATION_KEY, LIGHTNESS_KEY, SIDEBAR_OPACITY_KEY, ACCENT_KEY, DIFF_KEY, BLUR_KEY, BODY_GLASS_KEY, UI_SCALE_KEY, EXCLUDED_KEY, CHAT_BG_KEY, CHAT_BG_OPACITY_KEY]) write(key, null);
-    set({ ...DEFAULT_APPEARANCE, accent: null, diffPalette: "default" as DiffPalette, blur: 24, bodyGlass: true, uiScale: 1, showExcludedFiles: false, chatBackground: null, chatBackgroundOpacity: 0.22 });
+    set({ ...DEFAULT_APPEARANCE, accent: null, diffPalette: "default" as DiffPalette, blur: 24, bodyGlass: false, uiScale: 1, showExcludedFiles: false, chatBackground: null, chatBackgroundOpacity: 0.22 });
   },
 }));
 

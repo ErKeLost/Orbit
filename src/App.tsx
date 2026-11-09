@@ -7,6 +7,8 @@ import { useProjectRegistry } from "./hooks/use-project-registry";
 import { useDesktopNotifications } from "./hooks/use-desktop-integration";
 import { RemotePairingScreen } from "./components/remote/RemotePairingScreen";
 import { ScreenOverlay } from "./components/screen/ScreenOverlay";
+import { PerfHud } from "./components/PerfHud";
+import { perfSpan } from "./lib/perf-monitor";
 import { Panel } from "./components/Panels";
 
 const VoicePage = lazy(() => import("./features/voice/ui/VoicePage").then((module) => ({ default: module.VoicePage })));
@@ -55,6 +57,28 @@ function useMobileLayout(forced: boolean) {
 
 function WorkArea() {
   const panel = useWorkspace((state) => state.panel);
+
+  // 把当前面板写到 <html>：性能监控在记录停顿/掉帧时要能说出「当时在哪个界面」。
+  // 一次属性写，不在渲染路径上做别的事。
+  useEffect(() => {
+    document.documentElement.dataset.perfPanel = panel;
+  }, [panel]);
+
+  // 整页面板的切换是一次大范围的 show/hide：切过去/切回来都要重新布局、重绘
+  // 整棵会话面。这里量的是「提交之后到下一帧画完」——即新界面的布局+光栅化成本，
+  // 在 HUD 里表现为 `paint:settings 180ms`。
+  useEffect(() => {
+    const span = perfSpan(`paint:${panel}`);
+    let inner = 0;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => span.end());
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      if (inner) cancelAnimationFrame(inner);
+      span.end();
+    };
+  }, [panel]);
 
   const cwd = useWorkspace((state) => state.cwd);
   const connectionId = useWorkspace((state) => state.connectionId);
@@ -343,7 +367,7 @@ function WorkArea() {
               aria-hidden={panel !== "voice"}
             >
               <Suspense fallback={<div className="min-h-0 flex-1" />}>
-                <VoicePage />
+                <VoicePage visible={panel === "voice"} />
               </Suspense>
             </div>
           </div>
@@ -417,6 +441,7 @@ export default function App() {
       <>
         <MobileShell onSearch={openSearch} />
         <ScreenOverlay />
+        <PerfHud />
       </>
     );
   }
@@ -442,6 +467,7 @@ export default function App() {
         <QuickOpen />
       </div>
       <ScreenOverlay />
+      <PerfHud />
     </div>
   );
 }

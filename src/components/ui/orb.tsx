@@ -21,6 +21,12 @@ type OrbProps = {
   getInputVolume?: () => number
   getOutputVolume?: () => number
   className?: string
+  /**
+   * 暂停渲染循环（保留 WebGL 上下文）。语音页是常驻挂载的——切走后如果继续
+   * 60fps 画这颗球，就是让合成器在看不见的地方一直工作。暂停而不是卸载：
+   * 重建 context + 重编译着色器才是「进去闪一下」的来源。
+   */
+  paused?: boolean
 }
 
 export function Orb({
@@ -37,15 +43,20 @@ export function Orb({
   getInputVolume,
   getOutputVolume,
   className,
+  paused = false,
 }: OrbProps) {
   return (
     <div className={className ?? "relative h-full w-full"}>
       <Canvas
         resize={{ debounce: resizeDebounce }}
+        // 默认 DPR 会跟着 5K 屏一路涨到 2；这颗球最大 244px，2 倍已经够细。
+        dpr={[1, 2]}
+        frameloop={paused ? "never" : "always"}
         gl={{
           alpha: true,
           antialias: true,
           premultipliedAlpha: true,
+          powerPreference: "low-power",
         }}
       >
         <Scene

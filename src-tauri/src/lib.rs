@@ -337,6 +337,7 @@ pub fn run() {
             sessions_cmd::session_stamp,
             sessions_cmd::session_project,
             sessions_cmd::session_image,
+            sessions_cmd::session_image_file,
             pi_session::open_pi_terminal,
             git::git_diff_stats,
             git::git_changed_files,

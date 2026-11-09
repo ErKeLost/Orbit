@@ -16,6 +16,7 @@ import { useWorkspace, type WorkspaceMode } from "../lib/store";
 import { CHAT_PANE_ID, useShell } from "../features/shell/shellStore";
 import { useWorkspaceTabs } from "../features/shell/use-workspace-tabs";
 import { pressed } from "../lib/keybindings";
+import { togglePerfHud } from "../lib/perf-monitor";
 
 let runtimeStarted = false;
 
@@ -378,6 +379,11 @@ export function useWorkspaceShortcuts(
       if (pressed("App: Toggle Sidebar", event)) {
         event.preventDefault();
         setSidebarOpen(value => !value);
+      }
+      if (pressed("App: Perf HUD", event)) {
+        // 帧率 / 停顿仪表盘：只改一个 localStorage 开关并广播事件，HUD 自己挂/摘。
+        event.preventDefault();
+        togglePerfHud();
       }
       // 语音：三个命令都发同一个事件，SpeechInput 按当前状态执行。
       if (pressed("Voice: Start", event) || pressed("Voice: Stop", event) || pressed("Voice: Toggle", event)) {

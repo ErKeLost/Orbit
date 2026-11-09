@@ -62,7 +62,9 @@ function AccentSwatch({ color, active, onSelect, label }: { color: string | null
 /** Orbit's Appearance page: theme + accent + diff colors, then the tint sliders. */
 export function AppearancePage() {
   const appearance = useAppearance();
-  const glassDisabled = appearance.scheme === "light";
+  // 浅色主题始终不透明；「窗口玻璃」默认关闭（性能），关着时下面的半透明参数无效。
+  const glassUnavailable = appearance.scheme === "light";
+  const glassOff = glassUnavailable || !appearance.bodyGlass;
   const collapsedRailMode = useShell((state) => state.collapsedRailMode);
   const setCollapsedRailMode = useShell((state) => state.setCollapsedRailMode);
 
@@ -129,16 +131,23 @@ export function AppearancePage() {
         </Row>
         <Row anchorId="dark-lightness"
           label="深色亮度"
-          description={glassDisabled ? "只影响深色模式，你的深色设置会被保留。" : "深色主题的基础亮度，越低越暗，0 为纯黑。"}
+          description={glassUnavailable ? "只影响深色模式，你的深色设置会被保留。" : "深色主题的基础亮度，越低越暗，0 为纯黑。"}
         >
-          <Slider label="深色亮度" value={appearance.darkLightness} display={`${appearance.darkLightness}%`} min={0} max={30} onChange={(value) => appearance.setTint({ darkLightness: value })} disabled={glassDisabled} />
+          <Slider label="深色亮度" value={appearance.darkLightness} display={`${appearance.darkLightness}%`} min={0} max={30} onChange={(value) => appearance.setTint({ darkLightness: value })} disabled={glassUnavailable} />
         </Row>
       </Group>
 
       <Group
         title="透明度"
-        description={glassDisabled ? "浅色模式始终使用不透明窗口，因此这些设置已关闭；你的深色设置会被保留。" : "桌面透过 Orbit 的程度。模糊半径越大，合成开销越高。"}
+        description={
+          glassUnavailable
+            ? "浅色模式始终使用不透明窗口，因此这些设置已关闭；你的深色设置会被保留。"
+            : "窗口玻璃让桌面透过 Orbit，但窗口必须是非不透明的：合成器每一帧都要和桌面混合，这是整机卡顿的主要来源，所以默认关闭。"
+        }
       >
+        <Row anchorId="body-glass" label="窗口玻璃" description="默认关闭。开启后桌面会透过窗口，并启用下面的不透明度与模糊半径；关掉即回到不透明窗口。">
+          <Toggle label="Window glass" on={appearance.bodyGlass} onChange={appearance.setBodyGlass} disabled={glassUnavailable} />
+        </Row>
         <Row anchorId="sidebar-opacity" label="侧栏不透明度" description="作用于项目栏与其他玻璃面板。">
           <Slider
             label="侧栏不透明度"
@@ -147,14 +156,11 @@ export function AppearancePage() {
             min={15}
             max={100}
             onChange={(value) => appearance.setTint({ sidebarOpacity: value / 100 })}
-            disabled={glassDisabled}
+            disabled={glassOff}
           />
         </Row>
         <Row anchorId="blur" label="模糊半径" description="窗口背后的背景模糊。">
-          <Slider label="模糊半径" value={appearance.blur} display={String(appearance.blur)} min={0} max={60} onChange={appearance.setBlur} disabled={glassDisabled} />
-        </Row>
-        <Row anchorId="body-glass" label="主面板玻璃" description="把半透明效果延伸到会话与编辑器所在的主面板。">
-          <Toggle label="Main pane glass" on={appearance.bodyGlass} onChange={appearance.setBodyGlass} disabled={glassDisabled} />
+          <Slider label="模糊半径" value={appearance.blur} display={String(appearance.blur)} min={0} max={60} onChange={appearance.setBlur} disabled={glassOff} />
         </Row>
       </Group>
 

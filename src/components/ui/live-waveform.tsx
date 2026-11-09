@@ -68,6 +68,9 @@ export const LiveWaveform = ({
   const staticBarsRef = useRef<number[]>([])
   const needsRedrawRef = useRef(true)
   const gradientCacheRef = useRef<CanvasGradient | null>(null)
+  /** 画布尺寸缓存：每帧 getBoundingClientRect() 是一次强制布局，
+   *  语音页常驻时那就是 60Hz 的同步 reflow。尺寸由 ResizeObserver 更新。 */
+  const sizeRef = useRef({ width: 0, height: 0 })
   const lastWidthRef = useRef(0)
   const levelRef = useRef(level)
   const controlled = level !== undefined
@@ -97,6 +100,7 @@ export const LiveWaveform = ({
 
       gradientCacheRef.current = null
       lastWidthRef.current = rect.width
+      sizeRef.current = { width: rect.width, height: rect.height }
       needsRedrawRef.current = true
     })
 
@@ -338,9 +342,14 @@ export const LiveWaveform = ({
 
     let rafId: number
 
+    const measure = (element: HTMLCanvasElement) => {
+      const rect = element.getBoundingClientRect()
+      return { width: rect.width, height: rect.height }
+    }
+
     const animate = (currentTime: number) => {
       // Render waveform
-      const rect = canvas.getBoundingClientRect()
+      const rect = sizeRef.current.width > 0 ? sizeRef.current : (sizeRef.current = measure(canvas))
 
       // Update audio data if active
       if (active && currentTime - lastUpdateRef.current > updateRate) {
@@ -429,7 +438,10 @@ export const LiveWaveform = ({
 
       // Only redraw if needed
       if (!needsRedrawRef.current && !active) {
-        rafId = requestAnimationFrame(animate)
+        // 未开始/静音时没有新数据：画完这一帧就停掉循环。之前这里会一直
+        // requestAnimationFrame（语音页常驻 = 永久占一个 60Hz 回调，而且每帧
+        // 还要量一次矩形）。`active` 变化会重挂这个 effect，循环自己会回来。
+        animationRef.current = 0
         return
       }
 
@@ -532,11 +544,13 @@ export const LiveWaveform = ({
     }
 
     rafId = requestAnimationFrame(animate)
+    animationRef.current = rafId
 
     return () => {
       if (rafId) {
         cancelAnimationFrame(rafId)
       }
+      if (animationRef.current === rafId) animationRef.current = 0
     }
   }, [
     active,

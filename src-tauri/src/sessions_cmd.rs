@@ -201,6 +201,33 @@ pub async fn session_image(session_path: String, at: u64, ordinal: usize) -> Res
     .map_err(|error| error.to_string())?
 }
 
+/// 同一张图落成文件，返回路径而不是 base64。
+///
+/// 手机端仍然走 `session_image`：那边读不到这台机器的路径。桌面端用这个：几 MB
+/// 的图片不经过 IPC，也不在 JS 堆里留一份 base64 副本。失败时调用方回退到
+/// `session_image`，所以这里出任何问题都只是回到原来的表现。
+#[tauri::command]
+pub async fn session_image_file(app: AppHandle, session_path: String, at: u64, ordinal: usize) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = crate::sessions::sessions_root()?
+            .canonicalize()
+            .map_err(|_| "Pi 会话目录不可用".to_string())?;
+        let target = PathBuf::from(&session_path)
+            .canonicalize()
+            .map_err(|_| "会话文件不存在".to_string())?;
+        if target.extension().and_then(|value| value.to_str()) != Some("jsonl") || !target.starts_with(&root) {
+            return Err("只能读取 Pi 会话目录中的 JSONL 文件".into());
+        }
+        let dir = crate::media::session_media_dir(&app).ok_or("没有图片缓存目录")?;
+        let (mime, data) = crate::history::read_image(&target, at, ordinal)?;
+        let stem = format!("hist-{}-{at}-{ordinal}-{}", crate::media::session_key(&target), data.len());
+        let path = crate::media::write_history_image(&dir, &stem, &mime, &data).ok_or("图片写入缓存失败")?;
+        Ok(json!({ "mimeType": mime, "file": path.to_string_lossy() }))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 /// 会话文件当前的大小与修改时间。
 ///
 /// 切换会话时用它判断内存里的 transcript 缓存还能不能直接用：文件没动过就不必让

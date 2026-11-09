@@ -146,6 +146,7 @@ pub fn prune_session_media(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     let mut files: Vec<(PathBuf, u64, std::time::SystemTime)> = Vec::new();
     let mut total = 0u64;
+    let now = std::time::SystemTime::now();
     for entry in entries.flatten() {
         let Ok(meta) = entry.metadata() else { continue };
         if !meta.is_file() {
@@ -158,9 +159,15 @@ pub fn prune_session_media(dir: &Path) {
         return;
     }
     files.sort_by_key(|(_, _, modified)| *modified);
-    for (path, size, _) in files {
+    for (path, size, modified) in files {
         if total <= SESSION_MEDIA_CAP_BYTES {
             break;
+        }
+        // 最近一小时写的文件不删：活事件里的图片只有这一个副本（transcript 里存的
+        // 是路径，没有回源偏移），删了就是一张打不开的缩略图。更早的文件属于别的
+        // 会话，重新打开时会从会话 JSONL 里再抽一次。
+        if now.duration_since(modified).map(|age| age.as_secs() < 3600).unwrap_or(true) {
+            continue;
         }
         if std::fs::remove_file(&path).is_ok() {
             total = total.saturating_sub(size);
@@ -200,6 +207,112 @@ fn write_once(path: &Path, bytes: &[u8]) -> bool {
         return false;
     }
     std::fs::rename(&temporary, path).is_ok()
+}
+
+/// 会话路径的稳定短标识：图片文件名要能跨重启命中同一张图。
+///
+/// FNV-1a：几行代码、不需要额外的哈希 crate，碰撞概率对「同一目录下的几十个
+/// 会话」足够低（真撞了也只是多一次写文件）。
+pub fn session_key(path: &Path) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in path.to_string_lossy().as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// 把一张历史图片落成文件（base64 只在这一侧出现）。
+///
+/// 桌面端不需要把几 MB 的 base64 走一遍 IPC 再留在 JS 堆里：一张 5MB 的截图
+/// 在 JSON 里是 6.7MB 的字符串，到了 V8 里再乘 2（UTF-16），而它只是一张缩略图。
+/// 写进 `session-media` 后由 asset 协议直接交给浏览器解码，内存归合成器管，也能被
+/// `prune_session_media` 回收。
+pub fn write_history_image(dir: &Path, stem: &str, mime: &str, data: &str) -> Option<PathBuf> {
+    let path = dir.join(format!("{stem}.{}", image_extension(mime)));
+    if path.exists() {
+        return Some(path);
+    }
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data.as_bytes()).ok()?;
+    write_once(&path, &bytes).then_some(path)
+}
+
+/// 活事件（`tool_execution_*` / `message_*` / `agent_end`）里的内联图片落成文件。
+///
+/// 这里不按路径匹配，而是递归找 `{type:"image", mimeType, data}`：pi 的事件形状
+/// 不止一种（tool 结果在 `partialResult`/`result`，消息在 `message.content`），
+/// 按形状逐一维护迟早会漏一个，漏的那个就是一张几百 MB 的截图。
+/// 图片名字用 base64 的 FNV 哈希：同一张图重复送来时只 stat 一次，不重复写盘。
+pub fn offload_live_images(payload: &mut Value, dir: &Path) -> usize {
+    let mut written = 0;
+    walk_images(payload, dir, &mut written);
+    if written > 0 {
+        prune_occasionally(dir);
+    }
+    written
+}
+
+fn walk_images(node: &mut Value, dir: &Path, written: &mut usize) {
+    match node {
+        Value::Array(items) => {
+            for item in items {
+                walk_images(item, dir, written);
+            }
+        }
+        Value::Object(map) => {
+            if map.get("type").and_then(Value::as_str) == Some("image") {
+                let data = map.get("data").and_then(Value::as_str).map(str::to_owned);
+                if let Some(data) = data {
+                    let mime = map
+                        .get("mimeType")
+                        .and_then(Value::as_str)
+                        .unwrap_or("image/png")
+                        .to_string();
+                    let stem = format!("live-{:016x}-{}", fnv1a(data.as_bytes()), data.len());
+                    let path = dir.join(format!("{stem}.{}", image_extension(&mime)));
+                    if path.exists() || write_history_image(dir, &stem, &mime, &data).is_some() {
+                        map.insert("file".into(), Value::String(path.to_string_lossy().into_owned()));
+                        map.remove("data");
+                        *written += 1;
+                    }
+                    // 没写成功就保留原样的 base64：一张看不见的图比一个大响应更糟。
+                }
+                return;
+            }
+            for value in map.values_mut() {
+                walk_images(value, dir, written);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// 每隔一段时间清一次缓存：活事件的图片会持续写盘，不能只靠启动时算总量。
+fn prune_occasionally(dir: &Path) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    let last = LAST.load(Ordering::Relaxed);
+    if now.saturating_sub(last) < 300 {
+        return;
+    }
+    if LAST.compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed).is_err() {
+        return;
+    }
+    let dir = dir.to_path_buf();
+    std::thread::spawn(move || prune_session_media(&dir));
 }
 
 /// Move images out of a `get_messages` / `get_entries` response.

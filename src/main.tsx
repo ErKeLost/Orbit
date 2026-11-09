@@ -4,6 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from './lib/rpc'
 import { installExternalLinkHandler } from './lib/external-links'
 import { installPerfLog } from './lib/perf-log'
+import { perfMark } from './lib/perf-monitor'
 import { installPageVisibility } from './lib/page-visibility'
 import { warmHighlight } from './lib/highlight'
 import './lib/perf-tier'
@@ -13,8 +14,10 @@ import './index.css'
 
 document.title = import.meta.env.DEV ? 'Workspace · DEV (HMR)' : 'Workspace'
 installExternalLinkHandler()
+// 常驻性能监控：一个 rAF 循环，记录帧率/停顿/长任务/内存，⌘⇧P 打开 HUD。
 installPerfLog()
 installPageVisibility()
+perfMark('boot')
 
 // 语音页是最重的一个 lazy chunk（three.js + R3F）。等首屏闲下来再把它拉下来，
 // 否则第一次点侧栏「语音」会先看到一块空白，chunk 到了才是球——那就是"闪一下"。
@@ -24,6 +27,9 @@ const prefetchVoice = () => {
 // 固定延迟而不是 requestIdleCallback：dev 下第一次加载 three 会触发 Vite 重新预构建，
 // 和首屏抢带宽只会让页面再闪一次。两秒后拉，谁也不碍谁。
 window.setTimeout(prefetchVoice, 2500)
+
+// 首屏绘制完成之后再报一次「启动到第一帧」：这是判断「冷启动变慢」的基线。
+requestAnimationFrame(() => requestAnimationFrame(() => perfMark('first-paint')))
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

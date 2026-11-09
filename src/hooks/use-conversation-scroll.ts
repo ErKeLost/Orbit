@@ -357,10 +357,22 @@ function pinToBottom(el: HTMLElement | null) {
 }
 
 /** Keep the live turn's min-height in lockstep with the visible transcript. */
+// 这一次读的 padding 是常量（`[data-transcript-content]` 的 2.5rem），但
+// getComputedStyle 会强制一次样式重算 + 布局。流式时这个函数每帧都跑，缓存 1s
+// 一次就够，uiScale/主题变化最晚 1 秒后跟上。
+let transcriptsPad = { el: null as HTMLElement | null, at: 0, value: 0 };
+function transcriptPad(inner: HTMLElement): number {
+  const now = performance.now();
+  if (transcriptsPad.el === inner && now - transcriptsPad.at < 1000) return transcriptsPad.value;
+  const value = Number.parseFloat(getComputedStyle(inner).paddingBottom) || 0;
+  transcriptsPad = { el: inner, at: now, value };
+  return value;
+}
+
 function syncTranscriptViewport(el: HTMLElement | null) {
   if (!el || el.clientHeight <= 0) return;
   const inner = el.firstElementChild as HTMLElement | null;
-  const pad = inner ? Number.parseFloat(getComputedStyle(inner).paddingBottom) || 0 : 0;
+  const pad = inner ? transcriptPad(inner) : 0;
   const next = `${Math.max(0, el.clientHeight - pad)}px`;
   if (el.style.getPropertyValue("--transcript-viewport") === next) return;
   el.style.setProperty("--transcript-viewport", next);
