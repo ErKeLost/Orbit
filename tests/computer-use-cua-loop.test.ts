@@ -939,7 +939,10 @@ describe("cua loop", () => {
     expect(tools).toContain("type_text")
     expect(tools).toContain("clipboard_write")
     const paste = calls.find(call => call.tool === "hotkey")
-    expect(paste?.args.keys).toEqual(["cmd", "v"])
+    // The combo is platform-specific (`loop/paste.ts`): cmd on macOS, ctrl
+    // elsewhere. Hard-coding "cmd" here failed CI on Linux while the
+    // implementation was right.
+    expect(paste?.args.keys).toEqual([process.platform === "darwin" ? "cmd" : "ctrl", "v"])
     // The borrowed clipboard comes back, and only after the read-back.
     const writes = calls.filter(call => call.tool === "clipboard_write").map(call => call.args.text)
     expect(writes).toEqual(["蓝", "原来的剪贴板"])
