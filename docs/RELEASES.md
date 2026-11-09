@@ -6,6 +6,62 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.34
+
+A smoothness release for the whole machine, not just this window. The reported
+symptom was specific: leave the app alone for a while, then click a tab or switch
+session, and the entire computer stops for ten-odd seconds at something like ten
+frames a second. Two things compounded. Every decorative surface was drawing
+whether or not anyone could see it — the voice page's WebGL orb at 60fps forever,
+the empty-session galaxy re-stroking a 6px grid over the whole canvas 25 times a
+second — and the window was translucent with macOS vibrancy, which means the
+compositor blended the whole window with the desktop on every one of those
+frames. That cost lands in `WindowServer`, so it is the machine that stutters, not
+the app. On top of that, screenshots in a session were kept as base64 in the
+renderer for the life of the session (a computer-use run is easily hundreds of
+megabytes), and image previews were cached 120 at a time with no byte budget.
+
+`docs/PERF.md` §6 records the whole audit, but the two changes that matter are:
+
+**The window is opaque by default.** `orbit.bodyGlass` now defaults to `false`,
+so no `NSVisualEffect` view is installed and the compositor takes the opaque
+path. Settings → 外观 → 透明度 → 窗口玻璃 turns the old look back on, and once it
+is on nothing else differs: same vibrancy, same sidebar opacity, same blur
+radius. Light themes were already opaque and stay that way. Users who never touch
+the setting will simply see a solid window after updating.
+
+**Nothing renders while it is not on screen.** The orb's `react-three-fiber` loop
+pauses when the voice page is hidden (the WebGL context is kept, so going back
+does not flash), the waveform stops its animation frame when there is no audio and
+caches its canvas size, and the galaxy backdrop paints once into an offscreen grid
+layer, stops when the element is off-screen, unfocused, in reduced motion or
+degraded, and no longer measures the DOM on every pointer move. Its `pointermove`
+handler used to call `getBoundingClientRect()`, which is a forced layout at up to
+120Hz.
+
+Memory and switching got the same treatment. History and live images are now
+materialised to files in the app's media cache and streamed through the asset
+protocol (one command for history, one pass in the Rust stdout pump for live
+events), so a screenshot is no longer duplicated as base64 in the IPC payload and
+the JS heap; the preview cache is byte-budgeted instead of count-budgeted, and
+media older than an hour is the only thing the pruner may drop. Session history
+loads are single-flight, hover prefetch waits for hover intent and runs one at a
+time, and a long transcript now paints a skeleton for one frame and renders the
+rest inside `startTransition`, so the tab strip answers immediately instead of
+waiting for hundreds of markdown parses. The transcript's bottom fade moved from
+the scrolling element to a static wrapper, and git polling backs off to ten
+seconds when a checkout has not changed.
+
+Finally, the app can now be asked what it is doing. **⌘⇧P** opens a live panel with
+frame rate, frame time and p95, jank/stall/freeze counts, engine long tasks, the
+JS heap, DOM node count, and the duration and dropped frames of the last few
+actions (tab switch, session open, history load, prefetch, panel paint).
+`__orbitPerf.report()` in the console gives the same thing as text. If the app
+ever does measure sustained low frame rates, one freeze longer than three
+seconds, or three stalls inside thirty seconds, it degrades itself: decorative
+animations stop, vibrancy is dropped, the window becomes opaque, and a toast says
+why and that restarting restores the original look.
+
 ## v1.0.33
 
 A performance release for the chat surface, measured against t3code rather than
