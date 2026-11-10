@@ -93,14 +93,14 @@ export function BrowserDock() {
       >
         <span aria-hidden className="pointer-events-none absolute inset-y-0 left-0 w-px bg-stroke" />
       </div>
-      <div className="flex h-9 min-w-0 shrink-0 items-center border-b border-stroke">
-        <div role="tablist" aria-label="浏览器标签" className="scrollbar-none flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overscroll-none pl-1.5 pr-2.5">
+      <div className="tab-strip relative flex h-9 min-w-0 shrink-0 items-end bg-surface-sunken">
+        <div role="tablist" aria-label="浏览器标签" className="scrollbar-none flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto overscroll-none pl-1.5 pr-1">
           {tabs.map((tab) => {
             const selected = shown?.path === tab.path;
             return (
               <div key={tab.path}
                 ref={node => sortable.setItemRef(tab.path, node)}
-                className="reorder-item tab-motion group relative flex h-full w-44 min-w-24 shrink touch-none select-none items-center"
+                className="reorder-item tab-motion group relative z-10 flex h-8 w-44 min-w-24 shrink touch-none select-none items-stretch"
                 data-tauri-drag-region="false"
                 onPointerDown={event => {
                   if (event.button !== 0 || (event.target as HTMLElement).closest("[data-no-drag]")) return;
@@ -125,12 +125,14 @@ export function BrowserDock() {
                   aria-selected={selected}
                   title={tabName(tab.url, tab.title)}
                   onClick={() => { if (!sortable.consumeClick()) setActive(tab.path); }}
-                  className={`relative flex h-7.5 min-w-0 flex-1 cursor-default items-center gap-1.5 self-center rounded-md px-2 pr-7 text-left text-[13px] ${
-                    selected ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
+                  className={`relative flex h-full min-w-0 flex-1 cursor-default items-center gap-1.5 rounded-t-control border-x border-t px-2.5 pr-8 text-left text-ui ${
+                    selected
+                      ? "border-line bg-surface-canvas text-ink-1"
+                      : "border-transparent text-ink-3 hover:bg-fill hover:text-ink-2"
                   }`}
                 >
                   <Globe className="size-3.5 shrink-0" strokeWidth={1.75} />
-                  {tab.audioMuted ? <span aria-label="标签页已静音" title="标签页已静音" className="text-[10px]">静音</span> : null}
+                  {tab.audioMuted ? <span aria-label="标签页已静音" title="标签页已静音" className="text-2xs">静音</span> : null}
                   <span className="min-w-0 flex-1 truncate">{tabName(tab.url, tab.title)}</span>
                   {tab.path === floatingTab ? (
                     <span
@@ -151,31 +153,32 @@ export function BrowserDock() {
                     if (sortable.consumeClick()) return;
                     close(tab.path);
                   }}
-                  className="absolute right-1 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-content/50 opacity-0 hover:bg-content/10 hover:text-content group-hover:opacity-100"
+                  className="absolute right-1.5 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded-keycap text-ink-3 opacity-0 hover:bg-fill-strong hover:text-ink-1 group-hover:opacity-100 group-focus-within:opacity-100"
                 >
                   <X className="size-3" strokeWidth={1.75} />
                 </button>
               </div>
             );
           })}
-          <div className="min-w-4 flex-1" />
+          <div className="flex min-w-6 flex-1 items-center">
+            <button
+              type="button"
+              title="新建标签页"
+              aria-label="新建标签页"
+              onClick={() => openBrowser("")}
+              className="grid size-7 place-items-center rounded-control text-ink-3 hover:bg-fill-strong hover:text-ink-1"
+            >
+              <Plus className="size-3.5" strokeWidth={1.75} />
+            </button>
+          </div>
         </div>
         <div className="flex shrink-0 items-center gap-0.5 pr-1.5">
-          <button
-            type="button"
-            title="新建标签页"
-            aria-label="新建标签页"
-            onClick={() => openBrowser("")}
-            className="grid size-6.5 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content"
-          >
-            <Plus className="size-3.5" strokeWidth={1.75} />
-          </button>
           <button
             type="button"
             title="收起浏览器"
             aria-label="收起浏览器"
             onClick={() => setOpen(false)}
-            className="grid size-6.5 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content"
+            className="grid size-6.5 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1"
           >
             <X className="size-3.5" strokeWidth={1.75} />
           </button>

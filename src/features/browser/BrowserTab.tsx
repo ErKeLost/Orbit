@@ -12,7 +12,9 @@ import {
 import { claimBrowserSurface } from "../../lib/browser-surface"
 import { useShell } from "../shell/shellStore"
 import { BrowserImportPrompt } from "./BrowserImportPrompt"
+import { BrowserStart } from "./BrowserStart"
 import { useBrowserImportStatus } from "../../lib/browser-import"
+import { recordRecentPage } from "../../lib/recent-pages"
 import "../../styles/browser-channel.css"
 
 /**
@@ -85,6 +87,14 @@ export function BrowserTab({ path, url, title, active = true, agent = false }: {
     if (live) return
     address.current?.focus()
   }, [live])
+
+  // Every page this tab settles on becomes a candidate for the start page's
+  // "最近" list. Recording on the URL is what keeps it honest: a page that
+  // failed to load never fires it.
+  useEffect(() => {
+    if (!live) return
+    recordRecentPage(url, title)
+  }, [url, title, live])
 
   // This tab is the one the agent's channel talks to while it is in front. Every
   // tab stays mounted now (a page outlives the pane it was opened from), so this
@@ -263,8 +273,8 @@ export function BrowserTab({ path, url, title, active = true, agent = false }: {
             address.current?.blur()
           }}
         >
-          <div className="flex h-6.5 min-w-0 items-center gap-1.5 rounded-md bg-content/5 px-2">
-            {live ? <Globe className="size-3 shrink-0 text-content/40" strokeWidth={1.75} /> : null}
+          <div className="flex h-6.5 min-w-0 items-center gap-1.5 rounded-md bg-fill px-2">
+            {live ? <Globe className="size-3 shrink-0 text-ink-3" strokeWidth={1.75} /> : null}
             <input
               ref={address}
               data-browser-address
@@ -297,9 +307,9 @@ export function BrowserTab({ path, url, title, active = true, agent = false }: {
               autoComplete="off"
               aria-label="浏览器地址"
               placeholder="输入网址或搜索词，回车打开"
-              className="min-w-0 flex-1 bg-transparent text-[12px] text-content outline-none placeholder:text-content/35"
+              className="min-w-0 flex-1 bg-transparent text-xs text-ink-1 outline-none placeholder:text-ink-3"
             />
-            {title && !drafting ? <span className="max-w-[40%] shrink-0 truncate text-[11px] text-content/35" title={title}>{title}</span> : null}
+            {title && !drafting ? <span className="max-w-[40%] shrink-0 truncate text-2xs text-ink-3" title={title}>{title}</span> : null}
           </div>
         </form>
         <TabIcon
@@ -332,17 +342,17 @@ export function BrowserTab({ path, url, title, active = true, agent = false }: {
       {/* 所有标签页都常驻（页面不属于 pane），所以导入提示只由前台那个画一次。 */}
       {active ? <BrowserImportPrompt requested={importRequested} onClose={() => setImportRequested(false)} /> : null}
       <div ref={stage} role="application" aria-label="浏览器页面" className="browser-stage relative min-h-0 min-w-0 flex-1 overflow-hidden outline-none">
-        {!live ? <BrowserStart /> : null}
+        {!live ? <BrowserStart onOpen={go} /> : null}
         {/* 页面在浮的时候，这里是空的：那一页画在窗口上层，别处的画中画卡片里。 */}
         {live && floating ? (
           <div className="absolute inset-0 grid place-items-center">
-            <div className="flex flex-col items-center gap-2 text-content/40">
+            <div className="flex flex-col items-center gap-2 text-ink-3">
               <AppWindow className="size-6" strokeWidth={1.5} />
-              <span className="text-[12px]">这一页在画中画里</span>
+              <span className="text-xs">这一页在画中画里</span>
               <button
                 type="button"
                 onClick={() => toggleBrowserPip(path)}
-                className="rounded-md border border-stroke px-2 py-1 text-[12px] text-content/60 hover:bg-content/5 hover:text-content"
+                className="rounded-md border border-stroke px-2 py-1 text-xs text-ink-2 hover:bg-fill hover:text-ink-1"
               >
                 收回列里
               </button>
@@ -350,16 +360,6 @@ export function BrowserTab({ path, url, title, active = true, agent = false }: {
           </div>
         ) : null}
       </div>
-    </div>
-  )
-}
-
-/** A new tab is the app's face and nothing else: the address bar above is
- * where a page is opened, exactly as in a browser. */
-function BrowserStart() {
-  return (
-    <div className="browser-start">
-      <img src="/orbit-mark.png" alt="Orbit" className="browser-start-mark" draggable={false} />
     </div>
   )
 }
@@ -372,7 +372,7 @@ function TabIcon({ label, disabled, onClick, children }: { label: string; disabl
       aria-label={label}
       disabled={disabled}
       onClick={onClick}
-      className="grid size-6.5 shrink-0 place-items-center rounded-md text-content/50 enabled:hover:bg-content/10 enabled:hover:text-content disabled:opacity-30"
+      className="grid size-6.5 shrink-0 place-items-center rounded-md text-ink-3 enabled:hover:bg-fill-strong enabled:hover:text-ink-1 disabled:opacity-30"
     >
       {children}
     </button>
