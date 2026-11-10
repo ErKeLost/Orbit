@@ -28,6 +28,8 @@ import {
 } from "../../shared/ui/icons";
 import { FileTypeIcon } from "../shell/FileTypeIcon";
 import { SiteLogo } from "./site-logo";
+import { SourcesRow } from "./SourcesChip";
+import { turnSources } from "./turn-sources";
 import { useImageSrc } from "../../lib/media-src";
 import { resultSites, urlHost, urlOrigin } from "./web-search-site";
 import {
@@ -77,7 +79,7 @@ const HUGE_USER_MESSAGE_PREVIEW_CHARS = 4_000;
 function PreviewImage({ image, path, label }: { image: ToolImage; path?: string; label: string }) {
   const src = useImageSrc(image);
   if (!src) {
-    return <div aria-hidden className="h-24 w-32 animate-pulse rounded-xl border border-content/10 bg-content/5" />;
+    return <div aria-hidden className="h-24 w-32 animate-pulse rounded-xl border border-line bg-fill" />;
   }
   return (
     <ImageActionsMenu dataUrl={src} file={image.file} path={path}>
@@ -98,7 +100,7 @@ const isAbsolutePath = (path: string | undefined): path is string => Boolean(pat
 /** One attachment on a user message; the bytes may live in the session file. */
 function UserPhoto({ part }: { part: MessagePart }) {
   const src = useImageSrc(part);
-  if (!src) return <div aria-hidden className="h-24 w-24 animate-pulse rounded-xl bg-content/5" />;
+  if (!src) return <div aria-hidden className="h-24 w-24 animate-pulse rounded-xl bg-fill" />;
   return <img src={src} alt="附件" decoding="async" className="max-h-48 max-w-[14rem] rounded-xl object-cover" />;
 }
 
@@ -175,7 +177,7 @@ function WorkFoldLine({
   const label = live ? (
     title
   ) : (
-    <span className="min-w-0 flex-1 truncate font-sans text-sm text-content/50 transition-colors duration-200 group-hover:text-content/80">{title}</span>
+    <span className="min-w-0 flex-1 truncate font-sans text-sm text-ink-3 transition-colors duration-200 group-hover:text-ink-1">{title}</span>
   );
   const row = `flex w-full min-w-0 items-center gap-1.5 px-4 pb-1 pt-1.5 text-left${open ? " zen-fold-drop" : ""}`;
   // The caret leads the line, hugging the left edge like the rest of the turn.
@@ -190,7 +192,7 @@ function WorkFoldLine({
   return (
     <button type="button" aria-expanded={open} aria-label={open ? "收起过程" : "展开过程"} onClick={onToggle} className={`group ${row}`}>
       <ChevronRight
-        className={`size-3.5 shrink-0 text-content/45 transition-transform ${open ? "rotate-90" : ""}`}
+        className={`size-3.5 shrink-0 text-ink-3 transition-transform ${open ? "rotate-90" : ""}`}
         strokeWidth={1.75}
       />
       {label}
@@ -201,7 +203,7 @@ function WorkFoldLine({
 /* -------------------------------------------------------------- phase rows */
 
 function PhaseIcon({ kind, className = "" }: { kind: Phase["kind"]; className?: string }) {
-  const props = { className: `size-3.5 shrink-0 text-content/45 ${className}`, strokeWidth: 1.75 };
+  const props = { className: `size-3.5 shrink-0 text-ink-3 ${className}`, strokeWidth: 1.75 };
   if (kind === "edit") return <PenLine {...props} />;
   if (kind === "research") return <Search {...props} />;
   if (kind === "run") return <Terminal {...props} />;
@@ -221,7 +223,7 @@ function ThinkingRow({ step }: { step: TurnStep }) {
   const expandable = full !== text;
   const pulse = step.live ? "zen-thinking-pulse" : "";
   const label = (
-    <span className={`min-w-0 flex-1 truncate font-sans text-sm text-content/50 transition-colors duration-200 group-hover:text-content/75 ${pulse}`}>{text}</span>
+    <span className={`min-w-0 flex-1 truncate font-sans text-sm text-ink-3 transition-colors duration-200 group-hover:text-ink-2 ${pulse}`}>{text}</span>
   );
   return (
     <div className="flex min-w-0 flex-col">
@@ -253,7 +255,7 @@ function NoteRow({ step }: { step: TurnStep }) {
   const text = proseSummary(full);
   const expandable = Boolean(text) && full !== text;
   const label = (
-    <span className="min-w-0 flex-1 truncate font-sans text-sm text-content/50 transition-colors duration-200 group-hover:text-content/75">{text}</span>
+    <span className="min-w-0 flex-1 truncate font-sans text-sm text-ink-3 transition-colors duration-200 group-hover:text-ink-2">{text}</span>
   );
   return (
     <div className="flex min-w-0 flex-col">
@@ -326,8 +328,8 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
     [open, name, part.arguments, result, tool?.details],
   );
   const fileName = target.split(/[\\/]/).filter(Boolean).at(-1) ?? target;
-  const actionTone = failed ? "text-red-400" : "text-content/50";
-  const targetTone = failed ? "text-red-400" : "text-content/70";
+  const actionTone = failed ? "text-negative" : "text-ink-3";
+  const targetTone = failed ? "text-negative" : "text-ink-2";
   const patch = tool?.details?.patch;
   // patch 的增删行数扫两遍全量 diff：流式时这一行每帧重渲染，没必要重算。
   const { additions, deletions } = useMemo(() => {
@@ -351,24 +353,24 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
       >
         <span className="grid size-3.5 shrink-0 place-items-center">
           {running ? (
-            <Loader className="size-3.5 shrink-0 animate-spin text-content/40" strokeWidth={1.75} />
+            <Loader className="size-3.5 shrink-0 animate-spin text-ink-3" strokeWidth={1.75} />
           ) : (
-            <PhaseIcon kind={workCategory(name)} className={failed ? "text-red-400/70" : ""} />
+            <PhaseIcon kind={workCategory(name)} className={failed ? "text-negative/70" : ""} />
           )}
         </span>
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-[13px]">
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-ui">
           <span className={`shrink-0 font-sans text-sm ${actionTone}`}>{action}</span>
           {target || web ? (
             web && href ? (
-              <span className={`-my-0.5 flex min-w-0 max-w-full items-center gap-1 rounded bg-content/6 px-1 py-0.5 group-hover:bg-content/10 ${targetTone}`} title={siteHost ? `${siteHost} · ${target}` : target}>
+              <span className={`-my-0.5 flex min-w-0 max-w-full items-center gap-1 rounded bg-fill px-1 py-0.5 group-hover:bg-fill-strong ${targetTone}`} title={siteHost ? `${siteHost} · ${target}` : target}>
                 {siteOrigin ? <SiteLogo origin={siteOrigin} /> : null}
-                {siteHost ? <span className="shrink-0 font-sans text-[11px] text-content/45">{siteHost}</span> : null}
+                {siteHost ? <span className="shrink-0 font-sans text-2xs text-ink-3">{siteHost}</span> : null}
                 {target ? <span className="min-w-0 truncate">{target}</span> : null}
               </span>
             ) : file ? (
-              <span className={`-my-0.5 flex min-w-0 max-w-full items-center gap-1 rounded bg-content/6 px-1 py-0.5 group-hover:bg-content/10 ${targetTone}`} title={target}>
+              <span className={`-my-0.5 flex min-w-0 max-w-full items-center gap-1 rounded bg-fill px-1 py-0.5 group-hover:bg-fill-strong ${targetTone}`} title={target}>
                 {firstPreview ? (
-                  <img src={firstPreview} alt="" className="size-4 shrink-0 rounded-[4px] object-cover" draggable={false} />
+                  <img src={firstPreview} alt="" className="size-4 shrink-0 rounded-xs object-cover" draggable={false} />
                 ) : (
                   <FileTypeIcon name={fileName} isDir={false} />
                 )}
@@ -386,18 +388,18 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
             </span>
           ) : null}
           {additions || deletions ? (
-            <span className="shrink-0 font-sans text-[11px] font-semibold tabular-nums">
+            <span className="shrink-0 font-sans text-2xs font-semibold tabular-nums">
               <span className="text-diff-add-fg">+{additions}</span> <span className="text-diff-del-fg">-{deletions}</span>
             </span>
           ) : null}
         </span>
         {!running && typeof tool?.durationMs === "number" && tool.durationMs >= 1000 ? (
-          <span className="shrink-0 font-sans text-[11px] tabular-nums text-content/40" title={`工具执行耗时 ${tool.durationMs} ms`}>
+          <span className="shrink-0 font-sans text-2xs tabular-nums text-ink-3" title={`工具执行耗时 ${tool.durationMs} ms`}>
             {(tool.durationMs / 1000).toFixed(1)}s
           </span>
         ) : null}
-        {failed ? <X className="size-3.5 shrink-0 text-red-400" strokeWidth={2} /> : null}
-        <ChevronRight className={`size-3.5 shrink-0 text-content/35 opacity-0 transition-[opacity,transform] group-hover:opacity-100 ${open ? "rotate-90 opacity-100" : ""}`} strokeWidth={1.75} />
+        {failed ? <X className="size-3.5 shrink-0 text-negative" strokeWidth={2} /> : null}
+        <ChevronRight className={`size-3.5 shrink-0 text-ink-3 opacity-0 transition-[opacity,transform] group-hover:opacity-100 ${open ? "rotate-90 opacity-100" : ""}`} strokeWidth={1.75} />
       </button>
       {previews.length ? (
         <div className="flex flex-wrap gap-1.5 py-1 pl-5">
@@ -410,13 +412,13 @@ function ToolRow({ part, tools }: { part: Part; tools: Record<string, Tool> }) {
         <div className="min-w-0 pb-1.5">
           {code.request ? <CodeChange change={code.request} compact /> : null}
           {!code.request && !code.result ? (
-            <pre className="mt-1 max-h-64 min-w-0 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-content/4 px-2.5 py-2 font-mono text-[12px] leading-5 text-content/55">{request}</pre>
+            <pre className="mt-1 max-h-64 min-w-0 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-fill-weak px-2.5 py-2 font-mono text-xs leading-5 text-ink-2">{request}</pre>
           ) : null}
           {code.result && !running ? <CodeChange change={code.result} compact /> : null}
           {!code.result && !previews.length && (result || !running) ? (
             <pre
-              className={`mt-1 max-h-72 min-w-0 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-content/4 px-2.5 py-2 font-mono text-[12px] leading-5 ${
-                failed ? "text-red-400/80" : "text-content/55"
+              className={`mt-1 max-h-72 min-w-0 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-fill-weak px-2.5 py-2 font-mono text-xs leading-5 ${
+                failed ? "text-negative/80" : "text-ink-2"
               }`}
             >
               {result || "未返回输出"}
@@ -548,7 +550,7 @@ function PhaseGroup({ phase, tools, live, defaultOpen = false }: { phase: Phase;
   const label = live ? (
     <Shimmer className="min-w-0 truncate font-sans text-sm" duration={1.6}>{title}</Shimmer>
   ) : (
-    <span className="min-w-0 flex-1 truncate font-sans text-sm text-content/50 transition-colors duration-200 group-hover:text-content/80">{title}</span>
+    <span className="min-w-0 flex-1 truncate font-sans text-sm text-ink-3 transition-colors duration-200 group-hover:text-ink-1">{title}</span>
   );
   // The label already shows `proseSummary` of the headline. Repeating the same
   // words underneath is only worth it when the headline is longer than its
@@ -579,7 +581,7 @@ function PhaseGroup({ phase, tools, live, defaultOpen = false }: { phase: Phase;
         <span className="relative flex size-3.5 shrink-0 items-center justify-center">
           <PhaseIcon kind={phase.kind} className="group-hover:opacity-0" />
           <ChevronRight
-            className={`absolute size-3.5 text-content/45 opacity-0 transition-transform duration-200 group-hover:opacity-100 ${open ? "rotate-90" : ""}`}
+            className={`absolute size-3.5 text-ink-3 opacity-0 transition-transform duration-200 group-hover:opacity-100 ${open ? "rotate-90" : ""}`}
             strokeWidth={1.75}
           />
         </span>
@@ -640,7 +642,7 @@ function CopyButton({ text, label = "复制回复" }: { text: string; label?: st
       type="button"
       title={copied ? "已复制" : label}
       aria-label={copied ? "已复制" : label}
-      className="-ml-1 rounded-md p-1 text-content/40 hover:bg-content/8 hover:text-content/70"
+      className="-ml-1 rounded-md p-1 text-ink-3 hover:bg-fill-strong hover:text-ink-2"
       onClick={(event) => {
         event.stopPropagation();
         void navigator.clipboard.writeText(text).then(() => {
@@ -664,7 +666,7 @@ function BranchButton({ message }: { message: PiMessage }) {
       title={busy ? "正在创建分支" : "分支到新聊天"}
       aria-label={busy ? "正在创建分支" : "分支到新聊天"}
       disabled={disabled || busy}
-      className="rounded-md p-1 text-content/40 hover:bg-content/8 hover:text-content/70 disabled:opacity-40 disabled:hover:bg-transparent"
+      className="rounded-md p-1 text-ink-3 hover:bg-fill-strong hover:text-ink-2 disabled:opacity-40 disabled:hover:bg-transparent"
       onClick={() => {
         setBusy(true);
         void branchFromMessage(message).catch(report).finally(() => setBusy(false));
@@ -689,9 +691,9 @@ function TurnFooter({
   labelHidden: boolean;
   completedAt?: number;
 }) {
-  const dot = <span aria-hidden className="size-[3px] shrink-0 rounded-full bg-content/25" />;
+  const dot = <span aria-hidden className="size-[3px] shrink-0 rounded-full bg-fill-strong" />;
   return (
-    <div aria-label={label} className="flex w-full min-w-0 max-w-full items-center gap-2.5 overflow-hidden px-4 pb-3 pt-1 font-sans text-sm text-content/40">
+    <div aria-label={label} className="flex w-full min-w-0 max-w-full items-center gap-2.5 overflow-hidden px-4 pb-3 pt-1 font-sans text-sm text-ink-3">
       <span className="flex shrink-0 items-center gap-1">
         {copyText ? <CopyButton text={copyText} /> : <Check className="size-3.5" strokeWidth={1.75} />}
         {last ? <BranchButton message={last} /> : null}
@@ -705,7 +707,7 @@ function TurnFooter({
       {completedAt != null ? (
         <span className="flex shrink-0 items-center gap-2.5">
           {dot}
-          <span className="shrink-0 text-content/35">{clockFormatter.format(new Date(completedAt))}</span>
+          <span className="shrink-0 text-ink-3">{clockFormatter.format(new Date(completedAt))}</span>
         </span>
       ) : null}
     </div>
@@ -743,7 +745,7 @@ const UserMessage = memo(function UserMessage({ item }: { item: DisplayMessage }
           <div
             data-chat-message={item.id}
             data-chat-message-role="user"
-            className={`user-message-bubble relative w-fit min-w-0 max-w-[min(100%,36rem)] bg-content/10 px-3 py-2 font-sans text-content transition-[background-color] duration-200 ${
+            className={`user-message-bubble relative w-fit min-w-0 max-w-[min(100%,36rem)] bg-fill-strong px-3 py-2 font-sans text-ink-1 transition-[background-color] duration-200 ${
               singleLine ? "rounded-full" : "rounded-xl"
             }`}
           >
@@ -756,22 +758,22 @@ const UserMessage = memo(function UserMessage({ item }: { item: DisplayMessage }
               className={`user-message-markdown min-w-0 break-words ${expanded ? "" : "max-h-20 overflow-hidden"}`}
             >
               {huge ? (
-                <pre className="min-w-0 whitespace-pre-wrap break-words font-sans text-[13px] leading-5 text-content">{shown}</pre>
+                <pre className="min-w-0 whitespace-pre-wrap break-words font-sans text-ui leading-5 text-ink-1">{shown}</pre>
               ) : (
                 <Markdown content={text} links="panel" />
               )}
             </div>
             {clamped && !expanded ? (
-              <button type="button" className="mt-1 text-[12px] text-content/50 hover:text-content" onClick={() => setExpanded(true)}>
+              <button type="button" className="mt-1 text-xs text-ink-3 hover:text-ink-1" onClick={() => setExpanded(true)}>
                 显示全部
               </button>
             ) : null}
           </div>
         ) : null}
-        <div className="user-message-actions flex h-6 items-center gap-1 pt-1 text-content/40">
+        <div className="user-message-actions flex h-6 items-center gap-1 pt-1 text-ink-3">
           {text ? <CopyButton text={text} label="复制消息" /> : null}
           {messageTime(item.message) ? (
-            <time className="text-[12px] text-content/35" dateTime={new Date(messageTime(item.message)!).toISOString()}>
+            <time className="text-xs text-ink-3" dateTime={new Date(messageTime(item.message)!).toISOString()}>
               {clockFormatter.format(new Date(messageTime(item.message)!))}
             </time>
           ) : null}
@@ -785,13 +787,13 @@ function BashExecution({ message }: { message: PiMessage }) {
   const status = message.cancelled ? "已取消" : message.exitCode === 0 ? "完成" : message.exitCode == null ? "运行中" : `退出 ${message.exitCode}`;
   return (
     <div className="px-4 py-1">
-      <div className="overflow-hidden rounded-[10px] border border-content/10 bg-content/4">
-        <div className="flex h-8 items-center gap-2 border-b border-stroke px-2.5 font-mono text-[12px]">
-          <Terminal className="size-3.5 shrink-0 text-content/45" strokeWidth={1.75} />
-          <code className="min-w-0 flex-1 truncate text-content/80">{message.command ?? ""}</code>
-          <span className="shrink-0 text-[11px] text-content/45">{status}</span>
+      <div className="overflow-hidden rounded-card border border-line bg-fill-weak">
+        <div className="flex h-8 items-center gap-2 border-b border-stroke px-2.5 font-mono text-xs">
+          <Terminal className="size-3.5 shrink-0 text-ink-3" strokeWidth={1.75} />
+          <code className="min-w-0 flex-1 truncate text-ink-1">{message.command ?? ""}</code>
+          <span className="shrink-0 text-2xs text-ink-3">{status}</span>
         </div>
-        <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words px-2.5 py-2 font-mono text-[12px] leading-5 text-content/60">{message.output ?? ""}</pre>
+        <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words px-2.5 py-2 font-mono text-xs leading-5 text-ink-2">{message.output ?? ""}</pre>
       </div>
     </div>
   );
@@ -803,7 +805,7 @@ function CompactionNotice({ message }: { message: PiMessage }) {
   return (
     <div className="flex items-center gap-3 px-4 py-3">
       <span className="h-px flex-1 bg-stroke" />
-      <button type="button" disabled={!summary} onClick={() => setOpen((value) => !value)} className="flex shrink-0 items-center gap-1.5 text-[12px] text-content/45 hover:text-content/75 disabled:hover:text-content/45">
+      <button type="button" disabled={!summary} onClick={() => setOpen((value) => !value)} className="flex shrink-0 items-center gap-1.5 text-xs text-ink-3 hover:text-ink-2 disabled:hover:text-ink-3">
         <RefreshCw className="size-3" strokeWidth={1.75} />
         上下文已压缩
       </button>
@@ -819,7 +821,7 @@ function CompactionNotice({ message }: { message: PiMessage }) {
 
 export function ErrorRow({ error }: { error: string }) {
   return (
-    <div role="alert" className="mx-4 my-1 rounded-lg border border-red-400/25 bg-red-400/8 px-3 py-2 text-[13px] leading-relaxed text-red-300">
+    <div role="alert" className="mx-4 my-1 rounded-lg border border-negative/25 bg-negative/8 px-3 py-2 text-ui leading-relaxed text-negative">
       {formatTranscriptError(error)}
     </div>
   );
@@ -863,6 +865,9 @@ const AssistantTurn = memo(
       formatWorkingDuration(duration, undefined, true)
     );
     const answerText = turn.answer.flatMap((step) => (step.kind === "note" && step.text ? [step.text] : [])).join("\n\n");
+    // What the turn read on the web. The work fold that used to hold these rows
+    // is shut once the answer lands, so the sources are re-listed under it.
+    const sources = useMemo(() => turnSources([...turn.work, ...turn.answer], tools), [turn.work, turn.answer, tools]);
     const lastTime = messageTime(turn.last?.message) ?? (startedAt != null && duration != null ? startedAt + duration : undefined);
 
     if (turn.specials.length && !turn.work.length && !turn.answer.length) {
@@ -913,7 +918,7 @@ const AssistantTurn = memo(
               data-selectable-agent-response={streaming ? undefined : step.key}
               data-chat-message={step.key}
               data-chat-message-role="assistant"
-              className={`min-w-0 px-4 pb-1 text-content ${index === 0 ? (workVisible ? "pt-5" : "pt-3") : "pt-3"}`}
+              className={`min-w-0 px-4 pb-1 text-ink-1 ${index === 0 ? (workVisible ? "pt-5" : "pt-3") : "pt-3"}`}
             >
               <Markdown content={step.text ?? ""} animated={streaming && step.live} links="panel" />
             </div>
@@ -924,6 +929,7 @@ const AssistantTurn = memo(
           ),
         )}
         {turn.last?.message.errorMessage && !streaming ? <ErrorRow error={turn.last.message.errorMessage} /> : null}
+        {!streaming ? <SourcesRow sources={sources} /> : null}
         {!streaming && (answered || hasWork) ? (
           <TurnFooter
             copyText={answerText}
@@ -1041,13 +1047,13 @@ export function TranscriptSkeleton() {
       <span className="sr-only">正在加载会话…</span>
       {blocks.map((block) => (
         <div key={block.ask} className="flex min-w-0 flex-col gap-2">
-          <div className={`h-4 rounded-md bg-content/6 ${block.ask}`} />
+          <div className={`h-4 rounded-md bg-fill ${block.ask}`} />
           {block.lines.map((width) => (
-            <div key={width} className={`h-3.5 rounded-md bg-content/6 ${width}`} />
+            <div key={width} className={`h-3.5 rounded-md bg-fill ${width}`} />
           ))}
         </div>
       ))}
-      <div className="h-4 w-[31%] rounded-md bg-content/6" />
+      <div className="h-4 w-[31%] rounded-md bg-fill" />
     </div>
   );
 }

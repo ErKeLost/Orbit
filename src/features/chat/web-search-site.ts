@@ -22,7 +22,7 @@ const ASSET_HOST = /^(?:th|img|imgs|images|static|cdn|assets|api|fonts)\./;
 const MULTI_PART_SUFFIX = /^(?:co|com|org|net|gov|edu|ac)\.[a-z]{2}$/;
 
 /** One entry per site: `pharsight.greyb.com` and `greyb.com` are the same site. */
-function registrable(host: string) {
+export function registrableHost(host: string) {
   const labels = host.split(".");
   if (labels.length <= 2) return host;
   const tail = labels.slice(-2).join(".");
@@ -44,7 +44,7 @@ function wrappedTarget(payload: string) {
 function accept(hosts: string[], host: string | undefined) {
   const name = host?.toLowerCase().replace(/\.$/, "");
   if (!name || !HOST.test(name) || ENGINE_HOST.test(name) || ASSET_HOST.test(name)) return;
-  if (!hosts.some((seen) => registrable(seen) === registrable(name))) hosts.push(name);
+  if (!hosts.some((seen) => registrableHost(seen) === registrableHost(name))) hosts.push(name);
 }
 
 /**
@@ -68,4 +68,27 @@ export function resultSites(text: string, limit = 4): string[] {
     if (hosts.length >= limit) return hosts.slice(0, limit);
   }
   return hosts.slice(0, limit);
+}
+
+/** A page a turn opened: the site it belongs to, its address, and its own title. */
+export type WebSource = { host: string; url?: string; title?: string };
+
+/**
+ * The frontmatter a fetched (or highlighted) page opens with. Expand writes the
+ * page's own URL and title there, which is the only place a fetch result names
+ * what it is — the tool result body is the page's text.
+ */
+export function pageMeta(text: string): { url?: string; title?: string } {
+  const meta: { url?: string; title?: string } = {};
+  const head = /^\uFEFF?---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  if (!head) return meta;
+  for (const line of head[1].split(/\r?\n/)) {
+    const match = /^([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line.trim());
+    if (!match) continue;
+    const value = match[2].trim().replace(/^["']|["']$/g, "");
+    if (!value) continue;
+    if (match[1].toLowerCase() === "url") meta.url = value;
+    else if (match[1].toLowerCase() === "title") meta.title = value;
+  }
+  return meta;
 }

@@ -53,17 +53,17 @@ export function SiteLogo({ origin }: { origin: string }) {
   if (!host || failed || !src) {
     return (
       <span className="grid size-3.5 shrink-0 place-items-center overflow-hidden">
-        <Globe className="size-3.5 shrink-0 text-content/40" strokeWidth={1.75} />
+        <Globe className="size-3.5 shrink-0 text-ink-3" strokeWidth={1.75} />
       </span>
     );
   }
 
   return (
     <span className="relative grid size-3.5 shrink-0 place-items-center overflow-hidden">
-      {/* 14px is small for a placeholder: the app's row skeleton (`bg-content/6`)
+      {/* 14px is small for a placeholder: the app's row skeleton (`bg-fill`)
           disappears at this size, so this box uses the tone the title bar's own
           loading block uses. */}
-      {ready ? null : <span aria-hidden className="absolute inset-0 animate-pulse rounded-[3px] bg-content/15" />}
+      {ready ? null : <span aria-hidden className="absolute inset-0 animate-pulse rounded-xs bg-fill-strong" />}
       <img
         src={src}
         alt=""
@@ -71,7 +71,7 @@ export function SiteLogo({ origin }: { origin: string }) {
         loading="lazy"
         decoding="async"
         referrerPolicy="no-referrer"
-        className={`size-3.5 rounded-[3px] object-contain transition-opacity duration-150 ${ready ? "opacity-100" : "opacity-0"}`}
+        className={`size-3.5 rounded-xs object-contain transition-opacity duration-150 ${ready ? "opacity-100" : "opacity-0"}`}
         onLoad={() => {
           RESOLVED.set(origin, index);
           setSettled(index);
