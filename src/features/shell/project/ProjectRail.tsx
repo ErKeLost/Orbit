@@ -47,7 +47,6 @@ import { DevModeSlot, IS_MAC, MOD, ResizeHandle, TabVisitNav } from "../chrome";
 import { TerminalSpinner } from "../TerminalSpinner";
 import { ProjectContextMenu } from "./ProjectContextMenu";
 import { ProjectsSection } from "./ProjectsSection";
-import { ProjectSwitcher } from "./ProjectSwitcher";
 import { useShell } from "../shellStore";
 import { ProjectEditorDialog } from "./ProjectEditorDialog";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -74,12 +73,12 @@ export function RailAction({ label, icon: Icon, onClick, active = false, shortcu
       disabled={!onClick}
       aria-label={ariaLabel ?? label}
       className={`rail-row relative flex h-8 w-full items-center gap-2 rounded-md px-2 text-left ${
-        active ? "bg-selection text-content" : "text-content/50 hover:bg-content/10 hover:text-content"
+        active ? "bg-selection text-ink-1" : "text-ink-3 hover:bg-fill-strong hover:text-ink-1"
       } disabled:cursor-default disabled:opacity-40`}
     >
       <Icon className="size-4 shrink-0 opacity-70" strokeWidth={1.75} />
       <span className="min-w-0 flex-1 truncate text-sm font-medium leading-tight">{label}</span>
-      {shortcut ? <span aria-hidden className="shrink-0 text-[11px] text-content/40">{shortcut}</span> : null}
+      {shortcut ? <span aria-hidden className="shrink-0 text-2xs text-ink-3">{shortcut}</span> : null}
     </button>
   );
 }
@@ -92,13 +91,13 @@ function RailSearch({ onClick, active }: { onClick?: () => void; active?: boolea
       onClick={onClick}
       disabled={!onClick}
       aria-label={`搜索 (${MOD}K)`}
-      className={`rail-row rail-search-row relative flex h-8 w-full items-center gap-2 rounded-md border border-content/8 px-1.5 text-left ${
-        active ? "bg-selection text-content" : "text-content/50 hover:bg-content/10 hover:text-content"
+      className={`rail-row rail-search-row relative flex h-8 w-full items-center gap-2 rounded-md border border-line px-1.5 text-left ${
+        active ? "bg-selection text-ink-1" : "text-ink-3 hover:bg-fill-strong hover:text-ink-1"
       } disabled:cursor-default disabled:opacity-40`}
     >
       <Search className="size-4 shrink-0 opacity-70" strokeWidth={1.75} />
       <span className="min-w-0 flex-1 truncate text-sm font-medium leading-tight">搜索</span>
-      <span aria-hidden className="rail-shortcut shrink-0 text-[11px] text-content/40">{MOD}K</span>
+      <span aria-hidden className="rail-shortcut shrink-0 text-2xs text-ink-3">{MOD}K</span>
     </button>
   );
 }
@@ -115,13 +114,13 @@ function UpdateFooter() {
         onClick={() => void installDesktopUpdate()}
         disabled={installing}
         className={`flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left transition-colors ${
-          installing ? "bg-content/5 text-content/75" : "bg-accent/15 text-content hover:bg-accent/20"
+          installing ? "bg-fill text-ink-2" : "bg-accent/15 text-ink-1 hover:bg-accent/20"
         } disabled:cursor-default disabled:opacity-70`}
       >
         <span className="grid size-[18px] shrink-0 place-items-center">
           {installing ? <Loader className="size-4 animate-spin opacity-70" /> : <ArrowDownCircle className="size-4 text-accent" />}
         </span>
-        <span className="block min-w-0 flex-1 truncate text-[12px] font-medium leading-tight">
+        <span className="block min-w-0 flex-1 truncate text-xs font-medium leading-tight">
           {installing ? "正在下载…" : `更新到 ${version}`}
         </span>
       </button>
@@ -140,22 +139,21 @@ function ArchivedFooter({ projects }: { projects: Project[] }) {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(value => !value)}
-        className={`flex h-7 w-full items-center gap-1 rounded-md px-2 text-left ${open ? "bg-content/5" : "hover:bg-content/5"}`}
+        className={`flex h-7 w-full items-center gap-1 rounded-md px-2 text-left ${open ? "bg-fill" : "hover:bg-fill"}`}
       >
-        <Archive className="size-3.5 shrink-0 text-content/45" strokeWidth={1.75} />
-        <span className="min-w-0 flex-1 truncate text-[12px] text-content/50">已归档</span>
-        <span className="shrink-0 rounded-full bg-content/8 px-1.5 text-[10px] tabular-nums text-content/50">{projects.length}</span>
+        <Archive className="size-3.5 shrink-0 text-ink-3" strokeWidth={1.75} />
+        <span className="min-w-0 flex-1 truncate text-xs text-ink-3">已归档</span>
       </button>
       {open ? (
         <div className="mt-0.5 flex flex-col gap-px">
           {projects.map(project => (
-            <div key={project.path} className="group flex h-7 items-center gap-1.5 rounded-md px-2 hover:bg-content/5">
-              <span className="min-w-0 flex-1 truncate text-[12px] text-content/60" title={project.path}>{project.name}</span>
+            <div key={project.path} className="group flex h-7 items-center gap-1.5 rounded-md px-2 hover:bg-fill">
+              <span className="min-w-0 flex-1 truncate text-xs text-ink-2" title={project.path}>{project.name}</span>
               <button
                 type="button"
                 title="恢复项目"
                 onClick={() => update({ ...project, archivedAt: undefined })}
-                className="shrink-0 rounded px-1.5 text-[11px] text-content/50 hover:bg-content/10 hover:text-content"
+                className="shrink-0 rounded px-1.5 text-2xs text-ink-3 hover:bg-fill-strong hover:text-ink-1"
               >
                 恢复
               </button>
@@ -230,20 +228,20 @@ function RailSessionCard({
           onStartRename();
         }
       }}
-      className={`group flex h-7 w-full cursor-default select-none items-center gap-2 rounded-md px-1.5 text-left outline-none focus-visible:ring-1 focus-visible:ring-accent/50 ${
-        active ? "bg-selection-strong text-content" : "text-content/75 hover:bg-content/5 hover:text-content"
+      className={`group flex h-8 w-full cursor-default select-none items-center gap-2 rounded-control px-1.5 text-left outline-none focus-visible:ring-1 focus-visible:ring-accent/50 ${
+        active ? "bg-selection-strong text-ink-1" : "text-ink-2 hover:bg-fill hover:text-ink-1"
       }`}
     >
       {/* 图标列定宽：标题的左沿必须是一条线，否则一列扫下去全是毛边。 */}
       <span className="grid w-4 shrink-0 place-items-center">
-        <Icon name={sessionGlyph(session.icon)} className="size-3.5 text-content/45 group-hover:text-content/70" />
+        <Icon name={sessionGlyph(session.icon)} className="size-3.5 text-ink-3 group-hover:text-ink-2" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
         {renaming && onRename && onCancelRename ? (
-          <SessionTitleField value={title} onCommit={onRename} onCancel={onCancelRename} className="text-[12.5px]" />
+          <SessionTitleField value={title} onCommit={onRename} onCancel={onCancelRename} className="text-ui" />
         ) : (
           <span
-            className={`truncate text-[12.5px] leading-tight ${active ? "font-medium" : ""}`}
+            className={`truncate text-ui leading-tight ${active ? "font-medium" : ""}`}
             onDoubleClick={(event) => {
               if (!onStartRename) return;
               event.preventDefault();
@@ -255,9 +253,9 @@ function RailSessionCard({
           </span>
         )}
       </span>
-      <span className="flex min-w-6 shrink-0 items-center justify-end whitespace-nowrap text-[10px] leading-none tabular-nums text-content/30 group-hover:text-content/45">
+      <span className="flex min-w-6 shrink-0 items-center justify-end whitespace-nowrap text-2xs leading-none tabular-nums text-ink-3">
         {running ? (
-          <TerminalSpinner className="inline-block w-3 select-none text-center text-[11px] leading-none text-accent" />
+          <TerminalSpinner className="inline-block w-3 select-none text-center text-2xs leading-none text-accent" />
         ) : (
           sessionRelativeTime(session.modified)
         )}
@@ -330,19 +328,10 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
     () => liveSessions.filter((session) => session.running).map((session) => session.cwd),
     [liveSessions],
   );
-  /** 侧栏标题认的项目：只有“在这个项目里工作”时才算，首页不属于任何项目。 */
-  const currentProject = useMemo(
-    () =>
-      workspaceMode === "project"
-        ? (visibleProjects.find((project) => project.path === cwd) ?? null)
-        : null,
-    [cwd, visibleProjects, workspaceMode],
-  );
-
   /**
    * 会话区块只扫**当前**作用域：项目模式下是这个项目，主目录模式下是主目录。
    * 别的项目的会话仍然活着（后台跑、被收养/休眠），只是不在这里列——要看它们，
-   * 从标题上的项目菜单切过去。
+   * 从下面的项目列表切过去。
    */
   const sessionRoots = useMemo(() => (cwd ? [cwd] : []), [cwd]);
   const sessionGroups = useProjectSessionGroups(sessionRoots);
@@ -510,28 +499,8 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
         <SettingsNav />
       ) : (
         <>
-          <div className="flex shrink-0 flex-col gap-px px-2 pb-2 pt-0.5">
-            {/* 侧栏标题：项目名 + 分支，切换下沉成菜单里的子级。
-                和下面的搜索/导航同宽同高，图标左沿对齐，中间空出一行呼吸。 */}
-            <div className="flex shrink-0 items-center pb-1.5">
-              <ProjectSwitcher
-                current={currentProject}
-                projects={visibleProjects}
-                pending={Boolean(cwd) && busyProject === cwd}
-                onSelectProject={(path) => void chooseProject(path)}
-                onAddProject={
-                  runtimeTarget === "mobile"
-                    ? () => setPicker(true)
-                    : desktopRuntime()
-                      ? () => void addProjects().catch(report)
-                      : undefined
-                }
-                onOpenHome={homeDir ? () => void chooseHome() : undefined}
-                onOpenProjectMenu={(project, x, y) => setMenu({ project, x, y })}
-                onOpenSettings={() => useWorkspace.getState().set({ panel: "settings" })}
-                settingsShortcut={`${MOD},`}
-              />
-            </div>
+          <div className="flex shrink-0 flex-col gap-0.5 px-2 pb-2 pt-1.5">
+            {/* 侧栏不再有顶部的项目标题行：项目切换统一走下面的「项目」段。 */}
             <RailSearch onClick={onSearch} />
             <div className="mt-0.5" />
             {NAV
@@ -550,7 +519,7 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
           </div>
 
           <div ref={lockOverscroll} className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-none pb-2">
-            {/* 项目段：标题上那行菜单是「我在哪」，这一列是「我还能去哪」。 */}
+            {/* 项目段：切项目的唯一入口。 */}
             <ProjectsSection
               projects={visibleProjects}
               currentPath={workspaceMode === "project" ? cwd : undefined}
@@ -582,22 +551,18 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
                   className="flex h-7 w-full items-center gap-1 px-3 pb-1.5 text-left"
                 >
                   <ChevronDown
-                    className={`size-3 shrink-0 text-content/50 transition-transform ${sessionsOpen ? "" : "-rotate-90"}`}
+                    className={`size-3 shrink-0 text-ink-3 transition-transform ${sessionsOpen ? "" : "-rotate-90"}`}
                     strokeWidth={1.75}
                   />
-                  <span className="min-w-0 flex-1 truncate px-0.5 text-xs leading-5 text-content/50">会话</span>
-                  <span className="shrink-0 rounded-full bg-content/8 px-1.5 text-[10px] tabular-nums leading-4 text-content/50">
-                    {railSessions.length}
-                  </span>
+                  <span className="min-w-0 flex-1 truncate px-0.5 text-2xs leading-5 text-ink-3">会话</span>
                 </button>
                 {sessionsOpen ? (
                   <div className="flex flex-col pb-1">
                     {sessionAgeSections.map((group) => (
                       <section key={group.label} aria-label={group.label}>
                         {/* 分组标题：11px、40% 灰，只做分隔不做主角。 */}
-                        <h3 className="flex items-center gap-2 px-3 pb-1 pt-2 text-[10.5px] font-medium tracking-wide text-content/35">
+                        <h3 className="flex items-center gap-2 px-3 pb-1 pt-4 text-2xs font-medium text-ink-3">
                           <span className="min-w-0 truncate">{group.label}</span>
-                          <span className="shrink-0 tabular-nums text-content/25">{group.items.length}</span>
                         </h3>
                         <div className="flex flex-col gap-px px-2">
                           {group.items.map(({ session, project }) => (
@@ -670,9 +635,9 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
           onCancel={() => setRemoving(null)}
           onConfirm={() => void removeSelected()}
         >
-          <p className="text-[13px] font-medium text-content">{removing.name}</p>
-          <code className="mt-1 block break-all font-mono text-[11px] text-content/50">{removing.path}</code>
-          <p className="mt-3 text-[12px] leading-relaxed text-content/55">只会从侧栏移除，不会删除磁盘文件。</p>
+          <p className="text-ui font-medium text-ink-1">{removing.name}</p>
+          <code className="mt-1 block break-all font-mono text-2xs text-ink-3">{removing.path}</code>
+          <p className="mt-3 text-xs leading-relaxed text-ink-2">只会从侧栏移除，不会删除磁盘文件。</p>
         </ConfirmDialog>
       ) : null}
       {picker ? <ProjectDirectoryPicker open onClose={() => setPicker(false)} /> : null}

@@ -100,15 +100,14 @@ describe("ProjectsSection", () => {
     expect(row("/work/pi-gui")?.hasAttribute("data-selected")).toBe(false);
   });
 
-  it("多 root 的项目在行尾报个数，全部路径在 title 里", async () => {
+  it("多 root 的项目不报数字，全部路径交给 title", async () => {
     await render();
     expect(row("/work/create-x")?.getAttribute("data-project-roots")).toBe("2");
     expect(row("/work/pi-gui")?.getAttribute("data-project-roots")).toBe("1");
-    // 角标只报数，完整路径交给 title，行里没有第二条被截断的路径。
+    // 行里只有名字：数量不占位，完整路径放在 title 里。
     const title = row("/work/create-x")?.querySelector("button")?.getAttribute("title") ?? "";
     expect(title).toContain("/work/create-x-backend");
-    expect(row("/work/create-x")?.textContent).toContain("2");
-    expect(row("/work/pi-gui")?.textContent).not.toContain("1");
+    expect(row("/work/create-x")?.textContent).toBe("create-x");
   });
 
   it("加号菜单里有「打开文件夹…」和「不在文件夹里工作」", async () => {
@@ -122,10 +121,14 @@ describe("ProjectsSection", () => {
     expect(home).toBe(1);
   });
 
-  it("没有项目时给出提示，而不是一片空白", async () => {
+  it("没有项目时给一个图标入口，不写「还没有项目」也不报 0", async () => {
     await render({ projects: [] });
-    expect(container.textContent).toContain("还没有项目");
-    expect(container.textContent).toContain("0");
+    expect(container.textContent).not.toContain("还没有项目");
+    expect(container.textContent?.trim()).toBe("项目");
+    const empty = iconButton("打开文件夹");
+    expect(empty).not.toBeNull();
+    await click(empty);
+    expect(added).toBe(1);
   });
 
   it("右键一行打开项目菜单，不是浏览器的默认菜单", async () => {
