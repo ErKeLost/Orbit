@@ -28,7 +28,7 @@ import { WorkingTreeDiffView } from "../../source-control/ui/WorkingTreeDiffView
 /** CodeMirror 全家桶只在真的打开文件编辑时才加载，不进首屏 chunk。 */
 const CodeEditor = lazy(() => import("../editor/CodeEditor").then((m) => ({ default: m.CodeEditor })));
 const EditorFallback = (
-  <div className="grid h-full place-items-center text-content/40">
+  <div className="grid h-full place-items-center text-ink-3">
     <Loader className="size-4 animate-spin" />
   </div>
 );
@@ -77,9 +77,9 @@ function VideoPlayer({ src, path, mimeType }: { src: string; path: string; mimeT
           const video = event.currentTarget;
           setMeta({ width: video.videoWidth, height: video.videoHeight, duration: video.duration });
         }}
-        className="max-h-[64vh] max-w-full rounded-xl border border-content/10 bg-black"
+        className="max-h-[64vh] max-w-full rounded-xl border border-line bg-black"
       />
-      <p className="shrink-0 font-mono text-[11px] text-content/45">
+      <p className="shrink-0 font-mono text-2xs text-ink-3">
         {meta ? `${meta.width}×${meta.height} · ` : ""}
         {meta ? `${formatTime(meta.duration)} · ` : ""}
         {[format, sizeLabel].filter(Boolean).join(" · ")}
@@ -90,10 +90,10 @@ function VideoPlayer({ src, path, mimeType }: { src: string; path: string; mimeT
 
 function MediaNotice({ message, path }: { message: string; path: string }) {
   return (
-    <div className="flex w-full max-w-sm flex-col items-center gap-3 rounded-xl border border-content/10 bg-content/4 px-6 py-8 text-center">
-      <ImagePlus className="size-8 text-content/25" strokeWidth={1.5} />
-      <p className="text-[13px] leading-5 text-content/70">{message}</p>
-      <p className="break-all font-mono text-[11px] leading-4 text-content/40">{path}</p>
+    <div className="flex w-full max-w-sm flex-col items-center gap-3 rounded-xl border border-line bg-fill-weak px-6 py-8 text-center">
+      <ImagePlus className="size-8 text-ink-3" strokeWidth={1.5} />
+      <p className="text-ui leading-5 text-ink-2">{message}</p>
+      <p className="break-all font-mono text-2xs leading-4 text-ink-3">{path}</p>
     </div>
   );
 }
@@ -126,19 +126,19 @@ export function MediaView({ file, kind, remote }: { file: { path: string; name: 
     );
   }
   return (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-auto bg-content/2 p-6">
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-auto bg-fill-weak p-6">
       {notice !== null ? (
         <MediaNotice message={notice} path={file.path} />
       ) : src == null ? (
-        <Loader className="size-5 animate-spin text-content/30" />
+        <Loader className="size-5 animate-spin text-ink-3" />
       ) : kind === "video" ? (
         <VideoPlayer src={src} path={file.path} mimeType={meta?.mime} />
       ) : (
-        <object data={src} type="application/pdf" className="h-full w-full rounded-xl border border-content/10">
-          <p className="p-4 text-[13px] text-content/50">此浏览器无法内嵌预览 PDF。</p>
+        <object data={src} type="application/pdf" className="h-full w-full rounded-xl border border-line">
+          <p className="p-4 text-ui text-ink-3">此浏览器无法内嵌预览 PDF。</p>
         </object>
       )}
-      <p className="shrink-0 font-mono text-[11px] text-content/40">
+      <p className="shrink-0 font-mono text-2xs text-ink-3">
         {file.name}
         {meta ? ` · ${meta.mime} · ${formatBytes(meta.size)}` : fetching ? " · 读取中…" : ""}
       </p>
@@ -154,9 +154,9 @@ export function MediaView({ file, kind, remote }: { file: { path: string; name: 
 function MissingFileNotice({ path }: { path: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-      <ImagePlus className="size-8 text-content/20" strokeWidth={1.5} />
-      <p className="text-[13px] text-content/60">文件不存在</p>
-      <p className="max-w-md break-all font-mono text-[11px] leading-4 text-content/35">{path}</p>
+      <ImagePlus className="size-8 text-ink-3" strokeWidth={1.5} />
+      <p className="text-ui text-ink-2">文件不存在</p>
+      <p className="max-w-md break-all font-mono text-2xs leading-4 text-ink-3">{path}</p>
     </div>
   );
 }
@@ -176,13 +176,13 @@ function MarkdownDocumentPreview({ text }: { text: string }) {
   return (
     <>
       {metadata !== null ? (
-        <details className="group/metadata mb-6 rounded-lg border border-content/10 bg-content/[0.03]">
-          <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg px-3 py-2 text-[12px] text-content/60 hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent [&::-webkit-details-marker]:hidden">
-            <ChevronRight aria-hidden className="size-3.5 shrink-0 text-content/50 group-open/metadata:hidden" strokeWidth={1.75} />
-            <ChevronDown aria-hidden className="hidden size-3.5 shrink-0 text-content/50 group-open/metadata:block" strokeWidth={1.75} />
+        <details className="group/metadata mb-6 rounded-lg border border-line bg-fill-weak">
+          <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg px-3 py-2 text-xs text-ink-2 hover:text-ink-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent [&::-webkit-details-marker]:hidden">
+            <ChevronRight aria-hidden className="size-3.5 shrink-0 text-ink-3 group-open/metadata:hidden" strokeWidth={1.75} />
+            <ChevronDown aria-hidden className="hidden size-3.5 shrink-0 text-ink-3 group-open/metadata:block" strokeWidth={1.75} />
             属性
           </summary>
-          <pre className="whitespace-pre-wrap break-words border-t border-stroke px-3 py-2 font-mono text-[12px] leading-5 text-content/70">{metadata}</pre>
+          <pre className="whitespace-pre-wrap break-words border-t border-stroke px-3 py-2 font-mono text-xs leading-5 text-ink-2">{metadata}</pre>
         </details>
       ) : null}
       <Markdown content={markdown} />
@@ -321,9 +321,9 @@ export function FileView({
       ) : (
         <div ref={lockOverscroll} className="file-view flex min-h-0 flex-1 flex-col overflow-hidden">
           {contents.isPending ? (
-            <div className="grid h-full place-items-center text-content/40"><Loader className="size-4 animate-spin" /></div>
+            <div className="grid h-full place-items-center text-ink-3"><Loader className="size-4 animate-spin" /></div>
           ) : contents.isError ? (
-            <p className="px-4 py-3 text-[12px] text-content/50">{String(contents.error)}</p>
+            <p className="px-4 py-3 text-xs text-ink-3">{String(contents.error)}</p>
           ) : (
             <Suspense fallback={EditorFallback}>
               <CodeEditor
@@ -337,14 +337,14 @@ export function FileView({
           )}
         </div>
       )}
-      <div className={`flex h-7 shrink-0 items-center gap-2 border-t border-stroke px-3 font-mono text-[11px] text-content/45 ${review ? "hidden" : ""}`}>
+      <div className={`flex h-7 shrink-0 items-center gap-2 border-t border-stroke px-3 font-mono text-2xs text-ink-3 ${review ? "hidden" : ""}`}>
         <span className="min-w-0 truncate">{relative}</span>
         {remote && dirty ? (
           <button
             type="button"
             disabled={saving}
             onClick={() => void save()}
-            className="ml-auto shrink-0 rounded-md bg-accent px-2.5 py-0.5 font-sans text-[11px] font-medium text-white disabled:opacity-60"
+            className="ml-auto shrink-0 rounded-md bg-accent px-2.5 py-0.5 font-sans text-2xs font-medium text-accent-foreground disabled:opacity-60"
           >
             {saving ? "保存中…" : "保存"}
           </button>

@@ -187,7 +187,7 @@ export const DraftField = memo(
           <div
             ref={highlight}
             aria-hidden
-            className="composer-highlight pointer-events-none absolute inset-0 max-h-40 overflow-hidden whitespace-pre-wrap break-words px-3 py-3 font-sans text-sm leading-5.5 text-content"
+            className="composer-highlight pointer-events-none absolute inset-0 max-h-40 overflow-hidden whitespace-pre-wrap break-words px-3 py-3 font-sans text-sm leading-5.5 text-ink-1"
           >
             <ComposerHighlight text={draft} names={skillNames} mentions={mentionLabels} ghost={ghost} />
           </div>

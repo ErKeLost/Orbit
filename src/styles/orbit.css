@@ -375,17 +375,17 @@ html:not(.theme-light) .syntax-token {
  */
 
 :root {
-  --color-context-system: #a78bfa;
-  --color-context-conversation: #60a5fa;
-  --color-context-tools: #fbbf24;
-  --color-context-attachment: #2dd4bf;
+  --color-context-system: oklch(0.74 0.11 300);
+  --color-context-conversation: oklch(0.74 0.12 255);
+  --color-context-tools: oklch(0.8 0.12 82);
+  --color-context-attachment: oklch(0.76 0.1 190);
 }
 
 html.theme-light {
-  --color-context-system: #7c3aed;
-  --color-context-conversation: #2563eb;
-  --color-context-tools: #d97706;
-  --color-context-attachment: #0d9488;
+  --color-context-system: oklch(0.52 0.14 300);
+  --color-context-conversation: oklch(0.52 0.15 255);
+  --color-context-tools: oklch(0.58 0.12 82);
+  --color-context-attachment: oklch(0.55 0.1 190);
 }
 
 .context-swatch-system { background-color: var(--color-context-system); }
@@ -1553,41 +1553,70 @@ html.theme-light [data-composer-box] {
  * composer 到底层画布一起保持一致。
  */
 .orbit-galaxy-surface {
-  --background-lightness: var(--theme-dark-lightness);
-  --content-lightness: 92%;
-  --color-background-base: hsl(
-    var(--theme-hue) var(--theme-saturation) var(--theme-dark-lightness)
-  );
-  --color-content: hsl(var(--theme-hue) var(--theme-saturation) 92%);
-  --color-stroke: color-mix(in srgb, var(--color-content) 7%, transparent);
-  --color-selection-subtle: color-mix(
-    in srgb,
-    var(--color-content) 8%,
-    transparent
-  );
-  --color-selection: color-mix(
-    in srgb,
-    var(--color-content) 10%,
-    transparent
-  );
-  --color-selection-strong: color-mix(
-    in srgb,
-    var(--color-content) 12%,
-    transparent
-  );
-  --color-selection-hover: color-mix(
-    in srgb,
-    var(--color-content) 15%,
-    transparent
-  );
-  --color-selection-emphasis: color-mix(
-    in srgb,
-    var(--color-content) 20%,
-    transparent
-  );
+  /* 子树重新钉回暗色语义 token：新的铺色本身不区分明暗，这里换的是
+     surface / ink 的取值，而不是把 HSL 里的两个数字改小。 */
+  --surface-canvas: oklch(0.19 0.012 285);
+  --surface-sunken: oklch(0.155 0.012 285);
+  --surface-card: oklch(0.225 0.012 285);
+  --surface-raised: oklch(0.265 0.013 285);
+  --surface-overlay: oklch(0.3 0.013 285);
+  --ink-1: oklch(0.95 0.006 285);
+  --ink-2: oklch(0.78 0.008 285);
+  --ink-3: oklch(0.63 0.01 285);
+  --line: color-mix(in oklab, var(--ink-1) 9%, transparent);
+  --line-strong: color-mix(in oklab, var(--ink-1) 18%, transparent);
+  --fill-weak: color-mix(in oklab, var(--ink-1) 4%, transparent);
+  --fill: color-mix(in oklab, var(--ink-1) 7%, transparent);
+  --fill-strong: color-mix(in oklab, var(--ink-1) 11%, transparent);
+  /*
+   * 别名也要在这一层重新声明一遍。
+   *
+   * CSS 自定义属性是在声明它的元素上就完成替换的：`--color-ink-1: var(--ink-1)`
+   * 写在 :root 上时，:`root` 的 --ink-1 值已经被固化进去，子树再改 --ink-1 不会
+   * 追溯。工具类读的是 --color-ink-1 / --color-surface-*，所以只钉语义 token
+   * 会让这一屏出现「暗底 + 浅色主题的黑字」。凡是这里钉过的语义 token，对应的
+   * --color-* 别名都在同一层再绑一次。
+   */
+  --color-background-base: var(--surface-canvas);
+  --color-surface: var(--surface-canvas);
+  --color-surface-canvas: var(--surface-canvas);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-card: var(--surface-card);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-content: var(--ink-1);
+  --color-ink-1: var(--ink-1);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-stroke: var(--line);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fill-weak: var(--fill-weak);
+  --color-fill: var(--fill);
+  --color-fill-strong: var(--fill-strong);
+  /* 这一屏永远是深色底，强调色和状态色也跟着用深色主题那一档：
+     浅色主题的深蓝强调色在这一屏上会沉进背景里。 */
+  --accent: oklch(0.66 0.155 255);
+  --accent-ink: oklch(0.8 0.12 255);
+  --accent-fg: oklch(0.19 0.02 255);
+  --accent-soft: color-mix(in oklab, var(--accent) 16%, transparent);
+  --positive: oklch(0.74 0.14 158);
+  --negative: oklch(0.66 0.19 25);
+  --warning: oklch(0.8 0.13 82);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-foreground: var(--accent-fg);
+  --color-positive: var(--positive);
+  --color-negative: var(--negative);
+  --color-warning: var(--warning);
+  --color-danger: var(--negative);
+  --color-skill: var(--accent-ink);
+  --color-mention: var(--accent-ink);
+  --link-color: var(--accent-ink);
+  --color-markdown-heading: var(--ink-1);
   color-scheme: dark;
-  background: var(--color-background-base);
-  color: var(--color-content);
+  background: var(--surface-canvas);
+  color: var(--ink-1);
 }
 
 /* 分栏 diff 里没有对应行的那一半：斜线纹理占位（Codex 同款）。 */

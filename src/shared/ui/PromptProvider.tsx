@@ -36,11 +36,11 @@ export function PromptProvider({ children }: { children: ReactNode }) {
             ) : (
               <Input autoFocus value={value} onChange={(event) => setValue(event.target.value)} />
             )}
-            <div className="flex justify-end gap-2 text-[13px]">
-              <button type="button" onClick={() => close(null)} className="rounded-md px-3 py-1.5 hover:bg-content/8 active:scale-[0.97]">
+            <div className="flex justify-end gap-2 text-ui">
+              <button type="button" onClick={() => close(null)} className="rounded-md px-3 py-1.5 hover:bg-fill-strong active:scale-[0.97]">
                 取消
               </button>
-              <button type="submit" className="rounded-md bg-content px-3 py-1.5 font-medium text-background-base hover:bg-content/80 active:scale-[0.97]">
+              <button type="submit" className="rounded-md bg-ink-1 px-3 py-1.5 font-medium text-background-base hover:bg-ink-1/70 active:scale-[0.97]">
                 确认
               </button>
             </div>

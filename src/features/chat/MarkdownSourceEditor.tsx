@@ -54,7 +54,7 @@ export function MarkdownSourceEditor({
     <div className={`relative ${className}`}>
       <div
         aria-hidden
-        className={`pointer-events-none grid font-mono text-[13px] leading-5 text-content/85${lineNumbers ? "" : " py-3"}`}
+        className={`pointer-events-none grid font-mono text-ui leading-5 text-ink-1${lineNumbers ? "" : " py-3"}`}
         style={{
           gridTemplateColumns: lineNumbers
             ? `${gutterWidth} minmax(0, 1fr)`
@@ -64,7 +64,7 @@ export function MarkdownSourceEditor({
         {lines.map((line, index) => (
           <Fragment key={index}>
             {lineNumbers ? (
-              <div className="select-none pr-2 text-right tabular-nums whitespace-nowrap text-content/40">
+              <div className="select-none pr-2 text-right tabular-nums whitespace-nowrap text-ink-3">
                 {index + 1}
               </div>
             ) : null}
@@ -77,7 +77,7 @@ export function MarkdownSourceEditor({
       {lineNumbers ? (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-y-0 w-px bg-content/10"
+          className="pointer-events-none absolute inset-y-0 w-px bg-fill-strong"
           style={{ left: gutterWidth }}
         />
       ) : null}
@@ -90,7 +90,7 @@ export function MarkdownSourceEditor({
         onBlur={onBlur}
         spellCheck={false}
         placeholder={placeholder}
-        className={`markdown-source-field absolute inset-0 h-full w-full resize-none overflow-hidden border-0 bg-transparent font-mono text-[13px] leading-5 whitespace-pre-wrap wrap-break-word outline-none ${lineNumbers ? "py-0 pr-0" : "py-3 pr-3"}`}
+        className={`markdown-source-field absolute inset-0 h-full w-full resize-none overflow-hidden border-0 bg-transparent font-mono text-ui leading-5 whitespace-pre-wrap wrap-break-word outline-none ${lineNumbers ? "py-0 pr-0" : "py-3 pr-3"}`}
         style={{ paddingLeft: textOffset }}
       />
     </div>

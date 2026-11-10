@@ -162,8 +162,8 @@ export function BrowserPip() {
         onDoubleClick={dockBrowserPip}
         className="browser-pip-bar"
       >
-        <Globe className="size-3.5 shrink-0 text-content/40" strokeWidth={1.75} />
-        <span className="min-w-0 flex-1 truncate text-[12px] text-content/60" title={tab.url}>
+        <Globe className="size-3.5 shrink-0 text-ink-3" strokeWidth={1.75} />
+        <span className="min-w-0 flex-1 truncate text-xs text-ink-2" title={tab.url}>
           {hostOf(tab.url, tab.title)}
         </span>
         <button
@@ -172,7 +172,7 @@ export function BrowserPip() {
           aria-label="收回浏览器列"
           onClick={dockBrowserPip}
           onPointerDown={event => event.stopPropagation()}
-          className="grid size-6.5 shrink-0 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content"
+          className="grid size-6.5 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1"
         >
           <PanelRight className="size-3.5" strokeWidth={1.75} />
         </button>
@@ -185,7 +185,7 @@ export function BrowserPip() {
             dockBrowserPip();
           }}
           onPointerDown={event => event.stopPropagation()}
-          className="grid size-6.5 shrink-0 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content"
+          className="grid size-6.5 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1"
         >
           <X className="size-3.5" strokeWidth={1.75} />
         </button>

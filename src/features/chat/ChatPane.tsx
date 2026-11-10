@@ -136,7 +136,7 @@ function EmptySession({ cwd, onSubmitted }: { cwd: string; onSubmitted: () => vo
       <GalaxyDotBackground />
       <div className="pointer-events-none relative z-10 mx-auto flex w-full max-w-4xl flex-1 flex-col justify-center px-1.5 py-12">
         <div className="pointer-events-auto mb-4 px-2.5">
-          <h1 className="truncate text-lg text-content" title={project ? cwd : undefined}>{title}</h1>
+          <h1 className="truncate text-lg text-ink-1" title={project ? cwd : undefined}>{title}</h1>
         </div>
         <div className="pointer-events-auto w-full">
           <Composer onSubmitted={onSubmitted} centered />
@@ -412,7 +412,7 @@ export function ChatPane({
       <button
         type="button"
         onClick={showEarlier}
-        className="rounded-full border border-stroke/60 bg-content/4 px-3 py-1 font-sans text-[12px] text-content/55 hover:bg-content/8 hover:text-content/80"
+        className="rounded-full border border-stroke/60 bg-fill-weak px-3 py-1 font-sans text-xs text-ink-2 hover:bg-fill-strong hover:text-ink-1"
       >
         显示更早的 {Math.min(TRANSCRIPT_PAGE, start)} 段（之前还有 {start} 段）
       </button>
@@ -427,14 +427,14 @@ export function ChatPane({
           and "it is lying to me". */}
       {connection === "connecting" && transcript.messages.length > 0 ? (
         <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex justify-center">
-          <span className="mt-2 rounded-full border border-stroke/60 bg-background-base/85 px-2.5 py-1 text-[11px] text-content/60 backdrop-blur">正在重连电脑…</span>
+          <span className="mt-2 rounded-full border border-stroke/60 bg-background-base/85 px-2.5 py-1 text-2xs text-ink-2 backdrop-blur">正在重连电脑…</span>
         </div>
       ) : null}
       <div className="@container relative min-h-0 flex-1 transcript-composer-fade">
         {/* 底部渐隐的 mask 放在这层静态包裹上，而不是滚动容器本身：mask 层不用
             跟着 scrollTop 重算，滚动仍然是合成器上的纯位移（PERF.md 候选 #2）。 */}
         <div className="transcript-scroll-fade h-full">
-          <div ref={setScroller} className="agent-transcript h-full overflow-y-auto overscroll-none font-mono text-[13px] leading-5 [overflow-anchor:none]">
+          <div ref={setScroller} className="agent-transcript h-full overflow-y-auto overscroll-none font-mono text-ui leading-5 [overflow-anchor:none]">
           {/* Orbit's chat transcript: top-aligned content whose newest turn
               reserves a pane of height (`transcript-turn-anchor`), so a prompt
               sent with the transcript pinned to the bottom sits at the top. */}

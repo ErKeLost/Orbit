@@ -54,6 +54,6 @@ export function SessionsPage() {
       <MenuItem onClick={() => { void navigator.clipboard.writeText(menu.session.name || menu.session.firstMessage || ""); setMenu(null); }}>复制标题</MenuItem>
       {merged.listedPaths.has(menu.session.path) && <><MenuSeparator /><MenuItem danger disabled={!online} onClick={() => { setDeleting(menu.session); setMenu(null); }}>删除会话</MenuItem></>}
     </PointMenu>}
-    {deleting && <ConfirmDialog title="删除会话" confirmLabel="删除" danger onCancel={() => setDeleting(null)} onConfirm={() => void remove()}><p className="font-medium text-content">{deleting.name || deleting.firstMessage || "未命名会话"}</p></ConfirmDialog>}
+    {deleting && <ConfirmDialog title="删除会话" confirmLabel="删除" danger onCancel={() => setDeleting(null)} onConfirm={() => void remove()}><p className="font-medium text-ink-1">{deleting.name || deleting.firstMessage || "未命名会话"}</p></ConfirmDialog>}
   </>;
 }

@@ -325,7 +325,7 @@ export const SpeechInput = ({
       {isListening &&
         [0, 1, 2].map((index) => (
           <div
-            className="absolute inset-0 animate-ping rounded-full border-2 border-red-400/30"
+            className="absolute inset-0 animate-ping rounded-full border-2 border-negative/30"
             key={index}
             style={{
               animationDelay: `${index * 0.3}s`,
@@ -339,9 +339,9 @@ export const SpeechInput = ({
         className={cn(
           // Composer toolbar button, not a floating action: same square as
           // `ToolButton` in the bottom row, lit with the accent while recording.
-          "relative z-10 size-6.5 shrink-0 rounded-md bg-selection text-content/50 transition-colors hover:bg-selection-hover hover:text-content",
+          "relative z-10 size-6.5 shrink-0 rounded-md bg-selection text-ink-3 transition-colors hover:bg-selection-hover hover:text-ink-1",
           isListening &&
-            "border-0 bg-accent text-white hover:bg-accent/90 hover:text-white",
+            "border-0 bg-accent text-accent-foreground hover:bg-accent/90 hover:text-white",
           className
         )}
         title={buttonTitle}

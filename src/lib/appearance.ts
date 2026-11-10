@@ -26,7 +26,11 @@ const SATURATION_KEY = "orbit.themeSaturation";
 const LIGHTNESS_KEY = "orbit.themeDarkLightness";
 const SIDEBAR_OPACITY_KEY = "orbit.sidebarOpacity";
 
-export const DEFAULT_APPEARANCE = { hue: 240, saturation: 0, darkLightness: 9, sidebarOpacity: 0.85 };
+/**
+ * 墨蓝色调：色相 226、饱和度 14%、底色亮度 8%。三个值一起决定整条中性色阶
+ * （见 styles/orbit-theme.css 的 @theme static），不是只给页面刷一层蓝。
+ */
+export const DEFAULT_APPEARANCE = { hue: 255, saturation: 16, darkLightness: 8, sidebarOpacity: 0.85 };
 
 function read(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -76,12 +80,21 @@ function readDiffPalette(): DiffPalette {
 }
 
 /**
- * Text on an accent background. Always white: a surface painted with the
- * theme's accent color keeps one foreground instead of flipping per hue
- * (`#f59e0b` used to get a near-black label).
+ * Text on an accent background, picked from the accent's own luminance instead
+ * of always white. A fill at 66% lightness (`#6187ef`, the cobalt default) can
+ * never carry white text at 4.5:1; near-black ink gives it 5.5:1, while a dark
+ * user accent (`#ef4444`) keeps white.
  */
-function accentForeground() {
-  return "#ffffff";
+function accentForeground(color: string) {
+  const match = /^#([0-9a-fA-F]{6})$/.exec(color);
+  if (!match) return "#ffffff";
+  const value = Number.parseInt(match[1], 16);
+  const channel = (shift: number) => {
+    const c = ((value >> shift) & 0xff) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0);
+  return luminance > 0.35 ? "#0b0d13" : "#ffffff";
 }
 
 export const UI_SCALE_PERCENTS = Array.from({ length: 16 }, (_, i) => Math.round((0.5 + i * 0.1) * 100));
@@ -197,11 +210,11 @@ function applyToDocument(state: Pick<AppearanceState, "scheme" | "hue" | "satura
   if (state.accent) {
     root.classList.add("has-user-accent");
     root.style.setProperty("--user-accent-color", state.accent);
-    root.style.setProperty("--user-accent-foreground", accentForeground());
+    root.style.setProperty("--user-accent-foreground", accentForeground(state.accent));
     // 强调色接管 --color-accent：Working 状态、加载图标、焦点环这些原来固定
     // 蓝色的 UI 全部跟着主题强调色走，而不是只有气泡和发送按钮。
     root.style.setProperty("--color-accent", state.accent);
-    root.style.setProperty("--color-accent-foreground", accentForeground());
+    root.style.setProperty("--color-accent-foreground", accentForeground(state.accent));
   } else {
     root.classList.remove("has-user-accent");
     root.style.removeProperty("--user-accent-color");
@@ -219,18 +232,47 @@ function applyToDocument(state: Pick<AppearanceState, "scheme" | "hue" | "satura
   root.style.setProperty("--theme-hue", String(state.hue));
   root.style.setProperty("--theme-saturation", `${state.saturation}%`);
   root.style.setProperty("--theme-dark-lightness", `${state.darkLightness}%`);
+  // The token ramp does its math in OKLCH, where chroma and lightness are
+  // numbers, not percentages. Publish the raw values next to the display ones.
+  root.style.setProperty("--theme-saturation-unit", String(state.saturation));
+  root.style.setProperty("--theme-lightness-unit", String(state.darkLightness));
   root.style.setProperty("--sidebar-opacity", String(state.sidebarOpacity));
   document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute("content", themeColor[state.scheme]);
 }
 
 const initialPreference = loadThemePreference();
 
+/**
+ * Orbit 原样的默认色板（中性灰 + 240 色相）。它不是用户挑过的值，而是升级前写进
+ * localStorage 的初始值；换 token 后如果继续沿用，新色板在别人的机器上永远看不到。
+ * 三个值全中才算旧默认，用户自己调过的任何一个都不动。
+ */
+const LEGACY_DEFAULT_TINTS = [
+  { hue: 240, saturation: 0, darkLightness: 9 },
+  { hue: 226, saturation: 14, darkLightness: 8 },
+];
+
+function initialTint() {
+  const tint = {
+    hue: clamp(loadNumber(HUE_KEY, DEFAULT_APPEARANCE.hue), 0, 360),
+    saturation: clamp(loadNumber(SATURATION_KEY, DEFAULT_APPEARANCE.saturation), 0, 100),
+    darkLightness: clamp(loadNumber(LIGHTNESS_KEY, DEFAULT_APPEARANCE.darkLightness), 0, 30),
+  };
+  const isLegacyDefault = LEGACY_DEFAULT_TINTS.some(
+    (legacy) =>
+      tint.hue === legacy.hue &&
+      tint.saturation === legacy.saturation &&
+      tint.darkLightness === legacy.darkLightness,
+  );
+  return isLegacyDefault
+    ? { hue: DEFAULT_APPEARANCE.hue, saturation: DEFAULT_APPEARANCE.saturation, darkLightness: DEFAULT_APPEARANCE.darkLightness }
+    : tint;
+}
+
 export const useAppearance = create<AppearanceState>((set, get) => ({
   preference: initialPreference,
   scheme: resolveColorScheme(initialPreference),
-  hue: clamp(loadNumber(HUE_KEY, DEFAULT_APPEARANCE.hue), 0, 360),
-  saturation: clamp(loadNumber(SATURATION_KEY, DEFAULT_APPEARANCE.saturation), 0, 100),
-  darkLightness: clamp(loadNumber(LIGHTNESS_KEY, DEFAULT_APPEARANCE.darkLightness), 0, 30),
+  ...initialTint(),
   sidebarOpacity: clamp(loadNumber(SIDEBAR_OPACITY_KEY, DEFAULT_APPEARANCE.sidebarOpacity), 0.15, 1),
   accent: readAccent(),
   diffPalette: readDiffPalette(),

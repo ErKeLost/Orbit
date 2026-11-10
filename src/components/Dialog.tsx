@@ -22,7 +22,7 @@ export function Dialog({ open, onOpenChange, children }: { open: boolean; onOpen
       fitViewport
       onClose={() => onOpenChange(false)}
     >
-      <div className={`flex flex-col gap-3.5 p-4 text-[13px] ${content?.props.className ?? ""}`}>{body}</div>
+      <div className={`flex flex-col gap-3.5 p-4 text-ui ${content?.props.className ?? ""}`}>{body}</div>
     </Modal>
   );
 }

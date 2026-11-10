@@ -48,15 +48,15 @@ export function GitFileDiffView({ cwd, path, kind }: { cwd: string; path: string
 
   if (query.isPending) {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-content/50">
+      <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-ink-3">
         <LoaderCircle className="size-4 animate-spin" strokeWidth={1.75} />
-        <span className="text-[13px]">正在读取差异…</span>
+        <span className="text-ui">正在读取差异…</span>
       </div>
     );
   }
   if (query.isError) {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-[13px] text-danger">
+      <div className="flex min-h-0 flex-1 items-center justify-center px-4 text-center text-ui text-danger">
         读取差异失败：{query.error instanceof Error ? query.error.message : String(query.error)}
       </div>
     );
@@ -65,9 +65,9 @@ export function GitFileDiffView({ cwd, path, kind }: { cwd: string; path: string
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <header className="flex h-9 shrink-0 select-none items-center gap-2 border-b border-stroke px-3">
-        <FileDiff className="size-4 shrink-0 text-content/50" strokeWidth={1.75} />
-        <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-content/85" title={relative}>
-          <span className="text-content/45">{relative.slice(0, Math.max(0, relative.length - basename(relative).length))}</span>
+        <FileDiff className="size-4 shrink-0 text-ink-3" strokeWidth={1.75} />
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink-1" title={relative}>
+          <span className="text-ink-3">{relative.slice(0, Math.max(0, relative.length - basename(relative).length))}</span>
           {basename(relative)}
         </span>
       </header>

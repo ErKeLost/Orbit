@@ -68,7 +68,7 @@ function NavRow({ label, icon: Icon, active = false, disabled = false, onClick }
       title={disabled ? "请在电脑端管理" : undefined}
       aria-current={active ? "true" : undefined}
       className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left disabled:cursor-default disabled:opacity-40 ${
-        active ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
+        active ? "bg-selection text-ink-1" : "text-ink-3 hover:bg-fill hover:text-ink-1"
       }`}
     >
       <Icon className="size-4 shrink-0 opacity-70" strokeWidth={1.75} />
@@ -90,7 +90,7 @@ export function SettingsNav() {
       <div ref={lockOverscroll} aria-label="设置" className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-none px-2 py-3">
         {SETTINGS_GROUPS.map((group) => (
           <div key={group.id} className="flex flex-col gap-px">
-            <div className="px-2 pb-1 text-xs font-semibold text-content/35">{group.label}</div>
+            <div className="px-2 pb-1 text-xs font-semibold text-ink-3">{group.label}</div>
             {group.sections.map((item) => (
               <NavRow
                 key={item.id}

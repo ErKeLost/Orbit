@@ -86,25 +86,25 @@ export function ProjectDirectoryPicker({ open, onClose }: { open: boolean; onClo
             aria-label="当前文件夹"
             value={path}
             onChange={(event) => setPath(event.target.value.trim() || "~")}
-            className="min-w-0 flex-1 font-mono text-[12px]"
+            className="min-w-0 flex-1 font-mono text-xs"
           />
           <Button variant="ghost" onClick={() => setPath("~")}>主目录</Button>
         </div>
-        <div className="max-h-[46vh] min-h-[180px] overflow-y-auto rounded-lg border border-content/10">
-          {error ? <p className="p-3 text-[12px] text-content/60">{error}</p> : null}
+        <div className="max-h-[46vh] min-h-[180px] overflow-y-auto rounded-lg border border-line">
+          {error ? <p className="p-3 text-xs text-ink-2">{error}</p> : null}
           {!error && entries === null ? (
-            <p className="flex items-center gap-2 p-3 text-[12px] text-content/50"><Loader className="size-3.5 animate-spin" />读取中…</p>
+            <p className="flex items-center gap-2 p-3 text-xs text-ink-3"><Loader className="size-3.5 animate-spin" />读取中…</p>
           ) : null}
-          {!error && entries?.length === 0 ? <p className="p-3 text-[12px] text-content/50">没有子文件夹</p> : null}
+          {!error && entries?.length === 0 ? <p className="p-3 text-xs text-ink-3">没有子文件夹</p> : null}
           {entries?.map((entry) => (
             <button
               key={entry.path}
               type="button"
               onClick={() => setPath(entry.path)}
-              className="flex w-full items-center gap-2 border-b border-content/5 px-3 py-2 text-left last:border-b-0 hover:bg-content/5"
+              className="flex w-full items-center gap-2 border-b border-line px-3 py-2 text-left last:border-b-0 hover:bg-fill"
             >
               <Folder className="size-4 shrink-0 opacity-60" strokeWidth={1.75} />
-              <span className="min-w-0 flex-1 truncate text-[13px]">{entry.name}</span>
+              <span className="min-w-0 flex-1 truncate text-ui">{entry.name}</span>
               {projects.some((project) => project.path === entry.path) ? <Icon name="check" className="size-3.5 text-accent" /> : null}
             </button>
           ))}

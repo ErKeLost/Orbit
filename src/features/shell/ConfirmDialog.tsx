@@ -25,15 +25,15 @@ export function ConfirmDialog({
   return (
     <Modal title={title} size="sm" onClose={() => { if (!busy) onCancel(); }}>
       <form
-        className="flex flex-col gap-3.5 p-4 text-[13px] leading-[1.5]"
+        className="flex flex-col gap-3.5 p-4 text-ui leading-[1.5]"
         onSubmit={(event) => {
           event.preventDefault();
           onConfirm();
         }}
       >
-        {children ? <div className="text-content/75">{children}</div> : null}
+        {children ? <div className="text-ink-2">{children}</div> : null}
         <div className="flex justify-end gap-2">
-          <button type="button" disabled={busy} onClick={onCancel} className="rounded-md px-3 py-1.5 hover:bg-content/8 active:scale-[0.97]">
+          <button type="button" disabled={busy} onClick={onCancel} className="rounded-md px-3 py-1.5 hover:bg-fill-strong active:scale-[0.97]">
             {cancelLabel}
           </button>
           <button
@@ -41,8 +41,8 @@ export function ConfirmDialog({
             disabled={busy}
             className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 font-medium active:scale-[0.97] disabled:opacity-40 ${
               danger
-                ? "bg-red-500/20 text-red-400 hover:bg-red-500/30 disabled:hover:bg-red-500/20"
-                : "bg-content text-background-base hover:bg-content/80"
+                ? "bg-negative/20 text-negative hover:bg-negative/30 disabled:hover:bg-negative/20"
+                : "bg-ink-1 text-background-base hover:bg-ink-1/70"
             }`}
           >
             {busy ? <Loader className="size-3.5 animate-spin" /> : null}

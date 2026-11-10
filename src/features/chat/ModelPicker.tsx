@@ -147,13 +147,13 @@ function ModelPickerImpl() {
           setOpen(true);
         }}
         className={`flex h-6.5 shrink-0 items-center gap-1 rounded-md px-1.5 disabled:opacity-40 ${
-          open ? "bg-selection text-content" : "bg-selection text-content hover:bg-selection-hover"
+          open ? "bg-selection text-ink-1" : "bg-selection text-ink-1 hover:bg-selection-hover"
         }`}
       >
         {current ? <ModelLogo modelId={current.id} size={16} /> : null}
-        <span className="whitespace-nowrap text-[11px]">{label}</span>
-        {showEffort ? <span className="shrink-0 text-[11px] text-content/50">{effortLabel(state?.thinkingLevel)}</span> : null}
-        <ChevronDown className={`size-3 shrink-0 text-content/50 ${open ? "rotate-180" : ""}`} strokeWidth={1.75} />
+        <span className="whitespace-nowrap text-2xs">{label}</span>
+        {showEffort ? <span className="shrink-0 text-2xs text-ink-3">{effortLabel(state?.thinkingLevel)}</span> : null}
+        <ChevronDown className={`size-3 shrink-0 text-ink-3 ${open ? "rotate-180" : ""}`} strokeWidth={1.75} />
       </button>
       {open ? (
         <Popover

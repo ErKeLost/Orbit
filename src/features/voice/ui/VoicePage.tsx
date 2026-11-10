@@ -69,8 +69,8 @@ function CallControl({
       aria-label={label}
       className={`grid size-9 place-items-center rounded-full border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${
         danger
-          ? "border-red-400/25 bg-red-400/10 text-red-400 hover:bg-red-400/20"
-          : "border-stroke bg-content/5 text-content/60 hover:bg-content/10 hover:text-content"
+          ? "border-negative/25 bg-negative/10 text-negative hover:bg-negative/20"
+          : "border-stroke bg-fill text-ink-2 hover:bg-fill-strong hover:text-ink-1"
       }`}
     >
       {children}
@@ -175,8 +175,8 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
             barColor={orbColors[1]}
           />
         </div>
-        {voice.error ? <p role="alert" className="max-w-md px-4 text-center text-[12px] text-red-400">{voice.error}</p> : null}
-        {voice.partial ? <p className="max-w-md px-4 text-center text-[12px] text-content/50">{voice.partial}</p> : null}
+        {voice.error ? <p role="alert" className="max-w-md px-4 text-center text-xs text-negative">{voice.error}</p> : null}
+        {voice.partial ? <p className="max-w-md px-4 text-center text-xs text-ink-3">{voice.partial}</p> : null}
       </div>
 
       {active ? (
@@ -217,7 +217,7 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
               <PrimaryButton className="rounded-full px-4" disabled>
                 开始对话
               </PrimaryButton>
-              <p className="text-[12px] text-content/40">先在左上角选一个项目</p>
+              <p className="text-xs text-ink-3">先在左上角选一个项目</p>
             </div>
           ) : (
             <PrimaryButton className="rounded-full px-4" onClick={() => void voice.start()}>

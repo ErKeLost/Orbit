@@ -80,7 +80,7 @@ function WorkspaceTabItem({
         event.preventDefault();
         onContextMenu(event);
       }}
-      className="group relative flex h-7.5 w-52 min-w-28 shrink items-center"
+      className="group relative z-10 flex h-8 w-52 min-w-28 shrink items-stretch"
     >
       {dropHint ? (
         <span
@@ -96,8 +96,10 @@ function WorkspaceTabItem({
         aria-selected={active}
         title={working ? `${label} · 运行中` : label}
         onClick={onOpen}
-        className={`relative flex h-7.5 min-w-0 flex-1 cursor-default items-center gap-1.5 self-center rounded-md px-2 pr-6 text-left text-[13px] ${
-          active ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
+        className={`relative flex h-full min-w-0 flex-1 cursor-default items-center gap-1.5 rounded-t-control border-x border-t px-2.5 pr-7 text-left text-ui ${
+          active
+            ? "border-line bg-surface-canvas text-ink-1"
+            : "border-transparent text-ink-3 hover:bg-fill hover:text-ink-2"
         }`}
       >
         {working ? (
@@ -106,7 +108,7 @@ function WorkspaceTabItem({
             <span className="sr-only">运行中</span>
           </>
         ) : null}
-        <span className="min-w-0 flex-1 truncate">{loading ? <span aria-hidden className="block h-3 w-20 animate-pulse rounded bg-content/15" /> : label}</span>
+        <span className="min-w-0 flex-1 truncate">{loading ? <span aria-hidden className="block h-3 w-20 animate-pulse rounded bg-fill-strong" /> : label}</span>
       </button>
       {closable ? (
         <button
@@ -120,8 +122,8 @@ function WorkspaceTabItem({
             event.stopPropagation();
             onClose();
           }}
-          className={`absolute right-1 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-content/50 hover:bg-content/10 hover:text-content ${
-            active ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          className={`absolute right-1.5 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded-keycap text-ink-3 hover:bg-fill-strong hover:text-ink-1 ${
+            active ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
           }`}
         >
           <X className="size-3" strokeWidth={1.75} />
@@ -178,11 +180,11 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
   };
 
   return (
-    <header className="flex h-10 shrink-0 select-none items-stretch border-b border-stroke" data-tauri-drag-region="deep">
+    <header className="tab-strip relative flex h-10 shrink-0 select-none items-end bg-surface-sunken" data-tauri-drag-region="deep">
       {railsHidden ? (
         <>
           {IS_MAC ? <div className="w-[78px] shrink-0" /> : null}
-          <div className="flex shrink-0 items-center px-1.5">
+          <div className="flex shrink-0 items-center self-center px-1.5">
             <TitleIconButton
               label={`切换侧栏 (${MOD}B)`}
               onClick={() => useShell.getState().setProjectRailOpen(true)}
@@ -199,7 +201,7 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
         data-title-tab-strip
         role="tablist"
         aria-label="工作区"
-        className="scrollbar-none flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overscroll-none pl-1.5 pr-1"
+        className="scrollbar-none flex h-full min-w-0 flex-1 items-end gap-0.5 overflow-x-auto overscroll-none pl-1.5 pr-1"
       >
         {workspaces.map((workspace) => (
           <WorkspaceTabItem
@@ -220,12 +222,12 @@ export function TitleBar({ railsHidden }: { railsHidden: boolean }) {
           title={`新建会话 (${shortcutLabel(currentShortcut("Session: New"))})`}
           aria-label="新建会话"
           onClick={() => void tabs.create()}
-          className="grid size-6.5 shrink-0 place-items-center rounded-md text-content/45 hover:bg-content/10 hover:text-content"
+          className="mb-1 grid size-7 shrink-0 place-items-center rounded-control text-ink-3 hover:bg-fill-strong hover:text-ink-1"
         >
           <Plus className="size-3.5" strokeWidth={1.75} />
         </button>
       </div>
-      <div className="flex shrink-0 items-center gap-0.5 px-2" data-tauri-drag-region="false">
+      <div className="flex shrink-0 items-center gap-0.5 self-center px-2" data-tauri-drag-region="false">
         <TitleIconButton
           label={
             inspectorOpen

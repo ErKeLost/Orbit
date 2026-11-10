@@ -168,7 +168,7 @@ export function NotesView({
             aria-label="Filter notes"
             spellCheck={false}
             autoComplete="off"
-            className="h-7 w-full rounded-md bg-transparent pl-7 pr-2 text-[12px] text-content outline-none placeholder:text-content/40"
+            className="h-7 w-full rounded-md bg-transparent pl-7 pr-2 text-xs text-ink-1 outline-none placeholder:text-ink-3"
           />
         </div>
         <button
@@ -177,7 +177,7 @@ export function NotesView({
           aria-label="New note"
           disabled={creating}
           onClick={() => void onCreate()}
-          className="grid size-6 shrink-0 place-items-center rounded-md text-content/45 hover:bg-content/10 hover:text-content disabled:opacity-40"
+          className="grid size-6 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1 disabled:opacity-40"
         >
           {creating ? (
             <LoaderCircle
@@ -194,13 +194,13 @@ export function NotesView({
         className="min-h-0 flex-1 overflow-y-auto overscroll-none"
       >
         {error && notes.length === 0 ? (
-          <p className="px-3 py-2 text-[12px] text-content/50">{error}</p>
+          <p className="px-3 py-2 text-xs text-ink-3">{error}</p>
         ) : loading && notes.length === 0 ? (
-          <div className="flex justify-center py-10 text-content/40">
+          <div className="flex justify-center py-10 text-ink-3">
             <LoaderCircle className="size-4 animate-spin" strokeWidth={1.75} />
           </div>
         ) : visible.length === 0 ? (
-          <p className="px-3 py-2 text-[12px] text-content/50">
+          <p className="px-3 py-2 text-xs text-ink-3">
             {query.trim()
               ? "No matching notes"
               : "No notes yet. Save a turn from the transcript, or create one here."}
@@ -224,7 +224,7 @@ export function NotesView({
         aria-orientation="vertical"
         aria-label="Resize notes list"
         className={`absolute inset-y-0 -right-px z-10 w-1.5 cursor-col-resize touch-none ${
-          resize.dragging ? "bg-content/15" : "hover:bg-content/10"
+          resize.dragging ? "bg-fill-strong" : "hover:bg-fill-strong"
         }`}
         onPointerDown={resize.onPointerDown}
         onDoubleClick={resize.onDoubleClick}
@@ -237,15 +237,15 @@ export function NotesView({
       role="region"
       aria-label="Notes"
       data-app-notes
-      className="flex min-h-0 min-w-0 flex-1 flex-col text-content"
+      className="flex min-h-0 min-w-0 flex-1 flex-col text-ink-1"
     >
       <div className="flex h-10 shrink-0 select-none items-center border-b border-stroke">
-        <div className="flex min-w-0 flex-1 items-center gap-2 px-3 text-[13px]">
+        <div className="flex min-w-0 flex-1 items-center gap-2 px-3 text-ui">
           <File
-            className="size-3.5 shrink-0 text-content/45"
+            className="size-3.5 shrink-0 text-ink-3"
             strokeWidth={1.75}
           />
-          <span className="min-w-0 truncate text-content">笔记</span>
+          <span className="min-w-0 truncate text-ink-1">笔记</span>
         </div>
       </div>
       <div className="flex min-h-0 min-w-0 flex-1">

@@ -58,11 +58,11 @@
 }
 
 .codex-effort-option[data-effort-tone="ultra"] {
-  --codex-effort-color: #a855f7;
+  --codex-effort-color: var(--accent-ink);
 }
 
 .codex-effort-option[data-effort-tone="max"] {
-  --codex-effort-color: #f4b942;
+  --codex-effort-color: var(--warning);
 }
 
 .codex-effort-tile {

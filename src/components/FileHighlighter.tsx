@@ -79,7 +79,7 @@ export function FileHighlighter({ code, fileName, wrap = false }: { code: string
       className={`file-highlighter min-w-0 ${wrap ? "[&>pre]:whitespace-pre-wrap [&>pre]:break-words" : "[&>pre]:whitespace-pre"}`}
     >
       {plain ? (
-        <pre className={`font-mono text-[12.5px] leading-5 text-content/85 ${wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>{code}</pre>
+        <pre className={`font-mono text-xs leading-5 text-ink-1 ${wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre"}`}>{code}</pre>
       ) : (
         <div dangerouslySetInnerHTML={{ __html: html }} />
       )}

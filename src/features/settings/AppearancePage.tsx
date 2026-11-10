@@ -7,8 +7,18 @@ import { UI_SCALE_PERCENTS, useAppearance, type DiffPalette, type ThemePreferenc
 import { useShell } from "../shell/shellStore";
 import { Group, Row, Segmented, Select, Slider, Toggle } from "../../shared/ui/controls";
 
-/** Orbit ACCENT_COLOR_PRESETS. */
-const ACCENT_PRESETS = ["#4da3f5", "#8b5cf6", "#ec4899", "#ef4444", "#f59e0b", "#10b981"] as const;
+/**
+ * 强调色备选：都在同一档亮度（55–65%）里，所以换成哪一个，按钮上的文字都还是
+ * 深墨色，读得清；也没有一个是「紫到蓝」的那种 AI 渐变起手色。
+ */
+const ACCENT_PRESETS = [
+  "oklch(0.66 0.155 255)",
+  "oklch(0.66 0.12 190)",
+  "oklch(0.66 0.12 150)",
+  "oklch(0.74 0.13 82)",
+  "oklch(0.66 0.16 30)",
+  "oklch(0.66 0.14 330)",
+] as const;
 
 function AccentSwatch({ color, active, onSelect, label }: { color: string | null; active: boolean; onSelect: () => void; label: string }) {
   if (color == null) {
@@ -20,7 +30,7 @@ function AccentSwatch({ color, active, onSelect, label }: { color: string | null
         aria-checked={active}
         aria-label={label}
         onClick={onSelect}
-        className={`size-5 shrink-0 rounded-full border border-content/20 shadow-inner ${active ? "ring-2 ring-accent/70 ring-offset-2 ring-offset-background-base" : ""}`}
+        className={`size-5 shrink-0 rounded-full border border-line-strong shadow-inner ${active ? "ring-2 ring-accent/70 ring-offset-2 ring-offset-background-base" : ""}`}
       />
     );
   }
@@ -166,7 +176,7 @@ export function AppearancePage() {
 
       <Group title="聊天背景" description="聊天面板背后的图片，只保存在本机。">
         <div className="px-4 py-3.5">
-          <div className="relative flex min-h-[168px] items-center justify-center overflow-hidden rounded-xl border border-content/10 bg-content/2">
+          <div className="relative flex min-h-[168px] items-center justify-center overflow-hidden rounded-xl border border-line bg-fill-weak">
             {appearance.chatBackground ? (
               <>
                 <img src={convertFileSrc(appearance.chatBackground)} alt="聊天背景" className="max-h-[240px] w-full object-cover" />
@@ -176,9 +186,9 @@ export function AppearancePage() {
                 </div>
               </>
             ) : (
-              <button type="button" onClick={() => void chooseBackground()} className="flex flex-col items-center gap-2 px-6 py-10 text-content/45 hover:text-content/70">
+              <button type="button" onClick={() => void chooseBackground()} className="flex flex-col items-center gap-2 px-6 py-10 text-ink-3 hover:text-ink-2">
                 <ImagePlus className="size-6" strokeWidth={1.5} />
-                <span className="text-[13px]">选择图片</span>
+                <span className="text-ui">选择图片</span>
               </button>
             )}
           </div>

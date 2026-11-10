@@ -15,11 +15,11 @@ export function InlineArtifact({ card }: { card: Card }) {
       data-artifact-card={card.id}
       onClick={() => openArtifactPanel(card.id)}
       title={`在右栏打开${artifactLabel(card.kind)}`}
-      className="flex w-fit max-w-[min(24rem,100%)] min-w-0 items-center gap-2.5 min-h-[38px] rounded-xl border border-content/10 py-2 pr-3.5 pl-3 text-left text-content transition-colors hover:border-content/20 hover:bg-content/5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+      className="flex w-fit max-w-[min(24rem,100%)] min-w-0 items-center gap-2.5 min-h-[38px] rounded-xl border border-line py-2 pr-3.5 pl-3 text-left text-ink-1 transition-colors hover:border-line-strong hover:bg-fill focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
     >
-      <ArtifactIcon kind={card.kind} className="size-4 shrink-0 text-content/55" />
-      <span className="min-w-0 truncate text-[13px]">{card.title}</span>
-      <span className="shrink-0 text-[10.5px] uppercase tracking-wide text-content/35">{artifactLabel(card.kind)}</span>
+      <ArtifactIcon kind={card.kind} className="size-4 shrink-0 text-ink-2" />
+      <span className="min-w-0 truncate text-ui">{card.title}</span>
+      <span className="shrink-0 text-2xs uppercase tracking-wide text-ink-3">{artifactLabel(card.kind)}</span>
     </button>
   );
 }

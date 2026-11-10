@@ -194,7 +194,7 @@ export function UnifiedDiffView({
 
   if (files.length === 0) {
     return (
-      <p className="px-4 py-6 text-[13px] text-content/45">没有文件更改</p>
+      <p className="px-4 py-6 text-ui text-ink-3">没有文件更改</p>
     );
   }
 
@@ -214,9 +214,9 @@ export function UnifiedDiffView({
       }
     >
       <div
-        className={`flex h-8 shrink-0 items-center gap-3 border-b border-stroke px-3 text-[12px]`}
+        className={`flex h-8 shrink-0 items-center gap-3 border-b border-stroke px-3 text-xs`}
       >
-        <span className="text-content/70">{fileLabel}</span>
+        <span className="text-ink-2">{fileLabel}</span>
         <DiffCounts additions={additions} deletions={deletions} />
         <span className="ml-auto flex items-center gap-0.5">
           <button
@@ -224,7 +224,7 @@ export function UnifiedDiffView({
             title="展开全部文件"
             aria-label="展开全部文件"
             onClick={() => setOpen(new Set(files.map((file) => file.id)))}
-            className="grid size-7 place-items-center rounded-md text-content/45 hover:bg-content/10 hover:text-content"
+            className="grid size-7 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1"
           >
             <UnfoldVertical className="size-3.5" strokeWidth={1.75} />
           </button>
@@ -234,7 +234,7 @@ export function UnifiedDiffView({
             aria-label="折叠全部文件"
             disabled={open.size === 0}
             onClick={() => setOpen(new Set())}
-            className="grid size-7 place-items-center rounded-md text-content/45 hover:bg-content/10 hover:text-content disabled:opacity-40"
+            className="grid size-7 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1 disabled:opacity-40"
           >
             <FoldVertical className="size-3.5" strokeWidth={1.75} />
           </button>
@@ -249,7 +249,7 @@ export function UnifiedDiffView({
         }
       >
         {truncated ? (
-          <p className="px-3 py-3 text-[12px] text-content/45">
+          <p className="px-3 py-3 text-xs text-ink-3">
             差异过大，仅显示文件列表。
           </p>
         ) : null}
@@ -385,14 +385,14 @@ const FileSection = memo(function FileSection({
       data-diff-file={file.path}
       className={`${
         fileLayout === "cards"
-          ? "overflow-hidden rounded-md border border-content/10"
+          ? "overflow-hidden rounded-md border border-line"
           : ""
-      } ${focused ? "bg-content/[0.03]" : ""}`}
+      } ${focused ? "bg-fill-weak" : ""}`}
     >
       <header
         className={`${
           fileLayout === "stacked" ? "sticky top-0 z-30 backdrop-blur-xl" : ""
-        } flex items-center gap-2 bg-content/2 px-3 py-1.5 ${
+        } flex items-center gap-2 bg-fill-weak px-3 py-1.5 ${
           fileLayout === "stacked" || expanded
             ? "border-b border-stroke"
             : ""
@@ -405,17 +405,17 @@ const FileSection = memo(function FileSection({
           className="flex min-w-0 flex-1 items-center gap-2 text-left"
         >
           <Chevron
-            className="size-3.5 shrink-0 text-content/45"
+            className="size-3.5 shrink-0 text-ink-3"
             strokeWidth={1.75}
           />
           <FileTypeIcon name={name} isDir={false} size={16} />
           <span
-            className="min-w-0 flex-1 truncate font-mono text-[12px] text-content/85"
+            className="min-w-0 flex-1 truncate font-mono text-xs text-ink-1"
             title={file.label}
           >
             {/* Codex 风格的文件头：目录退后，文件名承担主视觉。 */}
             {name.length < file.label.length ? (
-              <span className="text-content/45">
+              <span className="text-ink-3">
                 {file.label.slice(0, file.label.length - name.length)}
               </span>
             ) : null}
@@ -439,7 +439,7 @@ const FileSection = memo(function FileSection({
             aria-label="暂存此文件"
             disabled={busy}
             onClick={() => onStageFile(file.id)}
-            className="grid size-4 place-items-center rounded-[3px] bg-content text-background-base hover:opacity-80 disabled:opacity-40"
+            className="grid size-4 place-items-center rounded-xs bg-ink-1 text-background-base hover:opacity-80 disabled:opacity-40"
           >
             <Check className="size-2.5" strokeWidth={2.5} />
           </button>
@@ -911,7 +911,7 @@ function FoldBar({
 }) {
   return (
     <div
-      className="flex items-center gap-1 bg-content/8 px-2"
+      className="flex items-center gap-1 bg-fill-strong px-2"
       style={{ height: UNIFIED_FOLD_PX }}
     >
       <button
@@ -919,7 +919,7 @@ function FoldBar({
         title="Expand upward"
         aria-label="向上展开未修改行"
         onClick={() => onReveal("up")}
-        className="grid size-5 place-items-center rounded text-content/40 hover:bg-content/10 hover:text-content"
+        className="grid size-5 place-items-center rounded text-ink-3 hover:bg-fill-strong hover:text-ink-1"
       >
         <ChevronUp className="size-3" strokeWidth={2} />
       </button>
@@ -928,14 +928,14 @@ function FoldBar({
         title="Expand downward"
         aria-label="向下展开未修改行"
         onClick={() => onReveal("down")}
-        className="grid size-5 place-items-center rounded text-content/40 hover:bg-content/10 hover:text-content"
+        className="grid size-5 place-items-center rounded text-ink-3 hover:bg-fill-strong hover:text-ink-1"
       >
         <ChevronDown className="size-3" strokeWidth={2} />
       </button>
       <button
         type="button"
         onClick={() => onReveal("all")}
-        className="min-w-0 flex-1 py-1 text-left font-mono text-[11px] text-content/45 hover:text-content/70"
+        className="min-w-0 flex-1 py-1 text-left font-mono text-2xs text-ink-3 hover:text-ink-2"
       >
         {hidden} 行未修改
       </button>
@@ -963,11 +963,11 @@ const DiffLineRow = memo(function DiffLineRow({
   if (line.kind === "hunk") {
     return (
       <div
-        className="flex items-center bg-content/5"
+        className="flex items-center bg-fill"
         style={{ height: UNIFIED_HUNK_PX }}
       >
         {lane === "code" ? (
-          <span className="px-3 font-mono text-[11px] leading-none text-content/40">
+          <span className="px-3 font-mono text-2xs leading-none text-ink-3">
             {line.text}
           </span>
         ) : null}
@@ -987,7 +987,7 @@ const DiffLineRow = memo(function DiffLineRow({
     ? "text-diff-add-fg"
     : deleted
       ? "text-diff-del-fg"
-      : "text-content/35";
+      : "text-ink-3";
 
   if (lane === "gutter") {
     return (
@@ -1001,7 +1001,7 @@ const DiffLineRow = memo(function DiffLineRow({
           />
         ) : null}
         <span
-          className={`relative block w-full pr-2 text-right font-mono text-[11px] leading-none tabular-nums ${gutterText}`}
+          className={`relative block w-full pr-2 text-right font-mono text-2xs leading-none tabular-nums ${gutterText}`}
         >
           {number ?? ""}
         </span>
@@ -1013,7 +1013,7 @@ const DiffLineRow = memo(function DiffLineRow({
             onClick={(event) =>
               onComment(event.currentTarget.getBoundingClientRect())
             }
-            className={`absolute top-0.5 left-0.5 z-10 grid size-4 place-items-center rounded-[3px] bg-content text-background-base outline-none transition-opacity hover:opacity-80 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent/50 ${
+            className={`absolute top-0.5 left-0.5 z-10 grid size-4 place-items-center rounded-xs bg-ink-1 text-background-base outline-none transition-opacity hover:opacity-80 focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-accent/50 ${
               hovered || commenting
                 ? "opacity-100"
                 : "pointer-events-none opacity-0"
@@ -1028,7 +1028,7 @@ const DiffLineRow = memo(function DiffLineRow({
             title="暂存此块"
             aria-label="暂存此块"
             onClick={onStage}
-            className={`absolute top-0.5 left-full z-10 ml-0.5 grid size-4 place-items-center rounded-[3px] bg-white text-[11px] font-bold text-black ${
+            className={`absolute top-0.5 left-full z-10 ml-0.5 grid size-4 place-items-center rounded-xs bg-ink-1 text-2xs font-bold text-surface-canvas ${
               hovered ? "opacity-100" : "pointer-events-none opacity-0"
             }`}
           >
@@ -1047,7 +1047,7 @@ const DiffLineRow = memo(function DiffLineRow({
       {/* Width is counted in minWidthCh. select-none keeps the glyph and the
           screen-reader cue out of copied code. */}
       <span
-        className={`w-7 shrink-0 select-none pl-3 font-mono text-[12px] leading-none font-semibold ${gutterText}`}
+        className={`w-7 shrink-0 select-none pl-3 font-mono text-xs leading-none font-semibold ${gutterText}`}
       >
         <span aria-hidden="true">{added ? "+" : deleted ? "−" : ""}</span>
         {added || deleted ? (
@@ -1055,7 +1055,7 @@ const DiffLineRow = memo(function DiffLineRow({
         ) : null}
       </span>
       <span
-        className={`whitespace-pre pr-3 font-mono text-[12px] leading-none text-content/80 ${
+        className={`whitespace-pre pr-3 font-mono text-xs leading-none text-ink-1 ${
           line.kind === "context" ? "opacity-70" : ""
         }`}
       >
@@ -1097,7 +1097,7 @@ function tokenStyle(piece: SyntaxToken): CSSProperties | undefined {
 }
 
 function EmptyBody({ children }: { children: string }) {
-  return <p className="px-3 py-3 text-[12px] text-content/45">{children}</p>;
+  return <p className="px-3 py-3 text-xs text-ink-3">{children}</p>;
 }
 
 function DiffCounts({
@@ -1109,7 +1109,7 @@ function DiffCounts({
 }) {
   if (additions <= 0 && deletions <= 0) return null;
   return (
-    <span className="flex shrink-0 items-center gap-1.5 font-sans text-[11px] font-semibold tabular-nums">
+    <span className="flex shrink-0 items-center gap-1.5 font-sans text-2xs font-semibold tabular-nums">
       {additions > 0 ? (
         <span className="text-diff-add-fg">+{formatInteger(additions)}</span>
       ) : null}
@@ -1138,7 +1138,7 @@ function IconButton({
       aria-label={title}
       disabled={disabled}
       onClick={onClick}
-      className="grid size-6 place-items-center rounded-md text-content/45 hover:bg-content/10 hover:text-content disabled:opacity-40"
+      className="grid size-6 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1 disabled:opacity-40"
     >
       {children}
     </button>

@@ -35,7 +35,7 @@ export function Toggle({
       disabled={disabled}
       onClick={() => onChange(!on)}
       className={`relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
-        on ? "bg-accent" : "bg-content/20"
+        on ? "bg-accent" : "bg-fill-strong"
       }`}
     >
       <span
@@ -58,10 +58,10 @@ export function SecondaryButton({ danger = false, type = "button", className = "
     <button
       {...props}
       type={type}
-      className={`flex shrink-0 items-center gap-1.5 rounded-md border border-content/10 px-2.5 py-1 text-[12px] ${
+      className={`flex shrink-0 items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-xs ${
         danger
-          ? "text-red-400 hover:border-red-400/40 hover:bg-red-400/10"
-          : "text-content/70 hover:bg-content/10 hover:text-content"
+          ? "text-negative hover:border-negative/40 hover:bg-negative/10"
+          : "text-ink-2 hover:bg-fill-strong hover:text-ink-1"
       } focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent ${className}`}
     >
       {children}
@@ -75,8 +75,8 @@ export function PrimaryButton({ type = "button", className = "", danger = false,
     <button
       {...props}
       type={type}
-      className={`inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md px-3 text-[12px] font-medium disabled:cursor-default disabled:opacity-40 ${
-        danger ? "bg-red-500 text-white hover:bg-red-500/85" : "bg-content text-background-base hover:bg-content/80"
+      className={`inline-flex h-7 shrink-0 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium disabled:cursor-default disabled:opacity-40 ${
+        danger ? "bg-negative text-on-status hover:bg-negative/85" : "bg-ink-1 text-background-base hover:bg-ink-1/70"
       } ${className}`}
     >
       {children}
@@ -87,12 +87,12 @@ export function PrimaryButton({ type = "button", className = "", danger = false,
 type ActionButtonVariant = "default" | "outline" | "secondary" | "ghost" | "destructive" | "link";
 
 const ACTION_BUTTON: Record<ActionButtonVariant, string> = {
-  default: "bg-content text-background-base hover:bg-content/80",
-  secondary: "border border-content/10 text-content/70 hover:bg-content/10 hover:text-content",
-  outline: "border border-content/10 text-content/70 hover:bg-content/10 hover:text-content",
-  ghost: "text-content/60 hover:bg-content/10 hover:text-content",
-  destructive: "border border-content/10 text-red-400 hover:border-red-400/40 hover:bg-red-400/10",
-  link: "text-sky-400/90 hover:text-sky-300 hover:underline",
+  default: "bg-ink-1 text-background-base hover:bg-ink-1/70",
+  secondary: "border border-line text-ink-2 hover:bg-fill-strong hover:text-ink-1",
+  outline: "border border-line text-ink-2 hover:bg-fill-strong hover:text-ink-1",
+  ghost: "text-ink-2 hover:bg-fill-strong hover:text-ink-1",
+  destructive: "border border-line text-negative hover:border-negative/40 hover:bg-negative/10",
+  link: "text-accent-ink/90 hover:text-accent-ink hover:underline",
 };
 
 type ActionButtonProps = Omit<ComponentPropsWithRef<"button">, "className"> & {
@@ -117,7 +117,7 @@ export function Button({ type = "button", title, className = "", variant, size, 
       title={title}
       aria-label={props["aria-label"] ?? title}
       data-slot="button"
-      className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md text-[12px] font-medium whitespace-nowrap transition-colors disabled:cursor-default disabled:opacity-40 [&_svg]:size-3.5 ${
+      className={`inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors disabled:cursor-default disabled:opacity-40 [&_svg]:size-3.5 ${
         iconOnly ? "size-7 p-0" : "h-7 px-2.5"
       } ${ACTION_BUTTON[inferred]} ${className}`}
     >
@@ -155,10 +155,10 @@ export function IconButton({
       }}
       className={`grid size-6.5 shrink-0 place-items-center rounded-md ${
         disabled
-          ? "text-content/25"
+          ? "text-ink-3"
           : active
-            ? "text-content hover:bg-content/10"
-            : "text-content/50 hover:bg-content/10 hover:text-content"
+            ? "text-ink-1 hover:bg-fill-strong"
+            : "text-ink-3 hover:bg-fill-strong hover:text-ink-1"
       } ${className}`}
     >
       {children}
@@ -174,12 +174,12 @@ export function TextField({
 }: Omit<ComponentPropsWithRef<"input">, "className"> & { className?: string; wide?: boolean }) {
   return (
     <label
-      className={`flex h-7 ${wide ? "w-full" : "w-52"} max-w-full shrink-0 items-center rounded-md border border-content/10 px-2 focus-within:border-content/20 ${className}`}
+      className={`flex h-7 ${wide ? "w-full" : "w-52"} max-w-full shrink-0 items-center rounded-md border border-line px-2 focus-within:border-line-strong ${className}`}
     >
       <input
         spellCheck={false}
         {...props}
-        className="min-w-0 flex-1 bg-transparent text-[12px] text-content outline-none placeholder:text-content/35 disabled:opacity-50"
+        className="min-w-0 flex-1 bg-transparent text-xs text-ink-1 outline-none placeholder:text-ink-3 disabled:opacity-50"
       />
     </label>
   );
@@ -192,7 +192,7 @@ export function Input({ className = "", ...props }: Omit<ComponentPropsWithRef<"
       spellCheck={false}
       {...props}
       data-slot="input"
-      className={`h-7 w-full min-w-0 rounded-md border border-content/10 bg-transparent px-2 text-[12px] text-content outline-none placeholder:text-content/35 focus:border-content/20 disabled:opacity-50 ${className}`}
+      className={`h-7 w-full min-w-0 rounded-md border border-line bg-transparent px-2 text-xs text-ink-1 outline-none placeholder:text-ink-3 focus:border-line-strong disabled:opacity-50 ${className}`}
     />
   );
 }
@@ -205,7 +205,7 @@ export function TextArea({
     <textarea
       spellCheck={false}
       {...props}
-      className={`w-full resize-y rounded-md border border-content/10 bg-transparent px-2 py-1.5 font-sans text-[12px] leading-5 text-content outline-none placeholder:text-content/35 focus:border-content/20 ${className}`}
+      className={`w-full resize-y rounded-md border border-line bg-transparent px-2 py-1.5 font-sans text-xs leading-5 text-ink-1 outline-none placeholder:text-ink-3 focus:border-line-strong ${className}`}
     />
   );
 }
@@ -225,7 +225,7 @@ export function Segmented<T extends string>({
     <div
       role="radiogroup"
       aria-label={label}
-      className="inline-grid max-w-full shrink-0 gap-0.5 rounded-md border border-content/10 p-0.5 text-[12px]"
+      className="inline-grid max-w-full shrink-0 gap-0.5 rounded-md border border-line p-0.5 text-xs"
       style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
     >
       {options.map((option) => (
@@ -235,8 +235,8 @@ export function Segmented<T extends string>({
           role="radio"
           aria-checked={value === option.value}
           onClick={() => onChange(option.value)}
-          className={`min-w-0 rounded-[5px] px-2.5 py-1 ${
-            value === option.value ? "bg-selection text-content" : "text-content/50 hover:text-content"
+          className={`min-w-0 rounded-xs px-2.5 py-1 ${
+            value === option.value ? "bg-selection text-ink-1" : "text-ink-3 hover:text-ink-1"
           }`}
         >
           {option.label}
@@ -278,7 +278,7 @@ export function Slider({
         className="sidebar-opacity-slider min-w-0 flex-1 disabled:cursor-not-allowed"
         onChange={(event) => onChange(Number(event.target.value))}
       />
-      <span className="w-10 shrink-0 text-right text-[12px] tabular-nums text-content">{display}</span>
+      <span className="w-10 shrink-0 text-right text-xs tabular-nums text-ink-1">{display}</span>
     </div>
   );
 }
@@ -342,13 +342,13 @@ export function Select({
         aria-expanded={open}
         aria-haspopup="listbox"
         onClick={() => setOpen((prev) => !prev)}
-        className="flex w-full items-center justify-between gap-2 rounded-md border border-content/10 bg-content/5 px-2 py-1 text-left text-[12px] text-content outline-none hover:border-content/20 disabled:cursor-not-allowed disabled:opacity-40"
+        className="flex w-full items-center justify-between gap-2 rounded-md border border-line bg-fill px-2 py-1 text-left text-xs text-ink-1 outline-none hover:border-line-strong disabled:cursor-not-allowed disabled:opacity-40"
       >
         <span className="flex min-w-0 flex-1 items-center gap-1.5">
           {selected?.icon ? <span className="grid size-4 shrink-0 place-items-center">{selected.icon}</span> : null}
           <span className="min-w-0 truncate">{selected ? selected.label : value}</span>
         </span>
-        <ChevronDown className={`size-3.5 shrink-0 text-content/50 transition-transform ${open ? "rotate-180" : ""}`} strokeWidth={1.75} />
+        <ChevronDown className={`size-3.5 shrink-0 text-ink-3 transition-transform ${open ? "rotate-180" : ""}`} strokeWidth={1.75} />
       </button>
       {open ? (
         <Popover
@@ -384,8 +384,8 @@ export function Select({
                 onMouseDown={(e) => e.preventDefault()}
                 onMouseEnter={() => setActive(index)}
                 onClick={() => pick(option.value)}
-                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] disabled:opacity-40 ${
-                  highlighted || isSelected ? "bg-selection text-content" : "text-content hover:bg-content/5"
+                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs disabled:opacity-40 ${
+                  highlighted || isSelected ? "bg-selection text-ink-1" : "text-ink-1 hover:bg-fill"
                 }`}
               >
                 {option.icon ? <span className="grid size-4 shrink-0 place-items-center">{option.icon}</span> : null}
@@ -420,8 +420,8 @@ export function MenuItem({
       role="menuitem"
       disabled={disabled}
       onClick={onClick}
-      className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] disabled:cursor-default disabled:opacity-40 ${
-        danger ? "text-red-400 hover:bg-red-400/10" : "text-content/80 hover:bg-content/8 hover:text-content"
+      className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-ui disabled:cursor-default disabled:opacity-40 ${
+        danger ? "text-negative hover:bg-negative/10" : "text-ink-1 hover:bg-fill-strong hover:text-ink-1"
       }`}
     >
       {icon ? <span className="grid size-3.5 shrink-0 place-items-center [&>svg]:size-3.5">{icon}</span> : null}
@@ -470,8 +470,8 @@ export function PointMenu({
 export function PageHeader({ title, description }: { title: string; description?: string }) {
   return (
     <header className="pb-4">
-      <h1 className="text-[20px] font-semibold leading-tight text-content">{title}</h1>
-      {description ? <p className="mt-1.5 max-w-xl text-[13px] leading-relaxed text-content/45">{description}</p> : null}
+      <h1 className="text-xl font-semibold leading-tight text-ink-1">{title}</h1>
+      {description ? <p className="mt-1.5 max-w-xl text-ui leading-relaxed text-ink-3">{description}</p> : null}
     </header>
   );
 }
@@ -479,7 +479,7 @@ export function PageHeader({ title, description }: { title: string; description?
 /** The plain card surface; `Group` is the same surface with a title above it. */
 export function Card({ className = "", children, ...props }: Omit<ComponentPropsWithRef<"div">, "className"> & { className?: string }) {
   return (
-    <div {...props} className={`overflow-hidden rounded-xl border border-content/10 bg-content/3 ${className}`}>
+    <div {...props} className={`overflow-hidden rounded-xl border border-line bg-fill-weak ${className}`}>
       {children}
     </div>
   );
@@ -501,12 +501,12 @@ export function Group({
     <section className="pt-8 first:pt-0">
       <div className="flex items-end gap-4 pb-2.5">
         <div className="min-w-0 flex-1">
-          <h2 className="text-[13px] font-semibold text-content">{title}</h2>
-          {description ? <p className="mt-1 text-[12px] leading-relaxed text-content/45">{description}</p> : null}
+          <h2 className="text-ui font-semibold text-ink-1">{title}</h2>
+          {description ? <p className="mt-1 text-xs leading-relaxed text-ink-3">{description}</p> : null}
         </div>
         {action ? <div className="shrink-0 pb-0.5">{action}</div> : null}
       </div>
-      <div className="overflow-hidden rounded-xl border border-content/10 bg-content/3">{children}</div>
+      <div className="overflow-hidden rounded-xl border border-line bg-fill-weak">{children}</div>
     </section>
   );
 }
@@ -527,11 +527,11 @@ export function Row({
   return (
     <div
       data-setting-id={anchorId}
-      className="flex items-start gap-6 border-b border-content/5 px-4 py-3.5 last:border-b-0"
+      className="flex items-start gap-6 border-b border-line px-4 py-3.5 last:border-b-0"
     >
       <div className="min-w-0 flex-1">
-        <div className="text-[13px] font-medium text-content">{label}</div>
-        {description ? <div className="mt-1 text-[12px] leading-relaxed text-content/45">{description}</div> : null}
+        <div className="text-ui font-medium text-ink-1">{label}</div>
+        {description ? <div className="mt-1 text-xs leading-relaxed text-ink-3">{description}</div> : null}
       </div>
       <div className="flex min-w-0 max-w-[60%] shrink-0 flex-wrap items-center justify-end gap-2">{children}</div>
     </div>
@@ -540,7 +540,7 @@ export function Row({
 
 /** Quiet empty/notice line used inside cards. */
 export function Notice({ children }: { children: ReactNode }) {
-  return <p className="px-4 py-3.5 text-[12px] leading-relaxed text-content/50">{children}</p>;
+  return <p className="px-4 py-3.5 text-xs leading-relaxed text-ink-3">{children}</p>;
 }
 
 /** Pulsing placeholder; `paragraph` stacks rows for a block of text. */
@@ -553,12 +553,12 @@ export function Skeleton({
     return (
       <div className={`flex flex-col gap-2 ${className}`} {...props}>
         {Array.from({ length: paragraph.rows ?? 3 }, (_, index) => (
-          <div key={index} className="h-6 w-full animate-pulse rounded-md bg-content/6" />
+          <div key={index} className="h-6 w-full animate-pulse rounded-md bg-fill" />
         ))}
       </div>
     );
   }
-  return <div className={`animate-pulse rounded-md bg-content/6 ${className}`} {...props} />;
+  return <div className={`animate-pulse rounded-md bg-fill ${className}`} {...props} />;
 }
 
 /** Collapsible section used for raw metadata and per-model details. */
@@ -582,7 +582,7 @@ export function Disclosure({
         aria-expanded={open}
         aria-controls={id}
         onClick={() => setOpen((value) => !value)}
-        className="group flex min-w-0 items-center gap-1.5 py-1 text-left text-[12px] text-content/55 hover:text-content"
+        className="group flex min-w-0 items-center gap-1.5 py-1 text-left text-xs text-ink-2 hover:text-ink-1"
       >
         <ChevronRight className={`size-3.5 shrink-0 transition-transform ${open ? "rotate-90" : ""}`} strokeWidth={1.75} />
         <span className="min-w-0 truncate">{title}</span>

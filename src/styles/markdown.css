@@ -344,30 +344,32 @@
   color: inherit;
 }
 
-/* GitHub alerts（`> [!NOTE]`）：边框 + 彩色标题行，和 t3code 一致的语义。 */
+/* GitHub alerts（`> [!NOTE]`）：边框 + 标题行。五种类型不再各带一个色相，
+   而是映射到状态 token：note/info 用强调色，tip 用正向，warning 用警示，
+   caution 用负向，important 用强调色的深一档。 */
 .chat-markdown .md-alert {
   padding-inline-start: 0.75rem;
   border-inline-start-width: 2px;
 }
 
 .chat-markdown .md-alert-note {
-  border-inline-start-color: color-mix(in srgb, #3b82f6 70%, transparent);
+  border-inline-start-color: color-mix(in oklab, var(--accent) 70%, transparent);
 }
 
 .chat-markdown .md-alert-tip {
-  border-inline-start-color: color-mix(in srgb, #10b981 70%, transparent);
+  border-inline-start-color: color-mix(in oklab, var(--positive) 70%, transparent);
 }
 
 .chat-markdown .md-alert-important {
-  border-inline-start-color: color-mix(in srgb, #a855f7 70%, transparent);
+  border-inline-start-color: color-mix(in oklab, var(--accent-ink) 80%, transparent);
 }
 
 .chat-markdown .md-alert-warning {
-  border-inline-start-color: color-mix(in srgb, #f59e0b 70%, transparent);
+  border-inline-start-color: color-mix(in oklab, var(--warning) 70%, transparent);
 }
 
 .chat-markdown .md-alert-caution {
-  border-inline-start-color: color-mix(in srgb, #ef4444 70%, transparent);
+  border-inline-start-color: color-mix(in oklab, var(--negative) 70%, transparent);
 }
 
 .chat-markdown .md-alert-title {
@@ -377,26 +379,24 @@
   margin: 0 0 0.25rem;
   font-weight: 600;
   font-size: 0.8125rem;
+  color: var(--ink-1);
 }
 
-.chat-markdown .md-alert-note .md-alert-title {
-  color: #60a5fa;
+.chat-markdown .md-alert-note .md-alert-title,
+.chat-markdown .md-alert-important .md-alert-title {
+  color: var(--accent-ink);
 }
 
 .chat-markdown .md-alert-tip .md-alert-title {
-  color: #34d399;
-}
-
-.chat-markdown .md-alert-important .md-alert-title {
-  color: #c084fc;
+  color: var(--positive);
 }
 
 .chat-markdown .md-alert-warning .md-alert-title {
-  color: #fbbf24;
+  color: var(--warning);
 }
 
 .chat-markdown .md-alert-caution .md-alert-title {
-  color: #f87171;
+  color: var(--negative);
 }
 
 :where(html.theme-light) .chat-markdown :is(.md-alert-note, .md-alert-tip, .md-alert-important, .md-alert-warning, .md-alert-caution) .md-alert-title {

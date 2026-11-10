@@ -103,32 +103,32 @@ canvas.screen-frame {
 }
 
 .screen-state[data-state="live"] {
-  color: color-mix(in oklab, var(--chart-2, #34d399) 82%, white);
+  color: color-mix(in oklab, var(--positive) 82%, white);
 }
 
 .screen-state[data-state="connecting"] {
-  color: color-mix(in oklab, var(--chart-4, #fbbf24) 82%, white);
+  color: color-mix(in oklab, var(--warning) 82%, white);
 }
 
 .screen-state[data-state="failed"] {
-  color: color-mix(in oklab, var(--destructive, #ef4444) 78%, white);
+  color: color-mix(in oklab, var(--negative) 78%, white);
 }
 
 .screen-pip[data-state="live"] .screen-state-dot,
 .screen-state[data-state="live"] .screen-state-dot {
-  background: var(--chart-2, #34d399);
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--chart-2, #34d399) 22%, transparent);
+  background: var(--positive);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--positive) 22%, transparent);
   animation: screen-pulse 2.4s ease-in-out infinite;
 }
 
 .screen-pip[data-state="connecting"] .screen-state-dot,
 .screen-state[data-state="connecting"] .screen-state-dot {
-  background: var(--chart-4, #fbbf24);
+  background: var(--warning);
 }
 
 .screen-pip[data-state="failed"] .screen-state-dot,
 .screen-state[data-state="failed"] .screen-state-dot {
-  background: var(--destructive, #ef4444);
+  background: var(--negative);
 }
 
 @keyframes screen-pulse {
@@ -153,7 +153,7 @@ canvas.screen-frame {
   overflow: hidden;
   /* Dark glass mixed from the theme base, then pulled toward black: on a phone
    * the picture is the content and the chrome only frames it. */
-  background: color-mix(in oklab, color-mix(in oklab, var(--color-background-base) 30%, #0b0b10) 92%, transparent);
+  background: color-mix(in oklab, color-mix(in oklab, var(--color-background-base) 30%, var(--surface-sunken)) 92%, transparent);
   border: 1px solid color-mix(in oklab, white 11%, transparent);
   box-shadow:
     0 24px 60px rgb(0 0 0 / 58%),
@@ -172,7 +172,7 @@ canvas.screen-frame {
   padding: 0 4px 0 12px;
   cursor: grab;
   touch-action: none;
-  color: #f4f4f5;
+  color: var(--ink-1);
   background: linear-gradient(
     to bottom,
     color-mix(in oklab, white 8%, transparent),
@@ -193,7 +193,7 @@ canvas.screen-frame {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 46%;
-  color: color-mix(in oklab, #f4f4f5 90%, transparent);
+  color: color-mix(in oklab, var(--ink-1) 90%, transparent);
 }
 
 .screen-pip-spacer {
@@ -212,13 +212,13 @@ canvas.screen-frame {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 10.5px;
   font-variant-numeric: tabular-nums;
-  color: color-mix(in oklab, #f4f4f5 62%, transparent);
+  color: color-mix(in oklab, var(--ink-1) 62%, transparent);
   background: color-mix(in oklab, white 6%, transparent);
 }
 
 .screen-pip[data-state="live"] .screen-pip-fps {
-  color: color-mix(in oklab, var(--chart-2, #34d399) 72%, #f4f4f5);
-  background: color-mix(in oklab, var(--chart-2, #34d399) 12%, transparent);
+  color: color-mix(in oklab, var(--positive) 72%, var(--ink-1));
+  background: color-mix(in oklab, var(--positive) 12%, transparent);
 }
 
 /* Touch targets stay at 30px even though the bar is compact: this is a phone. */
@@ -232,7 +232,7 @@ canvas.screen-frame {
   padding: 0;
   border: 0;
   border-radius: 8px;
-  color: color-mix(in oklab, #f4f4f5 78%, transparent);
+  color: color-mix(in oklab, var(--ink-1) 78%, transparent);
   background: transparent;
   flex: none;
   cursor: pointer;
@@ -255,7 +255,7 @@ canvas.screen-frame {
 
 .screen-pip-action:hover {
   background: color-mix(in oklab, white 13%, transparent);
-  color: #f4f4f5;
+  color: var(--ink-1);
 }
 
 /* Edge to edge: the window is already a frame, and six pixels of matte on each
@@ -331,12 +331,12 @@ canvas.screen-frame {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--chart-4, #fbbf24);
+  background: var(--warning);
   animation: screen-pulse 1.6s ease-in-out infinite;
 }
 
 .screen-veil[data-state="failed"] .screen-veil-dot {
-  background: var(--destructive, #ef4444);
+  background: var(--negative);
   animation: none;
 }
 
@@ -666,16 +666,16 @@ canvas.screen-frame {
 }
 
 .screen-error {
-  color: var(--destructive-foreground, #fff);
-  background: color-mix(in oklab, var(--destructive, #ef4444) 22%, transparent);
-  border: 1px solid color-mix(in oklab, var(--destructive, #ef4444) 38%, transparent);
+  color: var(--on-status);
+  background: color-mix(in oklab, var(--negative) 22%, transparent);
+  border: 1px solid color-mix(in oklab, var(--negative) 38%, transparent);
 }
 
 /* A downgrade is information, not a failure: H.264 unavailable still previews. */
 .screen-note {
   color: var(--color-content);
-  background: color-mix(in oklab, var(--chart-4, #fbbf24) 16%, transparent);
-  border: 1px solid color-mix(in oklab, var(--chart-4, #fbbf24) 32%, transparent);
+  background: color-mix(in oklab, var(--warning) 16%, transparent);
+  border: 1px solid color-mix(in oklab, var(--warning) 32%, transparent);
 }
 
 .screen-hint {

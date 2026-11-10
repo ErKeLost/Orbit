@@ -96,7 +96,7 @@ describe("inbox badges", () => {
     expect(reviewDecisionLabel("COMMENTED")).toBe("COMMENTED");
     expect(statePillClass("open")).toContain("emerald");
     expect(statePillClass("merged")).toContain("violet");
-    expect(statePillClass("closed")).toContain("content/50");
+    expect(statePillClass("closed")).toContain("text-ink-3");
   });
 
   test("maps check dots with a neutral fallback", () => {

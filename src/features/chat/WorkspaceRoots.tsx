@@ -31,7 +31,7 @@ export function WorkspaceRoots({ projectFolder }: { projectFolder: string; disab
           <span
             key={root}
             title={root}
-            className="flex h-6 min-w-0 max-w-40 items-center gap-1.5 rounded-md bg-content/6 px-1.5 text-[12px] text-content/45"
+            className="flex h-6 min-w-0 max-w-40 items-center gap-1.5 rounded-md bg-fill px-1.5 text-xs text-ink-3"
           >
             <Folder className="size-3.5 shrink-0" strokeWidth={1.75} />
             <span className="min-w-0 truncate">{name}</span>

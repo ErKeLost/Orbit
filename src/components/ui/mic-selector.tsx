@@ -120,7 +120,7 @@ export function MicSelector({ value, onValueChange, muted, onMutedChange, disabl
         }}
         title={current?.label ?? "选择麦克风"}
         className={cn(
-          "flex h-7 max-w-56 min-w-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-content/60 hover:bg-content/10 hover:text-content disabled:opacity-40",
+          "flex h-7 max-w-56 min-w-0 items-center gap-1.5 rounded-md px-2 text-xs text-ink-2 hover:bg-fill-strong hover:text-ink-1 disabled:opacity-40",
           className,
         )}
       >
@@ -131,9 +131,9 @@ export function MicSelector({ value, onValueChange, muted, onMutedChange, disabl
 
       {open ? (
         <Popover anchor={trigger} side="top" align="start" width={280} onDismiss={() => setOpen(false)} className="p-1">
-          {error ? <p className="px-2 py-1.5 text-[12px] text-red-400">{error}</p> : null}
+          {error ? <p className="px-2 py-1.5 text-xs text-negative">{error}</p> : null}
           {!error && devices.length === 0 ? (
-            <p className="px-2 py-1.5 text-[12px] text-content/45">{loading ? "读取中…" : "没有找到输入设备"}</p>
+            <p className="px-2 py-1.5 text-xs text-ink-3">{loading ? "读取中…" : "没有找到输入设备"}</p>
           ) : null}
           {devices.map((device) => (
             <button
@@ -144,7 +144,7 @@ export function MicSelector({ value, onValueChange, muted, onMutedChange, disabl
                 onValueChange?.(device.deviceId);
                 setOpen(false);
               }}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-content hover:bg-content/5"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-ink-1 hover:bg-fill"
             >
               <span className="min-w-0 flex-1 truncate">{device.label}</span>
               {selected === device.deviceId ? <Check className="size-3.5 shrink-0 text-accent" /> : null}
@@ -152,11 +152,11 @@ export function MicSelector({ value, onValueChange, muted, onMutedChange, disabl
           ))}
           {devices.length > 0 ? (
             <>
-              <div className="my-1 h-px bg-content/10" />
+              <div className="my-1 h-px bg-fill-strong" />
               <button
                 type="button"
                 onClick={toggleMute}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-content/70 hover:bg-content/5 hover:text-content"
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-ink-2 hover:bg-fill hover:text-ink-1"
               >
                 {isMuted ? <MicOff className="size-3.5" /> : <Mic className="size-3.5" />}
                 {isMuted ? "取消静音" : "静音"}

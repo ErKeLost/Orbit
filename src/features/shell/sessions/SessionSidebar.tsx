@@ -55,7 +55,7 @@ function SessionCard({
   onRename?: (name: string) => void;
 }) {
   const title = sessionTitle(session);
-  const statusClass = needsInput ? "text-amber-400" : working ? "text-accent" : "text-content/45";
+  const statusClass = needsInput ? "text-warning" : working ? "text-accent" : "text-ink-3";
   return (
     <li className="group relative">
       <div
@@ -66,10 +66,10 @@ function SessionCard({
         onPointerEnter={() => prefetchSession(session.path)}
         className={`relative flex w-full cursor-default select-none flex-col rounded-md border px-2.5 py-2 text-left ${
           needsInput
-            ? "border-dashed border-content/30 bg-content/20 text-content"
+            ? "border-dashed border-line-strong bg-fill-strong text-ink-1"
             : active
-              ? "border-transparent bg-selection text-content"
-              : "border-transparent text-content/80 hover:bg-content/5 hover:text-content"
+              ? "border-transparent bg-selection text-ink-1"
+              : "border-transparent text-ink-1 hover:bg-fill hover:text-ink-1"
         }`}
       >
         <div
@@ -86,12 +86,12 @@ function SessionCard({
           className="rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-accent/50"
         >
           <span className="relative flex min-w-0 items-center gap-2">
-            <Icon name={sessionGlyph(session.icon)} className="size-3.5 shrink-0 text-content/55" />
+            <Icon name={sessionGlyph(session.icon)} className="size-3.5 shrink-0 text-ink-2" />
             {renaming && onRename && onCancelRename ? (
               <SessionTitleField value={title} onCommit={onRename} onCancel={onCancelRename} />
             ) : (
               <span
-                className="line-clamp-1 min-w-0 flex-1 text-[13px] font-semibold leading-snug text-content"
+                className="line-clamp-1 min-w-0 flex-1 text-ui font-semibold leading-snug text-ink-1"
                 onDoubleClick={(event) => {
                   if (!onStartRename) return;
                   event.preventDefault();
@@ -102,7 +102,7 @@ function SessionCard({
                 {title}
               </span>
             )}
-            <span className={`flex shrink-0 items-center gap-1 whitespace-nowrap text-[11px] tabular-nums ${statusClass}`}>
+            <span className={`flex shrink-0 items-center gap-1 whitespace-nowrap text-2xs tabular-nums ${statusClass}`}>
               {needsInput ? (
                 <>
                   <CircleAlert className="size-3" strokeWidth={1.75} />
@@ -110,7 +110,7 @@ function SessionCard({
                 </>
               ) : working ? (
                 <>
-                  <TerminalSpinner className="inline-block w-3 select-none text-center text-[11px] leading-none text-accent" />
+                  <TerminalSpinner className="inline-block w-3 select-none text-center text-2xs leading-none text-accent" />
                   <span>Working...</span>
                 </>
               ) : (
@@ -121,7 +121,7 @@ function SessionCard({
         </div>
         <span className="relative mt-1 flex items-center gap-2">
           {branch ? (
-            <span className="flex min-w-0 flex-1 items-center gap-1 text-[11px] text-content/45">
+            <span className="flex min-w-0 flex-1 items-center gap-1 text-2xs text-ink-3">
               <GitBranch className="size-3 shrink-0" strokeWidth={1.75} />
               <span className="min-w-0 truncate">{branch}</span>
             </span>
@@ -168,14 +168,14 @@ function SessionsList({ cwd, query }: { cwd: string; query: string }) {
   });
 
   if (sessions.isPending && !merged.sessions.length) return null;
-  if (sessions.isError && !merged.sessions.length) return <p className="px-3 py-2 text-[12px] text-content/50">无法读取会话</p>;
+  if (sessions.isError && !merged.sessions.length) return <p className="px-3 py-2 text-xs text-ink-3">无法读取会话</p>;
   if (!visible.length) {
     return query.trim() ? (
-      <p className="px-3 py-2 text-[12px] text-content/50">没有匹配的会话</p>
+      <p className="px-3 py-2 text-xs text-ink-3">没有匹配的会话</p>
     ) : (
       <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
-        <MessageSquare className="size-5 text-content/30" strokeWidth={1.5} />
-        <p className="text-[12px] text-content/45">还没有会话</p>
+        <MessageSquare className="size-5 text-ink-3" strokeWidth={1.5} />
+        <p className="text-xs text-ink-3">还没有会话</p>
       </div>
     );
   }
@@ -226,8 +226,8 @@ function WorkspaceTabs({ tab, onPick }: { tab: SidebarTab; onPick: (tab: Sidebar
               aria-selected={active}
               data-tauri-drag-region="false"
               onClick={() => onPick(item.id)}
-              className={`flex h-6 min-w-0 flex-1 items-center justify-center self-center rounded-md px-2 text-[12px] leading-none ${
-                active ? "bg-selection text-content" : "text-content/50"
+              className={`flex h-6 min-w-0 flex-1 items-center justify-center self-center rounded-md px-2 text-xs leading-none ${
+                active ? "bg-selection text-ink-1" : "text-ink-3"
               }`}
             >
               <span className="block truncate leading-label">{item.label}</span>
@@ -290,7 +290,7 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
       <WorkspaceTabs tab={tab} onPick={setTab} />
 
       <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${tab === "files" ? "" : "hidden"}`}>
-        {project ? <FileTree cwd={project} /> : <p className="px-3 py-2 text-[12px] text-content/50">没有项目文件夹</p>}
+        {project ? <FileTree cwd={project} /> : <p className="px-3 py-2 text-xs text-ink-3">没有项目文件夹</p>}
       </div>
 
       <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${tab === "changes" ? "" : "hidden"}`}>
@@ -320,7 +320,7 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
             }}
           />
         ) : (
-          <p className="px-3 py-2 text-[12px] text-content/50">没有项目文件夹</p>
+          <p className="px-3 py-2 text-xs text-ink-3">没有项目文件夹</p>
         )}
       </div>
 
@@ -334,7 +334,7 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
               onChange={(event) => setQuery(event.target.value)}
               placeholder="搜索会话…"
               aria-label="搜索会话"
-              className="h-full w-full min-w-0 rounded-md bg-transparent py-0 pl-7 pr-2 text-[12px] text-content outline-none placeholder:text-content/35"
+              className="h-full w-full min-w-0 rounded-md bg-transparent py-0 pl-7 pr-2 text-xs text-ink-1 outline-none placeholder:text-ink-3"
             />
           </div>
           <button
@@ -342,14 +342,14 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
             title="筛选会话"
             aria-label="筛选会话"
             onClick={() => searchRef.current?.focus()}
-            className="relative grid size-6 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content"
+            className="relative grid size-6 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1"
           >
             <ListFilter className="size-3" strokeWidth={1.75} />
           </button>
         </div>
       ) : null}
       <div ref={lockOverscroll} className={`sidebar-session-scroll min-h-0 flex-1 overflow-y-auto overscroll-none ${tab === "sessions" ? "" : "hidden"}`}>
-        {project ? <SessionsList cwd={project} query={query} /> : <p className="px-3 py-2 text-[12px] text-content/50">没有项目文件夹</p>}
+        {project ? <SessionsList cwd={project} query={query} /> : <p className="px-3 py-2 text-xs text-ink-3">没有项目文件夹</p>}
       </div>
       <ResizeHandle label="调整侧栏宽度" dragging={resize.dragging} onPointerDown={resize.onPointerDown} onDoubleClick={resize.onDoubleClick} />
     </aside>

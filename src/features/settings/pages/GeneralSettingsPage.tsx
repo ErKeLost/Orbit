@@ -358,7 +358,7 @@ function ProjectMuteSelect({ cwd, desktop }: { cwd: string; desktop: boolean }) 
   const remaining = muteRemainingLabel(entry);
   return (
     <div className="flex items-center gap-2">
-      {remaining ? <span className="text-[11px] tabular-nums text-content/40">{remaining}</span> : null}
+      {remaining ? <span className="text-2xs tabular-nums text-ink-3">{remaining}</span> : null}
       <Select
         label="这个项目的通知"
         value={muteOptionFor(entry)}

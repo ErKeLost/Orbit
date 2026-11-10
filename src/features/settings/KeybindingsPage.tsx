@@ -82,12 +82,12 @@ function ShortcutRecorder({ row }: { row: KeybindingView }) {
           setError(null);
           setRecording(true);
         }}
-        className={`h-6 min-w-24 rounded-md border px-2 font-mono text-[11px] leading-none transition-colors ${
+        className={`h-6 min-w-24 rounded-md border px-2 font-mono text-2xs leading-none transition-colors ${
           recording
-            ? "border-accent text-content"
+            ? "border-accent text-ink-1"
             : row.disabled
-              ? "border-dashed border-content/15 text-content/35"
-              : "border-content/15 text-content/75 hover:bg-content/8"
+              ? "border-dashed border-line-strong text-ink-3"
+              : "border-line-strong text-ink-2 hover:bg-fill-strong"
         }`}
       >
         {recording ? "按下组合键…" : row.keys}
@@ -97,13 +97,13 @@ function ShortcutRecorder({ row }: { row: KeybindingView }) {
           type="button"
           aria-label={`恢复「${row.label}」默认快捷键`}
           onClick={() => apply({})}
-          className="rounded-md p-1 text-content/35 hover:bg-content/10 hover:text-content"
+          className="rounded-md p-1 text-ink-3 hover:bg-fill-strong hover:text-ink-1"
         >
           <RotateCcw className="size-3.5" strokeWidth={1.75} />
         </button>
       ) : null}
       {error ? (
-        <p role="alert" className="absolute right-0 top-full z-40 mt-1 w-max max-w-64 rounded-md border border-content/10 bg-background-base/95 px-2 py-1 text-[11px] text-red-400 shadow-lg">
+        <p role="alert" className="absolute right-0 top-full z-40 mt-1 w-max max-w-64 rounded-md border border-line bg-background-base/95 px-2 py-1 text-2xs text-negative shadow-lg">
           {error}
         </p>
       ) : null}
@@ -123,8 +123,8 @@ export function KeybindingsPage() {
       description="点一下快捷键就能录制新组合；录制时按 Delete 取消绑定，Esc 取消。"
       action={
         <div className="flex items-center gap-3">
-          <span className="shrink-0 text-[12px] tabular-nums text-content/40">{rows.length} 项</span>
-          <label className="flex h-7 w-44 shrink-0 items-center gap-2 rounded-md border border-content/10 px-2 text-content/45 focus-within:border-content/20">
+          <span className="shrink-0 text-xs tabular-nums text-ink-3">{rows.length} 项</span>
+          <label className="flex h-7 w-44 shrink-0 items-center gap-2 rounded-md border border-line px-2 text-ink-3 focus-within:border-line-strong">
             <Search className="size-3.5 shrink-0" strokeWidth={1.75} />
             <input
               value={query}
@@ -133,27 +133,27 @@ export function KeybindingsPage() {
               aria-label="筛选快捷键"
               spellCheck={false}
               autoComplete="off"
-              className="min-w-0 flex-1 bg-transparent text-[12px] text-content outline-none placeholder:text-content/35"
+              className="min-w-0 flex-1 bg-transparent text-xs text-ink-1 outline-none placeholder:text-ink-3"
             />
           </label>
         </div>
       }
     >
-      <div className="flex items-center border-b border-stroke bg-content/5 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-content/40">
+      <div className="flex items-center border-b border-stroke bg-fill px-4 py-2 text-2xs font-semibold uppercase tracking-[0.08em] text-ink-3">
         <span className="min-w-0 flex-1">命令</span>
         <span className="w-44 shrink-0">快捷键</span>
         <span className="w-32 shrink-0">生效场景</span>
       </div>
       {rows.length === 0 ? (
-        <p className="px-4 py-3 text-[12px] text-content/45">没有匹配的快捷键</p>
+        <p className="px-4 py-3 text-xs text-ink-3">没有匹配的快捷键</p>
       ) : (
         rows.map((row) => (
-          <div key={row.command} className="flex h-11 items-center border-b border-content/5 px-4 text-[12px] last:border-b-0">
-            <span className={`min-w-0 flex-1 truncate ${row.disabled ? "text-content/45" : ""}`}>{row.label}</span>
+          <div key={row.command} className="flex h-11 items-center border-b border-line px-4 text-xs last:border-b-0">
+            <span className={`min-w-0 flex-1 truncate ${row.disabled ? "text-ink-3" : ""}`}>{row.label}</span>
             <div className="w-44 shrink-0">
               <ShortcutRecorder row={row} />
             </div>
-            <span className="w-32 shrink-0 truncate text-content/45">{row.when}</span>
+            <span className="w-32 shrink-0 truncate text-ink-3">{row.when}</span>
           </div>
         ))
       )}

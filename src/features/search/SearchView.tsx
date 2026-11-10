@@ -22,7 +22,7 @@ const TABS: { id: Tab; label: string }[] = [
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <section className="min-w-0">
-      <p className="px-2.5 py-1 text-[11px] text-content/45">{label}</p>
+      <p className="px-2.5 py-1 text-2xs text-ink-3">{label}</p>
       <div className="flex flex-col gap-px">{children}</div>
     </section>
   );
@@ -73,16 +73,16 @@ function Row({
       ref={innerRef}
       type="button"
       onClick={onClick}
-      className={`flex min-h-9 w-full flex-col justify-center gap-0.5 rounded-lg px-2 py-1 text-left text-[13px] leading-none focus-visible:outline-none ${
-        active ? "bg-selection text-content" : "text-content hover:bg-content/5"
+      className={`flex min-h-9 w-full flex-col justify-center gap-0.5 rounded-lg px-2 py-1 text-left text-ui leading-none focus-visible:outline-none ${
+        active ? "bg-selection text-ink-1" : "text-ink-1 hover:bg-fill"
       }`}
     >
       <span className="flex min-w-0 items-center gap-2">
         <span className="grid size-4 shrink-0 place-items-center">{icon}</span>
         <span className="min-w-0 flex-1 truncate">{title}</span>
-        {meta ? <span className="min-w-0 max-w-[45%] shrink-0 truncate font-mono text-[11px] text-content/40">{meta}</span> : null}
+        {meta ? <span className="min-w-0 max-w-[45%] shrink-0 truncate font-mono text-2xs text-ink-3">{meta}</span> : null}
       </span>
-      {children ? <span className="block pl-6 text-[11px] leading-4 text-content/45">{children}</span> : null}
+      {children ? <span className="block pl-6 text-2xs leading-4 text-ink-3">{children}</span> : null}
     </button>
   );
 }
@@ -183,10 +183,10 @@ export function SearchView() {
   let rowIndex = -1;
 
   return (
-    <div role="region" aria-label="搜索" className="flex min-h-0 min-w-0 flex-1 flex-col text-content">
+    <div role="region" aria-label="搜索" className="flex min-h-0 min-w-0 flex-1 flex-col text-ink-1">
       <div className="flex h-10 shrink-0 select-none items-center border-b border-stroke" data-tauri-drag-region="deep">
         <TrafficLightSpacer />
-        <label className="flex min-w-0 flex-1 items-center gap-2 px-3 text-content/50">
+        <label className="flex min-w-0 flex-1 items-center gap-2 px-3 text-ink-3">
           <SearchIcon className="size-3.5 shrink-0" strokeWidth={1.75} />
           <input
             ref={input}
@@ -202,9 +202,9 @@ export function SearchView() {
             }}
             placeholder="搜索一切…（↑↓ 选择，↩ 打开）"
             aria-label="搜索文件和会话"
-            className="min-w-0 flex-1 select-text bg-transparent text-[13px] text-content outline-none placeholder:text-content/40"
+            className="min-w-0 flex-1 select-text bg-transparent text-ui text-ink-1 outline-none placeholder:text-ink-3"
           />
-          {searching ? <Loader className="size-3.5 shrink-0 animate-spin text-content/35" /> : null}
+          {searching ? <Loader className="size-3.5 shrink-0 animate-spin text-ink-3" /> : null}
         </label>
       </div>
 
@@ -215,7 +215,7 @@ export function SearchView() {
             type="button"
             aria-pressed={tab === item.id}
             onClick={() => setTab(item.id)}
-            className={`rounded-md px-2 py-1 text-[12px] ${tab === item.id ? "bg-selection text-content" : "text-content/50 hover:text-content"}`}
+            className={`rounded-md px-2 py-1 text-xs ${tab === item.id ? "bg-selection text-ink-1" : "text-ink-3 hover:text-ink-1"}`}
           >
             {item.label}
           </button>
@@ -224,8 +224,8 @@ export function SearchView() {
 
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-none p-2">
         {!hasQuery ? <EmptyState /> : null}
-        {hasQuery && nothing ? <p className="px-2 py-1.5 text-[12px] text-content/50">没有结果</p> : null}
-        {files.isError ? <p className="px-2 py-1.5 text-[12px] text-red-400">{String(files.error)}</p> : null}
+        {hasQuery && nothing ? <p className="px-2 py-1.5 text-xs text-ink-3">没有结果</p> : null}
+        {files.isError ? <p className="px-2 py-1.5 text-xs text-negative">{String(files.error)}</p> : null}
 
         <div className="flex flex-col gap-3">
           {(tab === "all" || tab === "projects") && matchedProjects.length > 0 ? (
@@ -265,7 +265,7 @@ export function SearchView() {
                     innerRef={(el) => {
                       if (el && index === active) el.dataset.active = "true";
                     }}
-                    icon={<MessageSquare className="size-3.5 text-content/50" strokeWidth={1.75} />}
+                    icon={<MessageSquare className="size-3.5 text-ink-3" strokeWidth={1.75} />}
                     title={<MatchText text={hit.title || "未命名会话"} query={query} />}
                     meta={hit.path === persistedSessionFile(cwd) ? "当前" : undefined}
                     onClick={() => openSession(hit)}
@@ -295,7 +295,7 @@ export function SearchView() {
                         <span className="min-w-0 truncate">
                           <MatchText text={hit.relative} query={query} />
                         </span>
-                        {hit.snippet && hit.kind === "content" ? <span className="min-w-0 truncate text-[11px] text-content/40"><MatchText text={hit.snippet} query={query} /></span> : null}
+                        {hit.snippet && hit.kind === "content" ? <span className="min-w-0 truncate text-2xs text-ink-3"><MatchText text={hit.snippet} query={query} /></span> : null}
                       </span>
                     }
                     meta={hit.line ? `:${hit.line}` : undefined}
@@ -319,14 +319,14 @@ function EmptyState() {
       <div className="relative mb-2 grid h-48 w-72 place-items-center">
         <div className="grid gap-[7px] opacity-[0.14] [mask-image:radial-gradient(ellipse_72%_68%_at_50%_50%,#000_18%,transparent_76%)]" style={{ gridTemplateColumns: "repeat(17, minmax(0, 1fr))" }}>
           {cells.map((cell) => (
-            <span key={cell} className="mx-auto size-[3px] rounded-full bg-content" />
+            <span key={cell} className="mx-auto size-[3px] rounded-full bg-ink-1" />
           ))}
         </div>
-        <div className="absolute grid size-14 place-items-center rounded-2xl bg-content/6 backdrop-blur-sm">
-          <SearchIcon className="size-6 text-content/50" strokeWidth={1.75} />
+        <div className="absolute grid size-14 place-items-center rounded-2xl bg-fill backdrop-blur-sm">
+          <SearchIcon className="size-6 text-ink-3" strokeWidth={1.75} />
         </div>
       </div>
-      <p className="max-w-xs text-center text-[13px] text-content/45">搜索文件、会话、消息与项目。</p>
+      <p className="max-w-xs text-center text-ui text-ink-3">搜索文件、会话、消息与项目。</p>
     </div>
   );
 }

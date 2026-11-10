@@ -15,12 +15,12 @@ import { SourceMark } from "./InboxList";
 
 /** 设置页小状态胶囊：绿点已连接、琥珀待登录、灰点未配置。 */
 function StatusPill({ tone, children }: { tone: GithubConnectionTone; children: ReactNode }) {
-  const dot = tone === "ok" ? "bg-emerald-400" : tone === "warn" ? "bg-amber-400" : "bg-content/25";
+  const dot = tone === "ok" ? "bg-positive" : tone === "warn" ? "bg-warning" : "bg-fill-strong";
   // 文字保持中性：琥珀字在亮色主题下对比度不够，颜色交给圆点。
-  const text = tone === "off" ? "text-content/40" : "text-content/65";
+  const text = tone === "off" ? "text-ink-3" : "text-ink-2";
   return (
     <span
-      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border border-content/10 bg-content/3 px-2 py-0.5 text-[11px] leading-4 ${text}`}
+      className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border border-line bg-fill-weak px-2 py-0.5 text-2xs leading-4 ${text}`}
     >
       <span aria-hidden className={`size-1.5 shrink-0 rounded-full ${dot}`} />
       {children}
@@ -31,7 +31,7 @@ function StatusPill({ tone, children }: { tone: GithubConnectionTone; children: 
 /** 行内命令片段，用于 `gh auth login` 这类要用户照抄的字。 */
 function InlineCode({ children }: { children: ReactNode }) {
   return (
-    <code className="rounded border border-content/10 bg-content/5 px-1 py-px font-mono text-[11px] text-content/70">{children}</code>
+    <code className="rounded border border-line bg-fill px-1 py-px font-mono text-2xs text-ink-2">{children}</code>
   );
 }
 
@@ -143,7 +143,7 @@ export function InboxSettings() {
           <Notice>GitLab Token 保存在电脑上，请在电脑端设置里连接或断开。</Notice>
         ) : gitlab.data?.connected ? (
           <Row label="实例" description="Token 只保存在本机，点「断开」即从本机删除。">
-            <span className="min-w-0 max-w-full truncate rounded-md border border-content/10 bg-content/5 px-2 py-1 font-mono text-[11px] text-content/70">
+            <span className="min-w-0 max-w-full truncate rounded-md border border-line bg-fill px-2 py-1 font-mono text-2xs text-ink-2">
               {gitlab.data.url}
             </span>
             <SecondaryButton danger disabled={busy} onClick={() => void disconnect()}>
@@ -186,7 +186,7 @@ export function InboxSettings() {
                 连接
               </PrimaryButton>
             </Row>
-            {error ? <p className="border-t border-content/5 px-4 py-2.5 text-[12px] leading-relaxed text-red-400">{error}</p> : null}
+            {error ? <p className="border-t border-line px-4 py-2.5 text-xs leading-relaxed text-negative">{error}</p> : null}
           </>
         )}
       </Group>

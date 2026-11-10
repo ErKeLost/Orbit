@@ -132,7 +132,7 @@ export const PromptOutline = memo(function PromptOutline({ scope }: { scope: Ref
             >
               <span
                 aria-hidden
-                className="rounded-full bg-content transition-[width,opacity] duration-200 ease-out"
+                className="rounded-full bg-ink-1 transition-[width,opacity] duration-200 ease-out"
                 style={{
                   height: BAR_HEIGHT_PX,
                   width: lit ? BAR_WIDTH_LIFTED_PX : BAR_WIDTH_PX,
@@ -155,7 +155,7 @@ export const PromptOutline = memo(function PromptOutline({ scope }: { scope: Ref
             onDismiss={() => setHover(null)}
             className="px-3 py-2"
           >
-            <p className="line-clamp-2 text-[13px] leading-snug text-content">{prompt.preview || "（空提示）"}</p>
+            <p className="line-clamp-2 text-ui leading-snug text-ink-1">{prompt.preview || "（空提示）"}</p>
           </Popover>
         );
       })()}

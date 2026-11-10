@@ -82,16 +82,16 @@ export function useSessionContextMenu({
           onConfirm={() => void remove()}
         >
           <div className="flex gap-3">
-            <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full bg-red-500/12 text-red-400">
+            <span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-full bg-negative/12 text-negative">
               <Trash className="size-4" strokeWidth={1.75} />
             </span>
             <div className="min-w-0 flex-1">
-              <p className="line-clamp-3 break-words text-[13px] font-medium leading-snug text-content" title={sessionTitle(deleting)}>
+              <p className="line-clamp-3 break-words text-ui font-medium leading-snug text-ink-1" title={sessionTitle(deleting)}>
                 {sessionTitle(deleting)}
               </p>
-              <p className="mt-2 text-[12px] leading-relaxed text-content/55">会话文件会从 Pi 的会话目录中永久删除，无法恢复。</p>
+              <p className="mt-2 text-xs leading-relaxed text-ink-2">会话文件会从 Pi 的会话目录中永久删除，无法恢复。</p>
               {deleting.path ? (
-                <p className="mt-1.5 truncate font-mono text-[11px] leading-tight text-content/35" title={deleting.path}>
+                <p className="mt-1.5 truncate font-mono text-2xs leading-tight text-ink-3" title={deleting.path}>
                   {deleting.path}
                 </p>
               ) : null}

@@ -176,20 +176,20 @@ export function GitHistoryGraph({
           onClick={onToggleExpanded}
           aria-expanded={expanded}
           aria-label={expanded ? "Collapse graph" : "Expand graph"}
-          className="flex h-full min-w-0 flex-1 items-center gap-1 px-3 text-left leading-none hover:bg-content/5"
+          className="flex h-full min-w-0 flex-1 items-center gap-1 px-3 text-left leading-none hover:bg-fill"
         >
-          <span className="text-[10px] font-semibold tracking-[0.04em] text-content/55 uppercase">
+          <span className="text-2xs font-semibold tracking-[0.04em] text-ink-2 uppercase">
             Graph
           </span>
           {expanded && commits.length > 0 ? (
-            <span className="ml-1 text-[10px] tabular-nums text-content/35">
+            <span className="ml-1 text-2xs tabular-nums text-ink-3">
               {searching ? `${matches.length}/${commits.length}` : commits.length}
             </span>
           ) : null}
           {expanded ? (
-            <ChevronDown className="ml-auto size-3.5 shrink-0 text-content/50" strokeWidth={1.75} />
+            <ChevronDown className="ml-auto size-3.5 shrink-0 text-ink-3" strokeWidth={1.75} />
           ) : (
-            <ChevronRight className="ml-auto size-3.5 shrink-0 text-content/50" strokeWidth={1.75} />
+            <ChevronRight className="ml-auto size-3.5 shrink-0 text-ink-3" strokeWidth={1.75} />
           )}
         </button>
       </div>
@@ -210,7 +210,7 @@ export function GitHistoryGraph({
               placeholder="搜索提交、作者、分支…"
               aria-label="搜索提交历史"
               spellCheck={false}
-              className="h-full w-full min-w-0 rounded-md bg-transparent py-0 pl-6 pr-6 text-[12px] text-content outline-none placeholder:text-content/35"
+              className="h-full w-full min-w-0 rounded-md bg-transparent py-0 pl-6 pr-6 text-xs text-ink-1 outline-none placeholder:text-ink-3"
             />
             {query ? (
               <button
@@ -218,7 +218,7 @@ export function GitHistoryGraph({
                 title="清除搜索"
                 aria-label="清除搜索"
                 onClick={() => setQuery("")}
-                className="absolute right-0.5 grid size-5 place-items-center rounded text-content/45 hover:bg-content/10 hover:text-content"
+                className="absolute right-0.5 grid size-5 place-items-center rounded text-ink-3 hover:bg-fill-strong hover:text-ink-1"
               >
                 <X className="size-3" strokeWidth={2} />
               </button>
@@ -232,11 +232,11 @@ export function GitHistoryGraph({
           className="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-none"
         >
           {!cwd || cwd === "~" ? (
-            <p className="px-3 py-2 text-[12px] text-content/45">No project folder</p>
+            <p className="px-3 py-2 text-xs text-ink-3">No project folder</p>
           ) : commits.length === 0 ? (
-            <p className="px-3 py-2 text-[12px] text-content/45">还没有提交</p>
+            <p className="px-3 py-2 text-xs text-ink-3">还没有提交</p>
           ) : matches.length === 0 ? (
-            <p className="px-3 py-2 text-[12px] text-content/45">
+            <p className="px-3 py-2 text-xs text-ink-3">
               没有匹配「{query.trim()}」的提交
             </p>
           ) : (
@@ -302,10 +302,10 @@ function HistoryRow({
           row.kind === "HEAD" ? "is-head" : ""
         } ${
           active
-            ? "is-selected bg-selection text-content"
+            ? "is-selected bg-selection text-ink-1"
             : highlighted
-              ? "bg-selection/60 text-content"
-              : "text-content hover:bg-content/5"
+              ? "bg-selection/60 text-ink-1"
+              : "text-ink-1 hover:bg-fill"
         }`}
       >
         <svg
@@ -338,7 +338,7 @@ function HistoryRow({
         </svg>
         <span className="ml-1 flex min-w-0 flex-1 items-center overflow-hidden">
           <span
-            className={`min-w-0 truncate text-[12px] leading-[22px] ${
+            className={`min-w-0 truncate text-xs leading-[22px] ${
               row.kind === "HEAD" ? "font-semibold" : ""
             }`}
           >
@@ -349,7 +349,7 @@ function HistoryRow({
             />
           </span>
           {commit.author ? (
-            <span className="ml-2 min-w-0 shrink truncate text-[12px] leading-[22px] text-content/45">
+            <span className="ml-2 min-w-0 shrink truncate text-xs leading-[22px] text-ink-3">
               <MatchText
                 text={commit.author}
                 positions={searching ? matchPositions(commit.author, terms) : []}
@@ -358,7 +358,7 @@ function HistoryRow({
             </span>
           ) : null}
           {fieldHint ? (
-            <span className="ml-1.5 shrink-0 rounded bg-content/10 px-1 text-[9px] leading-[14px] text-content/50">
+            <span className="ml-1.5 shrink-0 rounded bg-fill-strong px-1 text-2xs leading-[14px] text-ink-3">
               {fieldHint}
             </span>
           ) : null}
@@ -373,8 +373,8 @@ function RefPill({ refInfo }: { refInfo: GraphRef }) {
   const local = refInfo.kind === "local";
   return (
     <span
-      className={`ml-1 flex h-3.5 min-w-0 max-w-[6.5rem] shrink-0 self-center items-center gap-0.5 truncate rounded-full px-1.5 text-[10px] leading-none ${
-        refInfo.color ? "" : "bg-content/10 text-content/55"
+      className={`ml-1 flex h-3.5 min-w-0 max-w-[6.5rem] shrink-0 self-center items-center gap-0.5 truncate rounded-full px-1.5 text-2xs leading-none ${
+        refInfo.color ? "" : "bg-fill-strong text-ink-2"
       }`}
       style={
         refInfo.color

@@ -185,7 +185,7 @@ export function ImageAssetView({
         }}
       >
         {src == null ? (
-          <span className="text-[12px] text-content/45">打开 {name}…</span>
+          <span className="text-xs text-ink-3">打开 {name}…</span>
         ) : (
           <img
             ref={imageRef}
@@ -212,7 +212,7 @@ export function ImageAssetView({
           />
         )}
       </div>
-      <footer className="flex h-8 shrink-0 items-center gap-3 border-t border-stroke px-3 text-[11px] text-content/50">
+      <footer className="flex h-8 shrink-0 items-center gap-3 border-t border-stroke px-3 text-2xs text-ink-3">
         <span className="tabular-nums">{natural ? `${natural.w} × ${natural.h}` : "—"}</span>
         {bytes != null ? <span className="tabular-nums">{formatBytes(bytes)}</span> : null}
         {label ? <span className="uppercase">{label}</span> : null}
@@ -227,7 +227,7 @@ export function ImageAssetView({
           type="button"
           title="适应窗口"
           onClick={() => setZoom("fit")}
-          className="w-11 rounded text-center tabular-nums hover:text-content"
+          className="w-11 rounded text-center tabular-nums hover:text-ink-1"
         >
           {zoom === "fit" ? "Fit" : `${Math.round(zoom * 100)}%`}
         </button>
@@ -266,10 +266,10 @@ export function ImageAssetPreview({
 function AssetNotice({ message, path }: { message: string; path: string }) {
   return (
     <div className="grid h-full place-items-center p-6">
-      <div className="flex w-full max-w-sm flex-col items-center gap-3 rounded-xl border border-content/10 bg-content/4 px-6 py-8 text-center">
-        <ImagePlus className="size-8 text-content/25" strokeWidth={1.5} />
-        <p className="text-[13px] leading-5 text-content/70">{message}</p>
-        <p className="break-all font-mono text-[11px] leading-4 text-content/40">{path}</p>
+      <div className="flex w-full max-w-sm flex-col items-center gap-3 rounded-xl border border-line bg-fill-weak px-6 py-8 text-center">
+        <ImagePlus className="size-8 text-ink-3" strokeWidth={1.5} />
+        <p className="text-ui leading-5 text-ink-2">{message}</p>
+        <p className="break-all font-mono text-2xs leading-4 text-ink-3">{path}</p>
       </div>
     </div>
   );
@@ -290,7 +290,7 @@ function ZoomButton({
       title={label}
       aria-label={label}
       onClick={onClick}
-      className="grid size-5 place-items-center rounded hover:bg-content/10 hover:text-content"
+      className="grid size-5 place-items-center rounded hover:bg-fill-strong hover:text-ink-1"
     >
       {children}
     </button>

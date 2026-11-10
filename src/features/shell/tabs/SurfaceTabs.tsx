@@ -163,14 +163,14 @@ export function SurfaceTabs({
   };
 
   return (
-    <div className="flex h-9 min-w-0 shrink-0 items-center border-b border-stroke">
+    <div className="tab-strip relative flex h-9 min-w-0 shrink-0 items-end bg-surface-sunken">
       <div
         ref={attachStrip}
         role="tablist"
         aria-label="打开的文件"
         data-tab-strip={paneId}
         onPointerLeave={leaveStrip}
-        className="scrollbar-none flex h-full min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overscroll-none pl-1.5 pr-2.5"
+        className="scrollbar-none flex h-full min-w-0 flex-1 items-end gap-0.5 overflow-x-auto overscroll-none pl-1.5 pr-2.5"
       >
         {showGrip && onPaneDragStart ? (
           <div
@@ -178,7 +178,7 @@ export function SurfaceTabs({
             tabIndex={-1}
             title="拖动以调整面板位置"
             aria-label="拖动以调整面板位置"
-            className="grid h-7.5 w-5 shrink-0 cursor-grab touch-none place-items-center rounded-md text-content/35 hover:bg-content/5 hover:text-content/70 active:cursor-grabbing"
+            className="mb-0.5 grid h-7 w-5 shrink-0 cursor-grab touch-none place-items-center rounded-control text-ink-3 hover:bg-fill hover:text-ink-2 active:cursor-grabbing"
             onPointerDown={(event) => {
               if (event.button !== 0) return;
               event.preventDefault();
@@ -205,8 +205,8 @@ export function SurfaceTabs({
               }}
               className={
                 closing || opening
-                  ? "tab-motion group relative flex h-full w-full min-w-0 items-center overflow-hidden"
-                  : "reorder-item tab-motion group relative flex h-full w-56 min-w-28 shrink touch-none items-center"
+                  ? "tab-motion group relative z-10 flex h-8 w-full min-w-0 items-stretch overflow-hidden"
+                  : "reorder-item tab-motion group relative z-10 flex h-8 w-56 min-w-28 shrink touch-none items-stretch"
               }
               data-tab-dragging={!closing && sortable.draggingId === file.path ? "true" : undefined}
               onPointerDown={(event) => {
@@ -240,13 +240,15 @@ export function SurfaceTabs({
                   focusFile(file.path, paneId);
                 }}
                 onDoubleClick={() => pinFile(file.path, paneId)}
-                className={`relative flex h-7.5 min-w-0 flex-1 cursor-default items-center gap-1.5 self-center rounded-md px-2 text-left text-[13px] ${dirty ? "pr-10" : "pr-7"} ${
-                  active ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
+                className={`relative flex h-full min-w-0 flex-1 cursor-default items-center gap-1.5 rounded-t-control border-x border-t px-2.5 text-left text-ui ${dirty ? "pr-10" : "pr-8"} ${
+                  active
+                    ? "border-line bg-surface-canvas text-ink-1"
+                    : "border-transparent text-ink-3 hover:bg-fill hover:text-ink-2"
                 }`}
               >
                 <span className="grid shrink-0 place-items-center">
                   {file.diff ? (
-                    <FileDiff className="size-3.5 text-content/60" strokeWidth={1.75} />
+                    <FileDiff className="size-3.5 text-ink-2" strokeWidth={1.75} />
                   ) : (
                     <FileTypeIcon name={file.name} isDir={file.isDir === true} size={14} />
                   )}
@@ -266,8 +268,8 @@ export function SurfaceTabs({
                   event.stopPropagation();
                   closeFile(file.path, paneId);
                 }}
-                className={`absolute right-1 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-content/50 hover:bg-content/10 hover:text-content ${
-                  active ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                className={`absolute right-1.5 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded-keycap text-ink-3 hover:bg-fill-strong hover:text-ink-1 ${
+                  active ? "opacity-100" : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
                 }`}
               >
                 <X className="size-3" strokeWidth={1.75} />

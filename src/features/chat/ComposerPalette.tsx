@@ -130,9 +130,9 @@ export function ComposerPalette({
           : "没有找到文件或文件夹";
 
   return (
-    <div data-mention-picker className="overflow-hidden rounded-lg border border-content/10 bg-content/5 backdrop-blur-xl">
+    <div data-mention-picker className="overflow-hidden rounded-lg border border-line bg-fill backdrop-blur-xl">
       {rows.length === 0 ? (
-        <p className="px-3 py-2.5 text-[12px] text-content/50">{empty}</p>
+        <p className="px-3 py-2.5 text-xs text-ink-3">{empty}</p>
       ) : (
         <div
           ref={listRef}
@@ -161,8 +161,8 @@ export function ComposerPalette({
                   onMouseDown={(event) => event.preventDefault()}
                   onMouseEnter={() => setActive(index)}
                   onClick={() => onPick(row.pick)}
-                  className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] leading-none ${
-                    highlighted ? "bg-selection text-content" : "text-content"
+                  className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-ui leading-none ${
+                    highlighted ? "bg-selection text-ink-1" : "text-ink-1"
                   }`}
                 >
                   <span className="shrink-0">
@@ -173,7 +173,7 @@ export function ComposerPalette({
                     {row.file?.isDir ? "/" : null}
                   </span>
                   {row.note ? (
-                    <span className="min-w-0 max-w-[45%] shrink-0 truncate font-mono text-[11px] text-content/40">
+                    <span className="min-w-0 max-w-[45%] shrink-0 truncate font-mono text-2xs text-ink-3">
                       <MatchText text={row.note} positions={dirPositions} active={typed} />
                     </span>
                   ) : null}
@@ -191,17 +191,17 @@ export function ComposerPalette({
                 onMouseEnter={() => setActive(index)}
                 onClick={() => onPick(row.pick)}
                 className={`flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left ${
-                  highlighted ? "bg-selection text-content" : "text-content"
+                  highlighted ? "bg-selection text-ink-1" : "text-ink-1"
                 }`}
               >
                 <span className="flex w-full min-w-0 items-baseline gap-2">
-                  <span className="truncate text-[13px]">{row.title}</span>
+                  <span className="truncate text-ui">{row.title}</span>
                   {row.note ? (
-                    <span className="shrink-0 text-[10px] uppercase tracking-wide text-content/40">{row.note}</span>
+                    <span className="shrink-0 text-2xs uppercase tracking-wide text-ink-3">{row.note}</span>
                   ) : null}
                 </span>
                 {row.description ? (
-                  <span className="line-clamp-2 text-[11px] leading-4 text-content/50">{row.description}</span>
+                  <span className="line-clamp-2 text-2xs leading-4 text-ink-3">{row.description}</span>
                 ) : null}
               </button>
             );
@@ -209,7 +209,7 @@ export function ComposerPalette({
         </div>
       )}
       {pending.kind === "slash" ? (
-        <div className="flex w-full items-center gap-2 border-t border-stroke px-2.5 py-2 text-left text-[12px] text-content/70">
+        <div className="flex w-full items-center gap-2 border-t border-stroke px-2.5 py-2 text-left text-xs text-ink-2">
           <Search className="size-3.5 shrink-0" strokeWidth={1.75} />
           继续输入以筛选 · ↑↓ 选择 · Enter 插入 · Esc 关闭
         </div>

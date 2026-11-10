@@ -78,10 +78,10 @@ export function QuickComposer() {
 
   return (
     <div className="h-full w-full p-2">
-      <div className="flex h-full flex-col overflow-hidden rounded-xl border border-white/10 bg-background-base/95 shadow-[0_24px_60px_rgba(0,0,0,.45)] backdrop-blur-xl">
-        <div className="flex h-8 shrink-0 items-center gap-2 px-3 text-[11px] text-content/45">
+      <div className="flex h-full flex-col overflow-hidden rounded-panel border border-line bg-surface-canvas/95 shadow-dialog backdrop-blur-xl">
+        <div className="flex h-8 shrink-0 items-center gap-2 px-3 text-2xs text-ink-3">
           <span className="size-1.5 shrink-0 rounded-full bg-accent" />
-          <span className="min-w-0 truncate font-medium text-content/70">{projectName(cwd) || "没有项目"}</span>
+          <span className="min-w-0 truncate font-medium text-ink-2">{projectName(cwd) || "没有项目"}</span>
           <span className="flex-1" />
           <span className="shrink-0">Enter 发送 · Esc 收起</span>
         </div>
@@ -102,19 +102,19 @@ export function QuickComposer() {
               void send();
             }
           }}
-          className="min-h-9 w-full flex-1 resize-none bg-transparent px-3 pb-2 text-[13px] leading-5 text-content outline-none placeholder:text-content/30"
+          className="min-h-9 w-full flex-1 resize-none bg-transparent px-3 pb-2 text-ui leading-5 text-ink-1 outline-none placeholder:text-ink-3"
         />
         <div className="flex h-9 shrink-0 items-center gap-2 border-t border-stroke/60 px-3">
           {error ? (
-            <span role="alert" className="min-w-0 flex-1 truncate text-[11px] text-red-300">{error}</span>
+            <span role="alert" className="min-w-0 flex-1 truncate text-2xs text-negative">{error}</span>
           ) : (
-            <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-content/30">{cwd}</span>
+            <span className="min-w-0 flex-1 truncate font-mono text-2xs text-ink-3">{cwd}</span>
           )}
           <button
             type="button"
             onClick={() => void send()}
             disabled={!text.trim() || sending}
-            className="flex h-6 shrink-0 items-center gap-1.5 rounded-md bg-content px-2 text-[11px] font-medium text-background-base disabled:opacity-40"
+            className="flex h-6 shrink-0 items-center gap-1.5 rounded-md bg-ink-1 px-2 text-2xs font-medium text-background-base disabled:opacity-40"
           >
             {sending ? "发送中" : "发送"}
           </button>

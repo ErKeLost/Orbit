@@ -14,7 +14,7 @@ const FRAMES = [
 ] as const;
 
 export function TerminalSpinner({
-  className = "inline-block w-3.5 select-none text-center text-[11px] leading-none",
+  className = "inline-block w-3.5 select-none text-center text-2xs leading-none",
 }: {
   className?: string;
 }) {

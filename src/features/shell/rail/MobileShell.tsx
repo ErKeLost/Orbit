@@ -96,7 +96,7 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
   }, [screenPip]);
 
   return (
-    <div className="mobile-shell flex h-full min-h-0 flex-col bg-background-base text-content">
+    <div className="mobile-shell flex h-full min-h-0 flex-col bg-background-base text-ink-1">
       <header className="flex h-11 shrink-0 select-none items-center gap-1 border-b border-stroke px-2">
         {showFile ? (
           <TitleIconButton label="返回会话" onClick={() => setChatSurface(true)}>
@@ -107,7 +107,7 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
             <PanelLeft className="size-4" strokeWidth={1.75} />
           </TitleIconButton>
         )}
-        <span className="flex min-w-0 flex-1 items-center text-[14px] font-medium">
+        <span className="flex min-w-0 flex-1 items-center text-base font-medium">
           <span className="min-w-0 truncate">{showFile ? openFile.name : title}</span>
         </span>
         {showFile ? (
@@ -163,7 +163,7 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
                           role="tab"
                           aria-selected={drawerTab === tab}
                           onClick={() => setDrawerTab(tab)}
-                          className={`flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md text-[12px] ${drawerTab === tab ? "bg-selection text-content" : "text-content/50"}`}
+                          className={`flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md text-xs ${drawerTab === tab ? "bg-selection text-ink-1" : "text-ink-3"}`}
                         >
                           {tab === "sessions" ? <MessageMultiple className="size-3.5" strokeWidth={1.75} /> : <SlidersHorizontal className="size-3.5" strokeWidth={1.75} />}
                           {tab === "sessions" ? "会话" : "项目"}
@@ -190,7 +190,7 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
                       <button
                         type="button"
                         onClick={() => useWorkspace.getState().set({ panel: "settings", settingsPage: "general" })}
-                        className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-content/60 hover:bg-content/10 hover:text-content"
+                        className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-ink-2 hover:bg-fill-strong hover:text-ink-1"
                       >
                         <Settings className="size-4 opacity-70" strokeWidth={1.75} />
                         <span className="text-sm font-medium">Settings</span>

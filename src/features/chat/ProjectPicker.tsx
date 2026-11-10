@@ -75,7 +75,7 @@ export function ProjectPicker({ disabled }: { disabled: boolean }) {
         aria-haspopup="menu"
         aria-expanded={menu}
         onClick={() => setMenu((value) => !value)}
-        className="-ml-1.5 flex h-6 min-w-0 shrink items-center gap-1.5 rounded-md px-1.5 text-[12px] text-content/55 hover:bg-content/8 hover:text-content disabled:cursor-default disabled:opacity-40"
+        className="-ml-1.5 flex h-6 min-w-0 shrink items-center gap-1.5 rounded-md px-1.5 text-xs text-ink-2 hover:bg-fill-strong hover:text-ink-1 disabled:cursor-default disabled:opacity-40"
       >
         {busy ? (
           <Loader className="size-3.5 shrink-0 animate-spin" />

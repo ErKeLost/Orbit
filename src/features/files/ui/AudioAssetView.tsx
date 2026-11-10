@@ -114,19 +114,19 @@ export function AudioAssetView({
         className="hidden"
       />
 
-      <div className="grid min-h-0 flex-1 place-items-center overflow-auto bg-content/2 p-6">
-        <div className="flex w-full max-w-lg flex-col gap-4 rounded-xl border border-content/10 bg-content/[0.045] px-5 py-4">
+      <div className="grid min-h-0 flex-1 place-items-center overflow-auto bg-fill-weak p-6">
+        <div className="flex w-full max-w-lg flex-col gap-4 rounded-xl border border-line bg-fill-weak px-5 py-4">
           <div className="flex items-center gap-3.5">
             {/* 封面：文件名决定色相，同一首歌每次都是同一块颜色。 */}
             <div
-              className="relative grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg text-content"
+              className="relative grid size-12 shrink-0 place-items-center overflow-hidden rounded-lg text-ink-1"
               style={{ background: coverGradient(name) }}
             >
               <span className="absolute inset-0 opacity-25 [background-image:radial-gradient(circle_at_30%_18%,white_0,transparent_58%)]" />
               <span className="relative text-xl leading-none">♪</span>
             </div>
             {/* 名字单独占满一行，长的歌名不会再被播放键挤成省略号。 */}
-            <p className="min-w-0 flex-1 truncate text-[13px] font-medium leading-tight text-content" title={name}>
+            <p className="min-w-0 flex-1 truncate text-ui font-medium leading-tight text-ink-1" title={name}>
               {name}
             </p>
           </div>
@@ -138,11 +138,11 @@ export function AudioAssetView({
               aria-label={playing ? "暂停" : "播放"}
               aria-pressed={playing}
               disabled={src == null}
-              className="grid size-9 shrink-0 place-items-center rounded-full bg-content text-background-base transition-transform hover:scale-105 active:scale-95 disabled:opacity-40"
+              className="grid size-9 shrink-0 place-items-center rounded-full bg-ink-1 text-background-base transition-transform hover:scale-105 active:scale-95 disabled:opacity-40"
             >
               {playing ? <Pause className="size-3.5" strokeWidth={2.25} /> : <Play className="size-3.5 translate-x-px" strokeWidth={2.25} />}
             </button>
-            <span className="w-9 shrink-0 text-right font-mono text-[10.5px] tabular-nums text-content/45">
+            <span className="w-9 shrink-0 text-right font-mono text-2xs tabular-nums text-ink-3">
               {formatAudioTime(time)}
             </span>
             <div
@@ -166,27 +166,27 @@ export function AudioAssetView({
               }}
               className="group relative h-4 min-w-0 flex-1 cursor-pointer touch-none"
             >
-              <span className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-content/12" />
+              <span className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-fill-strong" />
               <span
-                className="absolute top-1/2 left-0 h-1 -translate-y-1/2 rounded-full bg-content/70 group-hover:bg-content"
+                className="absolute top-1/2 left-0 h-1 -translate-y-1/2 rounded-full bg-ink-1/70 group-hover:bg-ink-1"
                 style={{ width: `${ratio * 100}%` }}
               />
               <span
-                className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-content opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                className="absolute top-1/2 size-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
                 style={{ left: `${ratio * 100}%` }}
               />
             </div>
-            <span className="w-9 shrink-0 font-mono text-[10.5px] tabular-nums text-content/45">
+            <span className="w-9 shrink-0 font-mono text-2xs tabular-nums text-ink-3">
               {formatAudioTime(duration)}
             </span>
           </div>
 
-          {error ? <p role="alert" className="text-[11px] text-red-300">{error}</p> : null}
+          {error ? <p role="alert" className="text-2xs text-negative">{error}</p> : null}
         </div>
       </div>
 
       {/* 事实栏：和图片查看器的页脚同一套尺寸与分隔线。 */}
-      <footer className="flex h-8 shrink-0 items-center gap-3 border-t border-stroke px-3 text-[11px] text-content/50">
+      <footer className="flex h-8 shrink-0 items-center gap-3 border-t border-stroke px-3 text-2xs text-ink-3">
         <span className="tabular-nums">{formatAudioTime(duration)}</span>
         {bytes != null ? <span className="tabular-nums">{formatBytes(bytes)}</span> : null}
         {label ? <span className="uppercase">{label}</span> : null}

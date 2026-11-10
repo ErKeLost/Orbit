@@ -63,15 +63,15 @@ export function MobileProjectList({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <p className="shrink-0 px-3 pb-1 pt-2 text-[11px] font-medium tracking-wide text-content/40">电脑上的项目</p>
+      <p className="shrink-0 px-3 pb-1 pt-2 text-2xs font-medium tracking-wide text-ink-3">电脑上的项目</p>
       <ul className="flex min-h-0 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1.5 pb-4">
         {homeDir ? (
           <li>
             <button
               type="button"
               onClick={() => void openHome()}
-              className={`rail-row flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm font-medium leading-tight hover:bg-content/10 ${
-                workspaceMode === "home" ? "text-content" : "text-content/70"
+              className={`rail-row flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm font-medium leading-tight hover:bg-fill-strong ${
+                workspaceMode === "home" ? "text-ink-1" : "text-ink-2"
               }`}
             >
               {opening === homeDir ? (
@@ -98,14 +98,14 @@ export function MobileProjectList({ onNavigate }: { onNavigate?: () => void }) {
           <button
             type="button"
             onClick={() => setPicker(true)}
-            className="rail-row flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-content/50 hover:bg-content/10 hover:text-content"
+            className="rail-row flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-ink-3 hover:bg-fill-strong hover:text-ink-1"
           >
             <Plus className="size-4 shrink-0 opacity-70" strokeWidth={1.75} aria-hidden />
             <span className="min-w-0 flex-1 truncate text-sm font-medium leading-tight">添加项目</span>
           </button>
         </li>
       </ul>
-      <p className="shrink-0 px-3 pb-1 pt-2 text-[11px] font-medium tracking-wide text-content/40">工作区</p>
+      <p className="shrink-0 px-3 pb-1 pt-2 text-2xs font-medium tracking-wide text-ink-3">工作区</p>
       <div className="flex shrink-0 flex-col gap-px px-1.5 pb-3">
         {NAV.filter((item) => item.id !== "mobile-access").map((item) => (
           <RailAction
@@ -133,16 +133,16 @@ function ProjectRow({ project, current, busy, onOpen }: { project: Project; curr
       onClick={onOpen}
       aria-current={current ? "true" : undefined}
       className={`rail-row flex min-h-11 w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left ${
-        current ? "bg-selection text-content" : "text-content/80 hover:bg-content/8 hover:text-content"
+        current ? "bg-selection text-ink-1" : "text-ink-1 hover:bg-fill-strong hover:text-ink-1"
       }`}
     >
       <Folder className="size-4 shrink-0 opacity-80" style={{ color }} strokeWidth={1.75} aria-hidden />
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="min-w-0 truncate text-[14.5px] font-semibold leading-tight">{project.name}</span>
-        <span className="min-w-0 truncate text-[11px] leading-tight text-content/45">{prettyCwd(project.path)}</span>
+        <span className="min-w-0 truncate text-base font-medium leading-tight">{project.name}</span>
+        <span className="min-w-0 truncate text-2xs leading-tight text-ink-3">{prettyCwd(project.path)}</span>
       </span>
       {busy ? (
-        <Loader className="size-3.5 shrink-0 animate-spin text-content/45" aria-hidden />
+        <Loader className="size-3.5 shrink-0 animate-spin text-ink-3" aria-hidden />
       ) : current ? (
         <Check className="size-4 shrink-0 text-accent" strokeWidth={2} aria-label="当前项目" />
       ) : null}

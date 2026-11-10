@@ -34,7 +34,7 @@ export function VoiceExchange({ log, error }: { log: VoiceLogItem[]; error: stri
         </Conversation>
       ) : null}
       {notices.map(item => (
-        <p key={item.id} className="py-1 text-center text-[11px] leading-relaxed text-content/35">{item.text}</p>
+        <p key={item.id} className="py-1 text-center text-2xs leading-relaxed text-ink-3">{item.text}</p>
       ))}
     </div>
   );

@@ -22,9 +22,9 @@ const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFra
 const precise = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 2 });
 
 function ringClass(ratio: number) {
-  if (ratio >= 0.9) return "text-red-400";
-  if (ratio >= 0.75) return "text-amber-400";
-  return "text-content/45";
+  if (ratio >= 0.9) return "text-negative";
+  if (ratio >= 0.75) return "text-warning";
+  return "text-ink-3";
 }
 
 function MeterRing({ ratio, spinning }: { ratio: number; spinning?: boolean }) {
@@ -136,7 +136,7 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
   const usedRatio = usage && usage.window > 0 ? Math.max(0, usage.used / usage.window) : ratio;
   // The ring, the headline and the bar share one scale: calm is neutral, 75%
   // turns amber, 90% turns red — the same thresholds everywhere.
-  const levelClass = usedRatio >= 0.9 ? "text-red-400" : usedRatio >= 0.75 ? "text-amber-400" : "text-content";
+  const levelClass = usedRatio >= 0.9 ? "text-negative" : usedRatio >= 0.75 ? "text-warning" : "text-ink-1";
   const headline = compacting ? "Compacting context" : `${Math.round(usedRatio * 100)}% context used`;
   const classified = CONTEXT_SOURCE_KEYS.reduce((total, key) => total + buckets[key], 0);
   const rows = CONTEXT_SOURCE_KEYS.filter((key) => buckets[key] > 0);
@@ -152,7 +152,7 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
     const where = usage.used > usage.window ? "已超出窗口" : "已越过压缩线";
     return running ? `${where}：本轮工具执行完就会压缩` : `${where}：下一次回复结束后压缩`;
   })();
-  const statusNoteClass = `line-clamp-2 text-[10.5px] leading-4 ${compactionError ? "text-red-400" : "text-content/40"}`;
+  const statusNoteClass = `line-clamp-2 text-2xs leading-4 ${compactionError ? "text-negative" : "text-ink-3"}`;
 
   return (
     <div ref={root} className="relative shrink-0" onMouseEnter={keepOpen} onMouseLeave={scheduleClose}>
@@ -190,20 +190,20 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
           className="w-[19rem] px-3.5 py-3"
         >
           <div className="space-y-2.5">
-            <div className="text-[13px] font-semibold leading-4 text-content">Context</div>
+            <div className="text-ui font-semibold leading-4 text-ink-1">Context</div>
 
             {/* A stale bar under “Compacting” would be a lie: the old usage died with the compaction. */}
             {usage && !compacting ? (
               <>
                 <div className="flex items-end justify-between gap-2">
                   <div className="flex items-baseline gap-1.5">
-                    <span className={`font-mono text-[26px] font-semibold leading-none tracking-tight ${levelClass}`}>{compact.format(usage.used)}</span>
-                    <span className="text-[10.5px] leading-4 text-content/40">/ {compact.format(usage.window)} tokens</span>
+                    <span className={`font-mono text-2xl font-semibold leading-none tracking-tight ${levelClass}`}>{compact.format(usage.used)}</span>
+                    <span className="text-2xs leading-4 text-ink-3">/ {compact.format(usage.window)} tokens</span>
                   </div>
-                  <span className={`shrink-0 font-mono text-[13px] tabular-nums ${levelClass}`}>{percentLabel(usedRatio)}</span>
+                  <span className={`shrink-0 font-mono text-ui tabular-nums ${levelClass}`}>{percentLabel(usedRatio)}</span>
                 </div>
 
-                <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-content/10" aria-hidden>
+                <div className="relative h-2.5 w-full overflow-hidden rounded-full bg-fill-strong" aria-hidden>
                   {segments.map((segment) => (
                     <span
                       key={segment.key}
@@ -217,14 +217,14 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
                   ))}
                   {threshold != null ? (
                     <span
-                      className="absolute inset-y-0 w-px bg-content/60"
+                      className="absolute inset-y-0 w-px bg-line-strong"
                       style={{ left: `${Math.min(100, Math.max(0, threshold.ratio * 100))}%` }}
                       title={`自动压缩从这里开始：${percentLabel(threshold.ratio)}`}
                     />
                   ) : null}
                 </div>
                 {threshold != null ? (
-                  <div className="flex items-center justify-between text-[10.5px] leading-4 text-content/40">
+                  <div className="flex items-center justify-between text-2xs leading-4 text-ink-3">
                     <span>Compacts at {percentLabel(threshold.ratio)}</span>
                     <span className="tabular-nums">{precise.format(threshold.tokens)} tokens</span>
                   </div>
@@ -242,31 +242,31 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
                             key={key}
                             type="button"
                             onClick={() => setExpanded(open ? null : key)}
-                            className="-mx-1 flex w-[calc(100%+0.5rem)] flex-col rounded px-1 text-left hover:bg-content/5"
+                            className="-mx-1 flex w-[calc(100%+0.5rem)] flex-col rounded px-1 text-left hover:bg-fill"
                             aria-expanded={open}
                           >
                             <span className="flex items-center gap-2 py-[3px]">
                               <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${source.swatch}`} />
-                              <span className="text-[12px] leading-4 text-content/75">{source.label}</span>
-                              <span className="ml-auto font-mono text-[11.5px] tabular-nums text-content/85">{compact.format(buckets[key])}</span>
+                              <span className="text-xs leading-4 text-ink-2">{source.label}</span>
+                              <span className="ml-auto font-mono text-2xs tabular-nums text-ink-1">{compact.format(buckets[key])}</span>
                             </span>
-                            {open ? <span className="pb-1 pl-3.5 text-[10.5px] leading-4 text-content/40">{source.note}</span> : null}
+                            {open ? <span className="pb-1 pl-3.5 text-2xs leading-4 text-ink-3">{source.note}</span> : null}
                           </button>
                         );
                       })
                     ) : (
                       // 知道总量但拆不开（系统提示还没回传）：不编造四段，只把真数放上来。
                       <div className="flex items-center gap-2 py-[3px]">
-                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-content/30" />
-                        <span className="text-[12px] leading-4 text-content/75">Used</span>
-                        <span className="ml-auto font-mono text-[11.5px] tabular-nums text-content/85">{compact.format(usage.used)}</span>
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-fill-strong" />
+                        <span className="text-xs leading-4 text-ink-2">Used</span>
+                        <span className="ml-auto font-mono text-2xs tabular-nums text-ink-1">{compact.format(usage.used)}</span>
                       </div>
                     )
                   ) : null}
                 </div>
               </>
             ) : (
-              <div className="text-[11px] leading-4 text-content/50">{compacting ? "Usage returns after compaction" : "Waiting for Pi to report usage"}</div>
+              <div className="text-2xs leading-4 text-ink-3">{compacting ? "Usage returns after compaction" : "Waiting for Pi to report usage"}</div>
             )}
 
             {pinned ? (
@@ -279,7 +279,7 @@ export function ContextMeter({ usage, compacting }: { usage?: { used: number; wi
                   setExpanded(null);
                   void request({ type: "compact" }, 180000).then(() => loadMessages(cwd)).catch(report);
                 }}
-                className="w-full rounded-md border border-content/10 bg-content/5 px-2 py-1.5 text-[11px] text-content hover:bg-content/15 disabled:cursor-not-allowed disabled:opacity-40"
+                className="w-full rounded-md border border-line bg-fill px-2 py-1.5 text-2xs text-ink-1 hover:bg-fill-strong disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Compact now
               </button>

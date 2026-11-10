@@ -158,8 +158,8 @@ function QuickOpenOverlay({ onClose }: { onClose: () => void }) {
         }
       }}
     >
-      <div className="mx-auto mt-2 w-[min(640px,92vw)] overflow-hidden rounded-xl border border-content/10 bg-background-base/95 shadow-2xl backdrop-blur-xl">
-        <label className="flex h-11 items-center gap-2 border-b border-stroke px-3 text-content/50">
+      <div className="mx-auto mt-2 w-[min(640px,92vw)] overflow-hidden rounded-xl border border-line bg-background-base/95 shadow-2xl backdrop-blur-xl">
+        <label className="flex h-11 items-center gap-2 border-b border-stroke px-3 text-ink-3">
           <SearchIcon className="size-4 shrink-0" strokeWidth={1.75} />
           <input
             ref={input}
@@ -167,13 +167,13 @@ function QuickOpenOverlay({ onClose }: { onClose: () => void }) {
             onChange={(event) => setRaw(event.target.value)}
             placeholder={commandMode ? "输入命令…" : "转到文件（输入 > 执行命令）"}
             aria-label="转到文件或执行命令"
-            className="min-w-0 flex-1 select-text bg-transparent text-[13px] text-content outline-none placeholder:text-content/40"
+            className="min-w-0 flex-1 select-text bg-transparent text-ui text-ink-1 outline-none placeholder:text-ink-3"
           />
-          {files.isFetching ? <Loader className="size-3.5 shrink-0 animate-spin text-content/35" /> : null}
+          {files.isFetching ? <Loader className="size-3.5 shrink-0 animate-spin text-ink-3" /> : null}
         </label>
         <div ref={listRef} className="max-h-[420px] overflow-y-auto overscroll-none p-1.5">
           {rows.length === 0 ? (
-            <p className="px-2.5 py-3 text-[12px] text-content/45">{commandMode ? "没有匹配的命令" : query.length >= MIN_QUERY ? "没有匹配的文件" : "输入文件名，或 > 执行命令"}</p>
+            <p className="px-2.5 py-3 text-xs text-ink-3">{commandMode ? "没有匹配的命令" : query.length >= MIN_QUERY ? "没有匹配的文件" : "输入文件名，或 > 执行命令"}</p>
           ) : (
             rows.map((row, index) => {
               const isActive = index === active;
@@ -186,11 +186,11 @@ function QuickOpenOverlay({ onClose }: { onClose: () => void }) {
                   role="option"
                   onMouseMove={() => setActive(index)}
                   onClick={() => pick(row)}
-                  className={`flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] leading-none ${
-                    isActive ? "bg-selection text-content" : "text-content/80 hover:bg-content/5"
+                  className={`flex h-9 w-full items-center gap-2 rounded-lg px-2 text-left text-ui leading-none ${
+                    isActive ? "bg-selection text-ink-1" : "text-ink-1 hover:bg-fill"
                   }`}
                 >
-                  <span className="grid size-4 shrink-0 place-items-center text-content/50">
+                  <span className="grid size-4 shrink-0 place-items-center text-ink-3">
                     {row.kind === "file" ? (
                       <FileTypeIcon name={row.relative.split("/").at(-1) ?? row.relative} isDir={false} size={14} />
                     ) : row.kind === "command" ? (
@@ -200,8 +200,8 @@ function QuickOpenOverlay({ onClose }: { onClose: () => void }) {
                     )}
                   </span>
                   <span className="min-w-0 flex-1 truncate">{row.kind === "file" ? row.relative : row.label}</span>
-                  {row.kind === "file" && row.line ? <span className="shrink-0 font-mono text-[11px] text-content/40">:{row.line}</span> : null}
-                  {row.kind === "project" ? <span className="min-w-0 max-w-[45%] shrink-0 truncate font-mono text-[11px] text-content/40">{row.path}</span> : null}
+                  {row.kind === "file" && row.line ? <span className="shrink-0 font-mono text-2xs text-ink-3">:{row.line}</span> : null}
+                  {row.kind === "project" ? <span className="min-w-0 max-w-[45%] shrink-0 truncate font-mono text-2xs text-ink-3">{row.path}</span> : null}
                 </button>
               );
             })

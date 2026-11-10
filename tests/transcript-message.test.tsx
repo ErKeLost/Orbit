@@ -252,7 +252,7 @@ describe("assistant turns", () => {
     // 步骤行现在默认折起来，所以直接渲染过程内容本身。
     const html = renderToStaticMarkup(<ActivityPhases steps={projectTurn(items, tools, true).work} tools={tools} done={false} />);
     expect(html).toContain("失败的工具调用");
-    expect(html).toContain("text-red-400");
+    expect(html).toContain("text-negative");
   });
 
   test("does not turn transient provider errors into answers", () => {

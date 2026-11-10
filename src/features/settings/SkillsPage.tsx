@@ -33,16 +33,16 @@ export function SkillsPage() {
 
   return (
     <>
-      <div className="flex items-center gap-3 pb-4 text-[13px] text-content/45">
+      <div className="flex items-center gap-3 pb-4 text-ui text-ink-3">
         <span className="shrink-0 tabular-nums">{skills.length} 个技能</span>
-        <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border border-content/10 px-2.5 text-content/45 focus-within:border-content/20">
+        <label className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md border border-line px-2.5 text-ink-3 focus-within:border-line-strong">
           <Search className="size-3.5 shrink-0" strokeWidth={1.75} />
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="筛选"
             aria-label="筛选技能"
-            className="min-w-0 flex-1 bg-transparent text-[13px] text-content outline-none placeholder:text-content/35"
+            className="min-w-0 flex-1 bg-transparent text-ui text-ink-1 outline-none placeholder:text-ink-3"
           />
         </label>
         <button
@@ -51,30 +51,30 @@ export function SkillsPage() {
           aria-label="重新读取技能"
           disabled={!online || data.isFetching}
           onClick={() => void data.refetch()}
-          className="grid size-8 shrink-0 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content disabled:opacity-40"
+          className="grid size-8 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1 disabled:opacity-40"
         >
           {data.isFetching ? <Loader className="size-4 animate-spin" /> : <RefreshCw className="size-4" strokeWidth={1.75} />}
         </button>
         <SecondaryButton disabled title="在终端运行 pi install 后刷新">添加技能</SecondaryButton>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-content/10 bg-content/3">
+      <div className="overflow-hidden rounded-xl border border-line bg-fill-weak">
         {visible.map((command) => {
           const path = command.sourceInfo?.path ?? command.sourceInfo?.origin ?? "";
           const fileName = path.split("/").at(-1) ?? "";
           const enabled = !hidden.includes(command.name);
           return (
-            <div key={command.name} className={`border-b border-content/5 px-5 py-4 last:border-b-0 ${enabled ? "" : "opacity-55"}`}>
+            <div key={command.name} className={`border-b border-line px-5 py-4 last:border-b-0 ${enabled ? "" : "opacity-55"}`}>
               <div className="flex items-start gap-6">
                 <div className="min-w-0 flex-1">
-                  <div className="text-[13px] font-semibold text-content">{command.name}</div>
-                  <p className="mt-1.5 line-clamp-2 text-[12.5px] leading-relaxed text-content/55">{command.description || "没有提供说明"}</p>
-                  {path ? <p className="mt-1.5 truncate font-mono text-[11px] text-content/40" title={path}>{path}</p> : null}
+                  <div className="text-ui font-semibold text-ink-1">{command.name}</div>
+                  <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-ink-2">{command.description || "没有提供说明"}</p>
+                  {path ? <p className="mt-1.5 truncate font-mono text-2xs text-ink-3" title={path}>{path}</p> : null}
                 </div>
                 <div className="flex w-[190px] shrink-0 flex-col items-end gap-2 pt-0.5">
-                  <span className="rounded-md bg-content/8 px-2 py-0.5 text-[10px] font-semibold tracking-wide text-content/60">{badge(command)}</span>
+                  <span className="rounded-md bg-fill-strong px-2 py-0.5 text-2xs font-semibold tracking-wide text-ink-2">{badge(command)}</span>
                   <span className="flex items-center gap-2.5">
-                    <span className="text-[11px] text-content/45">pi</span>
+                    <span className="text-2xs text-ink-3">pi</span>
                     <Toggle
                       label={`${command.name} 显示`}
                       on={enabled}
@@ -88,14 +88,14 @@ export function SkillsPage() {
                       }}
                     />
                   </span>
-                  <span className="flex items-center gap-1 text-content/45">
+                  <span className="flex items-center gap-1 text-ink-3">
                     {path && fileName.endsWith(".md") ? (
                       <button
                         type="button"
                         title="打开 SKILL.md"
                         aria-label={`打开 ${command.name} 的文件`}
                         onClick={() => useShell.getState().openFile(path, { pin: true })}
-                        className="grid size-6 place-items-center rounded-md hover:bg-content/10 hover:text-content"
+                        className="grid size-6 place-items-center rounded-md hover:bg-fill-strong hover:text-ink-1"
                       >
                         <Eye className="size-3.5" strokeWidth={1.75} />
                       </button>
@@ -106,7 +106,7 @@ export function SkillsPage() {
                       aria-label={`复制 ${command.name} 的路径`}
                       disabled={!path}
                       onClick={() => void navigator.clipboard.writeText(path)}
-                      className="grid size-6 place-items-center rounded-md hover:bg-content/10 hover:text-content disabled:opacity-40"
+                      className="grid size-6 place-items-center rounded-md hover:bg-fill-strong hover:text-ink-1 disabled:opacity-40"
                     >
                       <Copy className="size-3.5" strokeWidth={1.75} />
                     </button>
@@ -116,7 +116,7 @@ export function SkillsPage() {
                       aria-label={`使用 ${command.name}`}
                       disabled={!online}
                       onClick={() => useWorkspace.getState().set({ draft: `/${command.name} `, panel: "chat" })}
-                      className="grid size-6 place-items-center rounded-md hover:bg-content/10 hover:text-content disabled:opacity-40"
+                      className="grid size-6 place-items-center rounded-md hover:bg-fill-strong hover:text-ink-1 disabled:opacity-40"
                     >
                       <Terminal className="size-3.5" strokeWidth={1.75} />
                     </button>
@@ -126,9 +126,9 @@ export function SkillsPage() {
             </div>
           );
         })}
-        {!online ? <p className="px-5 py-6 text-center text-[12px] text-content/45">连接 Pi 后读取技能。</p> : null}
+        {!online ? <p className="px-5 py-6 text-center text-xs text-ink-3">连接 Pi 后读取技能。</p> : null}
         {online && !data.isLoading && visible.length === 0 ? (
-          <p className="px-5 py-6 text-center text-[12px] text-content/45">{query ? "没有匹配的技能" : "还没有加载技能或命令"}</p>
+          <p className="px-5 py-6 text-center text-xs text-ink-3">{query ? "没有匹配的技能" : "还没有加载技能或命令"}</p>
         ) : null}
       </div>
     </>

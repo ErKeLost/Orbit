@@ -89,7 +89,7 @@ export function SearchableProjectPicker({
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className={`inline-flex h-6 min-w-0 max-w-56 items-center gap-1.5 rounded-md text-[11px] text-content/60 hover:bg-content/10 hover:text-content ${buttonClassName}`}
+        className={`inline-flex h-6 min-w-0 max-w-56 items-center gap-1.5 rounded-md text-2xs text-ink-2 hover:bg-fill-strong hover:text-ink-1 ${buttonClassName}`}
       >
         <span className="min-w-0 truncate">{current ?? "No project"}</span>
         <ChevronDown className="size-3 shrink-0 opacity-60" strokeWidth={1.75} />
@@ -102,7 +102,7 @@ export function SearchableProjectPicker({
           width={280}
           maxHeight={280}
           onDismiss={() => setOpen(false)}
-          className="flex min-h-0 flex-col text-[12px]"
+          className="flex min-h-0 flex-col text-xs"
         >
           <div className="flex h-8 shrink-0 items-center gap-1.5 border-b border-stroke px-2">
             <Search className="size-3 shrink-0 opacity-50" strokeWidth={1.75} />
@@ -117,12 +117,12 @@ export function SearchableProjectPicker({
               aria-label="Search projects"
               spellCheck={false}
               autoComplete="off"
-              className="h-full w-full bg-transparent outline-none placeholder:text-content/40"
+              className="h-full w-full bg-transparent outline-none placeholder:text-ink-3"
             />
           </div>
           <ul role="listbox" className="min-h-0 flex-1 overflow-y-auto p-1">
             {options.length === 0 ? (
-              <li className="px-2 py-1.5 text-content/45">No matching projects</li>
+              <li className="px-2 py-1.5 text-ink-3">No matching projects</li>
             ) : (
               options.map((option, index) => {
                 const selected = sameProjectPath(option.path, cwd);
@@ -136,7 +136,7 @@ export function SearchableProjectPicker({
                       onMouseEnter={() => setActive(index)}
                       onClick={() => pick(option.path)}
                       className={`flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left ${
-                        index === active ? "bg-content/10 text-content" : "text-content/75"
+                        index === active ? "bg-fill-strong text-ink-1" : "text-ink-2"
                       }`}
                     >
                       <span className="min-w-0 flex-1 truncate">{option.name}</span>

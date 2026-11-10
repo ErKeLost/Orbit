@@ -137,7 +137,7 @@ function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRe
     return (
       <>
         <div
-          className="relative flex min-w-0 items-center gap-2 rounded-lg border border-content/10 bg-content/4 py-1.5 pl-2 pr-1.5"
+          className="relative flex min-w-0 items-center gap-2 rounded-lg border border-line bg-fill-weak py-1.5 pl-2 pr-1.5"
           title={`${attachment.name} · ${attachment.chars.toLocaleString()} 字`}
         >
           <button
@@ -146,12 +146,12 @@ function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRe
             aria-label={`查看${attachment.name}`}
             className="flex min-w-0 items-center gap-2 text-left"
           >
-            <CodeSimple className="size-4 shrink-0 text-content/40" strokeWidth={1.6} />
+            <CodeSimple className="size-4 shrink-0 text-ink-3" strokeWidth={1.6} />
             <span className="min-w-0">
-              <span className="block max-w-[min(60vw,260px)] truncate font-mono text-[11px] leading-4 text-content/85">
+              <span className="block max-w-[min(60vw,260px)] truncate font-mono text-2xs leading-4 text-ink-1">
                 {attachment.preview || "（空白）"}
               </span>
-              <span className="block text-[10px] leading-3.5 text-content/45">
+              <span className="block text-2xs leading-3.5 text-ink-3">
                 {attachment.name} · {attachment.chars.toLocaleString()} 字
               </span>
             </span>
@@ -164,7 +164,7 @@ function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRe
               event.stopPropagation();
               onRemove();
             }}
-            className="grid size-4 shrink-0 place-items-center rounded-full text-content/40 hover:bg-content/15 hover:text-content"
+            className="grid size-4 shrink-0 place-items-center rounded-full text-ink-3 hover:bg-fill-strong hover:text-ink-1"
           >
             <X className="size-3" strokeWidth={2} />
           </button>
@@ -177,7 +177,7 @@ function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRe
             onClose={() => setPreview(false)}
           >
             {/* 预览也有上限：这里只证明“收到的是什么”，不是给一兆字做渲染。 */}
-            <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-md bg-content/5 p-3 font-mono text-[12px] leading-5 text-content/80">
+            <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-md bg-fill p-3 font-mono text-xs leading-5 text-ink-1">
               {attachment.text.slice(0, 8000)}
               {attachment.chars > 8000 ? "\n…" : ""}
             </pre>
@@ -188,7 +188,7 @@ function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRe
   }
   return (
     <>
-      <div className={`group relative flex min-w-0 items-center gap-1.5 rounded-md ${image ? "" : "bg-content/10 py-0.5 pl-1 pr-1"}`} title={attachment.kind === "file" ? attachment.path : attachment.name}>
+      <div className={`group relative flex min-w-0 items-center gap-1.5 rounded-md ${image ? "" : "bg-fill-strong py-0.5 pl-1 pr-1"}`} title={attachment.kind === "file" ? attachment.path : attachment.name}>
         {image ? (
           <button type="button" aria-label={`全屏查看 ${attachment.name}`} onClick={() => setPreview(true)} className="shrink-0 cursor-zoom-in rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
             <img src={url} alt="" draggable={false} className="size-9 rounded-lg object-cover" />
@@ -198,7 +198,7 @@ function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRe
             <span className="grid size-5 shrink-0 place-items-center">
               <FileTypeIcon name={attachment.name} isDir={false} size={16} />
             </span>
-            <span className="min-w-0 max-w-[140px] truncate text-[11px] leading-none text-content/80">{attachment.name}</span>
+            <span className="min-w-0 max-w-[140px] truncate text-2xs leading-none text-ink-1">{attachment.name}</span>
           </>
         )}
         <button
@@ -209,8 +209,8 @@ function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRe
             event.stopPropagation();
             onRemove();
           }}
-          className={`grid shrink-0 place-items-center rounded-full text-content/70 hover:bg-content/15 hover:text-content ${
-            image ? "absolute -right-1 -top-1 size-5 bg-content/20 opacity-100 shadow-sm backdrop-blur-sm" : "size-4 text-content/40"
+          className={`grid shrink-0 place-items-center rounded-full text-ink-2 hover:bg-fill-strong hover:text-ink-1 ${
+            image ? "absolute -right-1 -top-1 size-5 bg-fill-strong opacity-100 shadow-sm backdrop-blur-sm" : "size-4 text-ink-3"
           }`}
         >
           <X className="size-3" strokeWidth={2} />
@@ -231,8 +231,8 @@ function ToolButton({ active, disabled, label, onClick, children }: { active?: b
       disabled={disabled}
       onClick={onClick}
       className={`grid size-6.5 shrink-0 place-items-center rounded-md ${
-        active ? "bg-selection-emphasis text-content" : "bg-selection text-content/50 hover:bg-selection-hover hover:text-content"
-      } disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-content/50`}
+        active ? "bg-selection-emphasis text-ink-1" : "bg-selection text-ink-3 hover:bg-selection-hover hover:text-ink-1"
+      } disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-ink-3`}
     >
       {children}
     </button>
@@ -267,7 +267,7 @@ function ComposerAction({ busy, disabled, hasValue, onSend, onStop }: { busy: bo
         <ArrowUp className="size-3.5" strokeWidth={2.25} />
       </button>
     ) : (
-      <button type="button" title="Stop" aria-label="停止" onClick={onStop} className="grid size-6.5 place-items-center rounded-md bg-white text-black hover:bg-white/90">
+      <button type="button" title="Stop" aria-label="停止" onClick={onStop} className="grid size-6.5 place-items-center rounded-control bg-ink-1 text-surface-canvas hover:bg-ink-1/90">
         <Square className="size-2.5 fill-current" strokeWidth={0} />
       </button>
     );
@@ -653,10 +653,10 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
         <div
           ref={boxRef}
           data-composer-box
-          className={`relative z-10 rounded-lg border bg-content/3 backdrop-blur-sm ${fileDrag ? "border-accent/60" : "border-content/10 has-focus:border-content/20"}`}
+          className={`relative z-10 rounded-lg border bg-fill-weak backdrop-blur-sm ${fileDrag ? "border-accent/60" : "border-line has-focus:border-line-strong"}`}
         >
           {fileDrag ? (
-            <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-lg bg-accent/8 text-[12px] text-content/70">拖放文件以附加</div>
+            <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-lg bg-accent/8 text-xs text-ink-2">拖放文件以附加</div>
           ) : null}
           <div className="flex min-w-0 items-center gap-2.5 overflow-hidden px-3 pt-2.5">
             {/* 新会话（首页）：头部带项目选择器，发送前就能切项目 / 不在文件夹里工作。
@@ -703,10 +703,10 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
               </ToolButton>
               {plusOpen ? (
                 <Popover anchor={plusRef} side="top" align="start" width={250} onDismiss={() => setPlusOpen(false)} data-composer-plus className="p-1.5">
-                  <p className="px-2 pb-1 pt-0.5 text-[10px] font-medium uppercase tracking-wide text-content/40">添加到消息</p>
+                  <p className="px-2 pb-1 pt-0.5 text-2xs font-medium uppercase tracking-wide text-ink-3">添加到消息</p>
                   <button
                     type="button"
-                    className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left text-content hover:bg-content/10"
+                    className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left text-ink-1 hover:bg-fill-strong"
                     onClick={() => {
                       setPlusOpen(false);
                       if (runtimeTarget === "desktop") {
@@ -717,46 +717,46 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
                       fileInput.current?.click();
                     }}
                   >
-                    <ImagePlus className="mt-0.5 size-3.5 shrink-0 text-content/70" strokeWidth={1.75} />
+                    <ImagePlus className="mt-0.5 size-3.5 shrink-0 text-ink-2" strokeWidth={1.75} />
                     <span className="min-w-0">
-                      <span className="block text-[13px] font-medium leading-5">文件</span>
-                      <span className="mt-0.5 block text-[11px] leading-4 text-content/50">
+                      <span className="block text-ui font-medium leading-5">文件</span>
+                      <span className="mt-0.5 block text-2xs leading-4 text-ink-3">
                         {runtimeTarget === "desktop" ? "图片、视频、文档…从磁盘选择，或直接粘贴" : "从磁盘选择图片，或直接粘贴截图"}
                       </span>
                     </span>
                   </button>
-                  <p className="px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-content/40">输入</p>
+                  <p className="px-2 pb-1 pt-2 text-2xs font-medium uppercase tracking-wide text-ink-3">输入</p>
                   <button
                     type="button"
                     disabled={!suggestAvailable}
-                    className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left text-content hover:bg-content/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left text-ink-1 hover:bg-fill-strong disabled:cursor-not-allowed disabled:opacity-40"
                     onClick={() => {
                       const next = !suggestEnabled;
                       setSuggestEnabled(next);
                       savePromptSuggestion(next);
                     }}
                   >
-                    <Sparkles className={`mt-0.5 size-3.5 shrink-0 ${suggestEnabled ? "text-accent" : "text-content/70"}`} strokeWidth={1.75} />
+                    <Sparkles className={`mt-0.5 size-3.5 shrink-0 ${suggestEnabled ? "text-accent" : "text-ink-2"}`} strokeWidth={1.75} />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-medium leading-5">提示词联想</span>
-                      <span className="mt-0.5 block text-[11px] leading-4 text-content/50">每轮回答结束后，猜你下一句想说什么填进输入框；打字过程不会调用模型。Tab 或 → 采纳，Esc 忽略。每轮只算一次模型调用</span>
+                      <span className="block text-ui font-medium leading-5">提示词联想</span>
+                      <span className="mt-0.5 block text-2xs leading-4 text-ink-3">每轮回答结束后，猜你下一句想说什么填进输入框；打字过程不会调用模型。Tab 或 → 采纳，Esc 忽略。每轮只算一次模型调用</span>
                     </span>
                     {suggestEnabled && suggestAvailable ? <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent" /> : null}
                   </button>
-                  <p className="px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-content/40">模式</p>
+                  <p className="px-2 pb-1 pt-2 text-2xs font-medium uppercase tracking-wide text-ink-3">模式</p>
                   <button
                     type="button"
                     disabled={!online || running}
-                    className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left text-content hover:bg-content/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left text-ink-1 hover:bg-fill-strong disabled:cursor-not-allowed disabled:opacity-40"
                     onClick={() => {
                       setPlusOpen(false);
                       void setMultiAgentMode(!multiAgent).catch(report);
                     }}
                   >
-                    <Ungroup className={`mt-0.5 size-3.5 shrink-0 ${multiAgent ? "text-accent" : "text-content/70"}`} strokeWidth={1.75} />
+                    <Ungroup className={`mt-0.5 size-3.5 shrink-0 ${multiAgent ? "text-accent" : "text-ink-2"}`} strokeWidth={1.75} />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-medium leading-5">多 agent 协作</span>
-                      <span className="mt-0.5 block text-[11px] leading-4 text-content/50">可委派子 agent 并行处理</span>
+                      <span className="block text-ui font-medium leading-5">多 agent 协作</span>
+                      <span className="mt-0.5 block text-2xs leading-4 text-ink-3">可委派子 agent 并行处理</span>
                     </span>
                     {multiAgent ? <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent" /> : null}
                   </button>
@@ -764,7 +764,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
                     <button
                       type="button"
                       disabled={!online || running}
-                      className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left text-content hover:bg-content/10 disabled:cursor-not-allowed disabled:opacity-40"
+                      className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left text-ink-1 hover:bg-fill-strong disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={() => {
                         setPlusOpen(false);
                         void setComputerUseMode(!computerUse)
@@ -772,10 +772,10 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
                           .catch(report);
                       }}
                     >
-                      <CursorMagicSelection className={`mt-0.5 size-3.5 shrink-0 ${computerUse ? "text-accent" : "text-content/70"}`} strokeWidth={1.75} />
+                      <CursorMagicSelection className={`mt-0.5 size-3.5 shrink-0 ${computerUse ? "text-accent" : "text-ink-2"}`} strokeWidth={1.75} />
                       <span className="min-w-0 flex-1">
-                        <span className="block text-[13px] font-medium leading-5">操作电脑</span>
-                        <span className="mt-0.5 block text-[11px] leading-4 text-content/50">用自然语言让助手点选本机界面</span>
+                        <span className="block text-ui font-medium leading-5">操作电脑</span>
+                        <span className="mt-0.5 block text-2xs leading-4 text-ink-3">用自然语言让助手点选本机界面</span>
                       </span>
                       {computerUse ? <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent" /> : null}
                     </button>
@@ -783,7 +783,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
                   <button
                     type="button"
                     disabled={!online || running}
-                    className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left text-content hover:bg-content/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="flex w-full items-start gap-2.5 rounded-lg px-2 py-2 text-left text-ink-1 hover:bg-fill-strong disabled:cursor-not-allowed disabled:opacity-40"
                     onClick={() => {
                       setPlusOpen(false);
                       void setBrowserUseMode(!browserUse)
@@ -791,10 +791,10 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
                         .catch(report);
                     }}
                   >
-                    <Globe className={`mt-0.5 size-3.5 shrink-0 ${browserUse ? "text-accent" : "text-content/70"}`} strokeWidth={1.75} />
+                    <Globe className={`mt-0.5 size-3.5 shrink-0 ${browserUse ? "text-accent" : "text-ink-2"}`} strokeWidth={1.75} />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[13px] font-medium leading-5">操作浏览器</span>
-                      <span className="mt-0.5 block text-[11px] leading-4 text-content/50">在右侧第三栏里用真实 Chrome 打开并操作网页</span>
+                      <span className="block text-ui font-medium leading-5">操作浏览器</span>
+                      <span className="mt-0.5 block text-2xs leading-4 text-ink-3">在右侧第三栏里用真实 Chrome 打开并操作网页</span>
                     </span>
                     {browserUse ? <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent" /> : null}
                   </button>

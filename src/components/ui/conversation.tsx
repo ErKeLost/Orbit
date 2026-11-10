@@ -56,8 +56,8 @@ export const ConversationEmptyState = ({
       <>
         {icon && <div className="opacity-60">{icon}</div>}
         <div className="space-y-1">
-          <h3 className="text-[13px] font-medium text-content/70">{title}</h3>
-          {description && <p className="text-[12px] text-content/40">{description}</p>}
+          <h3 className="text-ui font-medium text-ink-2">{title}</h3>
+          {description && <p className="text-xs text-ink-3">{description}</p>}
         </div>
       </>
     )}
@@ -81,8 +81,8 @@ export const ConversationScrollButton = ({ className, ...props }: ConversationSc
       aria-label="滚动到底部"
       className={cn(
         "absolute bottom-3 left-1/2 flex size-7 -translate-x-1/2 items-center justify-center rounded-full",
-        "border border-stroke bg-background-base/90 text-content/70 shadow-md backdrop-blur",
-        "transition-colors hover:text-content",
+        "border border-stroke bg-background-base/90 text-ink-2 shadow-md backdrop-blur",
+        "transition-colors hover:text-ink-1",
         className,
       )}
       {...props}

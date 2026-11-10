@@ -172,7 +172,7 @@ export function GitChangesPanel({
 
   if (!cwd || cwd === "~") {
     return (
-      <p className="px-3 py-2 text-[12px] text-content/50">没有项目文件夹</p>
+      <p className="px-3 py-2 text-xs text-ink-3">没有项目文件夹</p>
     );
   }
 
@@ -181,9 +181,9 @@ export function GitChangesPanel({
       className="flex h-full min-h-0 flex-1 flex-col overflow-hidden"
     >
       <header className="flex h-9 shrink-0 items-center gap-2 border-b border-stroke px-3">
-        <span className="text-[12px] font-medium text-content">变更</span>
+        <span className="text-xs font-medium text-ink-1">变更</span>
         {status ? (
-          <span role="status" className="text-[11px] text-content/50">
+          <span role="status" className="text-2xs text-ink-3">
             {status}
           </span>
         ) : null}
@@ -192,16 +192,16 @@ export function GitChangesPanel({
             ref={branchMenuRef}
             className="relative ml-auto flex min-w-0 items-center gap-1"
           >
-            <span className="flex min-w-0 items-center gap-1 text-[11px] text-content/50">
+            <span className="flex min-w-0 items-center gap-1 text-2xs text-ink-3">
               <GitBranch className="size-3 shrink-0" strokeWidth={1.75} />
               <span className="min-w-0 truncate">{index.branch}</span>
               {index.ahead > 0 ? (
-                <span className="shrink-0 tabular-nums text-content/40">
+                <span className="shrink-0 tabular-nums text-ink-3">
                   ↑{index.ahead}
                 </span>
               ) : null}
               {index.behind > 0 ? (
-                <span className="shrink-0 tabular-nums text-content/40">
+                <span className="shrink-0 tabular-nums text-ink-3">
                   ↓{index.behind}
                 </span>
               ) : null}
@@ -213,7 +213,7 @@ export function GitChangesPanel({
               aria-expanded={branchMenuOpen}
               disabled={busy !== null}
               onClick={() => setBranchMenuOpen((open) => !open)}
-              className="grid size-5 shrink-0 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content disabled:opacity-40 aria-expanded:bg-content/10 aria-expanded:text-content"
+              className="grid size-5 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1 disabled:opacity-40 aria-expanded:bg-fill-strong aria-expanded:text-ink-1"
             >
               {busy === "pull" ? (
                 <Loader className="size-3.5 animate-spin" strokeWidth={1.75} />
@@ -225,7 +225,7 @@ export function GitChangesPanel({
               <div
                 role="menu"
                 aria-label="分支操作"
-                className="absolute top-full right-0 z-30 mt-1 min-w-36 rounded-md border border-content/10 bg-background-base py-1 shadow-lg"
+                className="absolute top-full right-0 z-30 mt-1 min-w-36 rounded-md border border-line bg-background-base py-1 shadow-lg"
               >
                 <button
                   type="button"
@@ -237,7 +237,7 @@ export function GitChangesPanel({
                       : "This branch needs a remote and upstream before it can pull"
                   }
                   onClick={() => void pull()}
-                  className="flex h-7 w-full items-center gap-2 px-3 text-left text-[12px] text-content hover:bg-content/10 disabled:opacity-40"
+                  className="flex h-7 w-full items-center gap-2 px-3 text-left text-xs text-ink-1 hover:bg-fill-strong disabled:opacity-40"
                 >
                   {busy === "pull" ? (
                     <Loader
@@ -644,7 +644,7 @@ function ChangedFiles({
                 void commit(false);
               }
             }}
-            className="max-h-40 w-full resize-none overflow-y-auto rounded-md bg-content/10 py-1 pr-8 pl-2 text-[13px] leading-5 text-content outline-none placeholder:text-content/35 disabled:opacity-40"
+            className="max-h-40 w-full resize-none overflow-y-auto rounded-md bg-fill-strong py-1 pr-8 pl-2 text-ui leading-5 text-ink-1 outline-none placeholder:text-ink-3 disabled:opacity-40"
           />
           <button
             type="button"
@@ -662,7 +662,7 @@ function ChangedFiles({
             onClick={() =>
               busy === "generate" ? cancelGenerate() : void generate()
             }
-            className="group absolute top-1 right-1 grid size-5 place-items-center rounded-md bg-content/10 text-content hover:bg-content/20 hover:text-content disabled:opacity-40"
+            className="group absolute top-1 right-1 grid size-5 place-items-center rounded-md bg-fill-strong text-ink-1 hover:bg-fill-strong hover:text-ink-1 disabled:opacity-40"
           >
             {busy === "generate" ? (
               <>
@@ -685,10 +685,10 @@ function ChangedFiles({
             type="button"
             disabled={!canCommit}
             onClick={() => void commit(false)}
-            className={`flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-l-md text-[12px] font-medium ${
+            className={`flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-l-md text-xs font-medium ${
               canCommit
-                ? "bg-content text-background-base"
-                : "bg-content/40 text-background-base"
+                ? "bg-ink-1 text-background-base"
+                : "bg-ink-1/70 text-background-base"
             }`}
           >
             <Check className="size-3.5" strokeWidth={2} />
@@ -704,9 +704,9 @@ function ChangedFiles({
             onClick={() => setMenuOpen((open) => !open)}
             className={`grid h-7 w-7 shrink-0 place-items-center rounded-r-md border-l border-background-base/10 ${
               canCommit
-                ? "bg-content text-background-base hover:bg-content/80"
-                : "bg-content/40 text-background-base hover:bg-content"
-            } disabled:pointer-events-none aria-expanded:bg-content aria-expanded:text-background-base`}
+                ? "bg-ink-1 text-background-base hover:bg-ink-1/70"
+                : "bg-ink-1/70 text-background-base hover:bg-ink-1"
+            } disabled:pointer-events-none aria-expanded:bg-ink-1 aria-expanded:text-background-base`}
           >
             <ChevronDown className="size-3.5" strokeWidth={2} />
           </button>
@@ -714,14 +714,14 @@ function ChangedFiles({
             <div
               role="menu"
               aria-label="提交选项"
-              className="absolute top-full right-0 z-30 mt-1 min-w-48 rounded-md border border-content/10 bg-background-base py-1 shadow-lg"
+              className="absolute top-full right-0 z-30 mt-1 min-w-48 rounded-md border border-line bg-background-base py-1 shadow-lg"
             >
               <button
                 type="button"
                 role="menuitem"
                 disabled={!canCommitPush}
                 onClick={() => void commit(true)}
-                className="flex h-7 w-full items-center px-3 text-left text-[12px] text-content hover:bg-content/10 disabled:opacity-40"
+                className="flex h-7 w-full items-center px-3 text-left text-xs text-ink-1 hover:bg-fill-strong disabled:opacity-40"
               >
                 Commit & Push
               </button>
@@ -730,17 +730,17 @@ function ChangedFiles({
                 role="menuitem"
                 disabled={!canCommitPushPr}
                 onClick={() => void commit(true, true)}
-                className="flex h-7 w-full items-center px-3 text-left text-[12px] text-content hover:bg-content/10 disabled:opacity-40"
+                className="flex h-7 w-full items-center px-3 text-left text-xs text-ink-1 hover:bg-fill-strong disabled:opacity-40"
               >
                 Commit, Push & Create PR
               </button>
-              <div className="my-1 border-t border-content/10" />
+              <div className="my-1 border-t border-line" />
               <button
                 type="button"
                 role="menuitemcheckbox"
                 aria-checked={amend}
                 onClick={() => void toggleAmend()}
-                className="flex h-7 w-full items-center justify-between gap-2 px-3 text-left text-[12px] text-content hover:bg-content/10"
+                className="flex h-7 w-full items-center justify-between gap-2 px-3 text-left text-xs text-ink-1 hover:bg-fill-strong"
               >
                 Amend Last Commit
                 <span className="grid size-3.5 shrink-0 place-items-center">
@@ -777,7 +777,7 @@ function ChangedFiles({
         className="min-h-0 flex-1 overflow-y-auto overscroll-none py-1"
       >
         {files.length === 0 ? (
-          <p className="px-3 py-2 text-[12px] text-content/45">
+          <p className="px-3 py-2 text-xs text-ink-3">
             {index
               ? index.ahead > 0 || index.behind > 0
                 ? syncStatusLabel(index)
@@ -909,8 +909,8 @@ function GitSyncActions({
   const createTitle = createPrTitle(index);
   const viewTitle = viewPrTitle(pr);
   const btn =
-    "flex h-7 w-full min-w-0 items-center justify-center gap-1.5 rounded-md px-2 text-[12px] font-medium disabled:opacity-40";
-  const secondary = `${btn} bg-content/10 text-content hover:bg-content/15`;
+    "flex h-7 w-full min-w-0 items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium disabled:opacity-40";
+  const secondary = `${btn} bg-fill-strong text-ink-1 hover:bg-fill-strong`;
   const showCreatePr = !hasOpenPr && !onDefault;
   const showViewPr = hasOpenPr;
   if (!canPublish && !canSync && !showCreatePr && !showViewPr) return null;
@@ -949,12 +949,12 @@ function GitSyncActions({
           />
           <span className="min-w-0 truncate">同步更改</span>
           {behind > 0 ? (
-            <span className="shrink-0 tabular-nums text-content/55">
+            <span className="shrink-0 tabular-nums text-ink-2">
               ↓{behind}
             </span>
           ) : null}
           {ahead > 0 ? (
-            <span className="shrink-0 tabular-nums text-content/55">
+            <span className="shrink-0 tabular-nums text-ink-2">
               ↑{ahead}
             </span>
           ) : null}
@@ -1026,19 +1026,19 @@ export function FileSection({
         >
           {open ? (
             <ChevronDown
-              className="size-3.5 shrink-0 text-content/50"
+              className="size-3.5 shrink-0 text-ink-3"
               strokeWidth={1.75}
             />
           ) : (
             <ChevronRight
-              className="size-3.5 shrink-0 text-content/50"
+              className="size-3.5 shrink-0 text-ink-3"
               strokeWidth={1.75}
             />
           )}
-          <span className="min-w-0 truncate text-[10px] font-semibold tracking-[0.04em] text-content/55 uppercase">
+          <span className="min-w-0 truncate text-2xs font-semibold tracking-[0.04em] text-ink-2 uppercase">
             {title}
           </span>
-          <span className="ml-1 grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-accent/80 px-1 text-[8px] text-white">
+          <span className="ml-1 grid h-4 min-w-4 shrink-0 place-items-center rounded-full bg-accent/80 px-1 text-2xs text-on-status">
             {count}
           </span>
         </button>
@@ -1175,7 +1175,7 @@ function ChangeDirRow({
     <li>
       <div
         style={{ paddingLeft: 8 + depth * 12 }}
-        className="group flex h-7 w-full items-center gap-1 pr-2 leading-none text-content hover:bg-content/5"
+        className="group flex h-7 w-full items-center gap-1 pr-2 leading-none text-ink-1 hover:bg-fill"
       >
         <button
           type="button"
@@ -1184,7 +1184,7 @@ function ChangeDirRow({
           onClick={toggle}
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
         >
-          <span className="grid size-4 shrink-0 place-items-center text-content/50">
+          <span className="grid size-4 shrink-0 place-items-center text-ink-3">
             {open ? (
               <ChevronDown className="size-3.5" strokeWidth={1.75} />
             ) : (
@@ -1192,7 +1192,7 @@ function ChangeDirRow({
             )}
           </span>
           <FileTypeIcon name={dir.name} isDir isOpen={open} size={16} />
-          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
+          <span className="min-w-0 flex-1 truncate text-ui font-medium">
             {dir.name}
           </span>
         </button>
@@ -1216,7 +1216,7 @@ function ChangeDirRow({
         </div>
         <span
           className={`grid w-3.5 shrink-0 place-items-center ${
-            dir.status ? statusColor(dir.status) : "text-content/40"
+            dir.status ? statusColor(dir.status) : "text-ink-3"
           }`}
           aria-hidden
         >
@@ -1269,8 +1269,8 @@ function ChangeRow({
           tree ? "" : "pl-2"
         } ${
           active
-            ? "bg-selection text-content"
-            : "text-content hover:bg-content/5"
+            ? "bg-selection text-ink-1"
+            : "text-ink-1 hover:bg-fill"
         }`}
       >
         <button
@@ -1287,9 +1287,9 @@ function ChangeRow({
           {tree ? <span className="size-4 shrink-0" /> : null}
           <FileTypeIcon name={name} isDir={false} size={16} />
           <span className="min-w-0 flex-1 truncate">
-            <span className="text-[13px] font-medium">{name}</span>
+            <span className="text-ui font-medium">{name}</span>
             {dir ? (
-              <span className="ml-1.5 text-[11px] text-content/40">{dir}</span>
+              <span className="ml-1.5 text-2xs text-ink-3">{dir}</span>
             ) : null}
           </span>
         </button>
@@ -1326,7 +1326,7 @@ function ChangeRow({
           )}
         </div>
         <span
-          className={`w-3.5 shrink-0 text-right font-mono text-[11px] font-semibold ${statusColor(file.status)}`}
+          className={`w-3.5 shrink-0 text-right font-mono text-2xs font-semibold ${statusColor(file.status)}`}
         >
           {statusLetter(file.status)}
         </span>
@@ -1353,7 +1353,7 @@ function IconAction({
       aria-label={title}
       disabled={disabled}
       onClick={onClick}
-      className="grid size-5 place-items-center rounded text-content/55 hover:bg-content/10 hover:text-content disabled:opacity-40"
+      className="grid size-5 place-items-center rounded text-ink-2 hover:bg-fill-strong hover:text-ink-1 disabled:opacity-40"
     >
       {children}
     </button>

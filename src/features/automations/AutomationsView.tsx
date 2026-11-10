@@ -240,11 +240,11 @@ export function AutomationsView() {
   };
 
   return (
-    <div role="region" aria-label="Automations" className="flex min-h-0 min-w-0 flex-1 flex-col text-content">
+    <div role="region" aria-label="Automations" className="flex min-h-0 min-w-0 flex-1 flex-col text-ink-1">
       <div className="flex h-10 shrink-0 select-none items-center gap-2 border-b border-stroke px-3" data-tauri-drag-region="deep">
         <TrafficLightSpacer />
-        <Zap className="size-4 shrink-0 text-content/60" strokeWidth={1.75} />
-        <span className="text-[13px] font-medium">自动化</span>
+        <Zap className="size-4 shrink-0 text-ink-2" strokeWidth={1.75} />
+        <span className="text-ui font-medium">自动化</span>
       </div>
       <div className="flex min-h-0 flex-1">
         {/* List column */}
@@ -257,7 +257,7 @@ export function AutomationsView() {
                 onChange={(event) => setFilter(event.target.value)}
                 placeholder="Filter automations"
                 aria-label="筛选自动化"
-                className="h-full w-full min-w-0 rounded-md bg-transparent py-0 pl-7 pr-2 text-[12px] outline-none placeholder:text-content/35"
+                className="h-full w-full min-w-0 rounded-md bg-transparent py-0 pl-7 pr-2 text-xs outline-none placeholder:text-ink-3"
               />
             </div>
             <button
@@ -265,14 +265,14 @@ export function AutomationsView() {
               title="新建自动化"
               aria-label="新建自动化"
               onClick={() => setDraft(emptyDraft(project))}
-              className="grid size-6 shrink-0 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content"
+              className="grid size-6 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1"
             >
               <Plus className="size-3.5" strokeWidth={1.75} />
             </button>
           </div>
           <div ref={lockOverscroll} className="min-h-0 flex-1 overflow-y-auto overscroll-none p-1.5">
             {visible.length === 0 ? (
-              <p className="px-2 py-2 text-[12px] text-content/45">{filter ? "没有匹配的自动化" : "No automations yet"}</p>
+              <p className="px-2 py-2 text-xs text-ink-3">{filter ? "没有匹配的自动化" : "No automations yet"}</p>
             ) : null}
             <div className="flex flex-col gap-0.5">
               {visible.map((item) => {
@@ -283,14 +283,14 @@ export function AutomationsView() {
                     type="button"
                     onClick={() => setDraft(draftFromAutomation(item))}
                     className={`flex flex-col gap-0.5 rounded-md px-2.5 py-2 text-left ${
-                      active ? "bg-selection text-content" : "text-content/80 hover:bg-content/5 hover:text-content"
+                      active ? "bg-selection text-ink-1" : "text-ink-1 hover:bg-fill hover:text-ink-1"
                     }`}
                   >
                     <span className="flex min-w-0 items-center gap-2">
-                      <span className="line-clamp-1 min-w-0 flex-1 text-[13px] font-semibold leading-snug">{item.name}</span>
-                      {item.enabled ? null : <span className="shrink-0 text-[11px] text-content/40">已暂停</span>}
+                      <span className="line-clamp-1 min-w-0 flex-1 text-ui font-semibold leading-snug">{item.name}</span>
+                      {item.enabled ? null : <span className="shrink-0 text-2xs text-ink-3">已暂停</span>}
                     </span>
-                    <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-content/45">
+                    <span className="flex min-w-0 items-center gap-1.5 text-2xs text-ink-3">
                       <Clock className="size-3 shrink-0" strokeWidth={1.75} />
                       <span className="min-w-0 truncate">{automationScheduleLabel(item)}</span>
                       <span className="shrink-0">·</span>
@@ -308,8 +308,8 @@ export function AutomationsView() {
           <div className="mx-auto w-full max-w-3xl px-6 py-8">
             {!draft ? (
               <>
-                <h1 className="text-[20px] font-semibold leading-tight">New automation</h1>
-                <p className="mt-1.5 text-[13px] text-content/45">Pick an example or start from scratch.</p>
+                <h1 className="text-xl font-semibold leading-tight">New automation</h1>
+                <p className="mt-1.5 text-ui text-ink-3">Pick an example or start from scratch.</p>
                 <div role="tablist" aria-label="模板分类" className="mt-4 flex flex-wrap items-center gap-1">
                   {AUTOMATION_TEMPLATE_CATEGORIES.map((entry) => (
                     <button
@@ -318,8 +318,8 @@ export function AutomationsView() {
                       role="tab"
                       aria-selected={category === entry.id}
                       onClick={() => setCategory(entry.id)}
-                      className={`h-7 rounded-md px-3 text-[12.5px] ${
-                        category === entry.id ? "bg-selection text-content" : "text-content/50 hover:text-content"
+                      className={`h-7 rounded-md px-3 text-xs ${
+                        category === entry.id ? "bg-selection text-ink-1" : "text-ink-3 hover:text-ink-1"
                       }`}
                     >
                       {entry.label}
@@ -331,15 +331,15 @@ export function AutomationsView() {
                   <button
                     type="button"
                     onClick={() => setDraft(emptyDraft(project))}
-                    className="flex h-[164px] flex-col rounded-xl border border-dashed border-content/20 p-4 text-left hover:bg-content/5"
+                    className="flex h-[164px] flex-col rounded-xl border border-dashed border-line-strong p-4 text-left hover:bg-fill"
                   >
                     <span className="flex items-start gap-3">
-                      <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-content/6">
+                      <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-fill">
                         <Plus className="size-4" strokeWidth={1.75} />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block text-[13px] font-semibold">Start from scratch</span>
-                        <span className="mt-1 block text-[12px] leading-relaxed text-content/45">
+                        <span className="block text-ui font-semibold">Start from scratch</span>
+                        <span className="mt-1 block text-xs leading-relaxed text-ink-3">
                           Write your own instructions and choose a trigger.
                         </span>
                       </span>
@@ -352,20 +352,20 @@ export function AutomationsView() {
                         key={template.id}
                         type="button"
                         onClick={() => setDraft(draftFromTemplate(template, project))}
-                        className="flex h-[164px] flex-col rounded-xl border border-content/10 p-4 text-left hover:bg-content/5"
+                        className="flex h-[164px] flex-col rounded-xl border border-line p-4 text-left hover:bg-fill"
                       >
                         <span className="flex items-start gap-3">
-                          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-content/6">
-                            <Icon className="size-4 text-content/60" strokeWidth={1.75} />
+                          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-fill">
+                            <Icon className="size-4 text-ink-2" strokeWidth={1.75} />
                           </span>
                           <span className="min-w-0 flex-1">
-                            <span className="block text-[13px] font-semibold">{template.name}</span>
-                            <span className="mt-1 line-clamp-3 block text-[12px] leading-relaxed text-content/45">
+                            <span className="block text-ui font-semibold">{template.name}</span>
+                            <span className="mt-1 line-clamp-3 block text-xs leading-relaxed text-ink-3">
                               {template.description}
                             </span>
                           </span>
                         </span>
-                        <span className="mt-auto flex items-center gap-1.5 text-[11px] text-content/40">
+                        <span className="mt-auto flex items-center gap-1.5 text-2xs text-ink-3">
                           <Clock className="size-3 shrink-0" strokeWidth={1.75} />
                           {template.triggerLabel}
                         </span>
@@ -377,7 +377,7 @@ export function AutomationsView() {
             ) : (
               <>
                 <div className="flex items-center gap-3">
-                  <h1 className="min-w-0 flex-1 truncate text-[20px] font-semibold leading-tight">
+                  <h1 className="min-w-0 flex-1 truncate text-xl font-semibold leading-tight">
                     {selected ? selected.name : "New automation"}
                   </h1>
                   {selected ? (
@@ -459,7 +459,7 @@ export function AutomationsView() {
                     </Row>
                   ) : null}
                   <Row label="下次运行">
-                    <span className="text-[12px] text-content/55">{nextRunPreview(nextAutomationRunAt(draft))}</span>
+                    <span className="text-xs text-ink-2">{nextRunPreview(nextAutomationRunAt(draft))}</span>
                   </Row>
                 </Group>
 
@@ -485,14 +485,14 @@ export function AutomationsView() {
                         label={
                           <span className="flex items-center gap-2">
                             <span>{RUN_STATUS_LABEL[run.status]}</span>
-                            <span className="text-[11px] font-normal text-content/40">
+                            <span className="text-2xs font-normal text-ink-3">
                               {new Date(run.scheduledFor).toLocaleString("zh-CN")}
                             </span>
                           </span>
                         }
                         description={run.error ?? (run.trigger === "manual" ? "手动触发" : "按计划触发")}
                       >
-                        {run.status === "running" ? <Loader className="size-3.5 animate-spin text-content/40" /> : null}
+                        {run.status === "running" ? <Loader className="size-3.5 animate-spin text-ink-3" /> : null}
                       </Row>
                     ))}
                   </Group>
@@ -504,7 +504,7 @@ export function AutomationsView() {
                     type="button"
                     disabled={saving}
                     onClick={() => void save(draft)}
-                    className="inline-flex h-7 items-center gap-1.5 rounded-md bg-content px-3 text-[12px] font-medium text-background-base hover:bg-content/80 disabled:opacity-40"
+                    className="inline-flex h-7 items-center gap-1.5 rounded-md bg-ink-1 px-3 text-xs font-medium text-background-base hover:bg-ink-1/70 disabled:opacity-40"
                   >
                     {saving ? <Loader className="size-3.5 animate-spin" /> : <Check className="size-3.5" strokeWidth={2} />}
                     保存
@@ -523,8 +523,8 @@ export function AutomationsView() {
           onCancel={() => setDeleting(null)}
           onConfirm={() => void remove(deleting)}
         >
-          <p className="font-medium text-content">{deleting.name}</p>
-          <p className="mt-2 text-[12px] leading-relaxed text-content/55">运行历史会一并删除，已启动的会话不受影响。</p>
+          <p className="font-medium text-ink-1">{deleting.name}</p>
+          <p className="mt-2 text-xs leading-relaxed text-ink-2">运行历史会一并删除，已启动的会话不受影响。</p>
         </ConfirmDialog>
       ) : null}
     </div>

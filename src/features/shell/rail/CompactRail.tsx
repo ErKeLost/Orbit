@@ -59,7 +59,7 @@ function CompactRailAction({
       disabled={disabled}
       onClick={onClick}
       className={`relative grid size-8 shrink-0 place-items-center rounded-md active:scale-[0.97] disabled:cursor-default disabled:opacity-35 ${
-        active ? "bg-selection text-content" : "text-content/50 hover:bg-content/10 hover:text-content"
+        active ? "bg-selection text-ink-1" : "text-ink-3 hover:bg-fill-strong hover:text-ink-1"
       }`}
     >
       <Icon className={`size-4 ${dot ? "compact-rail-icon-with-dot" : ""}`} strokeWidth={1.75} />
@@ -187,7 +187,7 @@ export function CompactRail() {
                 void connect(project.path, "project").catch(report);
               }}
               className={`relative grid size-8 shrink-0 place-items-center rounded-md active:scale-[0.97] ${
-                selected ? "bg-selection-strong text-content" : "text-content/70 opacity-65 hover:bg-content/10 hover:opacity-100"
+                selected ? "bg-selection-strong text-ink-1" : "text-ink-2 opacity-65 hover:bg-fill-strong hover:opacity-100"
               }`}
             >
               {/* Logo 图片优先，否则文件夹图标（选中 = 打开态）。 */}
@@ -214,7 +214,7 @@ export function CompactRail() {
             setProjectRailOpen(true);
             toast.info("在展开的项目栏里点击 + 添加项目");
           }}
-          className="grid size-8 shrink-0 place-items-center rounded-md text-content/45 hover:bg-content/10 hover:text-content active:scale-[0.97]"
+          className="grid size-8 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1 active:scale-[0.97]"
         >
           <Plus className="size-4" strokeWidth={1.75} />
         </button>

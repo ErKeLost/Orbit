@@ -309,7 +309,7 @@ export function MarkdownLink({
       {...attrs}
       href={href}
       dir="auto"
-      className={`text-sky-400/90 hover:text-sky-300 hover:underline ${className}`.trim()}
+      className={`text-accent-ink/90 hover:text-accent-ink hover:underline ${className}`.trim()}
       onClick={(event) => {
         onClick?.(event);
         if (event.defaultPrevented || !external || !href) return;

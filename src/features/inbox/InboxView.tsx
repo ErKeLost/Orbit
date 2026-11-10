@@ -160,11 +160,11 @@ export function InboxView() {
   const needProject = source === "github" && connected && !project;
 
   return (
-    <div role="region" aria-label="Inbox" className="flex min-h-0 min-w-0 flex-1 flex-col text-content">
+    <div role="region" aria-label="Inbox" className="flex min-h-0 min-w-0 flex-1 flex-col text-ink-1">
       <div className="flex h-10 shrink-0 select-none items-center gap-2 border-b border-stroke px-3" data-tauri-drag-region="deep">
         <TrafficLightSpacer />
-        <InboxIcon className="size-4 shrink-0 text-content/60" strokeWidth={1.75} />
-        <span className="text-[13px] font-medium">收件箱</span>
+        <InboxIcon className="size-4 shrink-0 text-ink-2" strokeWidth={1.75} />
+        <span className="text-ui font-medium">收件箱</span>
       </div>
       <div className="flex min-h-0 flex-1">
         <div className="flex h-full min-h-0 w-[340px] shrink-0 flex-col border-r border-stroke">
@@ -180,8 +180,8 @@ export function InboxView() {
                     setSource(tab);
                     setActiveKey(null);
                   }}
-                  className={`flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md text-[12px] ${
-                    source === tab ? "bg-selection text-content" : "text-content/50 hover:text-content"
+                  className={`flex h-7 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-md text-xs ${
+                    source === tab ? "bg-selection text-ink-1" : "text-ink-3 hover:text-ink-1"
                   }`}
                 >
                   <SourceMark source={tab} />
@@ -192,7 +192,7 @@ export function InboxView() {
             <button
               type="button"
               onClick={() => useWorkspace.getState().set({ panel: "settings", settingsPage: "inbox" })}
-              className="flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-[12px] text-content/50 hover:bg-content/10 hover:text-content"
+              className="flex h-7 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs text-ink-3 hover:bg-fill-strong hover:text-ink-1"
             >
               添加连接
             </button>
@@ -205,10 +205,10 @@ export function InboxView() {
                 onChange={(event) => setFilter(event.target.value)}
                 placeholder="筛选 Inbox"
                 aria-label="筛选列表"
-                className="h-full w-full min-w-0 rounded-md bg-transparent py-0 pl-7 pr-2 text-[12px] outline-none placeholder:text-content/35"
+                className="h-full w-full min-w-0 rounded-md bg-transparent py-0 pl-7 pr-2 text-xs outline-none placeholder:text-ink-3"
               />
             </div>
-            <div role="radiogroup" aria-label="类型过滤" className="flex shrink-0 items-center gap-px rounded-md bg-content/5 p-0.5">
+            <div role="radiogroup" aria-label="类型过滤" className="flex shrink-0 items-center gap-px rounded-md bg-fill p-0.5">
               {([["all", "全部"], ["issue", "Issue"], ["pr", "PR"]] as const).map(([value, label]) => (
                 <button
                   key={value}
@@ -216,8 +216,8 @@ export function InboxView() {
                   role="radio"
                   aria-checked={kindFilter === value}
                   onClick={() => setKindFilter(value)}
-                  className={`h-6 rounded px-1.5 text-[11px] ${
-                    kindFilter === value ? "bg-selection text-content" : "text-content/50 hover:text-content"
+                  className={`h-6 rounded px-1.5 text-2xs ${
+                    kindFilter === value ? "bg-selection text-ink-1" : "text-ink-3 hover:text-ink-1"
                   }`}
                 >
                   {label}
@@ -230,7 +230,7 @@ export function InboxView() {
               aria-label={assignedOnly ? "只看指派给我的" : "看全部"}
               onClick={() => setAssignedOnly((on) => !on)}
               className={`grid size-6 shrink-0 place-items-center rounded-md ${
-                assignedOnly ? "bg-selection text-content" : "text-content/50 hover:bg-content/10 hover:text-content"
+                assignedOnly ? "bg-selection text-ink-1" : "text-ink-3 hover:bg-fill-strong hover:text-ink-1"
               }`}
             >
               <Eye className="size-3.5" strokeWidth={1.75} />
@@ -241,7 +241,7 @@ export function InboxView() {
               aria-label="刷新"
               disabled={fetching}
               onClick={refresh}
-              className="grid size-6 shrink-0 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content disabled:opacity-40"
+              className="grid size-6 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1 disabled:opacity-40"
             >
               {fetching ? <Loader className="size-3.5 animate-spin" /> : <RefreshCw className="size-3" strokeWidth={1.75} />}
             </button>
@@ -249,15 +249,15 @@ export function InboxView() {
           <div ref={lockOverscroll} className="min-h-0 flex-1 overflow-y-auto overscroll-none">
             {!connected && connectionKnown ? <NotConnected source={source} /> : null}
             {connected && needProject ? (
-              <p className="px-3 py-3 text-[12px] leading-relaxed text-content/50">
+              <p className="px-3 py-3 text-xs leading-relaxed text-ink-3">
                 先打开一个 GitHub 项目，收件箱会读取这个项目里指派给你和为你保留的 Issue / Pull Request。
               </p>
             ) : null}
             {connected && !needProject && listError ? (
-              <p className="px-3 py-2 text-[12px] text-red-400">{String(listError)}</p>
+              <p className="px-3 py-2 text-xs text-negative">{String(listError)}</p>
             ) : null}
             {connected && !needProject && !listError && rows.length === 0 ? (
-              <p className="px-3 py-2 text-[12px] text-content/50">
+              <p className="px-3 py-2 text-xs text-ink-3">
                 {fetching ? "读取中…" : "暂无待处理"}
               </p>
             ) : null}
@@ -275,9 +275,9 @@ export function InboxView() {
             onBack={() => setActiveKey(null)}
           />
         ) : (
-          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-content/40">
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-ink-3">
             <InboxIcon className="size-6" strokeWidth={1.5} />
-            <p className="text-[13px]">选择一项查看</p>
+            <p className="text-ui">选择一项查看</p>
           </div>
         )}
       </div>

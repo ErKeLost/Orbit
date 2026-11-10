@@ -101,7 +101,7 @@ export function VoiceSettingsPage() {
 
   return (
     <>
-      {error ? <p className="mb-4 rounded-lg border border-red-400/25 bg-red-400/5 px-3 py-2 text-[12px] leading-relaxed text-red-400">{error}</p> : null}
+      {error ? <p className="mb-4 rounded-lg border border-negative/25 bg-negative/5 px-3 py-2 text-xs leading-relaxed text-negative">{error}</p> : null}
 
       <Group title="实时对话" description="识别和合成统一使用 Rime。每次开麦创建独立会话，可以发任务、问进度或旁观已有任务。">
         <Row label="对话语言" description="Rime 识别目前支持英语和西班牙语，不支持中文，也不会自动识别语言。">
@@ -136,10 +136,10 @@ export function VoiceSettingsPage() {
         <Row anchorId="voice-check" label="服务连接" description="分别检查识别与合成是否接受当前配置。检查不上传录音或合成语音，耗时包含网络握手。">
           <SecondaryButton disabled={!hasKey || checking || callActive || preview.playing || saving} onClick={()=>void checkConnection()}>{checking ? "检查中…" : "检查连接"}</SecondaryButton>
         </Row>
-        {report ? <div role="status" className="space-y-2 px-1 pb-3 text-[12px] leading-relaxed text-content/65">
+        {report ? <div role="status" className="space-y-2 px-1 pb-3 text-xs leading-relaxed text-ink-2">
           {([['stt','语音识别'],['tts','语音合成']] as const).map(([key,label])=>{
             const service = report[key];
-            return <p key={key} className={service.ok ? "text-emerald-500" : "text-red-400"}>{label}：{service.ok ? `连接正常 · ${service.latencyMs}ms` : rimeErrorMessage(service.error ?? "检查失败")}</p>;
+            return <p key={key} className={service.ok ? "text-positive" : "text-negative"}>{label}：{service.ok ? `连接正常 · ${service.latencyMs}ms` : rimeErrorMessage(service.error ?? "检查失败")}</p>;
           })}
         </div> : null}
       </Group>

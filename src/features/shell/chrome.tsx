@@ -18,15 +18,15 @@ export function TrafficLightSpacer() {
 
 /** Orbit's tab-group palette, hashed per project path. */
 const PROJECT_COLORS = [
-  "hsl(210 8% 58%)",
-  "hsl(211 92% 62%)",
-  "hsl(12 80% 58%)",
-  "hsl(45 90% 55%)",
-  "hsl(142 55% 50%)",
-  "hsl(330 70% 62%)",
-  "hsl(280 55% 62%)",
-  "hsl(175 55% 48%)",
-  "hsl(25 85% 58%)",
+  "oklch(0.65 0.01 255)",
+  "oklch(0.72 0.11 255)",
+  "oklch(0.72 0.12 30)",
+  "oklch(0.78 0.11 85)",
+  "oklch(0.74 0.11 155)",
+  "oklch(0.72 0.11 195)",
+  "oklch(0.72 0.11 330)",
+  "oklch(0.72 0.1 300)",
+  "oklch(0.75 0.11 55)",
 ] as const;
 
 export function projectColor(project: string): string {
@@ -53,7 +53,7 @@ export function formatInteger(value: number) {
 export function DiffStat({ additions, deletions, className = "" }: { additions: number; deletions: number; className?: string }) {
   if (additions <= 0 && deletions <= 0) return null;
   return (
-    <span className={`flex shrink-0 items-center gap-1 font-sans text-[11px] font-semibold tabular-nums ${className}`}>
+    <span className={`flex shrink-0 items-center gap-1 font-sans text-2xs font-semibold tabular-nums ${className}`}>
       {additions > 0 ? <span className="text-diff-add-fg">+{formatInteger(additions)}</span> : null}
       {deletions > 0 ? <span className="text-diff-del-fg">-{formatInteger(deletions)}</span> : null}
     </span>
@@ -86,10 +86,10 @@ export function TitleIconButton({
       }}
       className={`grid size-6.5 place-items-center rounded-md ${
         disabled
-          ? "text-content/25"
+          ? "text-ink-3"
           : active
-            ? "text-content hover:bg-content/10"
-            : "text-content/50 hover:bg-content/10 hover:text-content"
+            ? "text-ink-1 hover:bg-fill-strong"
+            : "text-ink-3 hover:bg-fill-strong hover:text-ink-1"
       }`}
     >
       {children}
@@ -138,7 +138,7 @@ export function DevModeSlot() {
       {import.meta.env.DEV ? (
         <span
           title="开发构建"
-          className="mr-1 min-w-0 truncate rounded-md bg-skill/15 px-1.5 py-0.5 text-[10px] font-medium tracking-wide text-skill"
+          className="mr-1 min-w-0 truncate rounded-md bg-skill/15 px-1.5 py-0.5 text-2xs font-medium tracking-wide text-skill"
         >
           Development
         </span>
@@ -168,7 +168,7 @@ export function ResizeHandle({
       aria-orientation="vertical"
       aria-label={label}
       className={`absolute inset-y-0 ${side === "left" ? "-left-px" : "-right-px"} z-10 w-1.5 cursor-col-resize touch-none ${
-        dragging ? "bg-content/15" : "hover:bg-content/10"
+        dragging ? "bg-fill-strong" : "hover:bg-fill-strong"
       }`}
       onPointerDown={onPointerDown}
       onDoubleClick={onDoubleClick}

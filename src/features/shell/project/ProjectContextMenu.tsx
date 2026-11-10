@@ -79,7 +79,7 @@ export function ProjectContextMenu({
         }}
         onBlur={saveName}
         aria-label="项目名称"
-        className="h-8 w-full rounded-md border border-content/10 bg-content/5 px-2 text-[13px] text-content outline-none focus-visible:border-accent/60"
+        className="h-8 w-full rounded-md border border-line bg-fill px-2 text-ui text-ink-1 outline-none focus-visible:border-accent/60"
       />
 
       {/* Logo 行：替换侧栏里的文件夹图标，可移除（monocode 的 Project logo）。 */}
@@ -102,7 +102,7 @@ export function ProjectContextMenu({
       <div className="mt-2 flex items-center gap-1.5 px-0.5" role="radiogroup" aria-label="项目颜色">
         <Swatch
           label="默认颜色"
-          color="hsl(210 8% 45%)"
+          color="var(--ink-3)"
           active={project.colorIndex == null && !project.customColor}
           onClick={() => patch({ colorIndex: undefined, customColor: undefined })}
         />
@@ -205,7 +205,7 @@ function Swatch({ color, label, active, onClick }: { color: string; label: strin
       title={label}
       onClick={onClick}
       className={`relative grid size-5 shrink-0 place-items-center rounded-full ring-offset-1 ring-offset-background-base ${
-        active ? "ring-2 ring-content/50" : "hover:scale-110"
+        active ? "ring-2 ring-line-strong" : "hover:scale-110"
       }`}
       style={{ background: color }}
     >
@@ -220,11 +220,11 @@ function MenuRow({ icon, label, danger = false, onClick }: { icon: React.ReactNo
       type="button"
       role="menuitem"
       onClick={onClick}
-      className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[13px] ${
-        danger ? "text-danger hover:bg-danger/10" : "text-content hover:bg-content/10"
+      className={`flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-ui ${
+        danger ? "text-danger hover:bg-danger/10" : "text-ink-1 hover:bg-fill-strong"
       }`}
     >
-      <span className={`shrink-0 ${danger ? "text-danger" : "text-content/50"}`}>{icon}</span>
+      <span className={`shrink-0 ${danger ? "text-danger" : "text-ink-3"}`}>{icon}</span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
     </button>
   );

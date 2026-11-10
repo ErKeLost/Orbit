@@ -182,7 +182,7 @@ export function ImageLightbox({ src, alt, onClose }: Props) {
       >
         <X className="size-4" strokeWidth={2} />
       </button>
-      <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-black/55 px-3 py-1 text-[11px] leading-5 text-white/70 backdrop-blur-md">
+      <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full border border-white/10 bg-black/55 px-3 py-1 text-2xs leading-5 text-white/70 backdrop-blur-md">
         {Math.round(scale * 100)}%{scale > 1 ? " · 拖拽平移" : ""} · 滚轮缩放 · 双击放大 · 0 复位
       </div>
     </div>,

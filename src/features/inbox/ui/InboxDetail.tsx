@@ -78,25 +78,25 @@ function CommentBody({
   return (
     <div className="flex flex-col gap-1">
       {comment.path ? (
-        <p className="flex items-center gap-1.5 text-[11px] text-content/45">
-          <span className="truncate rounded bg-content/8 px-1.5 py-px font-mono">{comment.path}</span>
+        <p className="flex items-center gap-1.5 text-2xs text-ink-3">
+          <span className="truncate rounded bg-fill-strong px-1.5 py-px font-mono">{comment.path}</span>
           {comment.line ? <span className="shrink-0">:{comment.line}</span> : null}
           {comment.resolved ? (
-            <span className="inline-flex shrink-0 items-center gap-1 rounded bg-emerald-400/10 px-1.5 py-px text-emerald-400">
+            <span className="inline-flex shrink-0 items-center gap-1 rounded bg-positive/10 px-1.5 py-px text-positive">
               <Check className="size-3" strokeWidth={2} />
               已解决
             </span>
           ) : null}
         </p>
       ) : null}
-      <div className="text-[13px] leading-relaxed text-content/85 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+      <div className="text-ui leading-relaxed text-ink-1 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
         <Markdown content={comment.body || "（无内容）"} />
       </div>
       {onReply && comment.kind === "review_comment" && comment.threadId ? (
         <button
           type="button"
           onClick={() => onReply(comment)}
-          className="inline-flex items-center gap-1 self-start text-[11px] text-content/50 hover:text-content"
+          className="inline-flex items-center gap-1 self-start text-2xs text-ink-3 hover:text-ink-1"
         >
           <CornerDownRight className="size-3" strokeWidth={1.75} />
           回复此评审串
@@ -155,11 +155,11 @@ function DiscussionTab({
   };
 
   if (threadError) {
-    return <p className="px-6 py-6 text-[12px] text-red-400">{threadError}</p>;
+    return <p className="px-6 py-6 text-xs text-negative">{threadError}</p>;
   }
   if (!thread) {
     return (
-      <div className="flex items-center gap-2 px-6 py-6 text-[12px] text-content/45">
+      <div className="flex items-center gap-2 px-6 py-6 text-xs text-ink-3">
         <Loader className="size-3.5 animate-spin" />
         读取讨论…
       </div>
@@ -169,44 +169,44 @@ function DiscussionTab({
     <div className="flex flex-col gap-4 px-6 py-5">
       {thread.commits.length > 0 ? (
         <section className="flex flex-col gap-1 rounded-lg border border-stroke px-3.5 py-3">
-          <p className="text-[11px] font-medium text-content/50">提交 · {thread.commits.length}</p>
+          <p className="text-2xs font-medium text-ink-3">提交 · {thread.commits.length}</p>
           {thread.commits.map((commit) => (
             <button
               key={commit.oid}
               type="button"
               onClick={() => void openUrl(commit.url).catch(report)}
-              className="flex min-w-0 items-center gap-2 text-left text-[12px] text-content/70 hover:text-content"
+              className="flex min-w-0 items-center gap-2 text-left text-xs text-ink-2 hover:text-ink-1"
             >
-              <span className="shrink-0 rounded bg-content/8 px-1.5 py-px font-mono text-[10px]">
+              <span className="shrink-0 rounded bg-fill-strong px-1.5 py-px font-mono text-2xs">
                 {commit.oid.slice(0, 7)}
               </span>
               <span className="min-w-0 flex-1 truncate">{commit.messageHeadline}</span>
-              <span className="shrink-0 text-[11px] text-content/40">{commit.author}</span>
+              <span className="shrink-0 text-2xs text-ink-3">{commit.author}</span>
             </button>
           ))}
         </section>
       ) : null}
       {thread.comments.length === 0 ? (
-        <p className="text-[13px] text-content/45">还没有讨论。</p>
+        <p className="text-ui text-ink-3">还没有讨论。</p>
       ) : (
         <div className="flex flex-col gap-4">
           {thread.comments.map((comment) => (
             <article key={comment.id} className="flex flex-col gap-1.5">
               <header className="flex items-center gap-2">
                 <Avatar login={comment.author} url={comment.authorAvatarUrl} />
-                <span className="text-[12px] font-medium text-content">{comment.author || "未知用户"}</span>
+                <span className="text-xs font-medium text-ink-1">{comment.author || "未知用户"}</span>
                 {comment.kind === "review" && comment.state ? (
-                  <span className="rounded bg-content/8 px-1.5 py-px text-[10px] font-medium text-content/60">
+                  <span className="rounded bg-fill-strong px-1.5 py-px text-2xs font-medium text-ink-2">
                     {reviewDecisionLabel(comment.state)}
                   </span>
                 ) : null}
                 {comment.kind === "review_comment" ? (
-                  <span className="inline-flex items-center gap-1 rounded bg-content/8 px-1.5 py-px text-[10px] text-content/60">
+                  <span className="inline-flex items-center gap-1 rounded bg-fill-strong px-1.5 py-px text-2xs text-ink-2">
                     <MessageSquare className="size-3" strokeWidth={1.75} />
                     评审意见
                   </span>
                 ) : null}
-                <span className="text-[11px] text-content/40">{formatRelativeTime(comment.createdAt)}</span>
+                <span className="text-2xs text-ink-3">{formatRelativeTime(comment.createdAt)}</span>
               </header>
               <CommentBody comment={comment} onReply={setReplyTo} />
             </article>
@@ -214,14 +214,14 @@ function DiscussionTab({
         </div>
       )}
       {thread.truncated ? (
-        <p className="text-[11px] text-content/40">讨论较多，仅显示最近部分；完整内容请在浏览器查看。</p>
+        <p className="text-2xs text-ink-3">讨论较多，仅显示最近部分；完整内容请在浏览器查看。</p>
       ) : null}
       <section className="sticky bottom-0 flex flex-col gap-2 border-t border-stroke bg-background-base/80 py-3 backdrop-blur">
         {replyTo ? (
-          <div className="flex items-center gap-2 text-[11px] text-content/50">
+          <div className="flex items-center gap-2 text-2xs text-ink-3">
             <CornerDownRight className="size-3" strokeWidth={1.75} />
             回复 {replyTo.author} 的评审串
-            <button type="button" onClick={() => setReplyTo(null)} className="hover:text-content">
+            <button type="button" onClick={() => setReplyTo(null)} className="hover:text-ink-1">
               <X className="size-3" strokeWidth={2} />
             </button>
           </div>
@@ -238,7 +238,7 @@ function DiscussionTab({
             type="button"
             disabled={!canPostComment(draft, posting)}
             onClick={() => void post()}
-            className="inline-flex h-7 items-center gap-1.5 rounded-md bg-content px-3 text-[12px] font-medium text-background-base hover:bg-content/80 disabled:opacity-40"
+            className="inline-flex h-7 items-center gap-1.5 rounded-md bg-ink-1 px-3 text-xs font-medium text-background-base hover:bg-ink-1/70 disabled:opacity-40"
           >
             {posting ? <Loader className="size-3.5 animate-spin" /> : null}
             发送评论
@@ -263,11 +263,11 @@ function ChangesTab({
   onFullContextChange: (on: boolean) => void;
 }) {
   if (diffError) {
-    return <p className="px-6 py-6 text-[12px] text-red-400">{diffError}</p>;
+    return <p className="px-6 py-6 text-xs text-negative">{diffError}</p>;
   }
   if (!diff) {
     return (
-      <div className="flex items-center gap-2 px-6 py-6 text-[12px] text-content/45">
+      <div className="flex items-center gap-2 px-6 py-6 text-xs text-ink-3">
         <Loader className="size-3.5 animate-spin" />
         读取变更…
       </div>
@@ -275,18 +275,18 @@ function ChangesTab({
   }
   return (
     <div className="flex flex-col gap-3 px-6 py-5">
-      <div className="flex flex-wrap items-center gap-2 text-[12px] text-content/55">
-        <span className="font-medium text-emerald-400">+{diff.additions}</span>
-        <span className="font-medium text-red-400">−{diff.deletions}</span>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-ink-2">
+        <span className="font-medium text-positive">+{diff.additions}</span>
+        <span className="font-medium text-negative">−{diff.deletions}</span>
         <span>· {diff.files.length} 个文件</span>
-        {diff.truncated ? <span className="text-amber-400">变更过大，仅显示部分补丁</span> : null}
+        {diff.truncated ? <span className="text-warning">变更过大，仅显示部分补丁</span> : null}
         <span className="min-w-0 flex-1" />
         {provider === "github" ? (
           <button
             type="button"
             onClick={() => onFullContextChange(!fullContext)}
-            className={`rounded-md px-2 py-0.5 text-[11px] ${
-              fullContext ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
+            className={`rounded-md px-2 py-0.5 text-2xs ${
+              fullContext ? "bg-selection text-ink-1" : "text-ink-3 hover:bg-fill hover:text-ink-1"
             }`}
           >
             完整上下文
@@ -296,10 +296,10 @@ function ChangesTab({
       {diff.files.length > 0 ? (
         <ul className="flex flex-col gap-0.5 rounded-lg border border-stroke px-3 py-2">
           {diff.files.map((file) => (
-            <li key={file.path} className="flex min-w-0 items-center gap-2 text-[12px]">
-              <span className="min-w-0 flex-1 truncate font-mono text-content/75">{file.path}</span>
-              <span className="shrink-0 text-emerald-400">+{file.additions}</span>
-              <span className="shrink-0 text-red-400">−{file.deletions}</span>
+            <li key={file.path} className="flex min-w-0 items-center gap-2 text-xs">
+              <span className="min-w-0 flex-1 truncate font-mono text-ink-2">{file.path}</span>
+              <span className="shrink-0 text-positive">+{file.additions}</span>
+              <span className="shrink-0 text-negative">−{file.deletions}</span>
             </li>
           ))}
         </ul>
@@ -307,7 +307,7 @@ function ChangesTab({
       {diff.patch ? (
         <InboxPrDiff diff={diff} />
       ) : (
-        <p className="text-[12px] text-content/45">此变更没有可展示的补丁。</p>
+        <p className="text-xs text-ink-3">此变更没有可展示的补丁。</p>
       )}
     </div>
   );
@@ -321,34 +321,34 @@ function ChecksTab({
   checksError?: string | null;
 }) {
   if (checksError) {
-    return <p className="px-6 py-6 text-[12px] text-red-400">{checksError}</p>;
+    return <p className="px-6 py-6 text-xs text-negative">{checksError}</p>;
   }
   if (!checks) {
     return (
-      <div className="flex items-center gap-2 px-6 py-6 text-[12px] text-content/45">
+      <div className="flex items-center gap-2 px-6 py-6 text-xs text-ink-3">
         <Loader className="size-3.5 animate-spin" />
         读取检查…
       </div>
     );
   }
   if (checks.checks.length === 0) {
-    return <p className="px-6 py-6 text-[13px] text-content/45">这个 Pull Request 没有 CI 检查。</p>;
+    return <p className="px-6 py-6 text-ui text-ink-3">这个 Pull Request 没有 CI 检查。</p>;
   }
   return (
     <ul className="flex flex-col gap-0.5 px-6 py-5">
       {checks.checks.map((check) => {
         const duration = checkDurationSeconds(check);
         return (
-          <li key={`${check.workflow}/${check.name}`} className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 hover:bg-content/5">
+          <li key={`${check.workflow}/${check.name}`} className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 hover:bg-fill">
             <span className={`size-2 shrink-0 rounded-full ${checkDotClass(check.state)}`} />
-            <span className="min-w-0 flex-1 truncate text-[12px] text-content/80">{check.name}</span>
-            {check.workflow ? <span className="shrink-0 text-[11px] text-content/40">{check.workflow}</span> : null}
-            {duration ? <span className="shrink-0 text-[11px] text-content/40">{duration}s</span> : null}
+            <span className="min-w-0 flex-1 truncate text-xs text-ink-1">{check.name}</span>
+            {check.workflow ? <span className="shrink-0 text-2xs text-ink-3">{check.workflow}</span> : null}
+            {duration ? <span className="shrink-0 text-2xs text-ink-3">{duration}s</span> : null}
             {check.url ? (
               <button
                 type="button"
                 onClick={() => void openUrl(check.url!).catch(report)}
-                className="shrink-0 text-content/40 hover:text-content"
+                className="shrink-0 text-ink-3 hover:text-ink-1"
                 aria-label="打开检查详情"
               >
                 <ExternalLink className="size-3" strokeWidth={1.75} />
@@ -435,7 +435,7 @@ export function DetailPane({
           <button
             type="button"
             onClick={onBack}
-            className="mt-0.5 shrink-0 rounded-md px-1 py-0.5 text-content/50 hover:bg-content/10 hover:text-content md:hidden"
+            className="mt-0.5 shrink-0 rounded-md px-1 py-0.5 text-ink-3 hover:bg-fill-strong hover:text-ink-1 md:hidden"
             aria-label="返回列表"
           >
             <ChevronDown className="size-4 rotate-90" strokeWidth={1.75} />
@@ -446,12 +446,12 @@ export function DetailPane({
                 kind={item.kind}
                 state={item.state}
                 draft={item.draft}
-                className={`mt-0.5 size-4 shrink-0 ${item.state === "open" ? "text-emerald-400" : "text-content/50"}`}
+                className={`mt-0.5 size-4 shrink-0 ${item.state === "open" ? "text-positive" : "text-ink-3"}`}
               />
-              <h2 className="min-w-0 flex-1 text-[16px] font-semibold leading-snug">{item.title}</h2>
+              <h2 className="min-w-0 flex-1 text-lg font-medium leading-snug">{item.title}</h2>
               <StatePill item={item} />
             </div>
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-content/50">
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-3">
               <span className="inline-flex items-center gap-1.5">
                 <SourceMark source={provider} />
                 <span className="font-mono">{item.repo}</span>
@@ -468,7 +468,7 @@ export function DetailPane({
                 <button
                   type="button"
                   onClick={() => void openUrl(item.url).catch(report)}
-                  className="inline-flex items-center gap-1 text-content/50 hover:text-content"
+                  className="inline-flex items-center gap-1 text-ink-3 hover:text-ink-1"
                 >
                   <ExternalLink className="size-3" strokeWidth={1.75} />
                   浏览器打开
@@ -476,19 +476,19 @@ export function DetailPane({
               ) : null}
             </div>
             {item.kind === "pr" && (details?.baseRefName || threadQ.data?.baseRefName) ? (
-              <p className="mt-1.5 flex items-center gap-1.5 text-[12px] text-content/55">
+              <p className="mt-1.5 flex items-center gap-1.5 text-xs text-ink-2">
                 <GitMerge className="size-3.5 shrink-0" strokeWidth={1.75} />
-                <span className="rounded bg-content/8 px-1.5 py-px font-mono text-[11px]">
+                <span className="rounded bg-fill-strong px-1.5 py-px font-mono text-2xs">
                   {threadQ.data?.baseRefName || details?.baseRefName}
                 </span>
-                <span className="text-content/35">←</span>
-                <span className="rounded bg-content/8 px-1.5 py-px font-mono text-[11px]">
+                <span className="text-ink-3">←</span>
+                <span className="rounded bg-fill-strong px-1.5 py-px font-mono text-2xs">
                   {threadQ.data?.headRefName || details?.headRefName}
                 </span>
                 {(() => {
                   const decision = threadQ.data?.reviewDecision || details?.reviewDecision || "";
                   return decision ? (
-                    <span className="rounded bg-content/8 px-1.5 py-px text-[11px] font-medium">
+                    <span className="rounded bg-fill-strong px-1.5 py-px text-2xs font-medium">
                       {reviewDecisionLabel(decision)}
                     </span>
                   ) : null;
@@ -507,8 +507,8 @@ export function DetailPane({
                   type="button"
                   disabled={acting !== null}
                   onClick={() => void runAction(action.id)}
-                  className={`h-6.5 rounded-md border border-stroke px-2.5 text-[11px] font-medium disabled:opacity-40 ${
-                    action.danger ? "text-red-400 hover:bg-red-400/10" : "text-content/70 hover:bg-content/5 hover:text-content"
+                  className={`h-6.5 rounded-md border border-stroke px-2.5 text-2xs font-medium disabled:opacity-40 ${
+                    action.danger ? "text-negative hover:bg-negative/10" : "text-ink-2 hover:bg-fill hover:text-ink-1"
                   }`}
                 >
                   {acting === action.id ? <Loader className="mr-1 inline size-3 animate-spin" /> : null}
@@ -526,8 +526,8 @@ export function DetailPane({
               role="tab"
               aria-selected={tab === entry.id}
               onClick={() => setTab(entry.id)}
-              className={`h-7 rounded-md px-3 text-[12px] ${
-                tab === entry.id ? "bg-selection text-content" : "text-content/50 hover:text-content"
+              className={`h-7 rounded-md px-3 text-xs ${
+                tab === entry.id ? "bg-selection text-ink-1" : "text-ink-3 hover:text-ink-1"
               }`}
             >
               {entry.label}
@@ -543,7 +543,7 @@ export function DetailPane({
                 {item.labels.map((label) => (
                   <span
                     key={label.name}
-                    className="inline-flex items-center gap-1.5 rounded-full border border-stroke px-2 py-0.5 text-[11px] text-content/65"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-stroke px-2 py-0.5 text-2xs text-ink-2"
                   >
                     {label.color ? (
                       <span className="size-2 rounded-full" style={{ backgroundColor: `#${label.color}` }} />
@@ -555,16 +555,16 @@ export function DetailPane({
             ) : null}
             {detailsQ.data ? (
               detailsQ.data.body.trim() ? (
-                <div className="text-[13px] leading-relaxed text-content/85 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+                <div className="text-ui leading-relaxed text-ink-1 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
                   <Markdown content={detailsQ.data.body} />
                 </div>
               ) : (
-                <p className="text-[13px] text-content/45">没有描述。</p>
+                <p className="text-ui text-ink-3">没有描述。</p>
               )
             ) : detailsQ.error ? (
-              <p className="text-[12px] text-red-400">{String(detailsQ.error)}</p>
+              <p className="text-xs text-negative">{String(detailsQ.error)}</p>
             ) : (
-              <div className="flex items-center gap-2 text-[12px] text-content/45">
+              <div className="flex items-center gap-2 text-xs text-ink-3">
                 <Loader className="size-3.5 animate-spin" />
                 读取描述…
               </div>

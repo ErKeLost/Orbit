@@ -22,10 +22,10 @@ export function ArtifactCard({ card, onOpen }: { card: Card; onOpen?: (id: strin
       title={`打开${label}`}
       onClick={() => onOpen?.(card.id)}
       disabled={!onOpen}
-      className="flex w-fit max-w-[min(24rem,100%)] min-w-0 items-center gap-2.5 min-h-[38px] rounded-xl border border-content/10 py-2 pr-3.5 pl-3 text-left font-sans transition-colors hover:border-content/20 hover:bg-content/5 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-60"
+      className="flex w-fit max-w-[min(24rem,100%)] min-w-0 items-center gap-2.5 min-h-[38px] rounded-xl border border-line py-2 pr-3.5 pl-3 text-left font-sans transition-colors hover:border-line-strong hover:bg-fill focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-60"
     >
-      <ArtifactIcon kind={card.kind} className="size-4 shrink-0 text-content/55" />
-      <span className="min-w-0 truncate text-[13px] text-content">{card.title}</span>
+      <ArtifactIcon kind={card.kind} className="size-4 shrink-0 text-ink-2" />
+      <span className="min-w-0 truncate text-ui text-ink-1">{card.title}</span>
     </button>
   );
 }

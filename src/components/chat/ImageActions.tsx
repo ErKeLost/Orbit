@@ -161,15 +161,15 @@ export function ImageActionsMenu({ dataUrl, file, path, prompt, children }: Imag
     {zoom && dataUrl ? <ImageLightbox src={dataUrl} alt={prompt ?? "生成的图片"} onClose={() => setZoom(false)} /> : null}
     {editing ? (
       <Modal title="AI 编辑这张图" description="把这张图作为参考图重新生成" size="md" onClose={() => setEditing(false)}>
-        <form className="flex flex-col gap-3.5 p-4 text-[13px]" onSubmit={event => { event.preventDefault(); void submitEdit(); }}>
+        <form className="flex flex-col gap-3.5 p-4 text-ui" onSubmit={event => { event.preventDefault(); void submitEdit(); }}>
           <div className="flex gap-3">
-            {dataUrl ? <img className="size-20 shrink-0 rounded-lg border border-content/10 object-cover" src={dataUrl} alt="参考图" /> : null}
-            <p className="text-[12px] leading-relaxed text-content/55">可以只改一处（比如「换成夜景」「去掉杯子」），也可以重写整段描述。</p>
+            {dataUrl ? <img className="size-20 shrink-0 rounded-lg border border-line object-cover" src={dataUrl} alt="参考图" /> : null}
+            <p className="text-xs leading-relaxed text-ink-2">可以只改一处（比如「换成夜景」「去掉杯子」），也可以重写整段描述。</p>
           </div>
           <TextArea autoFocus rows={6} value={draft} onChange={event => setDraft(event.target.value)} placeholder="描述你想怎么改…" />
           <div className="flex justify-end gap-2">
-            <button type="button" onClick={() => setEditing(false)} className="rounded-md px-3 py-1.5 hover:bg-content/8 active:scale-[0.97]">取消</button>
-            <button type="submit" disabled={!draft.trim() || busy === "edit"} className="inline-flex items-center gap-1.5 rounded-md bg-content px-3 py-1.5 font-medium text-background-base hover:bg-content/80 active:scale-[0.97] disabled:opacity-40">
+            <button type="button" onClick={() => setEditing(false)} className="rounded-md px-3 py-1.5 hover:bg-fill-strong active:scale-[0.97]">取消</button>
+            <button type="submit" disabled={!draft.trim() || busy === "edit"} className="inline-flex items-center gap-1.5 rounded-md bg-ink-1 px-3 py-1.5 font-medium text-background-base hover:bg-ink-1/70 active:scale-[0.97] disabled:opacity-40">
               {busy === "edit" ? <Loader className="size-3.5 animate-spin" /> : null}
               生成
             </button>

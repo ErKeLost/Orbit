@@ -97,9 +97,9 @@ export const CHECK_DOT: Record<string, string> = {
   pass: "bg-emerald-400",
   fail: "bg-red-400",
   pending: "bg-amber-400 animate-pulse",
-  skipping: "bg-content/30",
-  cancel: "bg-content/40",
-  unknown: "bg-content/30",
+  skipping: "bg-fill-strong",
+  cancel: "bg-ink-1/70",
+  unknown: "bg-fill-strong",
 };
 
 export function stateLabel(state: string): string {
@@ -109,7 +109,7 @@ export function stateLabel(state: string): string {
 export function statePillClass(state: string): string {
   if (state === "open") return "text-emerald-400 bg-emerald-400/10";
   if (state === "merged") return "text-violet-400 bg-violet-400/10";
-  return "text-content/50 bg-content/8";
+  return "text-ink-3 bg-fill-strong";
 }
 
 export function reviewDecisionLabel(decision: string): string {
@@ -117,7 +117,7 @@ export function reviewDecisionLabel(decision: string): string {
 }
 
 export function checkDotClass(state: string): string {
-  return CHECK_DOT[state] ?? "bg-content/30";
+  return CHECK_DOT[state] ?? "bg-fill-strong";
 }
 
 /** Rounded whole seconds, or null when the check has no start/finish pair. */

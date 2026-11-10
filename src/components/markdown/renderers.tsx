@@ -118,7 +118,7 @@ export function createMarkdownComponents(settleDelay: number): Components {
       // 应用就回不来了（XML 类型的目标还会直接显示浏览器解析错误页）。画成不可点的
       // 文字，把原地址留在 title 上，至少能看出来它指向什么。
       if (navigatesWebview(href ?? "")) {
-        return <span className="text-content/60" title={href}>{children}</span>;
+        return <span className="text-ink-2" title={href}>{children}</span>;
       }
       const plainText = plainTextOf(children);
       const external = Boolean(href && /^https?:\/\//i.test(href));

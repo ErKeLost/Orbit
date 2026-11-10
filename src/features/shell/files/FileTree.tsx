@@ -32,7 +32,7 @@ import { useShell } from "../shellStore";
 import { useAppearance } from "../../../lib/appearance";
 
 const GIT_STATUS_COLOR: Record<string, string> = {
-  M: "text-amber-400",
+  M: "text-warning",
   A: "text-diff-add-fg",
   U: "text-diff-add-fg",
   D: "text-diff-del-fg",
@@ -102,7 +102,7 @@ function HeaderIcon({ label, onClick, active = false, children }: HeaderIconProp
       onMouseDown={(e) => e.preventDefault()}
       onClick={onClick}
       className={`flex h-6 min-w-0 flex-1 items-center justify-center self-center rounded-md ${
-        active ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
+        active ? "bg-selection text-ink-1" : "text-ink-3 hover:bg-fill hover:text-ink-1"
       }`}
     >
       {children}
@@ -195,7 +195,7 @@ function EditRow({ depth, isDir, initial, onCommit, onCancel }: { depth: number;
           const dot = isDir ? -1 : input.value.lastIndexOf(".");
           input.setSelectionRange(0, dot > 0 ? dot : input.value.length);
         }}
-        className="h-6 min-w-0 flex-1 rounded-[5px] border border-accent/60 bg-content/[0.04] px-1.5 text-[13px] leading-none text-content outline-none ring-2 ring-accent/15 placeholder:text-content/35"
+        className="h-6 min-w-0 flex-1 rounded-xs border border-accent/60 bg-fill-weak px-1.5 text-ui leading-none text-ink-1 outline-none ring-2 ring-accent/15 placeholder:text-ink-3"
       />
     </div>
   );
@@ -206,7 +206,7 @@ function TreeChildren({ parent, depth, ctx }: { parent: string; depth: number; c
   const visible = ctx.showIgnored ? entries : entries?.filter((entry) => !entry.ignored);
   const creating = ctx.editing?.mode === "create" && ctx.editing.parent === parent ? ctx.editing : null;
   const pad = { paddingLeft: 28 + depth * 12 };
-  if (error) return <p className="truncate pr-2 text-[12px] text-red-400" style={pad}>{error}</p>;
+  if (error) return <p className="truncate pr-2 text-xs text-negative" style={pad}>{error}</p>;
   return (
     <>
       {creating ? (
@@ -214,7 +214,7 @@ function TreeChildren({ parent, depth, ctx }: { parent: string; depth: number; c
       ) : null}
       {visible?.map((entry) => <TreeNode key={entry.path} entry={entry} depth={depth} ctx={ctx} />)}
       {!creating && visible && visible.length === 0 ? (
-        <p className="pr-2 text-[12px] text-content/50" style={pad}>空文件夹</p>
+        <p className="pr-2 text-xs text-ink-3" style={pad}>空文件夹</p>
       ) : null}
     </>
   );
@@ -257,17 +257,17 @@ const TreeNode = memo(function TreeNode({ entry, depth, ctx }: { entry: DirEntry
           ctx.onMenu(entry, event.clientX, event.clientY);
         }}
         style={{ paddingLeft: 8 + depth * 12 }}
-        className={`flex h-7.5 w-full cursor-default items-center gap-1 pr-2 text-left text-[14px] leading-none ${
-          selected ? "bg-selection text-content" : "text-content hover:bg-content/5"
+        className={`flex h-7.5 w-full cursor-default items-center gap-1 pr-2 text-left text-base leading-none ${
+          selected ? "bg-selection text-ink-1" : "text-ink-1 hover:bg-fill"
         }`}
       >
-        <span className="grid size-4 shrink-0 place-items-center text-content/50">
+        <span className="grid size-4 shrink-0 place-items-center text-ink-3">
           {entry.isDir ? (open ? <ChevronDown className="size-3.5" strokeWidth={1.75} /> : <ChevronRight className="size-3.5" strokeWidth={1.75} />) : null}
         </span>
         <span className="shrink-0">
           <FileTypeIcon name={entry.name} isDir={entry.isDir} isOpen={open} />
         </span>
-        <span className={`min-w-0 truncate leading-label ${entry.ignored ? "italic text-content/50" : (gitColor ?? "")}`}>{entry.name}</span>
+        <span className={`min-w-0 truncate leading-label ${entry.ignored ? "italic text-ink-3" : (gitColor ?? "")}`}>{entry.name}</span>
       </button>
       {open ? <TreeChildren parent={entry.path} depth={depth + 1} ctx={ctx} /> : null}
     </div>
@@ -477,10 +477,10 @@ export function FileTree({ cwd, rootLabel }: { cwd: string; rootLabel?: string }
           }}
           className="flex h-full min-w-0 flex-1 items-center gap-1 pl-2 text-left"
         >
-          <span className="grid size-4 shrink-0 place-items-center text-content/50">
+          <span className="grid size-4 shrink-0 place-items-center text-ink-3">
             {rootOpen ? <ChevronDown className="size-3.5" strokeWidth={1.75} /> : <ChevronRight className="size-3.5" strokeWidth={1.75} />}
           </span>
-          <span className="min-w-0 truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-content/50">{name}</span>
+          <span className="min-w-0 truncate text-2xs font-semibold uppercase tracking-[0.08em] text-ink-3">{name}</span>
         </button>
       </div>
       <div

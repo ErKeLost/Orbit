@@ -235,7 +235,7 @@ export const TerminalDock = memo(function TerminalDock({ cwd, open }: { cwd: str
             border, so the handle only shows itself on hover/drag. */}
         <span
           aria-hidden
-          className={`${vertical ? "h-0.5 w-10" : "h-10 w-0.5"} rounded-full transition-colors ${dragging ? "bg-content/40" : "bg-transparent group-hover/sash:bg-content/25"}`}
+          className={`${vertical ? "h-0.5 w-10" : "h-10 w-0.5"} rounded-full transition-colors ${dragging ? "bg-ink-1/70" : "bg-transparent group-hover/sash:bg-fill-strong"}`}
         />
       </div>
       <div className="flex h-9 min-w-0 shrink-0 border-b border-stroke">
@@ -250,8 +250,8 @@ export const TerminalDock = memo(function TerminalDock({ cwd, open }: { cwd: str
                   aria-selected={active}
                   title={tab.label}
                   onClick={() => setActiveId(tab.id)}
-                  className={`relative flex h-7.5 min-w-0 flex-1 cursor-default items-center gap-1.5 self-center rounded-md px-2 pr-7 text-left text-[13px] ${
-                    active ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
+                  className={`relative flex h-7.5 min-w-0 flex-1 cursor-default items-center gap-1.5 self-center rounded-md px-2 pr-7 text-left text-ui ${
+                    active ? "bg-selection text-ink-1" : "text-ink-3 hover:bg-fill hover:text-ink-1"
                   }`}
                 >
                   <Terminal className="size-3.5 shrink-0" strokeWidth={1.75} />
@@ -265,7 +265,7 @@ export const TerminalDock = memo(function TerminalDock({ cwd, open }: { cwd: str
                     event.stopPropagation();
                     close(tab.id);
                   }}
-                  className="absolute right-1 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-content/50 opacity-0 hover:bg-content/10 hover:text-content group-hover:opacity-100"
+                  className="absolute right-1 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-ink-3 opacity-0 hover:bg-fill-strong hover:text-ink-1 group-hover:opacity-100"
                 >
                   <X className="size-3" strokeWidth={1.75} />
                 </button>
@@ -280,7 +280,7 @@ export const TerminalDock = memo(function TerminalDock({ cwd, open }: { cwd: str
             title="新建终端 (⌘`)"
             aria-label="新建终端"
             onClick={spawn}
-            className="grid size-6.5 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content"
+            className="grid size-6.5 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1"
           >
             <Plus className="size-3.5" strokeWidth={1.75} />
           </button>
@@ -294,7 +294,7 @@ export const TerminalDock = memo(function TerminalDock({ cwd, open }: { cwd: str
                 if (!rect) return;
                 setMenu({ x: rect.left, y: rect.bottom + 4 });
               }}
-              className="grid size-6.5 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content"
+              className="grid size-6.5 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1"
             >
               <SideIcon className="size-3.5" strokeWidth={1.75} />
             </button>
@@ -304,7 +304,7 @@ export const TerminalDock = memo(function TerminalDock({ cwd, open }: { cwd: str
             title="收起终端 (⌘J)"
             aria-label="收起终端"
             onClick={() => setOpen(false)}
-            className="grid size-6.5 place-items-center rounded-md text-content/50 hover:bg-content/10 hover:text-content"
+            className="grid size-6.5 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1"
           >
             <HideIcon className="size-3.5" strokeWidth={1.75} />
           </button>
@@ -330,7 +330,7 @@ export const TerminalDock = memo(function TerminalDock({ cwd, open }: { cwd: str
             >
               <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
                 {item.label}
-                {item.id === side ? <span className="text-content/55">✓</span> : null}
+                {item.id === side ? <span className="text-ink-2">✓</span> : null}
               </span>
             </MenuItem>
           ))}

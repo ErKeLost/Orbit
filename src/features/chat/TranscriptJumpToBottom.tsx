@@ -41,7 +41,7 @@ export const TranscriptJumpToBottom = memo(function TranscriptJumpToBottom({
         aria-label="跳到最新"
         data-jump-to-bottom
         onClick={onJump}
-        className="pointer-events-auto grid size-6 place-items-center rounded-full bg-accent text-white shadow-lg hover:bg-accent/85"
+        className="pointer-events-auto grid size-6 place-items-center rounded-full bg-accent text-accent-foreground shadow-lg hover:bg-accent/85"
       >
         <ChevronDown className="size-4" strokeWidth={2} />
       </button>

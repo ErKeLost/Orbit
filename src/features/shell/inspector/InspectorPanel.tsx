@@ -114,13 +114,13 @@ export function InspectorPanel({ visible, online }: { visible: boolean; online: 
                 if (active) setOpen(false);
                 else setTab(item.id);
               }}
-              className={`flex h-6 min-w-0 flex-1 items-center justify-center gap-1 self-center rounded-md px-2 text-[12px] leading-none ${
-                active ? "bg-selection text-content" : "text-content/50 hover:bg-content/5 hover:text-content"
+              className={`flex h-6 min-w-0 flex-1 items-center justify-center gap-1 self-center rounded-md px-2 text-xs leading-none ${
+                active ? "bg-selection text-ink-1" : "text-ink-3 hover:bg-fill hover:text-ink-1"
               }`}
             >
               <span className="block truncate leading-label">{item.label}</span>
               {badge > 0 ? (
-                <span className="shrink-0 text-[11px] font-medium tabular-nums text-accent">+{badge}</span>
+                <span className="shrink-0 text-2xs font-medium tabular-nums text-accent">+{badge}</span>
               ) : null}
             </button>
           );
@@ -131,7 +131,7 @@ export function InspectorPanel({ visible, online }: { visible: boolean; online: 
         {project ? (
           <FileTree cwd={project} />
         ) : (
-          <p className="px-3 py-2 text-[12px] text-content/45">没有项目文件夹</p>
+          <p className="px-3 py-2 text-xs text-ink-3">没有项目文件夹</p>
         )}
       </div>
 
@@ -175,7 +175,7 @@ export function InspectorPanel({ visible, online }: { visible: boolean; online: 
             </div>
           </>
         ) : (
-          <p className="px-3 py-2 text-[12px] text-content/45">没有项目文件夹</p>
+          <p className="px-3 py-2 text-xs text-ink-3">没有项目文件夹</p>
         )}
       </div>
     </aside>

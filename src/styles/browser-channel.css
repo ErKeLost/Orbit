@@ -59,20 +59,25 @@
   background: color-mix(in srgb, var(--color-content) 16%, transparent);
 }
 
+/*
+ * New tab: the tools you would otherwise dig out of a menu, then the pages you
+ * were just on. Left-aligned at a page margin and capped at a readable width —
+ * a centred logo in the middle of an empty pane was the whole screen before.
+ */
 .browser-start {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 20px;
+  overflow-y: auto;
+  padding: 40px 32px 32px;
 }
 
-.browser-start-mark {
-  width: 168px;
-  height: 168px;
-  object-fit: contain;
-  opacity: 0.9;
-  user-select: none;
+.browser-start-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
 }
 
 /*

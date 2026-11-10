@@ -102,7 +102,7 @@ export function RemotePairingScreen({ pairingUri, connecting, error, onPairingUr
   }
 
   return <main className="remote-pairing-screen">
-    <section className="remote-pairing-content" aria-labelledby="remote-pairing-title">
+    <section className="remote-pairing-ink-1" aria-labelledby="remote-pairing-title">
       <div className="remote-pairing-brand"><img src="/orbit-mark.png" alt="Orbit" /></div>
       <header className="remote-pairing-heading">
         <p>ORBIT MOBILE</p>

@@ -19,48 +19,14 @@
   }
 }
 
+/*
+ * Colour, type, radius, depth and motion all live in `styles/tokens.css` now.
+ * This file only keeps the pieces that are specific to Orbit's own surfaces:
+ * the two font stacks, the diff palette switch and the terminal stack.
+ */
 @theme {
   /* Preserve descenders in compact labels, including two 10px lines in a 30px tab. */
   --leading-label: 1.4;
-  --color-background-base: hsl(
-    var(--theme-hue) var(--theme-saturation) var(--background-lightness)
-  );
-  --color-content: hsl(
-    var(--theme-hue) var(--theme-saturation) var(--content-lightness)
-  );
-  /* Structural separators: use border-stroke, divide-stroke, or bg-stroke. */
-  --color-stroke: color-mix(in srgb, var(--color-content) 7%, transparent);
-  /* Interactive fills keep their dark-theme contrast but use gentler ink in
-     light mode. Prefer these over content opacity for selected/raised UI. */
-  --color-selection-subtle: color-mix(
-    in srgb,
-    var(--color-content) var(--selection-subtle-strength),
-    transparent
-  );
-  --color-selection: color-mix(
-    in srgb,
-    var(--color-content) var(--selection-strength),
-    transparent
-  );
-  --color-selection-strong: color-mix(
-    in srgb,
-    var(--color-content) var(--selection-strong-strength),
-    transparent
-  );
-  --color-selection-hover: color-mix(
-    in srgb,
-    var(--color-content) var(--selection-hover-strength),
-    transparent
-  );
-  --color-selection-emphasis: color-mix(
-    in srgb,
-    var(--color-content) var(--selection-emphasis-strength),
-    transparent
-  );
-  --color-accent: hsl(211 92% 62%);
-  --color-accent-foreground: #ffffff;
-  --color-skill: #e8c547;
-  --color-mention: #38bdf8;
   --font-mono:
     ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
     "Courier New", monospace;
@@ -71,30 +37,38 @@
      readable text on the theme background, `-bg`/`-gutter` are row tints.
      Palettes below swap them; diff UI must also show a +/- glyph so color is
      never the only cue. */
-  --color-diff-add: #10b981;
-  --color-diff-add-fg: #6ee7b7;
-  --color-diff-add-bg: color-mix(
-    in srgb,
-    var(--color-diff-add) 15%,
-    transparent
-  );
+  --color-diff-add: var(--positive);
+  --color-diff-add-fg: color-mix(in oklab, var(--positive) 55%, var(--ink-1));
+  --color-diff-add-bg: color-mix(in oklab, var(--positive) 15%, transparent);
   --color-diff-add-gutter: color-mix(
-    in srgb,
-    var(--color-diff-add) 25%,
+    in oklab,
+    var(--positive) 25%,
     transparent
   );
-  --color-diff-del: #f43f5e;
-  --color-diff-del-fg: #fda4af;
-  --color-diff-del-bg: color-mix(
-    in srgb,
-    var(--color-diff-del) 15%,
-    transparent
-  );
+  --color-diff-del: var(--negative);
+  --color-diff-del-fg: color-mix(in oklab, var(--negative) 55%, var(--ink-1));
+  --color-diff-del-bg: color-mix(in oklab, var(--negative) 15%, transparent);
   --color-diff-del-gutter: color-mix(
-    in srgb,
-    var(--color-diff-del) 25%,
+    in oklab,
+    var(--negative) 25%,
     transparent
   );
+}
+
+/*
+ * Tab strip. The strip is one step below the page and carries a single
+ * hairline along its bottom edge; the active tab paints over that line with
+ * the page surface, so it reads as the same sheet as the content below it —
+ * the browser convention, and the reason a tab needs no shadow or glow.
+ */
+.tab-strip::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--line);
+  pointer-events: none;
 }
 
 /* Static so Tailwind always emits it: only xterm reads it, via JS. */
@@ -113,29 +87,29 @@
 }
 
 :root {
-  --motion-reorder-duration: 160ms;
-  --motion-tab-close-duration: 200ms;
-  --motion-feedback-duration: 120ms;
-  --motion-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --motion-tab-ease-out: cubic-bezier(0.3333, 0.6667, 0.6667, 1);
-  --theme-hue: 240;
-  --theme-saturation: 0%;
-  --theme-dark-lightness: 9%;
+  /* Durations come from the token scale; these names stay for existing rules. */
+  --motion-feedback-duration: var(--dur-1);
+  --motion-enter-duration: var(--dur-2);
+  --motion-reorder-duration: var(--dur-2);
+  --motion-tab-close-duration: var(--dur-2);
+  --motion-ease-out: var(--ease);
+  --motion-tab-ease-out: var(--ease);
+
+  /* Appearance slider defaults; `appearance.ts` writes the live values. */
+  --theme-hue: 255;
+  --theme-saturation: 16%;
+  --theme-saturation-unit: 16;
+  --theme-dark-lightness: 8%;
+  --theme-lightness-unit: 8;
+
   --sidebar-opacity: 0.85;
   --window-background-opacity: 0.4;
   --chat-background-empty-opacity: 0.24;
   --chat-background-session-opacity: 0.24;
-  --selection-subtle-strength: 8%;
-  --selection-strength: 10%;
-  --selection-strong-strength: 12%;
-  --selection-hover-strength: 15%;
-  --selection-emphasis-strength: 20%;
-  --background-lightness: var(--theme-dark-lightness);
-  --content-lightness: 92%;
-  --link-color: #7dd3fc;
-  --color-skill: #e8c547;
-  --color-mention: #38bdf8;
-  --color-markdown-heading: #f9a8c9;
+
+  /* Links and headings use the token roles, not hues of their own. */
+  --link-color: var(--accent-ink);
+  --color-markdown-heading: var(--ink-1);
 }
 
 html {
@@ -143,19 +117,7 @@ html {
 }
 
 html.theme-light {
-  --background-lightness: 97%;
-  --content-lightness: 18%;
-  --link-color: hsl(211 92% 40%);
-  --color-skill: #a07c10;
-  --color-mention: #0284c7;
-  --color-markdown-heading: #be185d;
-  --selection-subtle-strength: 5%;
-  --selection-strength: 6%;
-  --selection-strong-strength: 7%;
-  --selection-hover-strength: 10%;
-  --selection-emphasis-strength: 14%;
-  --color-diff-add-fg: #047857;
-  --color-diff-del-fg: #be123c;
+  --link-color: var(--accent-ink);
   color-scheme: light;
 }
 
@@ -360,19 +322,21 @@ html.has-native-glass:not(.theme-light) #root {
 }
 
 .sidebar-glass {
-  background: color-mix(in srgb, var(--color-background-base) 90%, black);
+  /* The rail is one step below the page, not the page darkened by hand. */
+  background: var(--surface-sunken);
   transition: background-color var(--motion-feedback-duration)
     var(--motion-ease-out);
 }
 
 html.theme-light .sidebar-glass {
-  background: var(--color-background-base);
+  background: var(--surface-sunken);
 }
 
 html.has-native-glass:not(.theme-light) .sidebar-glass {
-  background: hsl(
-    var(--theme-hue) var(--theme-saturation) var(--background-lightness) /
-      var(--sidebar-opacity)
+  background: color-mix(
+    in oklab,
+    var(--surface-sunken) calc(var(--sidebar-opacity) * 100%),
+    transparent
   );
 }
 
@@ -635,7 +599,7 @@ html.has-chat-background.chat-background-effect-ready.chat-background-gradient-b
 }
 
 ::highlight(orbit-transcript-search-match) {
-  background-color: color-mix(in srgb, #e2c08d 46%, transparent);
+  background-color: color-mix(in srgb, var(--warning) 46%, transparent);
 }
 
 ::highlight(orbit-transcript-search-current) {
@@ -762,8 +726,8 @@ html.has-user-accent .user-message-bubble {
  * its base, twinkling as they rise and fading out past the top edge.
  */
 .orbit-sparkles {
-  --sparkle-color: #fde68a;
-  --sparkle-glow: rgb(251 191 36 / 0.9);
+  --sparkle-color: var(--warning);
+  --sparkle-glow: color-mix(in oklab, var(--warning) 90%, transparent);
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -772,10 +736,7 @@ html.has-user-accent .user-message-bubble {
   animation: orbit-halo 2400ms 150ms ease-out both;
 }
 
-html.theme-light .orbit-sparkles {
-  --sparkle-color: #f59e0b;
-  --sparkle-glow: rgb(217 119 6 / 0.55);
-}
+
 
 .orbit-sparkles::before {
   content: "";
@@ -828,7 +789,7 @@ html.theme-light .orbit-sparkles {
 
 .orbit-sparkle-ember {
   border-radius: 9999px;
-  background: radial-gradient(circle, #fffbeb, var(--sparkle-color) 70%);
+  background: radial-gradient(circle, var(--surface-card), var(--sparkle-color) 70%);
 }
 
 @keyframes orbit-rise {
@@ -973,15 +934,9 @@ html.theme-light .orbit-sparkles {
 }
 
 .plan-steps {
-  --mode-color: #fde047;
-  --mode-glow: rgb(250 204 21 / 0.85);
-  --mode-ink: #422006;
-}
-
-html.theme-light .plan-steps {
-  --mode-color: #ca8a04;
-  --mode-glow: rgb(202 138 4 / 0.55);
-  --mode-ink: #fff;
+  --mode-color: var(--accent);
+  --mode-glow: color-mix(in oklab, var(--accent) 85%, transparent);
+  --mode-ink: var(--accent-fg);
 }
 
 .plan-steps::before {
@@ -1058,7 +1013,7 @@ html.theme-light .plan-steps {
   width: var(--size);
   height: var(--size);
   border-radius: 9999px;
-  background: radial-gradient(circle, #fefce8, var(--mode-color) 70%);
+  background: radial-gradient(circle, var(--surface-card), var(--mode-color) 70%);
   box-shadow: 0 0 5px var(--mode-glow);
   animation: orbit-twinkle var(--duration) var(--delay) ease-in-out both;
 }
@@ -1124,15 +1079,9 @@ html.theme-light .plan-steps {
 }
 
 .orchestrator-constellation {
-  --mode-color: #f0abfc;
-  --mode-glow: rgb(232 121 249 / 0.85);
-  --mode-spark: #fdf4ff;
-}
-
-html.theme-light .orchestrator-constellation {
-  --mode-color: #c026d3;
-  --mode-glow: rgb(192 38 211 / 0.5);
-  --mode-spark: #f5d0fe;
+  --mode-color: var(--accent-ink);
+  --mode-glow: color-mix(in oklab, var(--accent-ink) 85%, transparent);
+  --mode-spark: color-mix(in oklab, var(--accent-ink) 30%, var(--ink-1));
 }
 
 .orchestrator-constellation::before {
@@ -2274,12 +2223,8 @@ header[data-tauri-drag-region] button {
       transparent calc(50% + var(--spread))
     ),
     linear-gradient(
-      hsl(
-        var(--theme-hue) var(--theme-saturation) var(--content-lightness) / 0.4
-      ),
-      hsl(
-        var(--theme-hue) var(--theme-saturation) var(--content-lightness) / 0.4
-      )
+      color-mix(in oklab, var(--ink-1) 40%, transparent),
+      color-mix(in oklab, var(--ink-1) 40%, transparent)
     );
   background-size:
     250% 100%,
@@ -2514,8 +2459,8 @@ html.has-user-accent .agent-chat-user-bubble {
 }
 
 html.theme-light .agent-chat-user-bubble {
-  background: #0a0a0a;
-  color: #fff;
+  background: var(--ink-1);
+  color: var(--surface-canvas);
 }
 
 html.theme-light.has-user-accent .agent-chat-user-bubble {
@@ -2524,7 +2469,7 @@ html.theme-light.has-user-accent .agent-chat-user-bubble {
 }
 
 html.theme-light .mono-pill {
-  background: #fff;
+  background: var(--surface-card);
   border-color: rgb(0 0 0 / 0.06);
   box-shadow:
     0 1px 2px rgb(0 0 0 / 0.06),
@@ -3295,12 +3240,17 @@ html.theme-light .mono-pill {
 
 /* Keep the original glass tint in dark mode. Light popovers use an opaque
    surface so underlying content cannot show through. */
+/*
+ * Menus and popovers sit on the overlay step of the ramp: one surface above
+ * whatever they cover, with the hairline doing the separation. Blur is kept
+ * only so text behind them does not read as part of the menu.
+ */
 .popover-backdrop {
-  background: color-mix(in srgb, var(--color-content) 2%, transparent);
+  background: color-mix(in oklab, var(--surface-overlay) 94%, transparent);
 }
 
 html.theme-light .popover-backdrop {
-  background: var(--color-background-base);
+  background: color-mix(in oklab, var(--surface-overlay) 96%, transparent);
 }
 
 /* Animate content only; its sibling glass stays still. Finish at `none` and
@@ -3594,9 +3544,9 @@ html.theme-light .btw-burst {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 11px;
-  border: 1px solid color-mix(in srgb, #f87171 24%, transparent);
-  border-radius: 10px;
-  background: color-mix(in srgb, #f87171 7%, transparent);
+  border: 1px solid color-mix(in oklab, var(--negative) 24%, transparent);
+  border-radius: var(--radius-control);
+  background: color-mix(in oklab, var(--negative) 7%, transparent);
 }
 
 /* The selected project mascot turns banked resets into a tiny status scene. */
@@ -3750,7 +3700,7 @@ html.theme-light .btw-burst {
   width: 4px;
   height: 8px;
   border-radius: 0;
-  background: #e39b4a;
+  background: var(--warning);
   opacity: 0.4;
 }
 

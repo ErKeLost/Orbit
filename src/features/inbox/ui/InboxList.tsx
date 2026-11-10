@@ -32,7 +32,7 @@ export function Avatar({ login, url, size = 16 }: { login: string; url?: string;
   if (!source || failed) {
     return (
       <span
-        className="grid shrink-0 place-items-center rounded-full bg-content/10 text-[9px] font-semibold text-content/60"
+        className="grid shrink-0 place-items-center rounded-full bg-fill-strong text-2xs font-semibold text-ink-2"
         style={{ width: size, height: size }}
       >
         {(login || "?").slice(0, 1).toUpperCase()}
@@ -47,14 +47,14 @@ export function Avatar({ login, url, size = 16 }: { login: string; url?: string;
       height={size}
       loading="lazy"
       onError={() => setFailed(true)}
-      className="shrink-0 rounded-full bg-content/10 object-cover"
+      className="shrink-0 rounded-full bg-fill-strong object-cover"
     />
   );
 }
 
 export function StatePill({ item }: { item: WorkItem }) {
   return (
-    <span className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-px text-[10px] font-medium ${statePillClass(item.state)}`}>
+    <span className={`inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-px text-2xs font-medium ${statePillClass(item.state)}`}>
       <KindIcon kind={item.kind} state={item.state} draft={item.draft} className="size-3" />
       {stateLabel(item.state)}
     </span>
@@ -68,7 +68,7 @@ export function LabelChips({ item }: { item: WorkItem }) {
       {item.labels.slice(0, 3).map((label) => (
         <span
           key={label.name}
-          className="inline-flex items-center gap-1 rounded bg-content/8 px-1.5 py-px text-[10px] text-content/60"
+          className="inline-flex items-center gap-1 rounded bg-fill-strong px-1.5 py-px text-2xs text-ink-2"
         >
           {label.color ? (
             <span className="size-1.5 rounded-full" style={{ backgroundColor: `#${label.color}` }} />
@@ -77,7 +77,7 @@ export function LabelChips({ item }: { item: WorkItem }) {
         </span>
       ))}
       {item.labels.length > 3 ? (
-        <span className="text-[10px] text-content/35">+{item.labels.length - 3}</span>
+        <span className="text-2xs text-ink-3">+{item.labels.length - 3}</span>
       ) : null}
     </span>
   );
@@ -88,8 +88,8 @@ export function InboxRow({ item, active, onSelect }: { item: InboxRowItem; activ
     <button
       type="button"
       onClick={onSelect}
-      className={`flex w-full flex-col gap-1 border-b border-content/5 px-3.5 py-2.5 text-left last:border-b-0 ${
-        active ? "bg-selection text-content" : "hover:bg-content/5"
+      className={`flex w-full flex-col gap-1 border-b border-line px-3.5 py-2.5 text-left last:border-b-0 ${
+        active ? "bg-selection text-ink-1" : "hover:bg-fill"
       }`}
     >
       <span className="flex min-w-0 items-center gap-2">
@@ -97,16 +97,16 @@ export function InboxRow({ item, active, onSelect }: { item: InboxRowItem; activ
           kind={item.kind}
           state={item.state}
           draft={item.draft}
-          className={`size-3.5 shrink-0 ${item.state === "open" ? "text-emerald-400" : "text-content/50"}`}
+          className={`size-3.5 shrink-0 ${item.state === "open" ? "text-positive" : "text-ink-3"}`}
         />
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{item.title}</span>
-        <span className="shrink-0 text-[11px] text-content/40">{formatRelativeTime(item.updatedAt)}</span>
+        <span className="min-w-0 flex-1 truncate text-ui font-medium">{item.title}</span>
+        <span className="shrink-0 text-2xs text-ink-3">{formatRelativeTime(item.updatedAt)}</span>
       </span>
-      <span className="flex min-w-0 items-center gap-1.5 pl-5.5 text-[11px] text-content/45">
+      <span className="flex min-w-0 items-center gap-1.5 pl-5.5 text-2xs text-ink-3">
         <span className="min-w-0 truncate">{item.repo}</span>
         <span className="shrink-0">#{item.number}</span>
         {item.attentionReason ? (
-          <span className="shrink-0 rounded bg-content/8 px-1.5 py-px text-[10px]">{item.attentionReason}</span>
+          <span className="shrink-0 rounded bg-fill-strong px-1.5 py-px text-2xs">{item.attentionReason}</span>
         ) : null}
         <StatePill item={item} />
         <span className="min-w-0 flex-1" />
@@ -120,12 +120,12 @@ export function NotConnected({ source }: { source: InboxProvider }) {
   const name = source === "github" ? "GitHub" : "GitLab";
   return (
     <div className="flex flex-col items-center gap-3 px-6 py-16 text-center">
-      <span className="grid size-12 place-items-center rounded-2xl bg-content/6">
+      <span className="grid size-12 place-items-center rounded-2xl bg-fill">
         <span className="scale-[1.6]"><SourceMark source={source} /></span>
       </span>
       <div>
-        <p className="text-[13px] font-medium text-content">尚未连接 {name}</p>
-        <p className="mt-1 max-w-64 text-[12px] leading-relaxed text-content/45">
+        <p className="text-ui font-medium text-ink-1">尚未连接 {name}</p>
+        <p className="mt-1 max-w-64 text-xs leading-relaxed text-ink-3">
           {source === "github"
             ? "在终端用 gh auth login 登录后即可在此查看 Pull Request 与 Issue。"
             : "在设置里填写实例地址和 Access Token 后即可在此查看合并请求与待办。"}
@@ -134,7 +134,7 @@ export function NotConnected({ source }: { source: InboxProvider }) {
       <button
         type="button"
         onClick={() => useWorkspace.getState().set({ panel: "settings", settingsPage: "inbox" })}
-        className="h-7 rounded-md bg-content px-3 text-[12px] font-medium text-background-base hover:bg-content/80"
+        className="h-7 rounded-md bg-ink-1 px-3 text-xs font-medium text-background-base hover:bg-ink-1/70"
       >
         打开连接设置
       </button>

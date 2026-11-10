@@ -1,8 +1,9 @@
 export type ResolvedTheme = "light" | "dark";
 
+/** Window chrome color, kept equal to `--color-surface` for the default tint. */
 export const themeColor: Record<ResolvedTheme, string> = {
-  light: "#f7f7f7",
-  dark: "#171717",
+  light: "#f5f5f7",
+  dark: "#121317",
 };
 
 /**

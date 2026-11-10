@@ -60,13 +60,13 @@ function NoteDetailTab({
       role="tab"
       aria-selected={selected}
       onClick={onSelect}
-      className={`relative flex h-9 items-center text-[12px] leading-none ${
-        selected ? "text-content" : "text-content/50 hover:text-content"
+      className={`relative flex h-9 items-center text-xs leading-none ${
+        selected ? "text-ink-1" : "text-ink-3 hover:text-ink-1"
       }`}
     >
       {label}
       {selected ? (
-        <span className="absolute inset-x-0 bottom-0 h-0.5 bg-content" />
+        <span className="absolute inset-x-0 bottom-0 h-0.5 bg-ink-1" />
       ) : null}
     </button>
   );
@@ -90,8 +90,8 @@ export function NoteDetail({
   if (!note) {
     return (
       <div className="flex h-full min-w-0 flex-1 flex-col items-center justify-center px-6 text-center">
-        <File className="mb-3 size-6 text-content/30" strokeWidth={1.75} />
-        <p className="text-[13px] text-content/45">Select a note</p>
+        <File className="mb-3 size-6 text-ink-3" strokeWidth={1.75} />
+        <p className="text-ui text-ink-3">Select a note</p>
       </div>
     );
   }
@@ -361,7 +361,7 @@ function NoteEditor({
     >
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 px-8 py-8">
         <header className="flex flex-col gap-3">
-          <div className="flex min-w-0 items-center gap-2 text-[12px] text-content/50">
+          <div className="flex min-w-0 items-center gap-2 text-xs text-ink-3">
             <File className="size-3.5 shrink-0" strokeWidth={1.75} />
             <span>Note</span>
             {note.slug ? (
@@ -395,11 +395,11 @@ function NoteEditor({
             }}
             onKeyDown={onTitleKeyDown}
             aria-label="Note title"
-            className="w-full border-0 bg-transparent p-0 text-[20px] font-semibold leading-tight text-content outline-none placeholder:text-content/35"
+            className="w-full border-0 bg-transparent p-0 text-xl font-semibold leading-tight text-ink-1 outline-none placeholder:text-ink-3"
             placeholder="Untitled"
           />
           {time ? (
-            <div className="text-[12px] text-content/50">Updated {time}</div>
+            <div className="text-xs text-ink-3">Updated {time}</div>
           ) : null}
           <NoteTagsEditor
             tags={tags}
@@ -413,7 +413,7 @@ function NoteEditor({
               type="button"
               disabled={!canAddToChat}
               onClick={() => onAddToChat(draft)}
-              className="inline-flex items-center gap-1 rounded-md bg-content px-3 h-6.5 text-[12px] text-background-base hover:bg-content/80 disabled:cursor-default disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-md bg-ink-1 px-3 h-6.5 text-xs text-background-base hover:bg-ink-1/70 disabled:cursor-default disabled:opacity-40"
             >
               Add to chat
             </button>
@@ -425,7 +425,7 @@ function NoteEditor({
                   window.clearTimeout(saveTimer.current);
                 void enqueueNoteSave(note.id, () => onDelete(note.id));
               }}
-              className="inline-flex items-center gap-1.5 rounded-md px-3 h-7 text-[12px] text-content/70 hover:bg-content/10 hover:text-red-400"
+              className="inline-flex items-center gap-1.5 rounded-md px-3 h-7 text-xs text-ink-2 hover:bg-fill-strong hover:text-negative"
             >
               <Trash className="size-3.5" strokeWidth={1.75} />
               Delete
@@ -434,7 +434,7 @@ function NoteEditor({
           {saveError ? (
             <div
               role="alert"
-              className="flex items-center gap-2 text-[12px] text-red-400/90"
+              className="flex items-center gap-2 text-xs text-negative/90"
             >
               <span>Could not save note: {saveError}</span>
               <button
@@ -499,7 +499,7 @@ function NoteEditor({
           }}
         >
           {imageDrag || imageBusy ? (
-            <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-lg bg-background-base/80 text-[12px] text-content/70 backdrop-blur-sm">
+            <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-lg bg-background-base/80 text-xs text-ink-2 backdrop-blur-sm">
               {imageBusy ? "Adding images…" : "Drop images here"}
             </div>
           ) : null}
@@ -516,7 +516,7 @@ function NoteEditor({
           ) : body.trim() ? (
             <AgentMarkdown content={noteMarkdown} />
           ) : (
-            <p className="text-[13px] text-content/45">No description</p>
+            <p className="text-ui text-ink-3">No description</p>
           )}
         </div>
       </div>
@@ -544,11 +544,11 @@ function NoteTagsEditor({
       className="flex min-w-0 flex-wrap items-center gap-1.5"
       aria-label="Tags"
     >
-      <span className="mr-0.5 text-[11px] text-content/45">Tags</span>
+      <span className="mr-0.5 text-2xs text-ink-3">Tags</span>
       {tags.map((tag) => (
         <span
           key={tag}
-          className="inline-flex h-6 max-w-48 items-center gap-1 rounded-md bg-content/8 pl-2 pr-1 text-[11px] text-content/70"
+          className="inline-flex h-6 max-w-48 items-center gap-1 rounded-md bg-fill-strong pl-2 pr-1 text-2xs text-ink-2"
         >
           <span className="truncate">#{tag}</span>
           <button
@@ -556,7 +556,7 @@ function NoteTagsEditor({
             title={`Remove #${tag}`}
             aria-label={`Remove #${tag}`}
             onClick={() => onChange(tags.filter((item) => item !== tag))}
-            className="grid size-4 shrink-0 place-items-center rounded text-content/40 hover:bg-content/10 hover:text-content"
+            className="grid size-4 shrink-0 place-items-center rounded text-ink-3 hover:bg-fill-strong hover:text-ink-1"
           >
             <X className="size-2.5" strokeWidth={1.75} />
           </button>
@@ -592,7 +592,7 @@ function NoteTagsEditor({
           placeholder="Add tag…"
           spellCheck={false}
           autoComplete="off"
-          className="h-6 min-w-20 flex-1 border-0 bg-transparent px-1 text-[11px] text-content outline-none placeholder:text-content/35"
+          className="h-6 min-w-20 flex-1 border-0 bg-transparent px-1 text-2xs text-ink-1 outline-none placeholder:text-ink-3"
         />
       ) : null}
     </div>

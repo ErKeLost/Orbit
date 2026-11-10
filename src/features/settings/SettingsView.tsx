@@ -25,7 +25,7 @@ const VoiceSettingsPage = lazy(() => import("../voice/ui/VoiceSettingsPage").the
 
 function DesktopOnly({ what }: { what: string }) {
   return (
-    <div className="overflow-hidden rounded-xl border border-content/10 bg-content/3 px-4 py-6 text-center text-[13px] text-content/50">
+    <div className="overflow-hidden rounded-xl border border-line bg-fill-weak px-4 py-6 text-center text-ui text-ink-3">
       请在电脑端管理{what}。这些配置保存在运行 Pi 的电脑上。
     </div>
   );
@@ -38,19 +38,19 @@ function SettingsSearch() {
   const results = useMemo(() => searchSettings(query), [query]);
   return (
     <div className="flex shrink-0 items-center gap-1.5 pr-2" data-tauri-drag-region="false">
-      <label ref={anchor} className="flex h-7 w-48 items-center gap-2 rounded-md border border-content/10 px-2 text-content/45 focus-within:border-content/20">
+      <label ref={anchor} className="flex h-7 w-48 items-center gap-2 rounded-md border border-line px-2 text-ink-3 focus-within:border-line-strong">
         <Search className="size-3.5 shrink-0" strokeWidth={1.75} />
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="搜索设置"
           aria-label="搜索设置"
-          className="min-w-0 flex-1 bg-transparent text-[12px] text-content outline-none placeholder:text-content/35"
+          className="min-w-0 flex-1 bg-transparent text-xs text-ink-1 outline-none placeholder:text-ink-3"
         />
       </label>
       {query.trim() ? (
         <Popover anchor={anchor} side="bottom" align="end" width={260} onDismiss={() => setQuery("")} className="overflow-y-auto p-1">
-          {results.length === 0 ? <p className="px-2 py-1.5 text-[12px] text-content/45">没有匹配的设置</p> : null}
+          {results.length === 0 ? <p className="px-2 py-1.5 text-xs text-ink-3">没有匹配的设置</p> : null}
           {results.map((result) => (
             <button
               key={`${result.section}:${result.settingId ?? "section"}`}
@@ -59,10 +59,10 @@ function SettingsSearch() {
                 jumpToSetting(result.section, result.settingId);
                 setQuery("");
               }}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[12px] text-content hover:bg-content/5"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-ink-1 hover:bg-fill"
             >
               <span className="min-w-0 flex-1 truncate">{result.label}</span>
-              <span className="shrink-0 text-[11px] text-content/40">{result.sectionLabel}</span>
+              <span className="shrink-0 text-2xs text-ink-3">{result.sectionLabel}</span>
             </button>
           ))}
         </Popover>
@@ -111,17 +111,17 @@ export function SettingsView() {
   else content = <GeneralSettingsPage />;
 
   return (
-    <div role="region" aria-label="设置" data-app-settings className="flex min-h-0 min-w-0 flex-1 flex-col text-content">
+    <div role="region" aria-label="设置" data-app-settings className="flex min-h-0 min-w-0 flex-1 flex-col text-ink-1">
       <div className="flex h-10 shrink-0 select-none items-center border-b border-stroke" data-tauri-drag-region="deep">
         <TrafficLightSpacer />
-        <div className="flex min-w-0 flex-1 items-center gap-2 px-3 text-[13px]">
-          <span className="shrink-0 text-content/45">设置</span>
-          <span aria-hidden className="shrink-0 text-content/25">/</span>
-          <span className="min-w-0 truncate text-content">{section.label}</span>
+        <div className="flex min-w-0 flex-1 items-center gap-2 px-3 text-ui">
+          <span className="shrink-0 text-ink-3">设置</span>
+          <span aria-hidden className="shrink-0 text-ink-3">/</span>
+          <span className="min-w-0 truncate text-ink-1">{section.label}</span>
         </div>
         {page === "appearance" ? (
           <div className="flex shrink-0 items-center gap-1.5 pr-2" data-tauri-drag-region="false">
-            <button type="button" onClick={restoreDefaults} className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-[12px] text-content/50 hover:bg-content/10 hover:text-content">
+            <button type="button" onClick={restoreDefaults} className="flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs text-ink-3 hover:bg-fill-strong hover:text-ink-1">
               <RotateCcw className="size-3.5" strokeWidth={1.75} />
               恢复默认外观
             </button>

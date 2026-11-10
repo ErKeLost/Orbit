@@ -81,11 +81,11 @@ export const toast = {
 };
 
 const TONE_ICON: Record<ToastTone, { Icon: typeof CheckCircle; className: string }> = {
-  success: { Icon: CheckCircle, className: "text-emerald-400" },
-  error: { Icon: CircleAlert, className: "text-red-400" },
-  warning: { Icon: CircleAlert, className: "text-amber-400" },
-  info: { Icon: CircleHelp, className: "text-content/55" },
-  loading: { Icon: Loader, className: "animate-spin text-content/55" },
+  success: { Icon: CheckCircle, className: "text-positive" },
+  error: { Icon: CircleAlert, className: "text-negative" },
+  warning: { Icon: CircleAlert, className: "text-warning" },
+  info: { Icon: CircleHelp, className: "text-ink-2" },
+  loading: { Icon: Loader, className: "animate-spin text-ink-2" },
 };
 
 function ToastCard({ item }: { item: ToastItem }) {
@@ -106,16 +106,16 @@ function ToastCard({ item }: { item: ToastItem }) {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       className={`approval-toast pointer-events-auto relative isolate overflow-hidden rounded-xl border shadow-xl ${
-        item.tone === "error" ? "border-red-400/30" : "border-content/10"
+        item.tone === "error" ? "border-negative/30" : "border-line"
       }`}
     >
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 rounded-[inherit] bg-background-base/80 backdrop-blur-xl" />
       <div className="flex items-start gap-2.5 px-3.5 py-3">
         <Icon className={`mt-px size-4 shrink-0 ${className}`} strokeWidth={1.75} />
         <div className="min-w-0 flex-1">
-          <p className="break-words text-[13px] font-semibold leading-snug text-content">{item.title}</p>
+          <p className="break-words text-ui font-semibold leading-snug text-ink-1">{item.title}</p>
           {item.description ? (
-            <p className="mt-1 line-clamp-4 whitespace-pre-line break-words text-[12px] leading-relaxed text-content/60">
+            <p className="mt-1 line-clamp-4 whitespace-pre-line break-words text-xs leading-relaxed text-ink-2">
               {item.description}
             </p>
           ) : null}
@@ -124,7 +124,7 @@ function ToastCard({ item }: { item: ToastItem }) {
           type="button"
           aria-label="关闭通知"
           onClick={() => dismiss(item.id)}
-          className="-mr-1 -mt-0.5 grid size-6 shrink-0 place-items-center rounded-md text-content/40 hover:bg-content/10 hover:text-content"
+          className="-mr-1 -mt-0.5 grid size-6 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1"
         >
           <X className="size-3.5" strokeWidth={1.75} />
         </button>
@@ -133,7 +133,7 @@ function ToastCard({ item }: { item: ToastItem }) {
         <div className="flex gap-2 border-t border-stroke px-3.5 py-2.5">
           <button
             type="button"
-            className="flex-1 rounded-md bg-accent px-2.5 py-1 text-[11px] font-medium text-accent-foreground hover:bg-accent/85"
+            className="flex-1 rounded-md bg-accent px-2.5 py-1 text-2xs font-medium text-accent-foreground hover:bg-accent/85"
             onClick={() => {
               item.action?.onClick();
               dismiss(item.id);

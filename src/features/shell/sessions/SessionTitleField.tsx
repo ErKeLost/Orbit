@@ -54,7 +54,7 @@ export function SessionTitleField({
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
       onPointerDown={(event) => event.stopPropagation()}
-      className={`min-w-0 flex-1 rounded-[4px] border border-accent/70 bg-background-base px-1 py-[1px] text-[13px] font-semibold leading-snug text-content outline-none ${className}`.trim()}
+      className={`min-w-0 flex-1 rounded-xs border border-accent/70 bg-background-base px-1 py-[1px] text-ui font-semibold leading-snug text-ink-1 outline-none ${className}`.trim()}
     />
   );
 }

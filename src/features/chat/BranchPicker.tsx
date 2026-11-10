@@ -76,14 +76,14 @@ export function BranchPicker({ cwd, current, disabled = false }: { cwd: string; 
         disabled={disabled}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => setOpen((value) => !value)}
-        className="flex h-6 min-w-0 max-w-56 items-center gap-1.5 rounded-md px-1.5 text-[12px] text-content/55 hover:bg-content/8 hover:text-content active:scale-[0.97] disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-content/55 aria-expanded:bg-content/8 aria-expanded:text-content"
+        className="flex h-6 min-w-0 max-w-56 items-center gap-1.5 rounded-md px-1.5 text-xs text-ink-2 hover:bg-fill-strong hover:text-ink-1 active:scale-[0.97] disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-ink-2 aria-expanded:bg-fill-strong aria-expanded:text-ink-1"
       >
         <GitBranch className="size-3.5 shrink-0" />
         <span className="relative min-w-0 flex-1 truncate">{current}</span>
       </button>
       {open ? (
         <Popover anchor={root} side="top" width={300} minHeight={180} maxHeight={360} onDismiss={() => setOpen(false)} role="dialog" aria-label="分支" className="flex flex-col overflow-hidden">
-          <label className="flex shrink-0 items-center gap-2 border-b border-stroke px-3 py-2.5 text-content/50">
+          <label className="flex shrink-0 items-center gap-2 border-b border-stroke px-3 py-2.5 text-ink-3">
             <Search className="size-3.5 shrink-0" strokeWidth={1.75} />
             <input
               autoFocus
@@ -105,12 +105,12 @@ export function BranchPicker({ cwd, current, disabled = false }: { cwd: string; 
                   else if (canCreate) void run(() => gitCreateBranch(cwd, createName));
                 }
               }}
-              className="min-w-0 flex-1 bg-transparent font-sans text-[13px] text-content outline-none placeholder:text-content/40 disabled:opacity-60"
+              className="min-w-0 flex-1 bg-transparent font-sans text-ui text-ink-1 outline-none placeholder:text-ink-3 disabled:opacity-60"
             />
             {busy ? <Loader className="size-3.5 shrink-0 animate-spin" /> : null}
           </label>
           <div ref={lockOverscroll} className="min-h-0 flex-1 overflow-y-auto overscroll-none px-1.5 py-1.5">
-            {!branches ? <div className="px-2 py-3 text-[12px] text-content/50">正在读取分支…</div> : null}
+            {!branches ? <div className="px-2 py-3 text-xs text-ink-3">正在读取分支…</div> : null}
             {rows.map((row, index) => {
               const highlighted = index === active;
               return (
@@ -124,26 +124,26 @@ export function BranchPicker({ cwd, current, disabled = false }: { cwd: string; 
                   onMouseDown={(event) => event.preventDefault()}
                   onMouseEnter={() => setActive(index)}
                   onClick={() => pick(row)}
-                  className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[13px] disabled:opacity-60 ${
-                    highlighted || row.current ? "bg-selection text-content" : "text-content hover:bg-content/5"
+                  className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-ui disabled:opacity-60 ${
+                    highlighted || row.current ? "bg-selection text-ink-1" : "text-ink-1 hover:bg-fill"
                   }`}
                 >
-                  {row.current ? <Check className="size-3.5 shrink-0" strokeWidth={1.75} /> : <GitBranch className="size-3.5 shrink-0 text-content/50" strokeWidth={1.75} />}
+                  {row.current ? <Check className="size-3.5 shrink-0" strokeWidth={1.75} /> : <GitBranch className="size-3.5 shrink-0 text-ink-3" strokeWidth={1.75} />}
                   <span className={`min-w-0 flex-1 truncate ${row.current ? "font-medium" : ""}`}>{row.name}</span>
-                  {row.remote ? <span className="shrink-0 rounded bg-content/6 px-1.5 py-0.5 text-[10px] text-content/40">{row.remote}</span> : null}
+                  {row.remote ? <span className="shrink-0 rounded bg-fill px-1.5 py-0.5 text-2xs text-ink-3">{row.remote}</span> : null}
                 </button>
               );
             })}
-            {branches && rows.length === 0 && !canCreate ? <p className="px-2.5 py-5 text-center text-[12px] text-content/45">没有匹配的分支</p> : null}
+            {branches && rows.length === 0 && !canCreate ? <p className="px-2.5 py-5 text-center text-xs text-ink-3">没有匹配的分支</p> : null}
           </div>
-          {error ? <p className="max-h-16 shrink-0 overflow-y-auto whitespace-pre-wrap border-t border-stroke px-2.5 py-2 text-[11px] leading-4 text-red-400/90">{error}</p> : null}
+          {error ? <p className="max-h-16 shrink-0 overflow-y-auto whitespace-pre-wrap border-t border-stroke px-2.5 py-2 text-2xs leading-4 text-negative/90">{error}</p> : null}
           {canCreate ? (
             <div className="shrink-0 border-t border-stroke p-1 px-1.5">
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => void run(() => gitCreateBranch(cwd, createName))}
-                className="flex h-7.5 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] text-content/75 hover:bg-content/8 hover:text-content disabled:opacity-60"
+                className="flex h-7.5 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-ui text-ink-2 hover:bg-fill-strong hover:text-ink-1 disabled:opacity-60"
               >
                 <Plus className="size-4 shrink-0" strokeWidth={1.75} />
                 <span className="min-w-0 truncate">创建分支 {createName}</span>

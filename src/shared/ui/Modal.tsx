@@ -89,7 +89,7 @@ export function ModalPanel({
           aria-labelledby={titleId}
           aria-describedby={descriptionId}
           onMouseDown={(event) => event.stopPropagation()}
-          className={`relative isolate flex flex-col overflow-hidden rounded-2xl border border-content/7 shadow-2xl ${fitViewport ? "max-h-[calc(100dvh-32px)]" : ""} ${className ?? ""}`}
+          className={`relative isolate flex flex-col overflow-hidden rounded-2xl border border-line shadow-2xl ${fitViewport ? "max-h-[calc(100dvh-32px)]" : ""} ${className ?? ""}`}
         >
           <GlassBackdrop className="bg-background-base dark:bg-background-base/55" />
           <div className="modal-panel relative z-[1] flex min-h-0 flex-1 flex-col">
@@ -105,14 +105,14 @@ export function ModalPanel({
               >
                 <h2
                   id={titleId}
-                  className="text-md font-semibold leading-tight tracking-tight text-content"
+                  className="text-md font-semibold leading-tight tracking-tight text-ink-1"
                 >
                   {title}
                 </h2>
                 {description ? (
                   <p
                     id={descriptionId}
-                    className="mt-0.5 truncate text-[12px] leading-snug text-content/50"
+                    className="mt-0.5 truncate text-xs leading-snug text-ink-3"
                   >
                     {description}
                   </p>
@@ -123,7 +123,7 @@ export function ModalPanel({
                 type="button"
                 aria-label="Close"
                 onClick={onClose}
-                className="grid size-7 shrink-0 place-items-center rounded-md text-content/45 hover:bg-content/8 hover:text-content focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                className="grid size-7 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               >
                 <X className="size-3.5" strokeWidth={1.75} />
               </button>

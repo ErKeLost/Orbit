@@ -803,10 +803,10 @@
   height: 26px;
 }
 
-.provider-fallback-mark[data-tone="0"] { background: #38bdf8; color: #082f49; }
-.provider-fallback-mark[data-tone="1"] { background: #a78bfa; color: #2e1065; }
-.provider-fallback-mark[data-tone="2"] { background: #34d399; color: #022c22; }
-.provider-fallback-mark[data-tone="3"] { background: #fbbf24; color: #451a03; }
+.provider-fallback-mark[data-tone="0"] { background: var(--accent); color: var(--accent-fg); }
+.provider-fallback-mark[data-tone="1"] { background: var(--accent-ink); color: var(--accent-fg); }
+.provider-fallback-mark[data-tone="2"] { background: var(--positive); color: var(--on-status); }
+.provider-fallback-mark[data-tone="3"] { background: var(--warning); color: var(--on-status); }
 
 .provider-fallback-mark {
   font-size: 10px;

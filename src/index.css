@@ -4,6 +4,7 @@
  * surface Orbit has no equivalent for, or an alias that lets a third-party
  * widget read Orbit's tokens.
  */
+@import "./styles/tokens.css";
 @import "./styles/orbit-theme.css";
 @import "./styles/model-picker.css";
 @import "./styles/orbit.css";

@@ -22,17 +22,17 @@ import {
  * 采样 4Hz，只 re-render 这一小块，不影响被测量的界面。
  */
 function tone(fps: number, refreshHz: number): string {
-  if (!fps) return "text-content/40";
+  if (!fps) return "text-ink-3";
   const ratio = fps / Math.max(30, refreshHz);
-  if (ratio >= 0.85) return "text-emerald-400";
-  if (ratio >= 0.55) return "text-amber-400";
-  return "text-red-400";
+  if (ratio >= 0.85) return "text-positive";
+  if (ratio >= 0.55) return "text-warning";
+  return "text-negative";
 }
 
 function Bar({ value, max, className }: { value: number; max: number; className?: string }) {
   const width = Math.max(2, Math.min(100, (value / Math.max(1, max)) * 100));
   return (
-    <span className="block h-1.5 w-full overflow-hidden rounded-full bg-content/10">
+    <span className="block h-1.5 w-full overflow-hidden rounded-full bg-fill-strong">
       <span className={`block h-full rounded-full ${className ?? "bg-accent"}`} style={{ width: `${width}%` }} />
     </span>
   );
@@ -98,20 +98,20 @@ export function PerfHud() {
   return (
     <div
       data-perf-hud
-      className="pointer-events-auto fixed bottom-3 left-3 z-[2147483000] w-[268px] select-none rounded-lg border border-stroke/70 bg-background-base/95 p-2.5 font-mono text-[11px] leading-4 text-content/80 shadow-2xl backdrop-blur"
+      className="pointer-events-auto fixed bottom-3 left-3 z-[2147483000] w-[268px] select-none rounded-lg border border-stroke/70 bg-background-base/95 p-2.5 font-mono text-2xs leading-4 text-ink-1 shadow-2xl backdrop-blur"
     >
       <div className="mb-1.5 flex items-baseline justify-between gap-2">
         <span className={`text-base font-semibold tabular-nums ${tone(snapshot.fps, refreshHz)}`}>
           {snapshot.fps}
-          <span className="ml-0.5 text-[10px] font-normal text-content/40">fps</span>
+          <span className="ml-0.5 text-2xs font-normal text-ink-3">fps</span>
         </span>
-        <span className="tabular-nums text-content/45">
+        <span className="tabular-nums text-ink-3">
           {snapshot.frameMs}ms · p95 {snapshot.p95Ms}ms
         </span>
         <button
           type="button"
           onClick={() => togglePerfHud(false)}
-          className="rounded px-1 text-content/40 hover:bg-content/10 hover:text-content"
+          className="rounded px-1 text-ink-3 hover:bg-fill-strong hover:text-ink-1"
           title="关闭"
           aria-label="关闭性能面板"
         >
@@ -125,56 +125,56 @@ export function PerfHud() {
           history.map((value, index) => (
             <span
               key={index}
-              className={`flex-1 rounded-[1px] ${value >= refreshHz * 0.85 ? "bg-emerald-400/70" : value >= refreshHz * 0.55 ? "bg-amber-400/80" : "bg-red-400/85"}`}
+              className={`flex-1 rounded-xs ${value >= refreshHz * 0.85 ? "bg-positive/70" : value >= refreshHz * 0.55 ? "bg-warning/80" : "bg-negative/85"}`}
               style={{ height: `${Math.max(6, Math.min(100, (value / peak) * 100))}%` }}
               title={`${value} fps`}
             />
           ))
         ) : (
-          <span className="text-content/30">正在采样…</span>
+          <span className="text-ink-3">正在采样…</span>
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-x-3 gap-y-1 tabular-nums text-content/60">
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1 tabular-nums text-ink-2">
         <span>
-          jank <b className="text-content/85">{snapshot.janks}</b>
+          jank <b className="text-ink-1">{snapshot.janks}</b>
         </span>
         <span>
-          停顿 <b className={snapshot.stalls ? "text-amber-400" : "text-content/85"}>{snapshot.stalls}</b>
+          停顿 <b className={snapshot.stalls ? "text-warning" : "text-ink-1"}>{snapshot.stalls}</b>
         </span>
         <span>
-          卡死 <b className={snapshot.freezes ? "text-red-400" : "text-content/85"}>{snapshot.freezes}</b>
+          卡死 <b className={snapshot.freezes ? "text-negative" : "text-ink-1"}>{snapshot.freezes}</b>
         </span>
         <span>
-          最长 <b className="text-content/85">{snapshot.worstMs}ms</b>
+          最长 <b className="text-ink-1">{snapshot.worstMs}ms</b>
         </span>
         <span>
-          长任务 <b className="text-content/85">{snapshot.longTasks || "—"}</b>
+          长任务 <b className="text-ink-1">{snapshot.longTasks || "—"}</b>
         </span>
         <span>
-          堆 <b className="text-content/85">{snapshot.heapMB === null ? "—" : `${snapshot.heapMB}MB`}</b>
+          堆 <b className="text-ink-1">{snapshot.heapMB === null ? "—" : `${snapshot.heapMB}MB`}</b>
         </span>
       </div>
 
       <div className="mt-1.5 space-y-1">
-        <Bar value={snapshot.fps} max={refreshHz} className={snapshot.fps >= refreshHz * 0.85 ? "bg-emerald-400" : "bg-red-400"} />
-        <div className="flex items-center justify-between text-[10px] text-content/40">
+        <Bar value={snapshot.fps} max={refreshHz} className={snapshot.fps >= refreshHz * 0.85 ? "bg-positive" : "bg-negative"} />
+        <div className="flex items-center justify-between text-2xs text-ink-3">
           <span>DOM {snapshot.domNodes}</span>
           <span>{snapshot.refreshHz}Hz · {snapshot.visible ? "前台" : "后台"}</span>
         </div>
       </div>
 
       {worstSpan ? (
-        <div className="mt-1.5 truncate text-[10px] text-content/45" title={`${worstSpan.name} ${worstSpan.ms}ms`}>
+        <div className="mt-1.5 truncate text-2xs text-ink-3" title={`${worstSpan.name} ${worstSpan.ms}ms`}>
           最近操作 · {worstSpan.name} {worstSpan.ms}ms{worstSpan.dropped ? `（掉 ${worstSpan.dropped} 帧）` : ""}
         </div>
       ) : null}
 
       {snapshot.stallsRecent.length ? (
-        <div className="mt-1.5 space-y-0.5 border-t border-stroke/50 pt-1.5 text-[10px] text-content/45">
+        <div className="mt-1.5 space-y-0.5 border-t border-stroke/50 pt-1.5 text-2xs text-ink-3">
           {snapshot.stallsRecent.slice(-3).map((stall, index) => (
             <div key={index} className="truncate" title={`${stall.gapMs}ms · ${stall.span ?? ""}`}>
-              <span className={stall.kind === "freeze" ? "text-red-400" : stall.kind === "stall" ? "text-amber-400" : "text-content/55"}>
+              <span className={stall.kind === "freeze" ? "text-negative" : stall.kind === "stall" ? "text-warning" : "text-ink-2"}>
                 {stall.kind}
               </span>{" "}
               {stall.gapMs}ms{stall.span ? ` · ${stall.span}` : ""}
@@ -184,14 +184,14 @@ export function PerfHud() {
       ) : null}
 
       {snapshot.degraded ? (
-        <div className="mt-1.5 rounded bg-amber-400/10 px-1.5 py-1 text-[10px] text-amber-400">已自动降级：{snapshot.degradeReason}</div>
+        <div className="mt-1.5 rounded bg-warning/10 px-1.5 py-1 text-2xs text-warning">已自动降级：{snapshot.degradeReason}</div>
       ) : null}
 
       <div className="mt-2 flex items-center gap-1.5">
         <button
           type="button"
           onClick={() => void copy()}
-          className="rounded border border-stroke/60 px-1.5 py-0.5 text-[10px] text-content/70 hover:bg-content/10 hover:text-content"
+          className="rounded border border-stroke/60 px-1.5 py-0.5 text-2xs text-ink-2 hover:bg-fill-strong hover:text-ink-1"
         >
           {copied ? "已复制" : "复制报告"}
         </button>
@@ -201,11 +201,11 @@ export function PerfHud() {
             resetPerfStats();
             setSnapshot(getPerfSnapshot());
           }}
-          className="rounded border border-stroke/60 px-1.5 py-0.5 text-[10px] text-content/70 hover:bg-content/10 hover:text-content"
+          className="rounded border border-stroke/60 px-1.5 py-0.5 text-2xs text-ink-2 hover:bg-fill-strong hover:text-ink-1"
         >
           重置
         </button>
-        <span className="ml-auto text-[10px] text-content/25">⌘⇧P</span>
+        <span className="ml-auto text-2xs text-ink-3">⌘⇧P</span>
       </div>
     </div>
   );

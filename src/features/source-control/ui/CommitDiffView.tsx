@@ -97,20 +97,20 @@ export function CommitDiffView({ cwd, sha }: Props) {
   );
 
   if (!cwd || cwd === "~") {
-    return <p className="grid h-full place-items-center text-[13px] text-content/45">没有项目文件夹</p>;
+    return <p className="grid h-full place-items-center text-ui text-ink-3">没有项目文件夹</p>;
   }
   if (error) {
     return (
       <div className="grid h-full place-items-center p-6 text-center">
-        <CircleAlert className="mx-auto mb-3 size-5 text-red-400" />
-        <p className="text-[13px] text-content">无法加载提交</p>
-        <p className="mt-1 text-[12px] text-content/50">{error}</p>
+        <CircleAlert className="mx-auto mb-3 size-5 text-negative" />
+        <p className="text-ui text-ink-1">无法加载提交</p>
+        <p className="mt-1 text-xs text-ink-3">{error}</p>
       </div>
     );
   }
   if (files == null) {
     return (
-      <div className="grid h-full place-items-center text-content/40">
+      <div className="grid h-full place-items-center text-ink-3">
         <Loader className="size-4 animate-spin" strokeWidth={1.75} />
       </div>
     );

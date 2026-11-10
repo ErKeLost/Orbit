@@ -453,7 +453,7 @@
 }
 
 /* tailwind red-400, same red the app surfaces use */
-.remote-pairing-error { color: #f87171; }
+.remote-pairing-error { color: var(--negative); }
 
 /*
  * Two ranks inside one alert: the route that failed, then what to check.
@@ -463,7 +463,7 @@
 .remote-pairing-error-body { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
 .remote-pairing-error-body strong { font-weight: 500; overflow-wrap: anywhere; }
 .remote-pairing-error-body small {
-  color: color-mix(in srgb, #f87171 62%, var(--pairing-muted));
+  color: color-mix(in oklab, var(--negative) 62%, var(--pairing-muted));
   font-size: 0.94em;
   overflow-wrap: anywhere;
 }
@@ -718,7 +718,7 @@ html.remote-native-scanning .remote-pairing-content {
   position: absolute;
   width: 34px;
   height: 34px;
-  border: 3.5px solid #35e07d;
+  border: 3.5px solid var(--positive);
   filter: drop-shadow(0 0 8px rgb(53 224 125 / 55%));
 }
 
@@ -733,7 +733,7 @@ html.remote-native-scanning .remote-pairing-content {
   top: 10%;
   height: 2px;
   border-radius: 999px;
-  background: linear-gradient(90deg, transparent, #59f0a0 22%, #c8ffdd 50%, #59f0a0 78%, transparent);
+  background: linear-gradient(90deg, transparent, var(--positive) 22%, var(--ink-1) 50%, var(--positive) 78%, transparent);
   box-shadow: 0 0 14px 2px rgb(53 224 125 / 45%);
   animation: qr-beam 2.8s ease-in-out infinite alternate;
 }
@@ -809,7 +809,7 @@ html.remote-native-scanning .remote-pairing-content {
   font-size: 13px;
 }
 
-.qr-scanner-status.is-error { border-color: rgb(255 122 122 / 38%); color: #ffb7b7; }
+.qr-scanner-status.is-error { border-color: color-mix(in oklab, var(--negative) 38%, transparent); color: var(--negative); }
 .qr-scanner-status svg { width: 16px; height: 16px; }
 
 .qr-scanner-status > button {

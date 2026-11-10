@@ -226,14 +226,14 @@ export function SessionPaneHeader({
         onPaneDragStart(event);
       }}
     >
-      {showGrip ? <GripVertical className="size-3.5 shrink-0 text-content/35" strokeWidth={1.75} /> : null}
-      <span className={`size-2 shrink-0 rounded-full ${focused ? "bg-accent" : "bg-content/20"}`} />
+      {showGrip ? <GripVertical className="size-3.5 shrink-0 text-ink-3" strokeWidth={1.75} /> : null}
+      <span className={`size-2 shrink-0 rounded-full ${focused ? "bg-accent" : "bg-fill-strong"}`} />
       {renaming && session ? (
         <SessionTitleField value={title} onCommit={commitTitle} onCancel={() => setRenaming(false)} className="text-xs font-normal" />
       ) : (
         <span
           data-no-drag
-          className="min-w-0 flex-1 truncate text-xs text-content"
+          className="min-w-0 flex-1 truncate text-xs text-ink-1"
           title={`${title}（双击重命名）`}
           onDoubleClick={() => {
             if (session) setRenaming(true);
@@ -242,7 +242,7 @@ export function SessionPaneHeader({
           {title}
         </span>
       )}
-      {running ? <TerminalSpinner className="shrink-0 select-none text-[11px] leading-none text-accent" /> : null}
+      {running ? <TerminalSpinner className="shrink-0 select-none text-2xs leading-none text-accent" /> : null}
       <button
         type="button"
         data-no-drag
@@ -250,7 +250,7 @@ export function SessionPaneHeader({
         aria-label={onClosePane ? "关闭面板" : "关闭会话"}
         disabled={!onClosePane && !session}
         onClick={() => (onClosePane ? onClosePane() : void closeSession())}
-        className="grid size-5 shrink-0 place-items-center rounded text-content/50 hover:bg-content/10 hover:text-content disabled:opacity-40"
+        className="grid size-5 shrink-0 place-items-center rounded text-ink-3 hover:bg-fill-strong hover:text-ink-1 disabled:opacity-40"
       >
         <X className="size-3" strokeWidth={1.75} />
       </button>
