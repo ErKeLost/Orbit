@@ -6,6 +6,55 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.35
+
+A visual release: the app has one palette now, and three places that were empty
+or ambiguous got an answer.
+
+Colour, radius, type size and duration moved into `src/styles/tokens.css`, in
+three layers — a raw ramp, the names components use (`surface-*`, `ink-1..3`,
+`line`, `fill*`, `accent*`, positive/negative/warning), and aliases so every
+pre-existing rule keeps resolving while it is migrated. Before this, colour was
+derived ad hoc: `text-content/45` here, `border-content/10` there, a sidebar
+mixed with black by hand, status colours pulled from Tailwind's palette, and
+nine text sizes between 10 and 14px. Two screens built a month apart read as two
+products. They now share four surfaces, three text roles, one hairline and one
+scale; `docs/TOKENS.md` records the layers, the alias table and the rule that a
+new colour has to earn a semantic role.
+
+The default tint is 墨蓝 — hue 255, chroma 16%, canvas lightness 8% — and the
+three values move as one palette, because each surface is an offset from the
+canvas. Anyone still holding the old written default (240 / 0 / 9) is moved to
+the new one; anyone who chose their own tint keeps it exactly. Light mode is
+mirrored and deliberately brighter: canvas at 0.985 OKLCH, cards at pure white,
+ink starting at 0.21, so contrast separates the layers instead of a grey veil.
+Two contrast fixes ride along: accent-as-text is mixed with the body colour
+(amber at 1.9:1 on light becomes 5.2:1), and text on an accent fill is picked
+from the fill's luminance — a cobalt button at 66% lightness takes near-black
+ink at 5.5:1 instead of white at 3.4:1.
+
+An answer now shows where it read. A fetch or a highlights read is a page the
+turn opened; a search is not, because its results are candidates the agent never
+read. Those pages appear under the settled reply as a stack of site favicons and
+`N 个来源`, hover or click opens the list, and a row opens in the browser panel
+beside the conversation (or the system browser with a modifier). The address
+comes from the page's own frontmatter, so a redirect shows where it landed, and
+the list is capped at twelve. A turn that read only local files shows nothing.
+
+A new browser tab is a start page instead of the app's logo: the four commands
+you would otherwise hunt through menus for, drawn with their own keycaps, and
+the last eight pages you visited — read from `localStorage`, recorded only once
+a tab has a live page, so a URL that failed to load is never offered back. The
+tab strip matches: it sits a step below the page with one hairline along its
+bottom edge, the active tab paints over that line as the same sheet as the
+content, and the `+` moved into the strip where the tab list ends.
+
+The rail no longer asks "where am I" twice. The `ProjectSwitcher` title row is
+gone; the project list is the only switch. The counts that made sense beside it
+went too — section badges, session-group totals, a multi-root project's corner
+number (its paths stay in the row's title) — and an empty project list is a
+dashed folder-plus tile rather than the sentence 「还没有项目」.
+
 ## v1.0.34
 
 A smoothness release for the whole machine, not just this window. The reported
