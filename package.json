@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/bundle-pi.mjs && tsc -b && tsc -p tsconfig.computer-use.json && tsc -p tsconfig.browser-use.json && tsc -p tsconfig.voice.json && vite build",
+    "build": "node scripts/bundle-pi.mjs && tsc -b && tsc -p tsconfig.computer-use.json && tsc -p tsconfig.browser-use.json && vite build",
     "lint": "oxlint src scripts tests src-tauri/resources",
     "preview": "vite preview",
     "tauri": "node scripts/tauri.mjs",
-    "check": "tsc -b && bun run check:providers && bun run check:subagents && bun run check:computer-use && bun run check:browser-use && bun run check:voice && bun run lint",
+    "check": "tsc -b && bun run check:providers && bun run check:subagents && bun run check:computer-use && bun run check:browser-use && bun run lint",
     "check:providers": "tsc -p tsconfig.providers.json",
     "test:providers": "node scripts/check-provider-auth.mjs",
     "check:subagents": "tsc -p tsconfig.subagents.json",
@@ -29,9 +29,7 @@
     "bundle:pi": "node scripts/bundle-pi.mjs",
     "tauri:dev": "node scripts/tauri.mjs dev",
     "tauri:build": "node scripts/tauri.mjs build",
-    "tauri:info": "node scripts/tauri.mjs info",
-    "check:voice": "tsc -p tsconfig.voice.json",
-    "eval:voice": "bun scripts/eval-voice-routing.ts"
+    "tauri:info": "node scripts/tauri.mjs info"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
@@ -41,6 +39,7 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.43.13",
     "@earendil-works/pi-coding-agent": "1.5.0",
+    "@elevenlabs/react": "^1.22.0",
     "@hugeicons/core-free-icons": "4.3.0",
     "@hugeicons/react": "1.1.10",
     "@iconify-json/catppuccin": "^1.2.17",

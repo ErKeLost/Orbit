@@ -1,0 +1,13 @@
+{
+  "name": "@orbit/speech-engine",
+  "private": true,
+  "type": "module",
+  "description": "ElevenLabs Speech Engine server: transcripts in, Pi replies out.",
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "create-engine": "bun run src/create-engine.ts"
+  },
+  "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.77.0"
+  }
+}

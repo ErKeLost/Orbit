@@ -45,3 +45,5 @@ crates/*/target/
 
 # Local Netlify folder
 .netlify
+tools/speech-engine/node_modules/
+tools/speech-engine/.env

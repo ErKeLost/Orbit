@@ -1,5 +1,3 @@
-import { rimeError } from "./rime-error"
-import { Channel } from "@tauri-apps/api/core";
 import { invoke } from "./native";
 import { useWorkspace } from "./store";
 import { runRemoteHostOperation } from "./remote-runtime";
@@ -188,59 +186,19 @@ export async function saveSpeechApiKey(provider:string|undefined,apiKey:string|n
 export async function transcribeAudio(audioBase64:string,mimeType:string):Promise<{text:string;transport:string;noSpeech?:boolean}> { if(!workspaceBackend()) throw new Error('语音输入请在电脑端使用'); return invoke<{text:string;transport:string;noSpeech?:boolean}>('transcribe_audio',{audioBase64,mimeType}) }
 
 /**
- * 语音 Agent（Rime）—— 与上面那套 composer 听写**互不相干**：那边是一次性的
- * 「录音变文字」，这边是一整个「听一句 → 交给 Pi → 把回答说出来」的环。
- * 配置在 rime.json，密钥在 auth.json 的 `rime` 条目下。
+ * 语音通话（ElevenLabs Speech Engine）—— 与上面的听写**互不相干**：听写是
+ * 「一段录音 → 一个字输入框」，通话是「一直开着的双向语音流」。
+ *
+ * 声音的一切都归 ElevenLabs：麦克风、断句、打断、识别、合成。前端只需要一个短期
+ * WebRTC token；长期 API Key 留在 Rust 里。Pi 那一端在 `tools/speech-engine`：
+ * ElevenLabs 会从云端连过去，每通电话起一个独立的 `pi --mode rpc` 进程。
  */
-async function rimeInvoke<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  try { return await invoke<T>(command, args) } catch (error) { throw rimeError(error) }
-}
-export type RimeServiceCheck = { ok: boolean; latencyMs?: number; requestId?: string; error?: import("./rime-error").RimeFailure }
-export async function rimeCheck(): Promise<{stt:RimeServiceCheck;tts:RimeServiceCheck}> { return rimeInvoke("rime_check") }
-export type RimeConfig = {
-  model:string
-  speaker:string
-  lang:string
-  sttLang:string
-  endpointMs?:number
-  timeScaleFactor?:number
-  textLookaheadTokens?:number
-  sttMode?:"written"|"verbatim"
-  contextTerms?:string[]
-  customLexicon?:{spelling:string;pronunciation:string}[]
-  configured:boolean
-  hasCredential:boolean
-  models?:string[]
-  langs?:string[]
-  sttLangs?:string[]
-}
-export async function rimeConfig():Promise<RimeConfig> { if(!workspaceBackend()) throw new Error('语音 Agent 请在电脑端使用'); return rimeInvoke<RimeConfig>('rime_config') }
-export type RimeVoice = {speaker:string;country?:string;description?:string;flagship?:boolean}
-export async function rimeVoices(model:string,language:string):Promise<{voices:RimeVoice[]}> { if(!workspaceBackend()) throw new Error('Rime 音色请在电脑端设置'); return rimeInvoke('rime_voices',{model,language}) }
-export async function saveRimeConfig(patch:Partial<RimeConfig>):Promise<RimeConfig> { if(!workspaceBackend()) throw new Error('语音 Agent 请在电脑端使用'); return rimeInvoke<RimeConfig>('save_rime_config',{config:patch}) }
-export async function saveRimeApiKey(apiKey:string|null):Promise<{hasCredential:boolean}> { if(!workspaceBackend()) throw new Error('语音 Agent 密钥请在电脑端设置'); return rimeInvoke('save_rime_api_key',{apiKey}) }
-/** 单段音频导出；实时对话和试听使用下方 WebSocket 流。 */
-export async function rimeTts(text:string,speaker?:string,format?:string):Promise<{audio:string;mimeType:string;sampleRate?:number;model:string;speaker:string;lang:string}> { return rimeInvoke('rime_tts',{text,...speaker?{speaker}:{},...format?{format}:{}}) }
-export async function rimeTtsPrepare():Promise<void> { return rimeInvoke('rime_tts_prepare') }
-/** 流式转写：说话时就把音频推进去，静音结束时只剩一个 end。 */
-export type SttEvent = { started?:boolean; partial?:string; done?:boolean; text?:string; error?:string; kind?:string; retryable?:boolean; requestId?:string }
-export async function rimeSttOpen(onEvent?:(event:SttEvent)=>void):Promise<{id:string;language:string}> {
- const channel=new Channel<SttEvent>()
- channel.onmessage=event=>onEvent?.(event)
- return rimeInvoke('rime_stt_open',{onEvent:channel})
-}
-export async function rimeSttPush(id:string,audioBase64:string):Promise<void> { return rimeInvoke('rime_stt_push',{id,audioBase64}) }
-export async function rimeSttFinish(id:string):Promise<{text:string;noSpeech:boolean}> { return rimeInvoke('rime_stt_finish',{id}) }
-export async function rimeSttAbort(id:string):Promise<void> { return rimeInvoke('rime_stt_abort',{id}) }
-/** 流式朗读：文本边送、音频边回。`onAudio` 收到的是 base64 的 PCM16。 */
-export type TtsEvent = {audio?:string;done?:boolean;error?:string;notice?:string;contextId?:string;sampleRate?:number;requestId?:string;kind?:string;retryable?:boolean}
-export async function rimeTtsStream(onAudio:(base64:string,sampleRate?:number)=>void,onEvent?:(event:TtsEvent)=>void):Promise<{id:string;sampleRate:number}> {
-  const channel = new Channel<TtsEvent>()
-  channel.onmessage = (event) => { if (event.audio) onAudio(event.audio,event.sampleRate); onEvent?.(event) }
-  return rimeInvoke('rime_tts_stream', { onAudio: channel })
-}
-export async function rimeTtsSend(id:string,text:string):Promise<void> { return rimeInvoke('rime_tts_send',{id,text}) }
-export async function rimeTtsFinish(id:string):Promise<void> { return rimeInvoke('rime_tts_finish',{id}) }
-export async function rimeTtsCancel(id:string):Promise<void> { return rimeInvoke('rime_tts_cancel',{id}) }
-/** 一句 PCM16 16k 单声道录音 → 文字。一条连接一句话。 */
-export async function rimeStt(audioBase64:string):Promise<{text:string;noSpeech:boolean;language:string}> { return rimeInvoke('rime_stt',{audioBase64}) }
+export type SpeechEngineConfig = { engineId:string; configured:boolean; hasCredential:boolean }
+export type SpeechEngineCheck = { ok:boolean; tier?:string; characterCount?:number; characterLimit?:number }
+export async function speechEngineConfig():Promise<SpeechEngineConfig> { if(!workspaceBackend()) throw new Error('语音通话请在电脑端使用'); return invoke<SpeechEngineConfig>('speech_engine_config') }
+export async function saveSpeechEngineConfig(patch:{engineId?:string|null}):Promise<SpeechEngineConfig> { if(!workspaceBackend()) throw new Error('语音通话请在电脑端设置'); return invoke<SpeechEngineConfig>('save_speech_engine_config',{config:patch}) }
+export async function saveSpeechEngineApiKey(apiKey:string|null):Promise<{hasCredential:boolean}> { if(!workspaceBackend()) throw new Error('语音密钥请在电脑端设置'); return invoke<{hasCredential:boolean}>('save_speech_engine_api_key',{apiKey}) }
+/** 每次开麦换一个 token；有效期很短，不要缓存。 */
+export async function speechEngineToken():Promise<{token:string;engineId:string}> { if(!workspaceBackend()) throw new Error('语音通话请在电脑端使用'); return invoke<{token:string;engineId:string}>('speech_engine_token') }
+/** 免费额度就是通话会在半句时断掉的原因，设置页先把它显示出来。 */
+export async function speechEngineCheck():Promise<SpeechEngineCheck> { return invoke<SpeechEngineCheck>('speech_engine_check') }

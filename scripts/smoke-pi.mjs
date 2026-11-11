@@ -13,7 +13,6 @@ cpSync(resolve(root,'src-tauri/resources/pi-runtime'),resolve(resources,'pi-runt
 cpSync(resolve(root,'src-tauri/resources/subagents'),resolve(resources,'subagents'),{recursive:true})
 cpSync(resolve(root,'src-tauri/resources/computer-use'),resolve(resources,'computer-use'),{recursive:true})
 cpSync(resolve(root,'src-tauri/resources/browser-use'),resolve(resources,'browser-use'),{recursive:true})
-cpSync(resolve(root,'src-tauri/resources/voice'),resolve(resources,'voice'),{recursive:true})
 cpSync(resolve(root,'src-tauri/resources/node_modules'),resolve(resources,'node_modules'),{recursive:true})
 cpSync(resolve(root,'src-tauri/resources/node-runtime'),resolve(resources,'node-runtime'),{recursive:true})
 cpSync(resolve(root,'src-tauri/resources/gui-extension.ts'),resolve(resources,'gui-extension.ts'))
