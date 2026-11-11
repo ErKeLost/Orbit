@@ -6,6 +6,36 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.37
+
+A one-component release: the indicator that says a session is working.
+
+It used to be a braille dot pattern — `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`, a state index stepped from an
+80ms interval. Braille made sense on a terminal grid, where the dots occupy a
+fixed cell of a fixed font. In a proportional UI at 12px it does not: every frame
+has a different ink coverage, so the mark reads as corrupted text rather than as
+something moving, and the advance width drifts between frames, so the row shifts
+by a pixel while it animates. What those ten frames share is only the meaning
+"still running"; the shape was noise.
+
+The spinner is now a ring with fixed geometry — a dim full circle under a bright
+quarter arc, rotated by CSS. The shape never changes, so only rotation carries
+the state, which holds at any size and does not depend on a monospace fallback
+being present.
+
+Deleting the frame table deleted the mechanism with it. The component kept the
+frame index in state and ticked it from an interval, so every visible spinner
+re-rendered twelve times a second for as long as anything was running; a project
+row and a session card and a pane header all did this at once. The ring needs no
+JavaScript and the component is now a pure function.
+
+Size had also leaked into the call sites: four places each passed their own
+`w-3` or `w-3.5`, plus `text-2xs leading-none`, to fit the glyph into their row.
+The ring owns its size (`size-3`, inline-flex), and the call sites choose only
+the colour. The one visible change beyond the shape is in the pane header, where
+the mark grew from 10px to 12px; the ring's open centre keeps it from outweighing
+the 8px status dot it sits next to.
+
 ## v1.0.36
 
 A voice release that removes more than it adds. The voice page used to be a
