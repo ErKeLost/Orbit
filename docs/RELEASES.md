@@ -6,6 +6,42 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.36
+
+A voice release that removes more than it adds. The voice page used to be a
+self-built call loop: microphone capture in an AudioWorklet, silence splitting,
+PCM scheduling into Web Audio, partial-transcript merging across streams, an
+intent router running in a side Pi session, and a priority queue for reading task
+events aloud. Two thousand lines of that, plus a Rime transport with sixteen
+commands, existed to do what a voice platform already does.
+
+A call is now three things: ElevenLabs owns the audio path, Pi owns the answer,
+the app draws the orb. `src-tauri/src/rime.rs` and the whole `resources/voice`
+extension are gone, along with the frontend capture, playback, routing and
+announcement modules and their tests — 6,000 lines out, 1,000 in. The page keeps
+one class: it fetches a short-lived WebRTC token, starts a session, and reports
+state, transcript, mute and barge-in from the SDK. No audio code is left in the
+webview.
+
+Pi answers from `tools/speech-engine`, a small server ElevenLabs connects to from
+the cloud. Each call gets its own `pi --mode rpc` process — history and task state
+isolated, disposed on hang-up — and the newest transcript is forwarded while the
+answer streams back out. Transcripts that contain no letters or digits are
+dropped rather than sent: a microphone macOS never authorised produces `...`, and
+answering that only makes Pi invent work.
+
+Credentials did not move into the page. The API key stays in `auth.json`
+(provider `elevenlabs`), the Speech Engine id in `eleven.json`, and the frontend
+receives a token with a short life. Settings → 语音 keeps two fields and a plan
+check that reports the remaining characters on the free tier.
+
+Two limits worth stating plainly, because both are visible in use. `sendResponse`
+is only valid inside an `onTranscript` handler, so the agent cannot speak after
+the caller stops talking: the task announcement queue is not "unfinished", it has
+no equivalent in this protocol. And a call acts on its own Pi session, so
+watching or steering another session from a call needs a bridge into the desktop
+RPC that does not exist yet. `docs/VOICE_ARCHITECTURE.md` records both.
+
 ## v1.0.35
 
 A visual release: the app has one palette now, and three places that were empty
