@@ -255,7 +255,7 @@ function RailSessionCard({
       </span>
       <span className="flex min-w-6 shrink-0 items-center justify-end whitespace-nowrap text-2xs leading-none tabular-nums text-ink-3">
         {running ? (
-          <TerminalSpinner className="inline-block w-3 select-none text-center text-2xs leading-none text-accent" />
+          <TerminalSpinner className="text-accent" />
         ) : (
           sessionRelativeTime(session.modified)
         )}

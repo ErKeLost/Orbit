@@ -110,7 +110,7 @@ function SessionCard({
                 </>
               ) : working ? (
                 <>
-                  <TerminalSpinner className="inline-block w-3 select-none text-center text-2xs leading-none text-accent" />
+                  <TerminalSpinner className="text-accent" />
                   <span>Working...</span>
                 </>
               ) : (

@@ -242,7 +242,7 @@ export function SessionPaneHeader({
           {title}
         </span>
       )}
-      {running ? <TerminalSpinner className="shrink-0 select-none text-2xs leading-none text-accent" /> : null}
+      {running ? <TerminalSpinner className="text-accent" /> : null}
       <button
         type="button"
         data-no-drag

@@ -173,7 +173,7 @@ function ProjectRow({
           </span>
         )}
         <span className={`min-w-0 flex-1 truncate text-ui leading-tight ${selected ? "font-medium" : ""}`}>{project.name}</span>
-        {busy ? <TerminalSpinner className="shrink-0 text-2xs leading-none text-accent group-hover:hidden" /> : null}
+        {busy ? <TerminalSpinner className="text-accent group-hover:hidden" /> : null}
       </button>
       <button
         type="button"
