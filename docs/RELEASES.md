@@ -6,6 +6,40 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.38
+
+Voice calls: a service you can check, and that says why it is silent.
+
+The call page is back to the shape it had before the ElevenLabs refactor — the orb
+at the top, a start button underneath, and the reply rendered as a real message in
+its own scrolling pane at full width. The plumbing under that page changed; the page
+should not have changed with it, and now it does not.
+
+Before it opens the microphone, the page asks the local engine for `GET /health`. A
+dead engine used to look exactly like a quiet assistant: the WebRTC session connects,
+VAD lights the orb, and nothing ever answers. Two failures now say themselves instead
+— "the service is not running, run `up.sh`", or "the service is serving `seng_A` while
+the app dials `seng_B`". Settings → Voice shows the same status: engine id, resident
+size, calls served, uptime.
+
+Transcripts longer than 1200 characters are treated as the room talking — a video or a
+podcast the microphone heard — and dropped with one log line, rather than handed to Pi
+as an instruction. Background voice detection is enabled on the engine as well. And a
+new utterance arriving mid-answer now goes in as `steer`, so talking over the reply no
+longer produces "Agent is already processing" as a chat bubble.
+
+`up.sh` re-points the engine that already exists instead of creating a new one. A
+changed tunnel address used to mean a new `seng_…` and a settings edit; now the id
+survives and the file the app reads records both. The script also takes the key from
+`auth.json` and finds `cloudflared` where it actually lives.
+
+The reason the last part of this release is about plumbing: that engine process had
+grown to 49 GB and been killed by the kernel, which left the tunnel answering 502 and
+the app showing nothing at all. It now logs with timestamps, exits on its own at 4 GB
+instead of dragging the machine into swap, disposes a call's Pi process when the socket
+drops without a close message, and stops a response stream from queueing text nobody
+will read.
+
 ## v1.0.37
 
 A one-component release: the indicator that says a session is working.
