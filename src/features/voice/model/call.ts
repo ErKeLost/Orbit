@@ -10,9 +10,12 @@
  */
 import { Conversation, type VoiceConversation } from "@elevenlabs/client"
 import { speechEngineToken } from "@/lib/rpc-projects"
+import { probeSpeechEngine } from "./health"
 
 export type CallState = "off" | "connecting" | "listening" | "thinking" | "speaking"
 export type CallTurn = { id: string; role: "user" | "agent"; text: string }
+/** 页面那一层要的形状：用户、助手、以及系统提示（比如引擎出错）。 */
+export type VoiceLogItem = { id: string; kind: "user" | "agent" | "system"; text: string }
 export type CallSnapshot = {
   state: CallState
   error: string | null
@@ -54,8 +57,15 @@ export class VoiceCall {
     const epoch = ++this.epoch
     this.update({ state: "connecting", error: null, turns: [], level: 0, outputLevel: 0 })
     try {
+      // 先确认本机那一端还活着：它死了的话，WebRTC 照样会接通，然后对面一直不出声。
+      const health = await probeSpeechEngine()
+      if (epoch !== this.epoch) return
+      if (!health.running) return this.fail(health.reason)
       const { token, engineId } = await speechEngineToken()
       if (epoch !== this.epoch) return
+      if (health.engineId && engineId && health.engineId !== engineId) {
+        return this.fail(`正在跑的服务端认的是 ${health.engineId}，应用配的是 ${engineId}：两边不一致。重新跑一次 tools/speech-engine/up.sh。`)
+      }
       this.update({ engineId })
       const conversation = (await Conversation.startSession({
         conversationToken: token,

@@ -93,7 +93,15 @@ pub async fn save_speech_engine_config(config: Value) -> Result<Value, String> {
                 text.to_owned()
             }
         };
-        let stored = json!({ "engineId": engine });
+        let stored = {
+            // `eleven.json` also carries the tunnel address written by `up.sh`; keep it.
+            let mut stored = read_stored();
+            if !stored.is_object() {
+                stored = json!({});
+            }
+            stored["engineId"] = json!(engine);
+            stored
+        };
         let path = config_path()?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| format!("无法创建 Pi 配置目录：{error}"))?;

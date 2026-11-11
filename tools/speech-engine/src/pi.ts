@@ -54,6 +54,16 @@ export class PiVoice {
       this.stderrTail = [...this.stderrTail.slice(-19), line]
     })
 
+    // `spawn` 失败（PATH 里没有 pi、shim 被删）只会异步发一个 'error' 事件；不接住它
+    // 就会变成未捕获异常，把这整个服务端进程带走。
+    this.child.on("error", error => {
+      this.closed = true
+      for (const [, pending] of this.pending) pending.reject(error)
+      this.pending.clear()
+      for (const settle of this.settled) settle(error)
+      this.settled.clear()
+    })
+
     this.child.on("exit", (code, signal) => {
       this.closed = true
       const detail = this.stderrTail.join(" | ").slice(0, 400)
@@ -66,6 +76,13 @@ export class PiVoice {
   }
 
   private receive(line: string) {
+    // A single RPC line is one event. Anything past a few MB is a tool payload we are
+    // never going to speak out loud, and parsing it in one go is exactly the kind of
+    // spike that can take this process from 130 MB to gigabytes. Drop it, say so.
+    if (line.length > 8 * 1024 * 1024) {
+      console.warn(`[pi] dropped a ${Math.round(line.length / 1024 / 1024)}MB rpc line`)
+      return
+    }
     let value: Record<string, unknown>
     try {
       value = JSON.parse(line)
@@ -108,6 +125,7 @@ export class PiVoice {
   prompt(text: string, signal: AbortSignal): AsyncIterable<string> {
     const queue: string[] = []
     let done = false
+    let disposed = false
     let error: Error | undefined
     let wake: (() => void) | undefined
     const flush = () => {
@@ -115,6 +133,9 @@ export class PiVoice {
       wake = undefined
     }
     const emit = (token: string) => {
+      // A consumer that walked away (call dropped mid-answer) must not keep growing
+      // its queue: the text would accumulate with nothing to drain it.
+      if (disposed) return
       queue.push(token)
       flush()
     }
@@ -126,10 +147,15 @@ export class PiVoice {
     this.deltas.add(emit)
     this.settled.add(settle)
     const cleanup = () => {
+      disposed = true
+      queue.length = 0
       this.deltas.delete(emit)
       this.settled.delete(settle)
+      signal.removeEventListener("abort", stop)
     }
-    void this.send({ type: "prompt", message: text }, 30_000).catch(settle)
+    // `steer`：通话中用户开口就是插话，pi 会把这句话并进正在跑的回合，而不是
+    // 直接回一句“已经忙着了”。不传这个字段，边说话边回答就会变成一条报错气泡。
+    void this.send({ type: "prompt", message: text, streamingBehavior: "steer" }, 30_000).catch(settle)
     const stop = () => void this.abort().catch(() => undefined)
     signal.addEventListener("abort", stop, { once: true })
 
@@ -137,17 +163,22 @@ export class PiVoice {
       next: async () => {
         for (;;) {
           if (queue.length) return { value: queue.shift()!, done: false }
+          if (disposed) return { value: undefined, done: true }
           if (done) {
+            const failure = error && !signal.aborted ? `pi 停止：${error.message}` : undefined
             cleanup()
-            signal.removeEventListener("abort", stop)
-            if (queue.length) return { value: queue.shift()!, done: false }
-            return error && !signal.aborted ? { value: `pi 停止：${error.message}`, done: false } : { value: undefined, done: true }
+            return failure && !queue.length ? { value: failure, done: false } : { value: undefined, done: true }
           }
           await new Promise<void>(resolve => {
             wake = resolve
             setTimeout(resolve, 250)
           })
         }
+      },
+      // Called by the SDK when a response is superseded (barge-in) or the call ends.
+      return: async () => {
+        cleanup()
+        return { value: undefined, done: true }
       },
     }
     return { [Symbol.asyncIterator]: () => iterator }

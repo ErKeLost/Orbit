@@ -16,6 +16,7 @@ import {
   type SpeechEngineCheck,
   type SpeechEngineConfig,
 } from "@/lib/rpc-projects";
+import { probeSpeechEngine, type EngineHealth } from "../model/health";
 
 export function VoiceSettingsPage() {
   const [config, setConfig] = useState<SpeechEngineConfig | null>(null);
@@ -24,7 +25,10 @@ export function VoiceSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [checking, setChecking] = useState(false);
   const [report, setReport] = useState<SpeechEngineCheck | null>(null);
+  const [health, setHealth] = useState<EngineHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const probe = async () => setHealth(await probeSpeechEngine());
 
   useEffect(() => {
     let live = true;
@@ -37,6 +41,9 @@ export function VoiceSettingsPage() {
       .catch((cause: unknown) => {
         if (live) setError(cause instanceof Error ? cause.message : String(cause));
       });
+    void probeSpeechEngine().then(value => {
+      if (live) setHealth(value);
+    });
     return () => {
       live = false;
     };
@@ -133,7 +140,23 @@ export function VoiceSettingsPage() {
       </Group>
 
       <Group title="服务端" description="Pi 那一端不在这个应用里：ElevenLabs 从云端连接到 tools/speech-engine，每次通话起一个独立的 pi --mode rpc 进程。">
-        <Row label="启动方式" description="bun run start（需要 ELEVENLABS_API_KEY、SPEECH_ENGINE_ID、PI_CWD），再用 ngrok/cloudflared 把 3001 端口暴露成 wss://。">
+        <Row
+          anchorId="voice-health"
+          label="本机服务"
+          description={
+            health === null
+              ? "正在问 127.0.0.1:3001…"
+              : health.running
+                ? `运行中 · ${health.engineId} · 内存 ${health.rssMb} MB · 已接 ${health.calls} 通 · 已跑 ${Math.floor(health.uptimeSec / 60)} 分钟`
+                : health.reason
+          }
+        >
+          <div className="flex items-center gap-2">
+            <span className={`size-2 rounded-full ${health === null ? "bg-ink-3" : health.running ? "bg-positive" : "bg-negative"}`} aria-hidden />
+            <SecondaryButton onClick={() => void probe()}>重新检查</SecondaryButton>
+          </div>
+        </Row>
+        <Row label="启动方式" description="up.sh 顺序是：起服务 → 起隧道 → 把隧道的 wss 地址写回 Engine → 记到 eleven.json。隧道换了地址，重跑一次就好，不需要改 Engine ID。">
           <code className="text-xs text-ink-3">tools/speech-engine</code>
         </Row>
       </Group>
