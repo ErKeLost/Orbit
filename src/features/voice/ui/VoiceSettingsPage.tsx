@@ -120,7 +120,7 @@ export function VoiceSettingsPage() {
         <Row
           anchorId="voice-engine"
           label="Speech Engine ID"
-          description="dashboard 里没有创建界面，用 tools/speech-engine 的 create-engine 生成 seng_… 后填这里。语音链路是：浏览器 ↔ ElevenLabs ↔ 本机 127.0.0.1 的 speech-engine 服务。"
+          description="第一次跑 tools/speech-engine/up.sh 会生成 seng_… 并写进 eleven.json。语音链路是：浏览器 ↔ ElevenLabs ↔ 本机 127.0.0.1 的 speech-engine。"
         >
           <div className="flex items-center gap-2">
             <Input placeholder="seng_…" value={engineDraft} onChange={event => setEngineDraft(event.target.value)} />

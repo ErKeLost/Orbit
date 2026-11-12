@@ -5,7 +5,6 @@
   "description": "ElevenLabs Speech Engine server: transcripts in, Pi replies out.",
   "scripts": {
     "start": "bun run src/server.ts",
-    "create-engine": "bun run src/create-engine.ts",
     "repoint": "bun run src/repoint.ts"
   },
   "dependencies": {
