@@ -142,10 +142,25 @@ fn probe_login_shell_path() -> Option<String> {
 }
 
 #[cfg(unix)]
-fn adopt_login_shell_path() {
-    let Some(login) = probe_login_shell_path() else {
-        return;
-    };
+fn login_path_cache() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    std::path::PathBuf::from(home)
+        .join(".pi")
+        .join("agent")
+        .join("login-path")
+}
+
+#[cfg(unix)]
+fn read_cached_login_path() -> Option<String> {
+    let path = std::fs::read_to_string(login_path_cache()).ok()?;
+    let path = path.trim();
+    (!path.is_empty()).then(|| path.to_string())
+}
+
+/// `setenv` is process-global and not thread-safe. Apply PATH only on this
+/// thread, before Tauri starts its runtime threads.
+#[cfg(unix)]
+fn merge_login_path(login: &str) {
     let current = std::env::var("PATH").unwrap_or_default();
     let mut seen = std::collections::HashSet::new();
     let merged: Vec<&str> = login
@@ -154,6 +169,57 @@ fn adopt_login_shell_path() {
         .filter(|dir| !dir.is_empty() && seen.insert(dir.to_string()))
         .collect();
     std::env::set_var("PATH", merged.join(":"));
+}
+
+/// A login shell can take seconds. Use the last successful PATH immediately,
+/// and refresh the cache in the background for the next launch. The first
+/// launch, with no cache, still waits — there is nothing else to apply.
+#[cfg(unix)]
+fn adopt_login_shell_path() {
+    let started = std::time::Instant::now();
+    if let Some(cached) = read_cached_login_path() {
+        merge_login_path(&cached);
+        eprintln!(
+            "[orbit] login PATH cache applied in {}ms",
+            started.elapsed().as_millis()
+        );
+        std::thread::spawn(|| {
+            let started = std::time::Instant::now();
+            match probe_login_shell_path() {
+                Some(login) => {
+                    if let Some(parent) = login_path_cache().parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(login_path_cache(), login);
+                    eprintln!(
+                        "[orbit] login PATH cache refreshed in {}ms",
+                        started.elapsed().as_millis()
+                    );
+                }
+                None => eprintln!(
+                    "[orbit] login PATH probe failed after {}ms",
+                    started.elapsed().as_millis()
+                ),
+            }
+        });
+        return;
+    }
+    let Some(login) = probe_login_shell_path() else {
+        eprintln!(
+            "[orbit] login PATH probe missed after {}ms",
+            started.elapsed().as_millis()
+        );
+        return;
+    };
+    merge_login_path(&login);
+    if let Some(parent) = login_path_cache().parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(login_path_cache(), &login);
+    eprintln!(
+        "[orbit] login PATH probed in {}ms",
+        started.elapsed().as_millis()
+    );
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -228,6 +294,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            let setup_started = std::time::Instant::now();
             // The screen channel pushes status changes to the UI instead of
             // being polled, and the pipeline thread — not the webview — is what
             // knows them.
@@ -250,6 +317,10 @@ pub fn run() {
             if let Some(dir) = media::session_media_dir(app.handle()) {
                 std::thread::spawn(move || media::prune_session_media(&dir));
             }
+            eprintln!(
+                "[orbit] window setup finished in {}ms",
+                setup_started.elapsed().as_millis()
+            );
             Ok(())
         })
         .manage(bridge::Bridge::default())
