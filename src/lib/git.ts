@@ -2,6 +2,7 @@ import { invoke } from "./native";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "./store";
 import { usePageVisible } from "./page-visibility";
+import { mobileRuntime } from "./runtime";
 
 export type GitDiffStats = { files: number; additions: number; deletions: number };
 export type GitChangedFile = { path: string; status: "M" | "A" | "D" | "U"; additions: number; deletions: number };
@@ -59,8 +60,10 @@ export function gitPollHits(key: string) {
   return quietPolls.get(key)?.hits ?? 0;
 }
 
-export function gitPollInterval(visible: boolean, hits: number) {
+export function gitPollInterval(visible: boolean, hits: number, remote = false) {
   if (!visible) return false as const;
+  // Each mobile poll is a round trip to the desktop. Stretch sooner.
+  if (remote) return hits >= 1 ? 30_000 : 15_000;
   return hits >= 2 ? GIT_QUIET_MS : GIT_FAST_MS;
 }
 
@@ -76,7 +79,7 @@ export function useGitDiffStats(cwd: string | undefined, enabled = true) {
       return value;
     },
     enabled: Boolean(cwd) && enabled && hasWorkspaceBackend(),
-    refetchInterval: () => gitPollInterval(visible, gitPollHits(key)),
+    refetchInterval: () => gitPollInterval(visible, gitPollHits(key), mobileRuntime()),
     staleTime: 2000,
   });
 }
@@ -92,7 +95,7 @@ export function useGitChangedFiles(cwd: string | undefined, enabled = true) {
       return value;
     },
     enabled: Boolean(cwd) && enabled && hasWorkspaceBackend(),
-    refetchInterval: () => gitPollInterval(visible, gitPollHits(key)),
+    refetchInterval: () => gitPollInterval(visible, gitPollHits(key), mobileRuntime()),
     staleTime: 2000,
   });
 }

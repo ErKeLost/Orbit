@@ -41,28 +41,28 @@ export function ScreenOverlay() {
   const hadFrame = useRef(false)
 
   useEffect(() => screenChannel().subscribe(setSnapshot), [])
-  // The frame rate is only meaningful once the panel's real refresh rate is
-  // known, so measure it as soon as the app shell mounts.
+  // Measuring the panel rate is a 400ms animation-frame loop. Do it when the
+  // window actually opens, not on every cold start of the phone shell.
+  const [rateReady, setRateReady] = useState(false)
   useEffect(() => {
-    void measurePanelFps()
-  }, [])
+    if (!mobile || !open) return
+    void measurePanelFps().then(() => setRateReady(true))
+  }, [mobile, open])
 
   const commit = useCallback((next: PipPlacement) => {
     setPlacement(next)
     savePlacement(next)
   }, [])
 
-  // One shape for both surfaces. Matching the pixel budget to the window size
-  // would save bytes, but it is also a resolution change — a new capture
-  // session, a new encoder and a keyframe — and enlarging should be instant.
-  // The small window simply downscales a sharp picture, which is free.
-  // `configure` is a no-op when the host already accepted the same shape.
+  // The thumbnail asks for a small frame. Enlarging asks for the panel size,
+  // which is one new keyframe — cheaper than decoding a desktop frame into a
+  // postage stamp for the whole time the window is open.
   useEffect(() => {
     if (!mobile || !open || !online) return
-    void screenChannel().configure(streamSettings(preferences)).catch(error => {
+    void screenChannel().configure(streamSettings(preferences, expanded ? "panel" : "thumb")).catch(error => {
       gooeyToast.error("屏幕预览未启动", { description: message(error), showTimestamp: false })
     })
-  }, [mobile, open, online, preferences])
+  }, [mobile, open, online, preferences, expanded, rateReady])
 
   // Closing the window releases the subscription; the desktop keeps the capture
   // session for its own idle grace so reopening is instant.

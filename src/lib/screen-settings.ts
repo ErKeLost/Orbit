@@ -151,25 +151,27 @@ export function screenPreferences(): ScreenPreferences {
 /**
  * Turn preferences into the shape sent to the host.
  *
- * One shape for both surfaces on purpose. Matching the pixel budget to the
- * window size would save bytes, but it also means a resolution change — and a
- * resolution change is a new capture session, a new encoder and a keyframe. The
- * floating window enlarging should be instant, so the stream stays put and the
- * small window simply downscales a sharp picture, which is free.
+ * `thumb` is the floating window: a smaller, slower frame. `panel` is the
+ * enlarged view. Switching is one new keyframe, which is cheaper than decoding
+ * a desktop-sized picture into a postage stamp for the whole time it is open.
  */
-export function streamSettings(preferences: ScreenPreferences = screenPreferences()) {
+export function streamSettings(preferences: ScreenPreferences = screenPreferences(), surface: "thumb" | "panel" = "panel") {
   const profile = QUALITY_PROFILES[preferences.quality]
   // Three is where phone panels stop; beyond that the extra pixels are wasted.
   const deviceWidth = Math.round(window.innerWidth * Math.min(window.devicePixelRatio || 1, 3))
-  // The explicit frame-rate choice wins over the quality profile's ceiling:
-  // "maximum" means the panel's maximum, not 30.
+  // A thumbnail does not need a desktop-sized frame. Enlarging pays for one
+  // new keyframe; watching a small window at full size pays for every frame.
+  const thumb = surface === "thumb"
+  const widthScale = thumb ? Math.min(profile.widthScale, 0.45) : profile.widthScale
+  const fpsCap = thumb ? Math.min(profile.maxFps, 15) : profile.maxFps
+  const quality = thumb ? Math.min(profile.quality, 60) : profile.quality
   const fps = preferences.fps === "panel"
-    ? Math.min(panelFps(), profile.maxFps)
-    : Math.min(preferences.fps, profile.maxFps)
+    ? Math.min(panelFps(), fpsCap)
+    : Math.min(preferences.fps, fpsCap)
   return {
-    maxWidth: clamp(Math.round(deviceWidth * profile.widthScale), 360, MAX_WIDTH),
+    maxWidth: clamp(Math.round(deviceWidth * widthScale), 360, thumb ? 720 : MAX_WIDTH),
     maxFps: fps,
-    quality: profile.quality,
+    quality,
     showCursor: preferences.showCursor,
     source: preferences.source,
     ...(preferences.source === "display" && preferences.displayId !== null

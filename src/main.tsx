@@ -7,6 +7,7 @@ import { installPerfLog } from './lib/perf-log'
 import { perfMark } from './lib/perf-monitor'
 import { installPageVisibility } from './lib/page-visibility'
 import { warmHighlight } from './lib/highlight'
+import { handheldSurface } from './lib/perf-tier'
 import './lib/perf-tier'
 import { Providers } from './components/Providers'
 import App from './App'
@@ -26,7 +27,8 @@ const prefetchVoice = () => {
 }
 // 固定延迟而不是 requestIdleCallback：dev 下第一次加载 three 会触发 Vite 重新预构建，
 // 和首屏抢带宽只会让页面再闪一次。两秒后拉，谁也不碍谁。
-window.setTimeout(prefetchVoice, 2500)
+// 手机不预热这颗球：通话在电脑上，three.js 只占内存和首屏带宽。
+if (!handheldSurface()) window.setTimeout(prefetchVoice, 2500)
 
 // 首屏绘制完成之后再报一次「启动到第一帧」：这是判断「冷启动变慢」的基线。
 requestAnimationFrame(() => requestAnimationFrame(() => perfMark('first-paint')))

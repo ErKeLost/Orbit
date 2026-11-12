@@ -1,19 +1,44 @@
-// 设备性能档位：低配机器自动降级流式渲染的"花活"，高配机器保持原效果。
-// 判定只用同步可得的信号（核数/内存/系统"减少动态效果"），不做耗时探测；
+// 设备性能档位：低配和手机自动降级流式渲染的花活，桌面高配保持原效果。
+// 判定只用同步可得的信号，不做耗时探测。
 // 用户可用 localStorage 'pi-gui.perfTier' = 'low' | 'high' 强制覆盖。
 export type PerfTier = "low" | "high";
 
+export function decidePerfTier(input: {
+  forced?: string | null;
+  cores: number;
+  memory?: number;
+  reduced: boolean;
+  handheld: boolean;
+}): PerfTier {
+  if (input.forced === "low" || input.forced === "high") return input.forced;
+  // A phone WebView often reports 8 cores. That is not a desktop GPU budget:
+  // the galaxy, shimmer and typing dots are the things that heat the phone.
+  if (input.handheld || input.cores <= 4 || (input.memory !== undefined && input.memory <= 4) || input.reduced) return "low";
+  return "high";
+}
+
+export function handheldSurface(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    if (new URLSearchParams(window.location.search).get("preview") === "mobile") return true;
+  } catch { /* query string is optional */ }
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
 function detect(): PerfTier {
   if (typeof window === "undefined") return "high";
+  let forced: string | null = null;
   try {
-    const forced = localStorage.getItem("pi-gui.perfTier");
-    if (forced === "low" || forced === "high") return forced;
+    forced = localStorage.getItem("pi-gui.perfTier");
   } catch { /* storage unavailable */ }
   const nav = navigator as Navigator & { deviceMemory?: number };
-  const cores = nav.hardwareConcurrency ?? 8;
-  const memory = nav.deviceMemory; // WebKit 不提供，缺省视为未知
-  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-  return cores <= 4 || (memory !== undefined && memory <= 4) || reduced ? "low" : "high";
+  return decidePerfTier({
+    forced,
+    cores: nav.hardwareConcurrency ?? 8,
+    memory: nav.deviceMemory,
+    reduced: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false,
+    handheld: handheldSurface(),
+  });
 }
 
 export const perfTier: PerfTier = detect();
@@ -25,4 +50,5 @@ export const isLowPerf = perfTier === "low";
 if (typeof document !== "undefined") {
   document.documentElement.dataset.perfTier = perfTier;
   document.documentElement.dataset.perf = perfTier;
+  if (handheldSurface()) document.documentElement.dataset.runtime = "mobile";
 }
