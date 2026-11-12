@@ -6,6 +6,23 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.40
+
+Hot paths stop repeating work that has not changed.
+
+The changes panel no longer reparses every tool call on each streamed token.
+A patch is parsed once and reused until that call's write or diff actually
+changes. Git status, while the window is visible, stays at five seconds only
+while the tree is moving; two unchanged polls stretch it to ten, and a hidden
+window stops polling. A long spoken-length reply — past eight thousand
+characters in the active message — leaves the animation frame and flushes at
+thirty times a second. Short replies still flush every frame.
+
+A voice call no longer keeps two Pi processes warm while nobody is talking.
+They start with the call and go away when it ends. The unused engine-creation
+script and the leftover Rime error type are gone; the engine is pointed by
+`up.sh` alone.
+
 ## v1.0.39
 
 A voice call no longer treats every utterance as a job for Pi.
