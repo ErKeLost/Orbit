@@ -6,6 +6,25 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.39
+
+A voice call no longer treats every utterance as a job for Pi.
+
+Jev answers one question before anything is woken: does this sentence need the
+working agent? Only a sure yes starts the process that has tools. Anything else
+— a low score, a timeout, a missing key — is spoken by a second Pi that has no
+tools. That reply is generated in the language the user just used. There is no
+phrase list, and the engine is not pinned to a language.
+
+Talking over an answer aborts the current turn and then sends the new line,
+instead of waiting for the tools already running to finish. Captions follow the
+streaming parts, and the orb follows the speaker's volume.
+
+`up.sh` still re-points the engine that already exists. It writes the
+low-latency profile — realtime transcription, flash speech, eager turns —
+without inventing keywords or locking Chinese. It also no longer mistakes
+Cloudflare's API host for the tunnel address.
+
 ## v1.0.38
 
 Voice calls: a service you can check, and that says why it is silent.
