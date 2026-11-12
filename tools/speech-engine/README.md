@@ -44,11 +44,19 @@ Engine 的 `ws_url`（`src/repoint.ts`），所以重跑一次不会换 `seng_�
 | `ELEVENLABS_API_KEY` | 用于校验来自 ElevenLabs 的连接 |
 | `SPEECH_ENGINE_ID` | `seng_…`，必须和 webhook 目标一致 |
 | `PI_CWD` | Pi 的工作目录（工具的根） |
-| `PI_ARGS` | 传给 Pi 的额外参数，例如 `--model deepseek-flash` |
-| `PI_SYSTEM_PROMPT` | 追加到语音会话的系统提示 |
-| `FILLER` / `FILLER_AFTER_MS` | Pi 迟于这个时间没出字时，先说一句缓冲话 |
+| `PI_ARGS` | 追加给 `pi --mode rpc` 的参数，例如 `--model <快模型>` |
+| `PI_SYSTEM_PROMPT` | 替换默认的口语系统提示 |
+| `FILLER` / `FILLER_AFTER_MS` | Pi 迟于这个时间没出字时先说的一句，默认 700ms |
+| `SPEECH_LANGUAGE` | 可选。不设就不锁语言，通话跟用户说的语言走 |
+| `SPEECH_TTS_MODEL` | 合成模型，默认 `eleven_flash_v2_5` |
+| `SPEECH_MAX_SECONDS` | 单通最长秒数，默认 3600，官方上限 7200 |
 | `PORT` / `WS_PATH` | 监听地址，默认 `3001` `/ws` |
 | `MEMORY_LIMIT_MB` | 内存哨兵，超过就自己退出等重启，默认 4096 |
+
+Eleven Realtime v1 Mini/Max 不能接 Speech Engine，也不能接 Pi。低延迟靠 WebRTC、
+`scribe_realtime`、flash 合成和 eager 抢话。重跑 `./up.sh` 会把这些写回已有 Engine。
+
+每句转写先问 Jev 要不要工作 agent。不够确信就不派活，交给一个没有工具的 Pi 按原话回答。没有短语表。密钥与电脑操作相同（`TYPESAFE_API_KEY` 或 `~/.pi/agent/typesafe-api-key`）。
 
 ## 已知边界
 

@@ -33,13 +33,30 @@
 - API Key 不出后端：前端只拿**短期 token**，与其它凭据同一处存放。
 - 每通电话一个 `pi --mode rpc` 进程：历史与任务状态天然隔离，挂断即销毁。
 
+## 分岔
+
+转写进来之后、叫醒干活的 Pi 之前，Jev 只回答一个是非题：这句话要不要工作 agent。概率不到 0.75，或者 Jev 没答上来，就不派活。
+
+不派活的那句交给另一个没有工具的 Pi，按用户当时的语言现答。不查短语表，不锁语言。干活的 Pi 只有被选中才收到这句话。
+
+Jev 看到的只有这一句和上一句已经念出来的话。实现在 `tools/speech-engine/src/turn.ts` 和 `gate.ts`。
+
+## 为什么不是 Realtime 模型
+
+Eleven Realtime v1 Mini / Max 是最低延迟的语音模式，但官方限制写明：Speech Engine
+和任何自定义 LLM 都不能用 Realtime 模型。Pi 是自己的进程，所以能接到 Pi 的最快路径是
+Speech Engine 的低延迟配置，不是把 Voice mode 拨到 Realtime。
+
+`up.sh` 重跑时会写上：`scribe_realtime`、`eleven_flash_v2_5`、`turnEagerness: eager`、
+通话上限默认 3600 秒、必须持有 WebRTC token。`speculativeTurn` 不开：它会在句子还没
+说完时启动一轮带工具的 Pi。插话是 abort 当前回合再发新 prompt，不用 Pi 的 `steer`
+（steer 会等当前工具调用跑完）。没有默认垫句；要先开口，自己设 `FILLER`。
+
 ## 明确的限制
 
-- **没有主动播报**。Speech Engine 协议的 `sendResponse` 只能在 `onTranscript` 里调用，
-  所以 Pi 在用户不再说话之后无法开口。原先那套播报队列/优先级/确认闸门随之删除。
-- **只能操作自己那条会话**。跨会话旁观与 steer 需要桥进桌面应用的 RPC，尚未实现。
-- 服务端必须公网可达（开发期用 cloudflared/ngrok）。隧道地址每次变都要重跑
-  `tools/speech-engine/up.sh`——它 **re-point 同一个 Engine**，不换 `seng_…`。
+- **没有主动播报**。`sendResponse` 只能在 `onTranscript` 里调用，所以 Pi 在用户不再说话之后无法开口。
+- **只能操作自己那条会话**。每通电话一个 `pi --mode rpc --no-session`，不写进桌面会话列表。
+- 服务端必须公网可达（开发期用 cloudflared）。隧道地址变了就重跑 `tools/speech-engine/up.sh`，不换 `seng_…`。
 - 免费计划约 1 万字符/月，通话按分钟消耗积分。
 
 ## 失败会长什么样

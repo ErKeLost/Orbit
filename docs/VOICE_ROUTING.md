@@ -1,6 +1,10 @@
 # 语音路由判定表
 
-实现：`src-tauri/resources/voice/router.ts`（判定）、`src/features/voice/model/voice-controller.ts`（执行）、
+> 归档。这是 Rime 自建语音环的行为契约，对应文件已在 v1.0.36 删除。
+> 现在的通话是 ElevenLabs Speech Engine，协议里没有「做完了再开口」，也不要按这张表改代码。
+> 现行说明见 `docs/VOICE_ARCHITECTURE.md`。
+
+实现（已删除）：`src-tauri/resources/voice/router.ts`（判定）、`src/features/voice/model/voice-controller.ts`（执行）、
 `src-tauri/resources/voice/execution-context.ts`（发给 Pi 的消息）。
 
 这份表是行为契约。要加场景，先在这里加一行，再加一个用例；不要为新场景增加阈值。

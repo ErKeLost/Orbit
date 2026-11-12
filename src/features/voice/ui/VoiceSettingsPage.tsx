@@ -139,7 +139,7 @@ export function VoiceSettingsPage() {
         </Row>
       </Group>
 
-      <Group title="服务端" description="Pi 那一端不在这个应用里：ElevenLabs 从云端连接到 tools/speech-engine，每次通话起一个独立的 pi --mode rpc 进程。">
+      <Group title="服务端" description="Pi 那一端不在这个应用里：ElevenLabs 从云端连接到 tools/speech-engine，每次通话起一个独立的 pi --mode rpc 进程。重跑 up.sh 会写成低延迟配置。Realtime 模型不能接 Pi。">
         <Row
           anchorId="voice-health"
           label="本机服务"
@@ -156,7 +156,7 @@ export function VoiceSettingsPage() {
             <SecondaryButton onClick={() => void probe()}>重新检查</SecondaryButton>
           </div>
         </Row>
-        <Row label="启动方式" description="up.sh 顺序是：起服务 → 起隧道 → 把隧道的 wss 地址写回 Engine → 记到 eleven.json。隧道换了地址，重跑一次就好，不需要改 Engine ID。">
+        <Row label="启动方式" description="up.sh 顺序是：起隧道 → 把 wss 地址和低延迟配置写回已有 Engine → 起服务。隧道换了地址，重跑一次就好，不需要改 Engine ID。">
           <code className="text-xs text-ink-3">tools/speech-engine</code>
         </Row>
       </Group>

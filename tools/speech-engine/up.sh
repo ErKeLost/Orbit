@@ -37,12 +37,17 @@ export ELEVENLABS_API_KEY
 TUNNEL=$!
 trap 'kill $TUNNEL 2>/dev/null || true; kill ${SERVER:-} 2>/dev/null || true' EXIT INT TERM
 
-for _ in $(seq 1 40); do
-  PUBLIC_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$LOG_DIR/speech-engine-tunnel.log" | head -1 || true)
+TUNNEL_LOG="$LOG_DIR/speech-engine-tunnel.log"
+for _ in $(seq 1 60); do
+  # 只认隧道横幅里那一条。错误行里也会出现 https://api.trycloudflare.com/tunnel，
+  # 以前 head -1 抓到过它，于是把 Engine 指到了 Cloudflare 的 API 域名上。
+  PUBLIC_URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$TUNNEL_LOG" \
+    | grep -vE '^https://(api|www)\.trycloudflare\.com$' | head -1 || true)
   [ -n "${PUBLIC_URL:-}" ] && break
+  kill -0 "$TUNNEL" 2>/dev/null || { echo "隧道进程退出了："; tail -5 "$TUNNEL_LOG"; exit 1; }
   sleep 1
 done
-[ -n "${PUBLIC_URL:-}" ] || { echo "隧道没有起来，看 $LOG_DIR/speech-engine-tunnel.log"; exit 1; }
+[ -n "${PUBLIC_URL:-}" ] || { echo "隧道没有起来，看 $TUNNEL_LOG"; exit 1; }
 echo "public: $PUBLIC_URL"
 
 # repoint 会把 { engineId, wsUrl } 写进 ~/.pi/agent/eleven.json；已有 Engine 原地改地址，

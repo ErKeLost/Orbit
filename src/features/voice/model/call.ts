@@ -1,27 +1,24 @@
 /**
  * 一通通话。
  *
- * 这一层刻意很薄：麦克风、断句、打断、识别、合成全部由 ElevenLabs 处理，
- * 这里只做三件事——拿 token 起会话、把状态和消息摊平给页面、结束时收尾。
- * Pi 在哪？不在这。Pi 在 `tools/speech-engine` 那一端，ElevenLabs 直接把
- * 转写发过去，再把回答的文本念出来。
- *
- * 所以这里没有任何音频代码：没有 AudioContext、没有 PCM、没有重采样。
+ * 麦克风、断句、打断、识别、合成在 ElevenLabs。这里拿 WebRTC token，把实时字幕和
+ * 音量摊平给页面。Pi 在 `tools/speech-engine`：ElevenLabs 把转写送过去，再把
+ * 流式回答念出来。Realtime 模型不能接自定义 LLM，所以这条链路是 Speech Engine。
  */
-import { Conversation, type VoiceConversation } from "@elevenlabs/client"
+import { Conversation, type VoiceConversation, type DisconnectionDetails } from "@elevenlabs/client"
 import { speechEngineToken } from "@/lib/rpc-projects"
 import { probeSpeechEngine } from "./health"
+import { applyAgentPart, applyAgentSnapshot, disconnectNotice, upsertTurn, type CallTurn } from "./turns"
 
+export type { CallTurn }
 export type CallState = "off" | "connecting" | "listening" | "thinking" | "speaking"
-export type CallTurn = { id: string; role: "user" | "agent"; text: string }
-/** 页面那一层要的形状：用户、助手、以及系统提示（比如引擎出错）。 */
 export type VoiceLogItem = { id: string; kind: "user" | "agent" | "system"; text: string }
 export type CallSnapshot = {
   state: CallState
   error: string | null
   muted: boolean
   turns: CallTurn[]
-  /** 输入音量，来自服务端的 VAD 分数；没有它球就只能是死的。 */
+  /** 输入音量，来自服务端的 VAD 分数。输出音量要本地轮询，协议里没有这个事件。 */
   level: number
   outputLevel: number
   engineId: string
@@ -34,7 +31,7 @@ export class VoiceCall {
   private listeners = new Set<() => void>()
   private conversation: VoiceConversation | null = null
   private epoch = 0
-  private turn = 0
+  private outputFrame = 0
 
   getSnapshot = () => this.value
   subscribe = (listener: () => void) => {
@@ -49,15 +46,32 @@ export class VoiceCall {
   }
   private fail(message: string) {
     this.conversation = null
+    this.watchOutput(false)
     this.update({ state: "off", error: message, level: 0, outputLevel: 0 })
+  }
+  private turns(next: CallTurn[], state?: CallState) {
+    this.update(state ? { turns: next, state } : { turns: next })
+  }
+  private watchOutput(on: boolean) {
+    cancelAnimationFrame(this.outputFrame)
+    this.outputFrame = 0
+    if (!on) return
+    const tick = () => {
+      const conversation = this.conversation
+      if (!conversation || this.value.state !== "speaking") return
+      const level = Math.min(1, conversation.getOutputVolume())
+      if (Math.abs(level - this.value.outputLevel) >= 0.04) this.update({ outputLevel: level })
+      this.outputFrame = requestAnimationFrame(tick)
+    }
+    this.outputFrame = requestAnimationFrame(tick)
   }
 
   async start() {
     if (this.value.state !== "off" || this.conversation) return
     const epoch = ++this.epoch
-    this.update({ state: "connecting", error: null, turns: [], level: 0, outputLevel: 0 })
+    this.watchOutput(false)
+    this.update({ state: "connecting", error: null, muted: false, turns: [], level: 0, outputLevel: 0 })
     try {
-      // 先确认本机那一端还活着：它死了的话，WebRTC 照样会接通，然后对面一直不出声。
       const health = await probeSpeechEngine()
       if (epoch !== this.epoch) return
       if (!health.running) return this.fail(health.reason)
@@ -69,36 +83,58 @@ export class VoiceCall {
       this.update({ engineId })
       const conversation = (await Conversation.startSession({
         conversationToken: token,
+        stripAudioTags: true,
         onConnect: () => {
           if (epoch === this.epoch) this.update({ state: "listening" })
         },
-        onDisconnect: () => {
+        onDisconnect: (details: DisconnectionDetails) => {
           if (epoch !== this.epoch) return
           this.conversation = null
-          this.update({ state: "off", level: 0, outputLevel: 0, muted: false })
+          this.watchOutput(false)
+          const notice = disconnectNotice(details)
+          this.update({ state: "off", level: 0, outputLevel: 0, muted: false, ...(notice ? { error: notice } : {}) })
         },
         onError: (message: string) => {
           if (epoch === this.epoch) this.fail(message || "语音连接出错")
         },
         onModeChange: ({ mode }) => {
           if (epoch !== this.epoch) return
-          this.update({ state: mode === "speaking" ? "speaking" : "listening", level: mode === "speaking" ? 0 : this.value.level })
+          const speaking = mode === "speaking"
+          this.update({ state: speaking ? "speaking" : "listening", outputLevel: speaking ? this.value.outputLevel : 0 })
+          this.watchOutput(speaking)
+        },
+        onInterruption: () => {
+          if (epoch !== this.epoch) return
+          this.watchOutput(false)
+          this.update({ state: "listening", outputLevel: 0 })
         },
         onVadScore: ({ vadScore }: { vadScore: number }) => {
           if (epoch !== this.epoch || this.value.state === "speaking") return
-          // 每帧都写 store 会让整页重渲染；只在肉眼能看出差别时更新。
           if (Math.abs(vadScore - this.value.level) < 0.04) return
           this.update({ level: Math.min(1, vadScore) })
         },
-        onMessage: ({ message, role }: { message: string; role: string }) => {
+        onIncomingEvent: (event: { type?: string; tentative_user_transcription_event?: { user_transcript?: string; event_id?: number } }) => {
+          if (epoch !== this.epoch || event.type !== "tentative_user_transcript") return
+          const text = event.tentative_user_transcription_event?.user_transcript?.trim()
+          const eventId = event.tentative_user_transcription_event?.event_id
+          if (!text || eventId === undefined) return
+          this.turns(upsertTurn(this.value.turns, { id: `user-${eventId}`, role: "user", text }, "replace"))
+        },
+        onMessage: ({ message, role, event_id, response_id }: { message: string; role: string; event_id?: number; response_id?: string }) => {
           if (epoch !== this.epoch || !message.trim()) return
-          const speaker: "user" | "agent" = role === "user" ? "user" : "agent"
-          const last = this.value.turns.at(-1)
-          // 同一句的分片追加到同一条，不要一句一个气泡。
-          const turns = last && last.role === speaker
-            ? [...this.value.turns.slice(0, -1), { ...last, text: `${last.text} ${message}`.trim() }]
-            : [...this.value.turns, { id: `turn-${++this.turn}`, role: speaker, text: message.trim() }]
-          this.update({ turns: turns.slice(-40), state: speaker === "agent" ? "thinking" : this.value.state })
+          if (role === "user") {
+            this.turns(upsertTurn(this.value.turns, { id: event_id === undefined ? "user-live" : `user-${event_id}`, role: "user", text: message.trim() }, "replace"), "thinking")
+            return
+          }
+          this.turns(applyAgentSnapshot(this.value.turns, response_id ?? (event_id === undefined ? "agent-live" : `agent-${event_id}`), message.trim()))
+        },
+        onAgentChatResponsePart: ({ text, type, event_id, response_id }) => {
+          if (epoch !== this.epoch) return
+          this.turns(applyAgentPart(this.value.turns, response_id ?? `agent-${event_id}`, type, text))
+        },
+        onAgentResponseCorrection: ({ event_id, response_id, corrected_agent_response }) => {
+          if (epoch !== this.epoch) return
+          this.turns(applyAgentSnapshot(this.value.turns, response_id ?? `agent-${event_id}`, corrected_agent_response))
         },
         textOnly: false,
       })) as VoiceConversation
@@ -118,11 +154,12 @@ export class VoiceCall {
     this.epoch++
     const conversation = this.conversation
     this.conversation = null
+    this.watchOutput(false)
     this.update({ state: "off", muted: false, level: 0, outputLevel: 0 })
     await conversation?.endSession().catch(() => undefined)
   }
 
-  /** 打断正在播放的回答：让服务端把它当成一次用户活动，不需要挂断。 */
+  /** 打断正在播放的回答。真正取消 Pi 那一轮发生在 speech-engine，这里只通知 ElevenLabs。 */
   interrupt() {
     this.conversation?.sendUserActivity()
   }

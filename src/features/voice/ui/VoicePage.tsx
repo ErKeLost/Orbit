@@ -179,15 +179,9 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
         </div>
       ) : (
         <div className="relative flex items-center justify-center gap-2 pb-12">
-          {starting ? (
-            <PrimaryButton className="rounded-full px-4" onClick={() => void voiceCall.stop()} aria-label="取消接通">
-              <span role="status">正在接通…</span>
-            </PrimaryButton>
-          ) : (
-            <PrimaryButton className="rounded-full px-4" onClick={() => void voiceCall.start()}>
-              开始对话
-            </PrimaryButton>
-          )}
+          <PrimaryButton className="rounded-full px-4" onClick={() => void voiceCall.start()}>
+            开始对话
+          </PrimaryButton>
         </div>
       )}
     </div>

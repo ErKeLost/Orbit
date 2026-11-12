@@ -9,6 +9,7 @@
     "repoint": "bun run src/repoint.ts"
   },
   "dependencies": {
-    "@elevenlabs/elevenlabs-js": "^2.77.0"
+    "@elevenlabs/elevenlabs-js": "^2.77.0",
+    "@typesafe-ai/sdk": "0.6.0"
   }
 }
