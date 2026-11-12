@@ -75,6 +75,60 @@ export function getChange(toolName: string, args: unknown, result: unknown): Cha
   return null;
 }
 
+function mix(value: string) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) hash = (hash * 33 + value.charCodeAt(index)) | 0;
+  return hash;
+}
+
+function changeStamp(toolName: string, args: unknown, result: unknown) {
+  const input = object(args);
+  const details = resultDetails(result);
+  return [
+    toolName,
+    mix(text(details, ["patch"])),
+    mix(text(input, ["patch", "unifiedDiff"])),
+    mix(text(input, ["content", "contents"])),
+    mix(typeof input.oldText === "string" ? input.oldText : ""),
+    mix(typeof input.newText === "string" ? input.newText : ""),
+  ].join(":");
+}
+
+type CachedChange = { stamp: string; change: Change | null };
+const changeCache = new Map<string, CachedChange>();
+
+type ChangeMessage = { message?: { content?: unknown } };
+type ChangeTool = { details?: unknown };
+
+/** Reuse a parsed change until that tool call's patch or write actually changes. */
+export function collectChanges(messages: ChangeMessage[], tools: Record<string, ChangeTool | undefined>) {
+  const seen = new Set<string>();
+  const changes: { id: string; change: Change }[] = [];
+  for (const item of messages) {
+    const content = item.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (!part || typeof part !== "object" || (part as { type?: string }).type !== "toolCall") continue;
+      const call = part as { id?: string; name?: string; arguments?: unknown };
+      const id = call.id ?? "";
+      if (!id) continue;
+      const tool = tools[id];
+      const stamp = changeStamp(call.name ?? "", call.arguments, tool?.details);
+      let cached = changeCache.get(id);
+      if (!cached || cached.stamp !== stamp) {
+        cached = { stamp, change: getChange(call.name ?? "", call.arguments, tool?.details) };
+        changeCache.set(id, cached);
+      }
+      seen.add(id);
+      if (cached.change) changes.push({ id, change: cached.change });
+    }
+  }
+  if (changeCache.size > seen.size) {
+    for (const id of changeCache.keys()) if (!seen.has(id)) changeCache.delete(id);
+  }
+  return changes;
+}
+
 function isImagePath(path: string) {
   return /\.(?:avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i.test(path);
 }

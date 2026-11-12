@@ -23,6 +23,7 @@ import {
 import { sendRemotePiCommand } from "./remote-runtime";
 import type { RemoteJson } from "./remote-protocol";
 import { mobileRuntime } from "./runtime";
+import { foregroundFlushDelay } from "./stream-cadence";
 import { isStaleExtensionContextError } from "./extension-errors";
 import { perfSpan } from "./perf-monitor";
 
@@ -265,11 +266,25 @@ function cancelFlush(project:string){
  if(handle.kind==='raf')cancelAnimationFrame(handle.id);else clearTimeout(handle.id)
  flushHandles.delete(project)
 }
+function messageChars(message:PiMessage|undefined){
+ if(!message)return 0
+ if(typeof message.content==='string')return message.content.length
+ if(!Array.isArray(message.content))return 0
+ let total=0
+ for(const part of message.content)if(typeof part.text==='string')total+=part.text.length
+ return total
+}
+function activeChars(project:string){
+ const transcript=current(project).transcript
+ const active=transcript.messages[transcript.active]??transcript.messages.at(-1)
+ return messageChars(active?.message)
+}
 function scheduleFlush(project:string){
  if(flushHandles.has(project))return
  const run=()=>{flushHandles.delete(project);flushEvents(project)}
  const foreground=typeof document!=='undefined'&&!document.hidden&&useWorkspace.getState().connectionId===project&&typeof requestAnimationFrame==='function'
- flushHandles.set(project,foreground?{kind:'raf',id:requestAnimationFrame(run)}:{kind:'timeout',id:setTimeout(run,BACKGROUND_FLUSH_MS) as unknown as number})
+ const slow=foreground?foregroundFlushDelay(activeChars(project)):BACKGROUND_FLUSH_MS
+ flushHandles.set(project,slow===null?{kind:'raf',id:requestAnimationFrame(run)}:{kind:'timeout',id:setTimeout(run,slow) as unknown as number})
 }
 function flushEvents(project:string){
  cancelFlush(project)

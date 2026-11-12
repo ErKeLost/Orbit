@@ -28,8 +28,6 @@ let calls = 0
 
 const spare: PiVoice[] = []
 const mouths: PiVoice[] = []
-let warming: Promise<void> | null = null
-let warmingMouth: Promise<void> | null = null
 
 async function makeReady(options: ConstructorParameters<typeof PiVoice>[0]) {
   const pi = new PiVoice(options)
@@ -42,46 +40,25 @@ async function makeReady(options: ConstructorParameters<typeof PiVoice>[0]) {
   }
 }
 
-function keepOneReady() {
-  if (spare.length || warming) return
-  warming = makeReady({ cwd })
-    .then(pi => {
-      spare.push(pi)
-    })
-    .catch(error => log("[warm] pi not ready", error instanceof Error ? error.message : error))
-    .finally(() => {
-      warming = null
-    })
-}
-
-function keepMouthReady() {
-  if (mouths.length || warmingMouth) return
-  warmingMouth = makeReady({ cwd, tools: false, filler: false, systemPrompt: MOUTH_RULES })
-    .then(pi => {
-      mouths.push(pi)
-    })
-    .catch(error => log("[warm] mouth not ready", error instanceof Error ? error.message : error))
-    .finally(() => {
-      warmingMouth = null
-    })
-}
-
 async function take() {
-  const ready = spare.pop()
-  keepOneReady()
-  return ready ?? makeReady({ cwd })
+  return spare.pop() ?? makeReady({ cwd })
 }
 
 async function takeMouth() {
-  const ready = mouths.pop()
-  keepMouthReady()
-  return ready ?? makeReady({ cwd, tools: false, filler: false, systemPrompt: MOUTH_RULES })
+  return mouths.pop() ?? makeReady({ cwd, tools: false, filler: false, systemPrompt: MOUTH_RULES })
+}
+
+function releaseIdle() {
+  if (agents.size > 0) return
+  for (const pi of spare.splice(0)) pi.dispose()
+  for (const pi of mouths.splice(0)) pi.dispose()
 }
 
 function release(conversationId: string) {
   boots.set(conversationId, (boots.get(conversationId) ?? 0) + 1)
   agents.get(conversationId)?.dispose()
   agents.delete(conversationId)
+  releaseIdle()
 }
 
 async function waitForPi(conversationId: string, signal: AbortSignal) {
@@ -121,9 +98,8 @@ async function* reply(said: string, heard: string, signal: AbortSignal): AsyncGe
   try {
     yield* mouth.prompt(spokenRequest(said, heard), signal)
   } finally {
-    if (signal.aborted) mouth.dispose()
-    else mouths.push(mouth)
-    keepMouthReady()
+    if (agents.size > 0 && !signal.aborted) mouths.push(mouth)
+    else mouth.dispose()
   }
 }
 
@@ -210,8 +186,6 @@ server.listen(PORT, () => {
   console.log(`speech engine on :${PORT}${WS_PATH} — ${process.env.SPEECH_ENGINE_ID} (cwd ${cwd})`)
 })
 
-keepOneReady()
-keepMouthReady()
 
 const LIMIT_MB = Number(process.env.MEMORY_LIMIT_MB ?? 4096)
 setInterval(() => {

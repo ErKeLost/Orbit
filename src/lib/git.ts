@@ -39,25 +39,60 @@ export const createDir = (path: string) => invoke<void>("create_dir", { path });
 export const renamePath = (from: string, to: string) => invoke<void>("rename_path", { from, to });
 export const deletePath = (path: string) => invoke<void>("delete_path", { path });
 
+const GIT_FAST_MS = 5_000;
+const GIT_QUIET_MS = 10_000;
+const quietPolls = new Map<string, { fingerprint: string; hits: number }>();
+
+/** Unchanged polls stretch the interval. A new fingerprint starts the fast cadence again. */
+export function noteGitPoll(key: string, fingerprint: string) {
+  const previous = quietPolls.get(key);
+  const hits = previous?.fingerprint === fingerprint ? previous.hits + 1 : 0;
+  quietPolls.set(key, { fingerprint, hits });
+  if (quietPolls.size > 24) {
+    const oldest = quietPolls.keys().next().value;
+    if (oldest) quietPolls.delete(oldest);
+  }
+  return hits;
+}
+
+export function gitPollHits(key: string) {
+  return quietPolls.get(key)?.hits ?? 0;
+}
+
+export function gitPollInterval(visible: boolean, hits: number) {
+  if (!visible) return false as const;
+  return hits >= 2 ? GIT_QUIET_MS : GIT_FAST_MS;
+}
+
 /** Uncommitted +/- for a folder, refreshed like Orbit's project cards. */
 export function useGitDiffStats(cwd: string | undefined, enabled = true) {
   const visible = usePageVisible();
+  const key = `stats:${cwd ?? ""}`;
   return useQuery({
     queryKey: ["git", "diff-stats", cwd],
-    queryFn: () => gitDiffStats(cwd!),
+    queryFn: async () => {
+      const value = await gitDiffStats(cwd!);
+      noteGitPoll(key, `${value.files}:${value.additions}:${value.deletions}`);
+      return value;
+    },
     enabled: Boolean(cwd) && enabled && hasWorkspaceBackend(),
-    refetchInterval: visible ? 5000 : false,
+    refetchInterval: () => gitPollInterval(visible, gitPollHits(key)),
     staleTime: 2000,
   });
 }
 
 export function useGitChangedFiles(cwd: string | undefined, enabled = true) {
   const visible = usePageVisible();
+  const key = `files:${cwd ?? ""}`;
   return useQuery({
     queryKey: ["git", "changed-files", cwd],
-    queryFn: () => gitChangedFiles(cwd!),
+    queryFn: async () => {
+      const value = await gitChangedFiles(cwd!);
+      noteGitPoll(key, value.map(file => `${file.path}:${file.status}:${file.additions}:${file.deletions}`).join("\n"));
+      return value;
+    },
     enabled: Boolean(cwd) && enabled && hasWorkspaceBackend(),
-    refetchInterval: visible ? 5000 : false,
+    refetchInterval: () => gitPollInterval(visible, gitPollHits(key)),
     staleTime: 2000,
   });
 }
