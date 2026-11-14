@@ -518,7 +518,7 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
               ))}
           </div>
 
-          <div ref={lockOverscroll} className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-none pb-2">
+          <div ref={lockOverscroll} className="sidebar-scroll flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-none pb-2">
             {/* 项目段：切项目的唯一入口。 */}
             <ProjectsSection
               projects={visibleProjects}

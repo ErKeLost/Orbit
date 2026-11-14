@@ -1,8 +1,9 @@
-import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState, type KeyboardEvent } from "react";
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useWorkspace } from "../../lib/store";
 import { ComposerHighlight } from "./ComposerHighlight";
 import { paletteRequest, type PaletteRequest } from "./ComposerPalette";
 import { draftKeyIntent, recallDraft, rememberDraft } from "./composerModel";
+import { resizeComposer } from "./composerResize";
 import type { MentionFile } from "./fileMentions";
 import {
   PROMPT_SUGGESTION_DEBOUNCE_MS,
@@ -98,9 +99,11 @@ export const DraftField = memo(
        * 有布局（下面的 ResizeObserver）再量。
        */
       const resize = useCallback((el: HTMLTextAreaElement | null) => {
+        // No layout box: `display:none` (settings / inbox covering the session).
+        // Measuring there reports 0 and would collapse the field until the next
+        // draft change. The ResizeObserver below measures once it is visible.
         if (!el || el.getClientRects().length === 0) return;
-        el.style.height = "auto";
-        el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+        resizeComposer(el);
       }, []);
       // 收起期间挂上来的输入框（比如重连后重新渲染的会话面板）高度还没量过：一有
       // 布局盒就立刻量一次。之后内容变化已经由下面的 draft 副作用负责，这里只补
@@ -142,11 +145,15 @@ export const DraftField = memo(
         }),
         [onPalette],
       );
+      // Before paint. Measuring after paint lets the collapsed field clamp the
+      // transcript for a frame, which is the chat shake while typing.
+      useLayoutEffect(() => {
+        resize(field.current);
+      }, [draft, resize]);
       useEffect(() => {
         rememberDraft(composerKey, draft);
         onHasValue(Boolean(draft.trim()));
-        resize(field.current);
-      }, [composerKey, draft, onHasValue, resize]);
+      }, [composerKey, draft, onHasValue]);
       // 回合结束、输入框空着：猜「你下一句想说什么」。**一轮只问一次** ——
       // 重渲染、切光标、开合面板、把草稿删回空白都不会再花一次调用。
       // 打字过程本身永远不调模型：联想只在 agent 每次 run 结束时产生一次。

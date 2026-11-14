@@ -94,7 +94,7 @@ export function SourcesRow({ sources }: { sources: TurnSource[] }) {
           }
           setPinned(true);
         }}
-        className="group flex max-w-full items-center gap-1.5 rounded-full border border-line bg-fill-weak py-1 pl-1 pr-2.5 text-ink-3 transition-colors duration-150 hover:bg-fill hover:text-ink-2"
+        className="group flex h-8 max-w-full items-center gap-1.5 rounded-full bg-surface-raised py-1 pr-3 pl-1.5 text-ink-3 transition-colors duration-150 hover:bg-surface-card hover:text-ink-2 hover:shadow-[0_0_0_1px_rgba(0,0,0,0.04),0_1px_1px_rgba(0,0,0,0.04),0_2px_4px_-1px_rgba(0,0,0,0.08)] dark:bg-surface-card dark:hover:bg-surface-raised dark:hover:shadow-none"
       >
         {/* Avatar group: overlapping marks, one per site, cut off at four —
             the count next to them says how many pages are behind it. */}
@@ -102,7 +102,7 @@ export function SourcesRow({ sources }: { sources: TurnSource[] }) {
           {sites.map((site) => (
             <span
               key={site}
-              className="grid size-4 place-items-center rounded-full bg-surface-card ring-1 ring-line transition-transform duration-150 group-hover:ring-line-strong"
+              className="grid size-[18px] place-items-center rounded-full bg-surface-raised ring-2 ring-surface-raised transition-colors duration-150 group-hover:bg-surface-card group-hover:ring-surface-card dark:bg-surface-card dark:ring-surface-card dark:group-hover:bg-surface-raised dark:group-hover:ring-surface-raised"
             >
               <SiteLogo origin={`https://${site}`} />
             </span>

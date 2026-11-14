@@ -87,7 +87,7 @@ export function SettingsNav() {
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   return (
     <>
-      <div ref={lockOverscroll} aria-label="设置" className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-none px-2 py-3">
+      <div ref={lockOverscroll} aria-label="设置" className="sidebar-scroll flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto overscroll-none px-2 py-3">
         {SETTINGS_GROUPS.map((group) => (
           <div key={group.id} className="flex flex-col gap-px">
             <div className="px-2 pb-1 text-xs font-semibold text-ink-3">{group.label}</div>

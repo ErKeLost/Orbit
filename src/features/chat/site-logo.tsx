@@ -33,7 +33,7 @@ const startIndex = (origin: string) => RESOLVED.get(origin) ?? 0;
  * icons), it fades in when it arrives, and only when every source has refused does
  * the globe stand in.
  */
-export function SiteLogo({ origin }: { origin: string }) {
+export function SiteLogo({ origin, size = 14, rounded = false }: { origin: string; size?: number; rounded?: boolean }) {
   const host = urlHost(origin) ?? "";
   const sources = useMemo(() => faviconSources(origin, host), [origin, host]);
   const [index, setIndex] = useState(() => startIndex(origin));
@@ -49,21 +49,26 @@ export function SiteLogo({ origin }: { origin: string }) {
   const failed = settled === null;
   const src = sources[settled ?? index];
   const ready = typeof settled === "number";
+  // 14px is the transcript row. The search cards ask for a larger, round mark;
+  // an inline size keeps those off the default class the row already uses.
+  const frame = size === 14 ? "size-3.5" : undefined;
+  const frameStyle = size === 14 ? undefined : { width: size, height: size };
+  const radius = rounded ? "rounded-full" : "rounded-xs";
 
   if (!host || failed || !src) {
     return (
-      <span className="grid size-3.5 shrink-0 place-items-center overflow-hidden">
-        <Globe className="size-3.5 shrink-0 text-ink-3" strokeWidth={1.75} />
+      <span className={`grid shrink-0 place-items-center overflow-hidden ${frame ?? ""} ${rounded ? "rounded-full" : ""}`.trim()} style={frameStyle}>
+        <Globe className={`${size === 14 ? "size-3.5" : "size-full"} shrink-0 text-ink-3`} strokeWidth={1.75} />
       </span>
     );
   }
 
   return (
-    <span className="relative grid size-3.5 shrink-0 place-items-center overflow-hidden">
+    <span className={`relative grid shrink-0 place-items-center overflow-hidden ${frame ?? ""} ${rounded ? "rounded-full" : ""}`.trim()} style={frameStyle}>
       {/* 14px is small for a placeholder: the app's row skeleton (`bg-fill`)
           disappears at this size, so this box uses the tone the title bar's own
           loading block uses. */}
-      {ready ? null : <span aria-hidden className="absolute inset-0 animate-pulse rounded-xs bg-fill-strong" />}
+      {ready ? null : <span aria-hidden className={`absolute inset-0 animate-pulse bg-fill-strong ${radius}`} />}
       <img
         src={src}
         alt=""
@@ -71,7 +76,7 @@ export function SiteLogo({ origin }: { origin: string }) {
         loading="lazy"
         decoding="async"
         referrerPolicy="no-referrer"
-        className={`size-3.5 rounded-xs object-contain transition-opacity duration-150 ${ready ? "opacity-100" : "opacity-0"}`}
+        className={`size-full object-contain transition-opacity duration-150 ${radius} ${ready ? "opacity-100" : "opacity-0"}`}
         onLoad={() => {
           RESOLVED.set(origin, index);
           setSettled(index);

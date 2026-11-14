@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Part } from "../src/lib/protocol";
 import { SiteLogo } from "../src/features/chat/site-logo";
-import { toolLabel } from "../src/features/chat/turnModel";
-import { resultSites, urlHost, urlOrigin } from "../src/features/chat/web-search-site";
+import { isSearchWidget, toolLabel } from "../src/features/chat/turnModel";
+import { resultSites, searchResults, siteLabel, urlHost, urlOrigin } from "../src/features/chat/web-search-site";
 
 const webCall = (args: Record<string, string>): Part => ({ type: "toolCall", id: "t1", name: "web_search", arguments: args });
 
@@ -86,5 +86,83 @@ describe("searched sites", () => {
   test("honors the limit and ignores prose", () => {
     expect(resultSites(searchMarkdown, 2)).toEqual(["tanstack.com", "dev.to"]);
     expect(resultSites("Expand Web Search：query\n\n没有结果")).toEqual([]);
+  });
+});
+
+describe("search result cards", () => {
+  test("reads the page title, url and snippet, not the engine", () => {
+    const hits = searchResults(searchMarkdown);
+    expect(hits.map((hit) => hit.host)).toEqual(["tanstack.com", "dev.to", "github.com", "betterstack.com"]);
+    expect(hits[0]).toMatchObject({ title: "Title", url: "https://tanstack.com/start", snippet: "Snippet text." });
+    expect(hits.some((hit) => hit.host.includes("bing"))).toBe(false);
+  });
+
+  test("keeps two pages on one site, and drops a repeated url", () => {
+    const markdown = [
+      "1. [Spring animations](https://motion.dev/docs/spring)",
+      "   Keeps its velocity when interrupted.",
+      "2. [React springs](https://motion.dev/docs/react)",
+      "   useSpring for anything interruptible.",
+      "3. [Spring animations](https://motion.dev/docs/spring)",
+      "   Duplicate of the first hit.",
+    ].join("\n");
+    expect(searchResults(markdown).map((hit) => hit.url)).toEqual([
+      "https://motion.dev/docs/spring",
+      "https://motion.dev/docs/react",
+    ]);
+    expect(searchResults(markdown)[0].title).toBe("Spring animations");
+  });
+
+  test("names a site the way people say it", () => {
+    expect(siteLabel("https://developer.mozilla.org/en-US/docs/Web/CSS")).toBe("mozilla");
+    expect(siteLabel("https://motion.dev/docs")).toBe("motion");
+    expect(searchResults("Expand Web Search：query\n\n没有结果")).toEqual([]);
+  });
+});
+
+describe("search widget", () => {
+  test("a query is the card strip; a fetch stays a row", async () => {
+    const { WebSearchTool } = await import("../src/features/chat/web-search");
+    const search = webCall({ mode: "search", query: "spring animations react" });
+    const fetch = webCall({ mode: "fetch", url: "https://motion.dev/docs" });
+    expect(isSearchWidget(search, {})).toBe(true);
+    expect(isSearchWidget(fetch, {})).toBe(false);
+    expect(isSearchWidget(search, { t1: { name: "web_search", running: false, isError: true, result: "nope" } })).toBe(false);
+
+    const html = renderToStaticMarkup(
+      <WebSearchTool
+        part={search}
+        tools={{
+          t1: {
+            name: "web_search",
+            running: false,
+            result: [
+              "Expand Web Search：spring animations react",
+              "",
+              "1. [Spring animations: physics based](https://motion.dev/docs/spring)",
+              "   Keeps its velocity.",
+              "2. [prefers-reduced-motion](https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-motion)",
+              "   CSS media feature.",
+            ].join("\n"),
+          },
+        }}
+      />,
+    );
+    expect(html).toContain("Searched 2 sites");
+    expect(html).toContain("Spring animations: physics based");
+    expect(html).toContain("mozilla");
+    expect(html).toContain('data-status="done"');
+    expect(html).toContain("motion.dev/favicon.ico");
+  });
+
+  test("a running search names the query and holds empty slots", async () => {
+    const { WebSearchTool } = await import("../src/features/chat/web-search");
+    const html = renderToStaticMarkup(
+      <WebSearchTool part={webCall({ mode: "search", query: "spring animations react" })} tools={{ t1: { name: "web_search", running: true } }} />,
+    );
+    expect(html).toContain("Searching");
+    expect(html).toContain("spring animations react");
+    expect(html).toContain('data-status="searching"');
+    expect(html).not.toContain("Searched");
   });
 });

@@ -73,6 +73,123 @@ export function resultSites(text: string, limit = 4): string[] {
 /** A page a turn opened: the site it belongs to, its address, and its own title. */
 export type WebSource = { host: string; url?: string; title?: string };
 
+/** One hit on the results grid: a page, not just the site that published it. */
+export type SearchHit = {
+  id: string;
+  title: string;
+  url: string;
+  host: string;
+  snippet?: string;
+};
+
+function usableHost(host: string | undefined): host is string {
+  const name = host?.toLowerCase().replace(/\.$/, "");
+  return Boolean(name && HOST.test(name) && !ENGINE_HOST.test(name) && !ASSET_HOST.test(name));
+}
+
+function cleanUrl(raw: string) {
+  return raw.replace(/&amp;/g, "&").replace(/[),.;]+$/g, "");
+}
+
+function decodeText(text: string) {
+  return text
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+/** The page a numbered result actually points at, unwrapping Bing's `u=a1` redirect. */
+function resultUrl(blob: string) {
+  const wrapped = /[?&]u=a1([A-Za-z0-9_-]{16,})/.exec(blob);
+  const fromWrap = wrapped ? wrappedTarget(wrapped[1]) : undefined;
+  if (fromWrap && usableHost(urlHost(fromWrap))) return fromWrap;
+  const heading = /##\s+\[[^\]]+\]\((https?:\/\/[^)\s]+)\)/i.exec(blob);
+  if (heading) {
+    const url = cleanUrl(heading[1]);
+    if (usableHost(urlHost(url))) return url;
+  }
+  const italic = /\*(https?:\/\/[^\s*]+)\*/.exec(blob);
+  if (italic) {
+    const url = cleanUrl(italic[1]);
+    if (usableHost(urlHost(url))) return url;
+  }
+  for (const match of blob.matchAll(/https?:\/\/[^\s)\]>"']+/gi)) {
+    const url = cleanUrl(match[0]);
+    if (usableHost(urlHost(url))) return url;
+  }
+  return undefined;
+}
+
+function resultTitle(blob: string, url: string, host: string) {
+  const heading = /##\s+\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/.exec(blob);
+  if (heading?.[1].trim()) return decodeText(heading[1].trim());
+  for (const match of blob.matchAll(/\[([^\]!]+)\]\((https?:\/\/[^)\s]+)\)/g)) {
+    const text = match[1].trim();
+    const link = cleanUrl(match[2]);
+    if (!text || /^https?:/i.test(text)) continue;
+    if (link === url || urlHost(link) === host) return decodeText(text);
+  }
+  return host.replace(/^www\./, "");
+}
+
+function resultSnippet(lines: string[], title: string) {
+  const body = lines
+    .slice(1)
+    .join(" ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/https?:\/\/\S+/g, " ")
+    .replace(/[#*_>`]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const withoutTitle = body.replace(title, "").replace(/\s+/g, " ").trim();
+  const text = withoutTitle.length >= 12 ? withoutTitle : body;
+  if (text.length < 12 || text === title) return undefined;
+  return text.slice(0, 180);
+}
+
+/**
+ * The pages a search result lists, in the order the engine returned them.
+ *
+ * Logos only need hosts. The results grid needs the page title and the URL a
+ * click should open, which live on the heading under each numbered line — not
+ * in the engine's own icon markup.
+ */
+export function searchResults(text: string, limit = 12): SearchHit[] {
+  const hits: SearchHit[] = [];
+  const seen = new Set<string>();
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length && hits.length < limit; i++) {
+    if (!/^\s{0,4}\d+\.\s/.test(lines[i])) continue;
+    const block = [lines[i]];
+    for (let j = i + 1; j < lines.length; j++) {
+      if (/^\s{0,4}\d+\.\s/.test(lines[j])) break;
+      if (!lines[j].trim() && block.length > 1) break;
+      block.push(lines[j]);
+      if (block.length > 8) break;
+    }
+    const blob = block.join("\n");
+    const url = resultUrl(blob);
+    const host = url ? urlHost(url) : undefined;
+    if (!url || !host || !usableHost(host)) continue;
+    const key = url.replace(/\/+$/, "");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const title = resultTitle(blob, url, host);
+    hits.push({ id: key, title, url, host, snippet: resultSnippet(block, title) });
+  }
+  return hits;
+}
+
+/** `developer.mozilla.org` reads as "mozilla", the name people say. */
+export function siteLabel(url: string) {
+  const host = urlHost(url)?.replace(/^www\./, "");
+  if (!host) return url;
+  return registrableHost(host).split(".")[0] || host;
+}
+
 /**
  * The frontmatter a fetched (or highlighted) page opens with. Expand writes the
  * page's own URL and title there, which is the only place a fetch result names

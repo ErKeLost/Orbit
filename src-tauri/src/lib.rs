@@ -245,7 +245,13 @@ pub fn run() {
     let builder = tauri::Builder::default().runtime(
         tauri_runtime_cef::Cef::default()
             .root_cache_path(browser::browser_dir().expect("browser data directory").join("cef"))
-            .secret_storage(tauri_runtime_cef::SecretStorage::System)
+            // Do not touch the login keychain at launch. `System` reads the shared
+            // "Chromium Safe Storage" item while CEF starts, and this ad-hoc signature
+            // cannot hold an ACL, so macOS asks for the login password on every open.
+            // The panel still persists its own cookies (`persist_session_cookies`).
+            // A Chromium browser's cookies are decrypted only when the user imports
+            // them, and only with the login password they type in that form.
+            .secret_storage(tauri_runtime_cef::SecretStorage::Mock)
             .persist_session_cookies(true)
             .log_severity(cef::LogSeverity::ERROR),
     );

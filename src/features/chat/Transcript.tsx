@@ -30,6 +30,7 @@ import { FileTypeIcon } from "../shell/FileTypeIcon";
 import { SiteLogo } from "./site-logo";
 import { SourcesRow } from "./SourcesChip";
 import { turnSources } from "./turn-sources";
+import { WebSearchTool } from "./web-search";
 import { useImageSrc } from "../../lib/media-src";
 import { resultSites, urlHost, urlOrigin } from "./web-search-site";
 import {
@@ -39,6 +40,7 @@ import {
   phaseTitle,
   projectTurn,
   proseSummary,
+  isSearchWidget,
   toolLabel,
   toolName,
   userImages,
@@ -46,6 +48,8 @@ import {
   type Phase,
   type TurnStep,
 } from "./turnModel";
+import { TaskList } from "./TaskList";
+import { isTodoStep, planFromSteps } from "./todos";
 
 const clockFormatter = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 
@@ -513,8 +517,16 @@ function StepRow({ step, tools }: { step: TurnStep; tools: Record<string, Tool> 
   if (step.kind === "image" && step.part?.type === "toolCall") return <GeneratedImageStep part={step.part} tools={tools} />;
   if (step.kind === "image" && step.part) return <InlineImage part={step.part} />;
   if (step.part) {
+    if (isTodoStep(step, tools)) return null;
     // 产物写完就是那张卡片；还在跑或者失败的时候仍然是一行工具调用。
     const tool = tools[step.part.id ?? ""];
+    if (isSearchWidget(step.part, tools)) {
+      return (
+        <div className="py-1">
+          <WebSearchTool part={step.part} tools={tools} />
+        </div>
+      );
+    }
     if (toolName(step.part, tools) === "write_artifact" && tool && !tool.running && !tool.isError)
       return <ArtifactToolRow part={step.part} tool={tool} />;
     return <ToolRow part={step.part} tools={tools} />;
@@ -841,9 +853,16 @@ type AssistantTurnProps = {
 const AssistantTurn = memo(
   function AssistantTurn({ items, tools, streaming, startedAt, elapsedMs, activity }: AssistantTurnProps) {
     const turn = useMemo(() => projectTurn(items, tools, streaming), [items, tools, streaming]);
+    const plan = useMemo(() => planFromSteps(turn.work, tools), [turn.work, tools]);
     const [workOverride, setWorkOverride] = useState<boolean | null>(null);
     const liveElapsed = useElapsed(startedAt, streaming);
     const hasWork = turn.work.length > 0 || Boolean(activity);
+    // A search is the pages it found, not a step in the fold. The fold closes
+    // when the turn settles, and the results would go with it. The plan is the
+    // same kind of thing: it stays on screen after Working folds shut.
+    const searches = useMemo(() => turn.work.filter((step) => step.part && isSearchWidget(step.part, tools)), [turn.work, tools]);
+    const foldWork = useMemo(() => turn.work.filter((step) => !searches.includes(step) && !isTodoStep(step, tools)), [turn.work, searches, tools]);
+    const hasFold = foldWork.length > 0 || Boolean(activity);
     const answered = turn.answer.length > 0;
     // Work folds behind the "worked for" line. While a turn is running the fold
     // opens on its own to the phase rows ("正在运行 7 条命令") — that is the
@@ -855,7 +874,7 @@ const AssistantTurn = memo(
     // rows and the answer share the same left edge, so with the fold expanded
     // and only a few pixels between them the answer reads as one more step.
     // The gap is what makes it "jump out" of Working.
-    const workVisible = hasWork && workOpen;
+    const workVisible = hasFold && workOpen;
     const duration = elapsedMs ?? (streaming ? liveElapsed : null);
     const foldTitle = streaming ? (
       <Shimmer className="min-w-0 truncate font-sans text-sm" duration={1.6}>
@@ -885,16 +904,16 @@ const AssistantTurn = memo(
         {turn.specials.map((item) =>
           item.message.role === "bashExecution" ? <BashExecution key={item.id} message={item.message} /> : <CompactionNotice key={item.id} message={item.message} />,
         )}
-        {hasWork || streaming ? (
+        {hasFold || streaming ? (
           <TurnRow folded={false}>
-            <WorkFoldLine title={foldTitle} live={streaming} expandable={hasWork} open={workOpen && hasWork} onToggle={() => setWorkOverride(!workOpen)} />
+            <WorkFoldLine title={foldTitle} live={streaming} expandable={hasFold} open={workOpen && hasFold} onToggle={() => setWorkOverride(!workOpen)} />
           </TurnRow>
         ) : null}
-        {hasWork ? (
+        {hasFold ? (
           <TurnRow folded={!workOpen}>
             {() => (
               <div className="zen-fold-rail zen-fold-tail flow-root pl-5">
-                <ActivityPhases steps={turn.work} tools={tools} done={!streaming || answered} />
+                <ActivityPhases steps={foldWork} tools={tools} done={!streaming || answered} />
                 {/* The worker feed is part of this fold, not a sibling of it: it
                     renders inside the same rail so collapsing "Working…" hides
                     it too. No extra padding, or its rows would sit to the right
@@ -903,6 +922,12 @@ const AssistantTurn = memo(
               </div>
             )}
           </TurnRow>
+        ) : null}
+        {plan ? <TaskList plan={plan} /> : null}
+        {searches.length ? (
+          <div className="flex min-w-0 flex-col gap-3 px-4 pt-1.5 pb-1">
+            {searches.map((step) => (step.part ? <WebSearchTool key={step.key} part={step.part} tools={tools} /> : null))}
+          </div>
         ) : null}
         {turn.images.length ? (
           <div className="flex min-w-0 flex-col px-4 pb-1">
@@ -918,7 +943,7 @@ const AssistantTurn = memo(
               data-selectable-agent-response={streaming ? undefined : step.key}
               data-chat-message={step.key}
               data-chat-message-role="assistant"
-              className={`min-w-0 px-4 pb-1 text-ink-1 ${index === 0 ? (workVisible ? "pt-5" : "pt-3") : "pt-3"}`}
+              className={`min-w-0 px-4 pb-1 text-ink-1 ${index === 0 ? (workVisible || searches.length ? "pt-5" : "pt-3") : "pt-3"}`}
             >
               <Markdown content={step.text ?? ""} animated={streaming && step.live} links="panel" />
             </div>
@@ -935,7 +960,7 @@ const AssistantTurn = memo(
             copyText={answerText}
             last={turn.last?.message}
             label={formatWorkingDuration(duration, undefined, true)}
-            labelHidden={hasWork}
+            labelHidden={hasFold}
             completedAt={lastTime}
           />
         ) : null}

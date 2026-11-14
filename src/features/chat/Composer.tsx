@@ -23,6 +23,8 @@ import { ADD_NOTE_TO_CHAT_EVENT, appendNoteReference, type NoteComposerCard } fr
 import { ModelPicker } from "./ModelPicker";
 import { BranchPicker } from "./BranchPicker";
 import { MessageQueueView } from "./MessageQueueView";
+import { TodoPill } from "./TaskList";
+import { parseTodoKey, sessionTodoKey } from "./todos";
 import { ComposerPalette, type PalettePick, type PaletteRequest } from "./ComposerPalette";
 import { DraftField, type DraftHandle } from "./ComposerDraftField";
 import { useComposerTokens } from "./composerTokens";
@@ -631,6 +633,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
 
   const context = contextMeterUsage(stats?.contextUsage);
   const queueVisible = queue.steering.length + queue.followUp.length > 0;
+  const todoKey = useWorkspace((state) => sessionTodoKey(state.transcript.messages, state.transcript.tools));
+  const todos = useMemo(() => parseTodoKey(todoKey), [todoKey]);
 
   return (
     <div className={`relative mx-auto w-full max-w-4xl ${centered ? "" : "p-1.5 pt-0"}`} data-session-composer>
@@ -644,6 +648,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
           onClear={() => void recallQueue(target).catch(report)}
         />
       ) : null}
+      {todos.length ? <TodoPill todos={todos} /> : null}
       <div className="relative overflow-visible">
         {palette && !plusOpen ? (
           <div className="absolute inset-x-0 bottom-full z-30 mb-1">

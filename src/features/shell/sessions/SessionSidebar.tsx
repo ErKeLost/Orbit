@@ -348,7 +348,7 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
           </button>
         </div>
       ) : null}
-      <div ref={lockOverscroll} className={`sidebar-session-scroll min-h-0 flex-1 overflow-y-auto overscroll-none ${tab === "sessions" ? "" : "hidden"}`}>
+      <div ref={lockOverscroll} className={`sidebar-scroll sidebar-session-scroll min-h-0 flex-1 overflow-y-auto overscroll-none ${tab === "sessions" ? "" : "hidden"}`}>
         {project ? <SessionsList cwd={project} query={query} /> : <p className="px-3 py-2 text-xs text-ink-3">没有项目文件夹</p>}
       </div>
       <ResizeHandle label="调整侧栏宽度" dragging={resize.dragging} onPointerDown={resize.onPointerDown} onDoubleClick={resize.onDoubleClick} />

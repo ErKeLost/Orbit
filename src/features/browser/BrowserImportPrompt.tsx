@@ -44,6 +44,8 @@ export function BrowserImportPrompt({ requested = false, onClose }: { requested?
   const [progress, setProgress] = useState<Progress | null>(null)
   const [done, setDone] = useState<string | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
+  const [password, setPassword] = useState("")
+  const [askPassword, setAskPassword] = useState(false)
 
   useEffect(() => {
     const pending = listen<Progress>("orbit://browser/import-progress", (event) => setProgress(event.payload))
@@ -95,14 +97,20 @@ export function BrowserImportPrompt({ requested = false, onClose }: { requested?
     onClose?.()
   }
 
-  const run = async () => {
+  const run = async (keychainPassword?: string) => {
     if (!offer) return
+    if (offer.needsKeychain && !keychainPassword) {
+      setAskPassword(true)
+      return
+    }
     setFailure(null)
     setProgress(null)
     try {
-      const { report } = await importBrowserSession(offer.browser, offer.profile)
+      const { report } = await importBrowserSession(offer.browser, offer.profile, keychainPassword)
       setDone(importSummary(report))
       setOffer(null)
+      setPassword("")
+      setAskPassword(false)
     } catch (error) {
       setFailure(error instanceof Error ? error.message : String(error))
     }
@@ -158,7 +166,19 @@ export function BrowserImportPrompt({ requested = false, onClose }: { requested?
         className="w-44 shrink-0"
         width={320}
       /> : null}
-      <button type="button" className="browser-banner-action" onClick={() => void run()}>一键导入</button>
+      {askPassword || offer.needsKeychain ? (
+        <input
+          type="password"
+          value={password}
+          autoComplete="off"
+          placeholder="登录钥匙串密码"
+          aria-label="登录钥匙串密码"
+          className="h-7 w-40 shrink-0 rounded-md border border-line bg-transparent px-2 text-xs text-ink-1 outline-none placeholder:text-ink-3"
+          onChange={(event) => setPassword(event.target.value)}
+          onKeyDown={(event) => { if (event.key === "Enter") void run(password) }}
+        />
+      ) : null}
+      <button type="button" className="browser-banner-action" onClick={() => void run(password || undefined)}>一键导入</button>
       <button type="button" className="browser-banner-action" onClick={stopAsking}>不再显示</button>
     </div>
   )

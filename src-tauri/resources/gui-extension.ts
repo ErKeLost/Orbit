@@ -1072,6 +1072,27 @@ export function registerImages(pi:ExtensionAPI):void{
  * 这一次为什么被略去。张数上限是常态（每轮都会命中），体积预算不是；把理由说成一句
  * 话，用户才知道该调哪个开关。
  */
+const TODO_STATUSES=new Set(['pending','in_progress','completed','cancelled'])
+function normalizeTodos(params:unknown):{content:string;status:string}[]{
+  const todos=(params as {todos?:unknown})?.todos
+  if(!Array.isArray(todos))throw new Error('todowrite 需要 todos 数组')
+  return todos.flatMap(item=>{
+    if(!item||typeof item!=='object')return []
+    const record=item as {content?:unknown;status?:unknown}
+    const content=typeof record.content==='string'?record.content.trim():''
+    if(!content)return []
+    const status=typeof record.status==='string'&&TODO_STATUSES.has(record.status)?record.status:'pending'
+    return [{content,status}]
+  })
+}
+function summarizeTodos(todos:{content:string;status:string}[]){
+  if(!todos.length)return 'Todos cleared'
+  const count=(status:string)=>todos.filter(todo=>todo.status===status).length
+  const counts=[`${count('completed')}/${todos.length} completed`,...['in_progress','pending','cancelled'].flatMap(status=>count(status)?[`${count(status)} ${status.replace('_',' ')}`]:[])].join(', ')
+  const active=todos.filter(todo=>todo.status==='in_progress').map(todo=>JSON.stringify(todo.content))
+  return `Todos updated: ${counts}${active.length?`. In progress: ${active.join(', ')}`:''}`
+}
+
 function dropReason(settings:RequestBudgetSettings,result:{droppedByCount:number;droppedByBudget:number}):string{
   if(result.droppedByCount&&result.droppedByBudget)return `只保留最近 ${settings.maxImages} 张、且本次请求超出体积预算`
   if(result.droppedByCount)return `只保留最近 ${settings.maxImages} 张`
@@ -1164,6 +1185,45 @@ export default async function (pi: ExtensionAPI) {
     const title=value.title?.trim()||(kind==='html'?'未命名页面':'未命名文档')
     return {id,kind,title,body}
   }
+  // OpenCode 的 todowrite：计划不落库，最近一次调用的完整列表就是当前计划。
+  // Pi 没有这个工具，也没有配对的 todoread——读计划就是看上一次写入。
+  pi.registerTool({
+    name:'todowrite',
+    label:'更新任务',
+    description:'Create and update the session todo list. The user sees it as your working plan. Send the full list on every call; it replaces the previous one.',
+    promptSnippet:'维护当前会话的任务列表',
+    promptGuidelines:[
+      '任务有 3 个以上彼此不同的步骤，或用户一次给了好几件事、或明确要一份待办时，用 todowrite。单步的小事和纯聊天不要用。拿不准就用。',
+      '每次调用都发送完整列表，它会替换上一份。开始做某一项时把它标成 in_progress，真正做完立刻标 completed。列表没变化就不要再调。',
+      '同一时间只标一项 in_progress。不要用这个工具去读文件或执行命令。',
+    ],
+    defaultActive:true,
+    parameters:{
+      type:'object',
+      properties:{
+        todos:{
+          type:'array',
+          description:'The updated todo list.',
+          items:{
+            type:'object',
+            properties:{
+              content:{type:'string',description:'Brief description of the task'},
+              status:{type:'string',enum:['pending','in_progress','completed','cancelled'],description:'Current status of the task'},
+            },
+            required:['content','status'],
+          },
+        },
+      },
+      required:['todos'],
+    },
+    async execute(_toolCallId:string,params:unknown){
+      const todos=normalizeTodos(params)
+      return {
+        content:[{type:'text' as const,text:summarizeTodos(todos)}],
+        details:{todos},
+      }
+    },
+  })
   pi.registerTool({
     name:'write_artifact',
     label:'写产物',

@@ -222,6 +222,17 @@ html:not(.is-mac) ::-webkit-scrollbar-corner {
   background: transparent;
 }
 
+/* Left rail still scrolls; the thumb stays hidden so the list edge stays clean. */
+.sidebar-scroll {
+  scrollbar-width: none;
+}
+
+.sidebar-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 /* Tint-less transparent rather than `transparent`, which browsers interpolate
    through black and would dim the page on the way in and out of glass. */
 html.has-native-glass:not(.theme-light),
@@ -593,9 +604,16 @@ html.has-chat-background.chat-background-effect-ready.chat-background-gradient-b
   }
 }
 
+/*
+ * Real heights only. An estimated 240px stand-in changes the scroll range
+ * whenever the transcript viewport changes — including the layout pass that
+ * measures the composer. Stick-to-bottom pins, the estimate snaps back, and
+ * the chat shakes for as long as the reader is typing. History is already
+ * windowed by turn, so off-screen turns do not need a fake height.
+ */
 .transcript-turn {
-  content-visibility: auto;
-  contain-intrinsic-block-size: auto 240px;
+  content-visibility: visible;
+  contain-intrinsic-block-size: none;
 }
 
 ::highlight(orbit-transcript-search-match) {
@@ -1670,6 +1688,36 @@ header[data-tauri-drag-region] button {
   height: 12px;
   border-radius: 999px;
   background: var(--color-content);
+  cursor: pointer;
+}
+
+.appearance-hue {
+  appearance: none;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    oklch(0.7 0.16 0),
+    oklch(0.72 0.16 40),
+    oklch(0.78 0.15 85),
+    oklch(0.72 0.15 145),
+    oklch(0.7 0.13 190),
+    oklch(0.66 0.15 250),
+    oklch(0.64 0.16 300),
+    oklch(0.68 0.16 340),
+    oklch(0.7 0.16 360)
+  );
+  outline: none;
+}
+
+.appearance-hue::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 3px solid var(--color-background-base);
+  background: oklch(0.7 0.16 var(--hue, 255));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-content) 35%, transparent);
   cursor: pointer;
 }
 

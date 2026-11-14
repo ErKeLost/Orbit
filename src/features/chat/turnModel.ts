@@ -344,7 +344,8 @@ export function formatWorkingDuration(elapsedMs: number | null | undefined, mode
 
 /**
  * A tool row: `<action> <target>`. `file` gives the target the file chip;
- * `href` marks a web row, which gets a site-logo chip instead.
+ * `href` marks a fetch, which gets a site-logo chip. A search with no URL is
+ * the results strip, not this row.
  */
 export type ToolLabel = { action: string; target: string; file: boolean; /** Set on web rows, which carry a site-logo chip. */ web?: boolean; href?: string };
 
@@ -385,4 +386,12 @@ export function toolLabel(part: Part, tools: Record<string, Tool>): ToolLabel {
   if (kind === "command") return { action: "Run", target: first(["command", "cmd", "script"]), file: false };
   if (kind === "computer") return { action: "Computer", target: first(["goal", "app", "url", "target"]), file: false };
   return { action: name, target: first(["path", "query", "command", "input", "url", "name"]), file: false };
+}
+
+/** A search that lists pages. A fetch names one URL; a failed call stays a tool row. */
+export function isSearchWidget(part: Part | undefined, tools: Record<string, Tool>) {
+  if (!part || part.type !== "toolCall") return false;
+  if (tools[part.id ?? ""]?.isError) return false;
+  const label = toolLabel(part, tools);
+  return Boolean(label.web && !label.href);
 }

@@ -28,7 +28,11 @@ export type ImportSource = {
   cookies: number | null
   account: string | null
   running: boolean
+  /** Chromium-family cookies need the login-keychain password. Firefox does not. */
+  needsKeychain?: boolean
 }
+
+export const KEYCHAIN_PASSWORD_REQUIRED = "KEYCHAIN_PASSWORD_REQUIRED"
 
 /** What an import actually brought over. */
 export type ImportReport = {
@@ -54,8 +58,8 @@ export function browserImportSources(): Promise<ImportSource[]> {
  * Read supported cookies and verify them in the native panel's cookie store.
  * The report records the destination namespace as well as the source profile.
  */
-export function browserImportSession(browser: string, profile: string): Promise<ImportReport> {
-  return invoke<ImportReport>("browser_import_session", { browser, profile })
+export function browserImportSession(browser: string, profile: string, keychainPassword?: string): Promise<ImportReport> {
+  return invoke<ImportReport>("browser_import_session", { browser, profile, keychainPassword: keychainPassword || null })
 }
 /** The last import verified in this app's actual cookie store, or null. */
 export function browserImportState(): Promise<ImportReport | null> {
@@ -64,11 +68,11 @@ export function browserImportState(): Promise<ImportReport | null> {
 
 /** Import selects the Profile for subsequently created native tabs. Existing
  * pages keep their request context, history, playback and session leases. */
-export async function importBrowserSession(browser: string, profile: string): Promise<{ report: ImportReport; cookies: number }> {
+export async function importBrowserSession(browser: string, profile: string, keychainPassword?: string): Promise<{ report: ImportReport; cookies: number }> {
   if (importSnapshot.busy) throw new Error("已有浏览器导入正在进行，请等它结束")
   setImportBusy(true)
   try {
-    const report = await browserImportSession(browser, profile)
+    const report = await browserImportSession(browser, profile, keychainPassword)
     return { report, cookies: report.cookies }
   } finally {
     // Resume native placement after success or failure; a transient import lock

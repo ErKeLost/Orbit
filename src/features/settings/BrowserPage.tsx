@@ -15,6 +15,7 @@ export function BrowserPage() {
   const [busy, setBusy] = useState<string | null>(null)
   const { busy: importing } = useBrowserImportStatus()
   const [failure, setFailure] = useState<string | null>(null)
+  const [password, setPassword] = useState("")
 
   const load = async () => {
     try {
@@ -33,6 +34,10 @@ export function BrowserPage() {
   }, [])
 
   const runImport = async (source: ImportSource) => {
+    if (source.needsKeychain && !password) {
+      setFailure("导入这个浏览器需要登录钥匙串密码，只在这一次使用，不会保存。")
+      return
+    }
     const key = `${source.browser}:${source.profile}`
     setBusy(key)
     // Two halves, and the second one is slow (one WebKit round trip per cookie),
@@ -40,7 +45,8 @@ export function BrowserPage() {
     // describe both.
     const notice = toast.info(`正在从 ${source.browser} 导入…`, { duration: Infinity })
     try {
-      const { report } = await importBrowserSession(source.browser, source.profile)
+      const { report } = await importBrowserSession(source.browser, source.profile, source.needsKeychain ? password : undefined)
+      setPassword("")
       setReport(report)
       setFailure(null)
       toast.success(importSummary(report), {
@@ -61,8 +67,20 @@ export function BrowserPage() {
       {failure ? <Notice>{failure}</Notice> : null}
       <Group
         title="从其他浏览器导入登录"
-        description="选择要复制的浏览器资料，将可导入的 Cookie 写入 Orbit 面板并验证。不改动来源浏览器；建议先退出来源浏览器，让最新登录状态落盘。"
+        description="选择要复制的浏览器资料，将可导入的 Cookie 写入 Orbit 面板并验证。Chrome 一类浏览器要登录钥匙串密码才能解密，只在导入时填写，不会保存，启动时也不会再问。不改动来源浏览器。"
       >
+        {sources?.some((source) => source.needsKeychain) ? (
+          <Row label="登录钥匙串密码" description="用来解密来源浏览器的 Cookie。只用于这一次导入。">
+            <input
+              type="password"
+              value={password}
+              autoComplete="off"
+              aria-label="登录钥匙串密码"
+              className="h-7 w-44 rounded-md border border-line bg-transparent px-2 text-xs text-ink-1 outline-none"
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </Row>
+        ) : null}
         {sources === null ? (
           <Notice>正在检测已安装的浏览器…</Notice>
         ) : sources.length === 0 ? (

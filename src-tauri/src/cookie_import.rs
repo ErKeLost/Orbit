@@ -403,7 +403,7 @@ fn firefox_same_site(value: Option<&Value>) -> Option<&'static str> {
 /// That shape is the point: `browser::webkit_cookie` already turns it into a
 /// WebKit cookie, so an imported session lands in the column through exactly
 /// the code path a same-browser import uses.
-pub fn read_cookies(source: &Source) -> Result<CookieRead, String> {
+pub fn read_cookies(source: &Source, keychain_password: Option<&str>) -> Result<CookieRead, String> {
     let database = match source.kind {
         Kind::Firefox => source.path.join("cookies.sqlite"),
         Kind::Chromium { .. } => chromium_database(&source.path).ok_or("找不到来源 Cookie 数据库")?,
@@ -411,7 +411,7 @@ pub fn read_cookies(source: &Source) -> Result<CookieRead, String> {
     let snapshot = CookieSnapshot::create(&database)?;
     match source.kind {
         Kind::Firefox => firefox_cookies(&snapshot.database),
-        Kind::Chromium { service } => chromium_source_cookies(&snapshot.database, service),
+        Kind::Chromium { service } => chromium_source_cookies(&snapshot.database, service, keychain_password),
     }
 }
 
@@ -437,15 +437,15 @@ impl Drop for CookieSnapshot { fn drop(&mut self) { let _ = std::fs::remove_dir_
 /// A Chromium profile needs that browser's own Safe Storage key, which only a
 /// desktop build can ask the OS for.
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn chromium_source_cookies(database: &Path, service: &str) -> Result<CookieRead, String> {
-    let password = safe_storage_password(service)?;
+fn chromium_source_cookies(database: &Path, service: &str, keychain_password: Option<&str>) -> Result<CookieRead, String> {
+    let password = safe_storage_password(service, keychain_password)?;
     chromium_cookies(database, &password)
 }
 
 /// Mobile has neither a keychain lookup nor OpenSSL. Firefox's plaintext store
 /// still works, which is why enumeration stays compiled there.
 #[cfg(any(target_os = "android", target_os = "ios"))]
-fn chromium_source_cookies(_profile: &Path, _service: &str) -> Result<CookieRead, String> {
+fn chromium_source_cookies(_profile: &Path, _service: &str, _keychain_password: Option<&str>) -> Result<CookieRead, String> {
     Err("从 Chromium 浏览器导入登录只在桌面端可用".to_string())
 }
 
@@ -646,30 +646,52 @@ fn decrypt_value_version(blob: &[u8], password: &str, host: &str, schema_version
     String::from_utf8(plaintext).map_err(|_| "解密结果不是文本".to_string())
 }
 
+/// Stable token the UI treats as "ask for the login password", not a failure.
+pub const KEYCHAIN_PASSWORD_REQUIRED: &str = "KEYCHAIN_PASSWORD_REQUIRED";
+
+fn keychain_account(service: &str) -> &str {
+    service.strip_suffix(" Safe Storage").unwrap_or(service)
+}
+
 /// The password a Chromium browser derives its key from.
 ///
-/// macOS and Linux ask the system secret store, which is what makes the user's
-/// "allow access" click the actual authorization: nothing here can read another
-/// application's key without it.
+/// On macOS this never opens the system keychain dialog. Launch must not ask,
+/// and a surprise dialog here would be the same prompt. The user types the
+/// login-keychain password in the import form; that password authorizes
+/// `security` to read this one item. It is not stored.
 #[cfg(target_os = "macos")]
-pub fn safe_storage_password(service: &str) -> Result<String, String> {
-    let output = Command::new("security")
-        .args(["find-generic-password", "-w", "-s", service, "-a", service.strip_suffix(" Safe Storage").unwrap_or(service)])
-        .output()
-        .map_err(|error| format!("无法运行 security：{error}"))?;
+pub fn safe_storage_password(service: &str, keychain_password: Option<&str>) -> Result<String, String> {
+    let keychain_password = keychain_password.map(str::trim).filter(|value| !value.is_empty()).ok_or_else(|| KEYCHAIN_PASSWORD_REQUIRED.to_string())?;
+    let account = keychain_account(service);
+    let keychain = login_keychain();
+    let unlock = Command::new("security").args(["unlock-keychain", "-p", keychain_password, &keychain]).output().map_err(|error| format!("无法运行 security：{error}"))?;
+    if !unlock.status.success() {
+        return Err("登录钥匙串密码不正确".to_string());
+    }
+    // Partition list, not the trusted-application ACL Chrome uses. This lets the
+    // `security` tool read the item without a GUI prompt. It does not add Orbit's
+    // ad-hoc binary, which could not keep the grant anyway.
+    let grant = Command::new("security").args(["set-generic-password-partition-list", "-S", "apple-tool:,apple:", "-s", service, "-a", account, "-k", keychain_password, &keychain]).output().map_err(|error| format!("无法运行 security：{error}"))?;
+    if !grant.status.success() {
+        let detail = String::from_utf8_lossy(&grant.stderr).trim().to_string();
+        return Err(if detail.is_empty() { "登录钥匙串密码不正确，或这个浏览器没有钥匙串项".to_string() } else { format!("无法用这把密码读取「{service}」") });
+    }
+    let output = Command::new("security").args(["find-generic-password", "-w", "-s", service, "-a", account]).output().map_err(|error| format!("无法运行 security：{error}"))?;
     if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(format!(
-            "读不到钥匙串里的「{service}」：{}。请在钥匙串提示中点「允许」，或在「钥匙串访问」里把该条目的访问权限交给 Orbit",
-            if detail.is_empty() { "项目不存在或已被拒绝".to_string() } else { detail }
-        ));
+        return Err(format!("读不到钥匙串里的「{service}」。请确认密码，并确认这个浏览器曾经在这台电脑上登录过"));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim_end_matches(['\r', '\n']).to_string())
 }
 
+#[cfg(target_os = "macos")]
+fn login_keychain() -> String {
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+    home.join("Library/Keychains/login.keychain-db").display().to_string()
+}
+
 /// Linux keeps the same secret in the Secret Service or KWallet.
 #[cfg(all(unix, not(target_os = "macos"), not(any(target_os = "android", target_os = "ios"))))]
-pub fn safe_storage_password(service: &str) -> Result<String, String> {
+pub fn safe_storage_password(service: &str, _keychain_password: Option<&str>) -> Result<String, String> {
     let application = service.replace(" Safe Storage", "").to_lowercase();
     let output = Command::new("secret-tool")
         .args(["lookup", "application", &application])
@@ -687,7 +709,7 @@ pub fn safe_storage_password(service: &str) -> Result<String, String> {
 /// builds, to the browser binary through app-bound encryption. Neither is
 /// reachable from here, and a wrong key would only look like an empty import.
 #[cfg(windows)]
-pub fn safe_storage_password(_service: &str) -> Result<String, String> {
+pub fn safe_storage_password(_service: &str, _keychain_password: Option<&str>) -> Result<String, String> {
     Err("Windows 上的 Chromium 密钥由 DPAPI 和应用绑定加密保护，暂不支持从这些浏览器导入".to_string())
 }
 

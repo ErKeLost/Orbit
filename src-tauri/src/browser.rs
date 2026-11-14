@@ -48,6 +48,8 @@ pub struct ImportSource {
     pub account: Option<String>,
     /// Whether the browser is running right now.
     pub running: bool,
+    /// Chromium-family cookies are sealed with the login keychain. Firefox is not.
+    pub needs_keychain: bool,
 }
 
 /// What an import actually brought over.
@@ -145,6 +147,7 @@ pub fn browser_import_sources() -> Result<Vec<ImportSource>, String> {
                 &source.path,
                 matches!(source.kind, crate::cookie_import::Kind::Firefox),
             ),
+            needs_keychain: matches!(source.kind, crate::cookie_import::Kind::Chromium { .. }),
         })
         .collect())
 }
@@ -170,6 +173,7 @@ pub async fn browser_import_session(
     app: tauri::AppHandle,
     browser: String,
     profile: String,
+    keychain_password: Option<String>,
 ) -> Result<ImportReport, String> {
     let _guard = IMPORT_LOCK
         .try_lock()
@@ -182,10 +186,11 @@ pub async fn browser_import_session(
         .find(|source| source.browser == browser && source.profile == profile)
         .ok_or_else(|| format!("找不到导入来源 {browser} / {profile}，请刷新列表"))?;
     // Keychain prompts and SQLite reads can block; keep the async runtime responsive.
-    let read =
-        tauri::async_runtime::spawn_blocking(move || crate::cookie_import::read_cookies(&source))
-            .await
-            .map_err(|e| e.to_string())??;
+    let read = tauri::async_runtime::spawn_blocking(move || {
+        crate::cookie_import::read_cookies(&source, keychain_password.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     if read.cookies.is_empty() {
         return Err(format!(
             "{browser} 的这个 profile 没有可导入的普通 Cookie（跳过 {} 个）",
