@@ -36,7 +36,7 @@
 
 .composer-model-search input::placeholder { color: color-mix(in srgb, var(--color-content) 50%, transparent); }
 
-.composer-model-groups { min-height: 0; max-height: 300px; padding: 1px 6px 6px; overflow-y: auto; overscroll-behavior: contain; border-top: 1px solid var(--color-stroke); scrollbar-width: thin; }
+.composer-model-groups { min-height: 0; max-height: 300px; padding: 1px 6px 6px; overflow-y: auto; overscroll-behavior: contain; border-top: 1px solid var(--color-stroke); }
 
 .composer-model-group { padding: 6px 0 1px; }
 

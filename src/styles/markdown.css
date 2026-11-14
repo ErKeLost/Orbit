@@ -412,7 +412,6 @@
   border-radius: 0.75rem;
   background: color-mix(in srgb, var(--color-content) 6%, transparent);
   padding: 0.8rem 0.9rem;
-  scrollbar-width: thin;
 }
 
 .chat-markdown pre code {

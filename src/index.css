@@ -12,3 +12,31 @@
 /* 聊天 markdown 的外观，必须排在 orbit.css 之后：它按 t3code 的 .chat-markdown
    覆盖同优先级的 .agent-markdown 规则。 */
 @import "./styles/markdown.css";
+
+/*
+ * 全局滚动条：不画出来，滚动照旧。
+ *
+ * 一条规则盖住聊天、侧栏、编辑器、代码块和设置页。不要在组件上再写
+ * scrollbar-width: thin——那会在 Firefox 里把拇指画回来。
+ *
+ * WKWebView 不认 scrollbar-width，所以 webkit 伪元素必须写。两条都要，
+ * 语音页已经验证过只写一条会漏。overflow 不动：hidden 会把滚动一起关掉。
+ * !important 是为了压过后加载的组件样式和 xterm.css，不是为了盖住滚动本身。
+ */
+html,
+html * {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none;
+}
+
+html::-webkit-scrollbar,
+html *::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+/* xterm 自己画的拇指，不是原生滚动条，上面的伪元素规则盖不到。 */
+.xterm .xterm-scrollable-element > .scrollbar {
+  display: none !important;
+}
