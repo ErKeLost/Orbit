@@ -6,6 +6,12 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.43
+
+Web search results sit a little smaller.
+
+The site row and the page cards were a size larger than the rest of the turn. The row is shorter, the cards are shorter, and a turn that searched several times no longer pushes the answer as far down.
+
 ## v1.0.42
 
 Typing in the composer no longer shakes the chat above it.
