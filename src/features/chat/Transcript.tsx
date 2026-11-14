@@ -925,7 +925,7 @@ const AssistantTurn = memo(
         ) : null}
         {plan ? <TaskList plan={plan} /> : null}
         {searches.length ? (
-          <div className="flex min-w-0 flex-col gap-3 px-4 pt-1.5 pb-1">
+          <div className="flex min-w-0 flex-col gap-2 px-4 pt-1.5 pb-1">
             {searches.map((step) => (step.part ? <WebSearchTool key={step.key} part={step.part} tools={tools} /> : null))}
           </div>
         ) : null}

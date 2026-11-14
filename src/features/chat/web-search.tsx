@@ -58,7 +58,7 @@ const PLATE =
   "bg-surface-raised transition-colors group-hover:bg-surface-card group-hover/card:bg-surface-card dark:bg-surface-card dark:group-hover:bg-surface-raised dark:group-hover/card:bg-surface-raised";
 const FOCUS = "outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-3";
 
-const CARD_SHELL = `flex h-[84px] w-full cursor-pointer flex-col rounded-[14px] p-2.5 text-left ${SURFACE} ${FOCUS} group-hover/card:-translate-y-0.5`;
+const CARD_SHELL = `flex h-[72px] w-full cursor-pointer flex-col rounded-xl p-2 text-left ${SURFACE} ${FOCUS} group-hover/card:-translate-y-0.5`;
 
 function cx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -135,14 +135,14 @@ function WebSearch({
     quiet ? INSTANT : { ...CARD, delay: Math.max(0, index - (expanded ? COLUMNS - 1 : 0)) * STAGGER };
 
   return (
-    <div data-slot="web-search" data-status={searching ? "searching" : "done"} data-open={open || undefined} className="@container flex w-full max-w-[560px] min-w-0 flex-col font-sans text-ink-1">
+    <div data-slot="web-search" data-status={searching ? "searching" : "done"} data-open={open || undefined} className="@container flex w-full max-w-[520px] min-w-0 flex-col font-sans text-ink-1">
       <button
         type="button"
         data-slot="web-search-trigger"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         title={query ? `“${query}”` : undefined}
-        className={cx("group flex h-10 w-fit max-w-full cursor-pointer items-center gap-2.5 rounded-full pr-3.5 pl-1.5 text-left", SURFACE, FOCUS)}
+        className={cx("group flex h-8 w-fit max-w-full cursor-pointer items-center gap-2 rounded-full pr-3 pl-1 text-left", SURFACE, FOCUS)}
       >
         <GlobeTile searching={searching} progress={ring} quiet={quiet} />
         <motion.span
@@ -152,7 +152,7 @@ function WebSearch({
           animate={{ width: labelWidth ?? "auto" }}
           transition={swap}
         >
-          <span ref={measureRef} aria-hidden className="pointer-events-none invisible absolute top-0 left-0 text-sm font-semibold whitespace-nowrap">
+          <span ref={measureRef} aria-hidden className="pointer-events-none invisible absolute top-0 left-0 text-[13px] font-semibold whitespace-nowrap">
             {text}
           </span>
           <AnimatePresence initial={false} mode="popLayout">
@@ -163,10 +163,10 @@ function WebSearch({
               animate="center"
               exit="exit"
               transition={swap}
-              className="truncate text-sm font-semibold whitespace-nowrap"
+              className="truncate text-[13px] font-semibold whitespace-nowrap"
             >
               {searching ? (
-                <Shimmer className="text-sm font-semibold" duration={1.6}>
+                <Shimmer className="text-[13px] font-semibold" duration={1.6}>
                   {text}
                 </Shimmer>
               ) : (
@@ -185,7 +185,7 @@ function WebSearch({
         {open ? (
           <Collapse key="sources" quiet={quiet}>
             {count > 0 || skeletons > 0 ? (
-              <ol data-slot="web-search-sources" className="grid grid-cols-2 gap-2 pt-2.5 @min-[32rem]:grid-cols-4">
+              <ol data-slot="web-search-sources" className="grid grid-cols-2 gap-1.5 pt-2 @min-[30rem]:grid-cols-4">
                 <AnimatePresence initial={false} mode="popLayout">
                   {shown.map((source, index) => (
                     <motion.li
@@ -236,7 +236,7 @@ function WebSearch({
                         onClick={() => setExpanded(false)}
                         className={cx(
                           CARD_SHELL,
-                          "group flex-row items-center justify-center gap-1.5 bg-transparent text-[12.5px] font-semibold text-ink-3 shadow-[inset_0_0_0_1px_var(--line)] group-hover/card:translate-y-0 hover:bg-surface-raised hover:text-ink-1 hover:shadow-none dark:bg-transparent dark:hover:bg-surface-card",
+                          "group flex-row items-center justify-center gap-1 bg-transparent text-xs font-semibold text-ink-3 shadow-[inset_0_0_0_1px_var(--line)] group-hover/card:translate-y-0 hover:bg-surface-raised hover:text-ink-1 hover:shadow-none dark:bg-transparent dark:hover:bg-surface-card",
                         )}
                       >
                         <Chevron className="-ml-0.5 rotate-180 transition-transform duration-200 group-hover:-translate-y-px" />
@@ -293,11 +293,11 @@ function SourceCard({ source, index }: { source: SearchHit; index: number }) {
       onClick={(event) => openPage(source.url, event)}
       className={cx(CARD_SHELL, "group justify-between")}
     >
-      <span className="line-clamp-2 text-[12.5px] leading-[17px] font-semibold text-ink-1/85 transition-colors group-hover:text-ink-1">{source.title}</span>
-      <span className="flex items-center gap-1.5">
-        <SiteLogo origin={`https://${source.host}`} size={16} rounded />
-        <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-ink-3">{siteLabel(source.url)}</span>
-        <span className="text-[11px] font-semibold text-ink-3/70 tabular-nums">{index}</span>
+      <span className="line-clamp-2 text-xs leading-4 font-semibold text-ink-1/85 transition-colors group-hover:text-ink-1">{source.title}</span>
+      <span className="flex items-center gap-1">
+        <SiteLogo origin={`https://${source.host}`} size={14} rounded />
+        <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-ink-3">{siteLabel(source.url)}</span>
+        <span className="text-[10.5px] font-semibold text-ink-3/70 tabular-nums">{index}</span>
       </span>
     </button>
   );
@@ -307,7 +307,7 @@ function MoreCard({ sources, quiet, onClick }: { sources: SearchHit[]; quiet: bo
   return (
     <button type="button" onClick={onClick} aria-label={`Show ${sources.length} more sources`} className={cx(CARD_SHELL, "group justify-between")}>
       <FaviconStack sources={sources} quiet={quiet} />
-      <span className="flex items-center gap-1 text-[12.5px] leading-[17px] font-semibold whitespace-nowrap text-ink-1/85 transition-colors group-hover:text-ink-1">
+      <span className="flex items-center gap-1 text-xs leading-4 font-semibold whitespace-nowrap text-ink-1/85 transition-colors group-hover:text-ink-1">
         <span className="relative inline-grid overflow-hidden tabular-nums">
           <AnimatePresence initial={false} mode="popLayout">
             <motion.span
@@ -330,7 +330,7 @@ function MoreCard({ sources, quiet, onClick }: { sources: SearchHit[]; quiet: bo
 function SkeletonCard({ quiet, delay }: { quiet: boolean; delay: number }) {
   const bar = "rounded-full bg-fill-strong";
   return (
-    <div className="relative flex h-[84px] flex-col justify-between overflow-hidden rounded-[14px] bg-surface-raised p-2.5 dark:bg-surface-card">
+    <div className="relative flex h-[72px] flex-col justify-between overflow-hidden rounded-xl bg-surface-raised p-2 dark:bg-surface-card">
       <span className="flex flex-col gap-1.5 pt-0.5">
         <span className={cx(bar, "h-2.5 w-[88%]")} />
         <span className={cx(bar, "h-2.5 w-[60%]")} />
@@ -380,7 +380,7 @@ function useHoverIntent(enterDelay: number) {
   return { active, hover };
 }
 
-function FaviconStack({ sources, quiet, size = 20 }: { sources: SearchHit[]; quiet: boolean; size?: number }) {
+function FaviconStack({ sources, quiet, size = 16 }: { sources: SearchHit[]; quiet: boolean; size?: number }) {
   const { active: spread, hover } = useHoverIntent(SPREAD_DELAY);
   const shown: SearchHit[] = [];
   for (const source of sources) {
@@ -444,8 +444,8 @@ function GlobeTile({ searching, progress, quiet }: { searching: boolean; progres
   }, [searching, progress, quiet, fill]);
 
   return (
-    <span className="relative flex size-7 shrink-0 items-center justify-center rounded-full bg-surface-card text-ink-3 shadow-[0_1px_2px_rgba(0,0,0,0.06)] transition-colors group-hover:text-ink-1 dark:bg-surface-raised">
-      <svg aria-hidden viewBox="0 0 24 24" width={15} height={15} {...STROKE} strokeWidth={2}>
+    <span className="relative flex size-6 shrink-0 items-center justify-center rounded-full bg-surface-card text-ink-3 shadow-[0_1px_2px_rgba(0,0,0,0.06)] transition-colors group-hover:text-ink-1 dark:bg-surface-raised">
+      <svg aria-hidden viewBox="0 0 24 24" width={13} height={13} {...STROKE} strokeWidth={2}>
         <circle cx="12" cy="12" r="9" />
         <path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z" />
       </svg>
