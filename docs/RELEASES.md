@@ -6,6 +6,12 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.44
+
+Scrollbars stay off. Scrolling does not.
+
+One rule hides the thumb on every scroller — chat, rail, editor, code block, terminal — and leaves wheel, trackpad, and keyboard scroll alone. The Mac webview ignores `scrollbar-width`, so the webkit rule is part of the same rule. Linux and Windows no longer draw a separate thin bar.
+
 ## v1.0.43
 
 Web search results sit a little smaller.
