@@ -6,6 +6,16 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.41
+
+A voice call no longer starts its own Pi.
+
+ElevenLabs still listens and speaks. The local engine only forwards the transcript and streams the words back. Work goes to the session that was on screen when the microphone opened, through the same send path the composer already uses. It does not open a session, and it does not follow a tab switch mid-call.
+
+Jev still picks the lane — speak, dispatch, watch, confirm, or stop. An unsure answer stays spoken and is not dispatched. When that session finishes, fails, or needs a confirmation, the sentence is spoken even if nobody is talking. If the call has already ended, the same voice is synthesized locally. A call with no live session says so and does not invent one.
+
+The bundled Pi runtime is 1.5.2.
+
 ## v1.0.40
 
 Hot paths stop repeating work that has not changed.
