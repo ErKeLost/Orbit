@@ -1,159 +1,99 @@
 /**
- * Speech Engine server: ElevenLabs sends transcripts, Pi answers, the text is spoken.
- *
- * ElevenLabs owns capture, turn-taking, interruption and synthesis. Jev decides
- * whether the utterance needs the working agent. Otherwise a no-tools Pi answers
- * in the user's language. No phrase list.
+ * Speech Engine pipe. ElevenLabs sends transcripts. The desktop decides the
+ * words. This process does not spawn Pi.
  *
  *   ELEVENLABS_API_KEY=sk_…  SPEECH_ENGINE_ID=seng_…  bun run start
  */
-import { createServer } from "node:http"
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
 import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js"
-import { routeUtterance } from "./gate.ts"
-import { MOUTH_RULES, PiVoice } from "./pi.ts"
+import { Desk, DESK_MISSING, announcementOf, withoutAnnouncements } from "./desk.ts"
 import { dropReason, latestUserText, previousAgentText } from "./utterance.ts"
 
 const PORT = Number(process.env.PORT ?? 3001)
 const WS_PATH = process.env.WS_PATH ?? "/ws"
-const cwd = process.env.PI_CWD ?? process.cwd()
 const startedAt = Date.now()
 const log = (...parts: unknown[]) => console.log(new Date().toISOString().slice(11, 19), ...parts)
 
 if (!process.env.ELEVENLABS_API_KEY) throw new Error("缺少 ELEVENLABS_API_KEY")
 if (!process.env.SPEECH_ENGINE_ID) throw new Error("缺少 SPEECH_ENGINE_ID（seng_…）")
 
-const agents = new Map<string, PiVoice>()
-const boots = new Map<string, number>()
+const desk = new Desk()
 let calls = 0
 
-const spare: PiVoice[] = []
-const mouths: PiVoice[] = []
+function cors(response: ServerResponse) {
+  response.setHeader("access-control-allow-origin", "*")
+  response.setHeader("access-control-allow-methods", "GET, POST, OPTIONS")
+  response.setHeader("access-control-allow-headers", "content-type")
+  response.setHeader("cache-control", "no-store")
+}
 
-async function makeReady(options: ConstructorParameters<typeof PiVoice>[0]) {
-  const pi = new PiVoice(options)
+function json(response: ServerResponse, status: number, body: unknown) {
+  cors(response)
+  response.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(body))
+}
+
+function readBody(request: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    request.on("data", chunk => chunks.push(Buffer.from(chunk)))
+    request.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")))
+    request.on("error", reject)
+  })
+}
+
+async function posted(request: IncomingMessage): Promise<{ id?: string; text?: string }> {
+  const text = await readBody(request)
+  if (!text.trim()) return {}
   try {
-    await pi.ready()
-    return pi
-  } catch (error) {
-    pi.dispose()
-    throw error
+    const body = JSON.parse(text) as { id?: unknown; text?: unknown }
+    return {
+      id: typeof body.id === "string" ? body.id : undefined,
+      text: typeof body.text === "string" ? body.text : undefined,
+    }
+  } catch {
+    return {}
   }
-}
-
-async function take() {
-  return spare.pop() ?? makeReady({ cwd })
-}
-
-async function takeMouth() {
-  return mouths.pop() ?? makeReady({ cwd, tools: false, filler: false, systemPrompt: MOUTH_RULES })
-}
-
-function releaseIdle() {
-  if (agents.size > 0) return
-  for (const pi of spare.splice(0)) pi.dispose()
-  for (const pi of mouths.splice(0)) pi.dispose()
-}
-
-function release(conversationId: string) {
-  boots.set(conversationId, (boots.get(conversationId) ?? 0) + 1)
-  agents.get(conversationId)?.dispose()
-  agents.delete(conversationId)
-  releaseIdle()
-}
-
-async function waitForPi(conversationId: string, signal: AbortSignal) {
-  const boot = boots.get(conversationId)
-  const deadline = Date.now() + 20_000
-  while (Date.now() < deadline && !signal.aborted) {
-    const pi = agents.get(conversationId)
-    if (pi) return pi
-    if (boots.get(conversationId) !== boot) return undefined
-    await new Promise(resolve => setTimeout(resolve, 40))
-  }
-  return agents.get(conversationId)
-}
-
-async function* speak(conversationId: string, text: string, signal: AbortSignal): AsyncGenerator<string> {
-  const pi = await waitForPi(conversationId, signal)
-  if (signal.aborted) return
-  if (!pi) {
-    log("[call] agent process is not ready")
-    return
-  }
-  yield* pi.prompt(text, signal)
-}
-
-function spokenRequest(said: string, heard: string) {
-  return heard ? `context:\n${heard}\n---\n${said}` : said
-}
-
-async function* reply(said: string, heard: string, signal: AbortSignal): AsyncGenerator<string> {
-  let mouth: PiVoice
-  try {
-    mouth = await takeMouth()
-  } catch (error) {
-    log("[mouth] not ready", error instanceof Error ? error.message : error)
-    return
-  }
-  try {
-    yield* mouth.prompt(spokenRequest(said, heard), signal)
-  } finally {
-    if (agents.size > 0 && !signal.aborted) mouths.push(mouth)
-    else mouth.dispose()
-  }
-}
-
-async function* answer(conversationId: string, said: string, heard: string, signal: AbortSignal): AsyncGenerator<string> {
-  const turn = await routeUtterance(said, heard, signal)
-  if (signal.aborted || turn.kind === "drop") return
-  if (turn.kind === "speak") {
-    log(`[gate] ${conversationId} speak`)
-    yield* reply(turn.text, heard, signal)
-    return
-  }
-  log(`[gate] ${conversationId} agent: ${said.slice(0, 80)}`)
-  yield* speak(conversationId, turn.text, signal)
 }
 
 const handlers = {
   onInit(conversationId: string) {
-    release(conversationId)
-    const boot = (boots.get(conversationId) ?? 0) + 1
-    boots.set(conversationId, boot)
-    void take()
-      .then(pi => {
-        if (boots.get(conversationId) !== boot) {
-          pi.dispose()
-          return
-        }
-        agents.set(conversationId, pi)
-        calls++
-        log(`[call] ${conversationId} — ${agents.size} in flight`)
-      })
-      .catch(error => log("[call] pi failed", error instanceof Error ? error.message : error))
+    calls++
+    log(`[call] ${conversationId}`)
   },
-  onTranscript(transcript: { role: string; content: string }[], signal: AbortSignal, session: { conversationId?: string; sendResponse: (value: AsyncIterable<string>) => unknown }) {
-    const conversationId = session.conversationId ?? ""
+  onTranscript(transcript: { role: string; content: string }[], signal: AbortSignal, session: { conversationId?: string; sendResponse: (value: AsyncIterable<string> | string) => unknown }) {
+    const visible = withoutAnnouncements(transcript)
     const latest = latestUserText(transcript)
+    const announced = announcementOf(latest)
+    if (announced) {
+      log(`[announce] ${announced.slice(0, 80)}`)
+      desk.spoke(announced)
+      session.sendResponse(announced)
+      return
+    }
     const dropped = dropReason(latest)
     if (dropped === "empty") {
       if (latest) log(`[turn] ignored empty transcript ${JSON.stringify(latest)}`)
       return
     }
     if (dropped === "background") {
-      log(`[turn] ignored ${latest.length} chars of background audio: ${latest.slice(0, 60)}…`)
+      log(`[turn] ignored ${latest.length} chars of background audio`)
       return
     }
-    log(`[turn] ${conversationId}: ${latest.slice(0, 80)}`)
-    session.sendResponse(answer(conversationId, latest, previousAgentText(transcript), signal))
+    if (!desk.attached) {
+      log("[turn] desk is not connected")
+      session.sendResponse(DESK_MISSING)
+      return
+    }
+    const heard = previousAgentText(visible)
+    log(`[turn] ${session.conversationId ?? ""}: ${latest.slice(0, 80)}`)
+    const { spoken } = desk.enqueue(latest, heard, signal)
+    session.sendResponse(spoken)
   },
   onClose(session: { conversationId?: string }) {
-    const conversationId = session.conversationId ?? ""
-    release(conversationId)
-    log(`[call] ${conversationId} ended — ${agents.size} in flight`)
+    log(`[call] ${session.conversationId ?? ""} ended`)
   },
   onDisconnect(session: { conversationId?: string }) {
-    release(session.conversationId ?? "")
+    log(`[call] ${session.conversationId ?? ""} dropped`)
   },
   onError(error: Error, session?: { conversationId?: string }) {
     console.error("[engine]", session?.conversationId ?? "", error.message)
@@ -161,44 +101,80 @@ const handlers = {
 }
 
 const server = createServer((request, response) => {
-  response.setHeader("access-control-allow-origin", "*")
-  response.setHeader("cache-control", "no-store")
-  if (request.url?.split("?")[0] !== "/health") {
-    response.writeHead(404, { "content-type": "text/plain" }).end("not found")
+  const path = request.url?.split("?")[0] ?? "/"
+  if (request.method === "OPTIONS") {
+    cors(response)
+    response.writeHead(204).end()
     return
   }
-  const body = JSON.stringify({
-    ok: true,
-    engineId: process.env.SPEECH_ENGINE_ID,
-    cwd,
-    calls,
-    inFlight: agents.size,
-    rssMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
-    uptimeSec: Math.round((Date.now() - startedAt) / 1000),
-  })
-  response.writeHead(200, { "content-type": "application/json" }).end(body)
+  if (path === "/health") {
+    json(response, 200, {
+      ok: true,
+      engineId: process.env.SPEECH_ENGINE_ID,
+      calls,
+      desk: desk.attached,
+      inFlight: 0,
+      rssMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
+      uptimeSec: Math.round((Date.now() - startedAt) / 1000),
+    })
+    return
+  }
+  if (path === "/desk/hello" && request.method === "POST") {
+    desk.hello()
+    json(response, 200, { ok: true })
+    return
+  }
+  if (path === "/desk/next" && request.method === "GET") {
+    const timeout = Number(new URL(request.url ?? "", "http://127.0.0.1").searchParams.get("timeout") ?? 20000)
+    void desk.next(Math.min(20000, Math.max(1, timeout))).then(turn => {
+      if (!turn) {
+        cors(response)
+        response.writeHead(204).end()
+        return
+      }
+      json(response, 200, turn)
+    })
+    return
+  }
+  if (path === "/desk/chunk" && request.method === "POST") {
+    void posted(request).then(body => {
+      if (body.id && body.text) desk.chunk(body.id, body.text)
+      json(response, 200, { ok: true })
+    })
+    return
+  }
+  if (path === "/desk/end" && request.method === "POST") {
+    void posted(request).then(body => {
+      if (body.id) desk.end(body.id)
+      json(response, 200, { ok: true })
+    })
+    return
+  }
+  if (path === "/desk/spoken" && request.method === "GET") {
+    void desk.waitSpoken(1600).then(text => {
+      if (!text) {
+        cors(response)
+        response.writeHead(204).end()
+        return
+      }
+      json(response, 200, { text })
+    })
+    return
+  }
+  response.writeHead(404, { "content-type": "text/plain" }).end("not found")
 })
 
 const client = new ElevenLabsClient({ apiKey: process.env.ELEVENLABS_API_KEY })
 client.speechEngine.attach(process.env.SPEECH_ENGINE_ID, server, WS_PATH, handlers as never)
 
 server.listen(PORT, () => {
-  console.log(`speech engine on :${PORT}${WS_PATH} — ${process.env.SPEECH_ENGINE_ID} (cwd ${cwd})`)
+  console.log(`speech engine on :${PORT}${WS_PATH} — ${process.env.SPEECH_ENGINE_ID} (desk, no pi)`)
 })
-
 
 const LIMIT_MB = Number(process.env.MEMORY_LIMIT_MB ?? 4096)
 setInterval(() => {
-  const usage = process.memoryUsage()
-  const rssMb = Math.round(usage.rss / 1024 / 1024)
-  const heapMb = Math.round(usage.heapUsed / 1024 / 1024)
-  log(`[stats] rss ${rssMb}MB heap ${heapMb}MB — calls ${calls}, in flight ${agents.size}, spares ${spare.length}`)
-  if (rssMb < LIMIT_MB) return
-  console.error(`[watchdog] rss ${rssMb}MB over ${LIMIT_MB}MB — exiting so the supervisor can restart`)
-  process.exit(1)
-}, 300_000)
-setInterval(() => {
   const rssMb = Math.round(process.memoryUsage().rss / 1024 / 1024)
+  log(`[stats] rss ${rssMb}MB — calls ${calls}, desk ${desk.attached}`)
   if (rssMb < LIMIT_MB) return
   console.error(`[watchdog] rss ${rssMb}MB over ${LIMIT_MB}MB — exiting so the supervisor can restart`)
   process.exit(1)
@@ -206,7 +182,6 @@ setInterval(() => {
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, () => {
-    for (const pi of [...agents.values(), ...spare.splice(0), ...mouths.splice(0)]) pi.dispose()
     server.close(() => process.exit(0))
     setTimeout(() => process.exit(0), 1500).unref()
   })

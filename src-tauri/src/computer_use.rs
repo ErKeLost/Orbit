@@ -13,7 +13,7 @@ pub(crate) fn typesafe_key_path() -> Result<PathBuf, String> {
     Ok(agent_dir()?.join("typesafe-api-key"))
 }
 
-fn typesafe_api_key() -> Option<String> {
+pub(crate) fn typesafe_api_key() -> Option<String> {
     if let Ok(key) = std::env::var("TYPESAFE_API_KEY") {
         let key = key.trim().to_string();
         if !key.is_empty() {

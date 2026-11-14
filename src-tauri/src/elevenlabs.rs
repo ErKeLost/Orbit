@@ -5,9 +5,10 @@
 //! (a) keep the API key out of the webview, (b) hold the engine id, and (c) mint the
 //! short-lived WebRTC conversation token the page uses to join a call.
 //!
-//! The Pi side of a call lives in `tools/speech-engine`: ElevenLabs connects to that
-//! WebSocket, and each call gets its own `pi --mode rpc` process.
+//! The desktop decides what to say. Speech Engine only forwards the transcript.
+//! This process does not start a Pi session.
 
+use base64::Engine;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
@@ -180,6 +181,110 @@ pub async fn speech_engine_check() -> Result<Value, String> {
         "characterCount": body.get("character_count").cloned().unwrap_or(Value::Null),
         "characterLimit": body.get("character_limit").cloned().unwrap_or(Value::Null),
     }))
+}
+
+/// One SystemOne call for the voice desk. The key stays here. A missing key
+/// or a timeout is a failure; the desk then speaks and does not dispatch.
+#[tauri::command]
+pub async fn voice_classify(request: Value) -> Result<Value, String> {
+    let key = crate::computer_use::typesafe_api_key().ok_or_else(|| "没有 Jev Key".to_string())?;
+    let config = crate::computer_use::read_computer_use_config();
+    let base = config
+        .get("systemoneBaseUrl")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("https://api.typesafe.ai")
+        .trim_end_matches('/')
+        .to_string();
+    let mut body = request;
+    if !body.is_object() {
+        return Err("语音分类必须是一个对象".into());
+    }
+    body["model"] = json!(crate::computer_use::computer_use_jev_model(&config));
+    let response = client()
+        .post(format!("{base}/v1/systemone"))
+        .bearer_auth(key)
+        .json(&body)
+        .timeout(std::time::Duration::from_millis(800))
+        .send()
+        .await
+        .map_err(|error| format!("Jev 请求失败：{error}"))?;
+    let status = response.status();
+    let payload: Value = response.json().await.unwrap_or(Value::Null);
+    if !status.is_success() {
+        let message = payload
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or("请求被拒绝");
+        return Err(format!("Jev 返回 {status}：{message}"));
+    }
+    Ok(payload)
+}
+
+/// Speak one sentence after the call has ended. Same key, flash model, the
+/// engine's own voice. Does not open a session and does not start Pi.
+#[tauri::command]
+pub async fn speech_engine_speak(text: String) -> Result<Value, String> {
+    let sentence = text.trim().to_string();
+    if sentence.is_empty() || sentence.chars().count() > 400 {
+        return Err("播报只能是一两句".into());
+    }
+    let key = api_key()?;
+    let engine = normalized(&read_stored())["engineId"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    if engine.is_empty() {
+        return Err("还没有配置 Speech Engine ID".into());
+    }
+    let voice = engine_voice(&key, &engine).await?;
+    let response = client()
+        .post(format!("{API}/v1/text-to-speech/{voice}?output_format=mp3_22050_32"))
+        .header("xi-api-key", key)
+        .json(&json!({
+            "text": sentence,
+            "model_id": "eleven_flash_v2_5",
+        }))
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+        .map_err(|error| format!("合成失败：{error}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let body: Value = response.json().await.unwrap_or(Value::Null);
+        return Err(detail(status.as_u16(), &body));
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| format!("合成没有返回声音：{error}"))?;
+    Ok(json!({
+        "audioBase64": base64::engine::general_purpose::STANDARD.encode(&bytes),
+        "mime": "audio/mpeg",
+    }))
+}
+
+async fn engine_voice(key: &str, engine: &str) -> Result<String, String> {
+    let response = client()
+        .get(format!("{API}/v1/speech-engine/{engine}"))
+        .header("xi-api-key", key)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|error| format!("读取声音失败：{error}"))?;
+    let status = response.status();
+    let body: Value = response.json().await.unwrap_or(Value::Null);
+    if !status.is_success() {
+        return Err(detail(status.as_u16(), &body));
+    }
+    body.pointer("/tts/voice_id")
+        .or_else(|| body.pointer("/tts/voiceId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| "Speech Engine 没有声音".to_string())
 }
 
 fn detail(status: u16, body: &Value) -> String {

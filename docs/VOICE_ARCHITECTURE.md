@@ -1,89 +1,138 @@
-# 语音通话（ElevenLabs Speech Engine）
+# 语音：耳朵在 ElevenLabs，手在桌面会话
 
-实现日期：2026-11-11。替换掉原先自建的 Rime 语音环。
+设计日期：2026-11-13。替换 v1.0.36 的「一通电话一只 `pi --mode rpc --no-session`」。
 
 ## 一句话
 
-声音链路**不在这个仓库里**。ElevenLabs 负责麦克风采集、语音识别、轮次判断、打断与合成；
-桌面应用只负责拿到一枚短期 WebRTC token 并显示通话界面；Pi 那一端在 `tools/speech-engine`。
+人说话，活派给**开麦时桌面上那条会话**。做完、失败、要确认，都由我们念出来，人不说话也念。挂断只关麦，任务接着跑。人不看屏幕。
+
+ElevenLabs 只做耳朵和嘴：采集、识别、断句、打断、把我们送回的字念出来。它不决定派不派活，也不是那只 agent。不用 Realtime。
+
+## 不碰默认的那条 Pi
+
+开新会话、输入框发消息、切会话、重连，都还走现在这条。语音不插进去。
+
+不改 `connect`、`new_session`、`switch_session`，不改 Composer 的发送，不改会话启动参数和系统提示，不挂 `before_agent_start`，不写 `gui-session-profile`，不给普通会话加一套语音人设。旧的 Rime 路径曾经这么做，这次不做。
+
+语音要动那条会话时，只调界面已经在用的命令：`sendPrompt`、`deliveryFor`、`answerDialog`，以及对绑定连接的 `{ type: "abort" }`。叫法和正文跟人在输入框里发出去的一样。会话自己不知道这句话来自麦克风。
 
 ```
-桌面 WebView ──WebRTC──► ElevenLabs（STT + 断句 + 打断 + TTS）
-                              │ WebSocket（一通电话一条）
-                              ▼
-                   tools/speech-engine（本机常驻）
-                              │ JSONL / spawn
-                              ▼
-                    pi --mode rpc（每通电话一个会话）
+麦 ──WebRTC──► ElevenLabs（STT + 断句 + 打断 + TTS）
+                    │ user_transcript
+                    ▼
+         tools/speech-engine（管子，不养 Pi）
+                    │ http://127.0.0.1:3001/desk
+                    ▼
+         桌面应用（Jev 一条分类，然后只走一条）
+            speak     → 没有工具的嘴，当场答
+            dispatch  → 原话一条，发给绑定的桌面会话，先说「开始了」
+            watch     → 读这条会话的投影，念，不发消息
+            confirm   → 只回答已经播报过的确认
+            control   → 别念了 / 挂断 / 停掉
+                    │
+    orbit-turn-settled / orbit-session-needs-input（绑定的那条）
+                    ▼
+         播报：通话还在就 sendUserMessage；人已经挂了就本地 TTS
 ```
 
-## 职责划分
+## 为什么不是现在这套，也不是 Realtime
+
+现在的 `tools/speech-engine` 接通就 `spawn pi --mode rpc --no-session`。这只不在会话列表里，看不见桌面上正在用的那条，挂断即毁。`sendResponse` 只能在 `onTranscript` 里调用，任务过一会儿做完，它没有开口的权利。所以人还是得看屏幕。
+
+Realtime 更快，但脑子是他们的模型。Pi 只能做成它自己决定要不要调的工具，做完也不会叫人。Jev 插不进开口之前。`seng_…` 也挂不上 Realtime 模型。
+
+Rime 当时好用，是因为它只做耳朵和嘴。派发、旁观、做完了再念，都在这边，而且念的是桌面上那条真会话。这次把 Rime 换成 ElevenLabs，职责划分按那个恢复。断句、回声、PCM 不再自己做。
+
+## 职责
 
 | 组件 | 位置 | 职责 |
 | --- | --- | --- |
-| 通话界面 | `src/features/voice/ui/VoicePage.tsx` | 球、对话列表、开始/打断/结束/静音 |
-| 通话状态 | `src/features/voice/model/call.ts` | 拿 token、起会话、把 SDK 回调摊平成状态 |
-| 凭据与 token | `src-tauri/src/elevenlabs.rs` | API Key 存 `auth.json`（provider `elevenlabs`），engine id 存 `eleven.json`，签发 WebRTC token |
-| Pi 服务端 | `tools/speech-engine` | 接受 ElevenLabs 的 WS，把转写交给一个独立 Pi 进程，流式送回回答 |
+| 通话 | `src/features/voice` | 球、字幕、开麦/静音/挂断。持有 WebRTC。播报时调用 `sendUserMessage` |
+| 桌子 | `src/features/voice/model/` | 绑定焦点、问 Jev、派发、旁观、播报队列。**只有这里能碰桌面会话** |
+| 嘴 | 桌子旁边的一只没有工具的生成 | 闲聊、进度的说法、结果摘要。不写会话，不声称自己干过活 |
+| 管子 | `tools/speech-engine` | 接 ElevenLabs 的 WS，把转写交给桌子，把桌子的字流式送回。不 spawn Pi |
+| 凭据 | `src-tauri/src/elevenlabs.rs` | 不变：key 在 `auth.json`，engine id 在 `eleven.json`，页面只拿短期 token |
+| 本地嘴 | 同上，挂断之后 | 通话已断时，用同一把 key、同一个 voice、`eleven_flash_v2_5` 把播报念出来 |
 
-## 为什么这么切
+Jev 从 `tools/speech-engine/src/gate.ts` 搬到桌子。管子不再需要 `TYPESAFE_API_KEY`。
 
-- 断句、重采样、PCM 排程、分片合并、AEC 这些是“语音工程”，不是这个产品要做的事；
-  自建版本的这些代码全部删除（约 2000 行）。
-- API Key 不出后端：前端只拿**短期 token**，与其它凭据同一处存放。
-- 每通电话一个 `pi --mode rpc` 进程：历史与任务状态天然隔离，挂断即销毁。
+## 绑定
 
-## 分岔
+开麦时记下当时的 `{ connectionId, sessionFile, cwd }`。这一通就盯这一条。
 
-转写进来之后、叫醒干活的 Pi 之前，Jev 只回答一个是非题：这句话要不要工作 agent。概率不到 0.75，或者 Jev 没答上来，就不派活。
+- 中途人在界面上换了会话，不跟着换。否则一句话会派进另一条。
+- 开麦时没有活着的桌面会话：不派活，念「没有正在用的会话」。不偷偷 `new_session`，也不再拉一只 `--no-session`。
+- 换焦点是以后的一句明确指令，这一刀不做。
 
-不派活的那句交给另一个没有工具的 Pi，按用户当时的语言现答。不查短语表，不锁语言。干活的 Pi 只有被选中才收到这句话。
+## 管子
 
-Jev 看到的只有这一句和上一句已经念出来的话。实现在 `tools/speech-engine/src/turn.ts` 和 `gate.ts`。
+ElevenLabs 的协议不变：`onTranscript` 里必须 `sendResponse`，外面调会被丢掉。所以管子只做三件事。
 
-## 为什么不是 Realtime 模型
+1. 转写以 `orbit:announce:` 开头：不叫桌子，不叫 Jev，把冒号后面的句子原样送回。这是播报，不是用户说的话。
+2. 其他转写：转给 `ws://127.0.0.1:3001/desk`，把桌子流回来的字送回 ElevenLabs。
+3. 桌子没接上：送回「桌面没接上，这句不会派活。」不编一句回答，不派活。
 
-Eleven Realtime v1 Mini / Max 是最低延迟的语音模式，但官方限制写明：Speech Engine
-和任何自定义 LLM 都不能用 Realtime 模型。Pi 是自己的进程，所以能接到 Pi 的最快路径是
-Speech Engine 的低延迟配置，不是把 Voice mode 拨到 Realtime。
+空转写、纯背景音，沿用现在的丢弃，不送给桌子。
 
-`up.sh` 重跑时会写上：`scribe_realtime`、`eleven_flash_v2_5`、`turnEagerness: eager`、
-通话上限默认 3600 秒、必须持有 WebRTC token。`speculativeTurn` 不开：它会在句子还没
-说完时启动一轮带工具的 Pi。插话是 abort 当前回合再发新 prompt，不用 Pi 的 `steer`
-（steer 会等当前工具调用跑完）。没有默认垫句；要先开口，自己设 `FILLER`。
+`/health`、隧道、`up.sh`、内存哨兵留着。删掉工人 Pi：`take`、`agents`、`mouths` 里那只带工具的、`--mode rpc --no-session`。闲聊的嘴也不放在管子里，免得又养出第二只看不见桌面的 Pi。
 
-## 明确的限制
+## 播报
 
-- **没有主动播报**。`sendResponse` 只能在 `onTranscript` 里调用，所以 Pi 在用户不再说话之后无法开口。
-- **只能操作自己那条会话**。每通电话一个 `pi --mode rpc --no-session`，不写进桌面会话列表。
-- 服务端必须公网可达（开发期用 cloudflared）。隧道地址变了就重跑 `tools/speech-engine/up.sh`，不换 `seng_…`。
-- 免费计划约 1 万字符/月，通话按分钟消耗积分。
+这是可以不看屏幕的原因。`sendResponse` 补不了这个洞，所以播报不走那条迟到的调用。
 
-## 失败会长什么样
+只盯绑定的那条连接：
 
-一通电话有三段：本页 ↔ ElevenLabs ↔ 本机 3001。第三段断掉时，前两段照样接通，
-页面就一直"在听"而对面不出声——这也是 2026-11-11 那次"根本不好使"的主因：内核日志里写着
-`low swap: killing largest compressed process with pid … (bun) … 49054 MB`，服务端涨到 49 GB
-被系统杀掉，隧道于是回 502，而应用里没有任何地方说这件事。
+- `orbit-turn-settled`：这一轮停了。`aborted` 念「停了」。`error` 念失败，不念堆栈。否则拿最后一条助手回复，让嘴收成一两句，不念代码、日志、清单。
+- `orbit-session-needs-input`：有一个 `confirm` / `input` / `select` 等着人。念那个问题，并记下 `request.id`。没有这个记录，「可以」不是确认。
 
-所以现在：
+通话还开着：页面 `conversation.sendUserMessage("orbit:announce:" + 句子)`。ElevenLabs 把它当成一次用户输入送进管子，管子原样念。这样仍然是一张嘴，回声消除还在他们那边。字幕里不要把这条显示成用户说的话。下一句真用户转写里如果夹着它，桌子在问 Jev 之前剥掉。
 
-- 服务端和 `/ws` 同端口提供 `GET /health`（engineId、内存、通话数、运行时长）；
-- 开麦前先问它，服务没在跑就直说"没在运行，跑一次 up.sh"，而不是让人对着空气说话；
-- 设置 → 语音 → 本机服务 也显示同一份状态；
-- 服务端有内存哨兵（默认 4 GB 自杀等重启），并接住了 `pi` 子进程的 spawn 错误——那条
-  未捕获异常原本会直接把整个服务端带走。
+这一步要先探针证实：Speech Engine 的服务端协议写明的入站只有 `user_transcript`。客户端有 `sendUserMessage`，但是不是会变成管子的 `onTranscript`，文档没保证。探针不过，通话中的播报改成本地 TTS，播的时候关麦，播完再开。不要两张嘴同时出声。
 
-## 配置
+人已经挂了：仍要念。走本地 TTS，不依赖这通 WebRTC。挂断取消的是麦，不是播报队列。
 
-`~/.pi/agent/eleven.json`：`{"engineId": "seng_…"}`。
-`~/.pi/agent/auth.json` 的 `elevenlabs` 条目：`{"key": "sk_…", "type": "api_key"}`。
-两边都能在「设置 → 语音」里改。
+`contextual_update` 不能用。官方写明它不打断、不念。
+
+## 派发和确认
+
+派发用现成的 `sendPrompt` / `deliveryFor`，不另写一套队列。
+
+- 会话空闲：`{ type: "prompt", message: 用户原话 }`。
+- 会话在跑，这句是在改当前任务：`streamingBehavior: "steer"`。`deliveryFor` 发现其实没在跑，会退化成 prompt，桌子按它实际走的那条念。
+- 会话在跑，这句是下一件：`streamingBehavior: "followUp"`，念「排上了」。
+- 问不到 pi 在不在跑：按 `deliveryBehavior` 现有的规则，当成在跑。不要猜。
+
+消息正文只有用户原话。不包系统提示，不写 `voice_session`，不要求这条桌面会话改成口语。长答案留在会话里；念出来的是嘴的摘要。
+
+确认用 `answerDialog(request, answer, connectionId)`。只对已经播报过的那个 `request.id`。取消是 `{ cancelled: true }`，同意是 `{ confirmed: true }`，其余把原话放进 `{ value }`。
+
+「停掉」是对绑定连接发 `{ type: "abort" }`。不用 `stop()`：那个会清队列再把 steering 重放回去，语音里的停不是这个意思。
+
+## 失败
+
+| 看到的 | 原因 | 说什么 |
+| --- | --- | --- |
+| 开麦就失败 | `:3001` 没人，或 engine id 和健康检查不一致 | 现在这句，不变 |
+| 接通了但每句都说桌面没接上 | 管子在，桌子的 `/desk` 没有 | 这句话，不派活 |
+| 说了「开始了」之后一直安静 | 播报探针没过，或本地 TTS 没接 | 不能当成做完了。设置里要能看见上一次播报是走了 `sendUserMessage` 还是本地 TTS |
+| 挂断后没有声音 | 播报队列被挂断清掉 | 这是缺陷。挂断只关麦 |
+
+## 明确不做
+
+- Realtime，以及「Realtime 闲聊、Jev 再把某一句拨给 Pi」。
+- 短语表。分类只来自 Jev 的一次回答；代码只卡阈值。
+- 把闲聊送进桌面会话。
+- 开麦时新建会话、或再养一只通话专属 Pi。也不改默认开会话、普通对话那条 Pi。
+- 语音里切换到另一条会话。下一刀再做，做的时候也是明确指令，不跟随界面焦点。
+- 主动把进度一段段念出来。这一刀只念结束、失败、和需要人回答的确认。人要进度，走 watch。
 
 ## 验证
 
-- `GET /v1/user/subscription` → 计划与剩余额度（设置页「检查」按钮）。
-- `GET /v1/convai/conversation/token?agent_id=seng_…` → 200 且返回 `token`，说明 engine 与凭据都有效。
-- `GET http://127.0.0.1:3001/health` → 本机服务在不在。
-- 端到端：用 `tools/speech-engine/probe.mjs` 拿一个自签的 Speech Engine JWT 连 `wss://…/ws`，
-  发一条 `user_transcript`，能在几秒内收到 `agent_response` 就说明整条链路是通的（本机、隧道都试一遍）。
+- 管子不再 spawn `pi`。一通电话的进程列表里没有它拉起来的工人。
+- 「你好」之后，绑定会话的消息数不变。
+- 「把登录改成失败三次锁定」之后，绑定会话多一条，正文等于这句原话。界面先听到「开始了」，麦可以继续说。
+- 这轮跑完、人没再说话：念一两句结果。挂断后跑完：仍念。
+- 「做到哪了」不增加会话消息。
+- 没有待确认时说「可以」，不调用 `answerDialog`。
+- 「别念了」只停声音。「停掉」才 `abort`，而且不重放队列。
+- 没开麦时，新会话和输入框发消息走的仍是原来的 Pi。会话启动、系统提示、Composer 发送路径没有为语音加分支。

@@ -1,4 +1,7 @@
 /**
+ * Unused by the call. The pipe does not spawn Pi. The desk uses `pi_oneshot`
+ * for the mouth, and the composer's existing session for work.
+ *
  * One Pi process per voice conversation, driven over `pi --mode rpc`.
  *
  * Speech Engine wants the first spoken chunk immediately, and a new transcript

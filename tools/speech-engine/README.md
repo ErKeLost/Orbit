@@ -1,17 +1,16 @@
 # Speech Engine（语音通话的 Pi 服务端）
 
 语音通话里，**声音全部归 ElevenLabs**：麦克风采集、语音识别、轮次判断、打断、语音合成都在他们那边。
-这个目录只负责“大脑那一端”——ElevenLabs 从云端连进来，我们把它收到的转写交给 Pi，再把 Pi 的回答
-流式送回去念出来。
+这个目录只是一根管子。它不 spawn Pi。桌面应用连上 `http://127.0.0.1:3001/desk`，决定派不派给正在用的那条会话，再把要念的字送回来。
 
 ```
 浏览器 ──WebRTC──► ElevenLabs（STT + 断句 + 打断 + TTS）
                         │  WebSocket（一通电话一条连接）
                         ▼
-            tools/speech-engine（本机常驻进程）
-                        │  spawn / JSONL
+            tools/speech-engine（本机常驻，不养 Pi）
+                        │  /desk
                         ▼
-              pi --mode rpc（每通电话一个独立会话）
+              桌面应用（Jev、派发、播报）
 ```
 
 ## 跑起来
@@ -44,7 +43,7 @@ Engine 的 `ws_url`（`src/repoint.ts`），所以重跑一次不会换 `seng_�
 | `ELEVENLABS_API_KEY` | 用于校验来自 ElevenLabs 的连接 |
 | `SPEECH_ENGINE_ID` | `seng_…`，必须和 webhook 目标一致 |
 | `PI_CWD` | Pi 的工作目录（工具的根） |
-| `PI_ARGS` | 追加给 `pi --mode rpc` 的参数，例如 `--model <快模型>` |
+| `PI_ARGS` | 不再使用。管子不启动 Pi |
 | `PI_SYSTEM_PROMPT` | 替换默认的口语系统提示 |
 | `FILLER` / `FILLER_AFTER_MS` | Pi 迟于这个时间没出字时先说的一句，默认 700ms |
 | `SPEECH_LANGUAGE` | 可选。不设就不锁语言，通话跟用户说的语言走 |
@@ -56,12 +55,10 @@ Engine 的 `ws_url`（`src/repoint.ts`），所以重跑一次不会换 `seng_�
 Eleven Realtime v1 Mini/Max 不能接 Speech Engine，也不能接 Pi。低延迟靠 WebRTC、
 `scribe_realtime`、flash 合成和 eager 抢话。重跑 `./up.sh` 会把这些写回已有 Engine。
 
-每句转写先问 Jev 要不要工作 agent。不够确信就不派活，交给一个没有工具的 Pi 按原话回答。没有短语表。密钥与电脑操作相同（`TYPESAFE_API_KEY` 或 `~/.pi/agent/typesafe-api-key`）。
+每句转写交给桌面的 `/desk`。Jev、派发和播报都在应用里。这个进程不读 Jev 的密钥，也不启动 Pi。
 
 ## 已知边界
 
-- `sendResponse` **只能在 `onTranscript` 里调用**（官方协议如此）。所以“任务完成后主动播报”这条
-  路在产品里不存在：用户问了才会说。
-- 一通电话一个 Pi 进程，所以它能操作的是**自己这条会话**；要跨会话旁观/steer，需要再桥进
-  桌面应用的 RPC，那是另一件事。
+- `sendResponse` 仍然只能在 `onTranscript` 里调用。做完了要开口时，应用用 `sendUserMessage` 把 `orbit:announce:` 送回来，由这里原样念。人已经挂断时，应用自己合成，不经过这里。
+- 桌子没接上时，这句只回「桌面没接上，这句不会派活。」
 - 免费计划约 1 万字符/月，通话按分钟消耗；额度耗尽会在句子中间断掉。

@@ -9,7 +9,7 @@ configures one local Pi runtime; it has no remote-environment selector.
 
 Settings → Providers → **Pi 运行配置** provides:
 
-- **Binary path**: empty uses Orbit's bundled Pi 1.5.0. A command on PATH, an
+- **Binary path**: empty uses Orbit's bundled Pi 1.5.2. A command on PATH, an
   absolute executable path, or a Node CLI script can be selected instead.
 - **Launch arguments**: quoted literal arguments, including `--model`,
   `--provider`, `--thinking`, and extension flags. `--provider` requires

@@ -1,119 +1,89 @@
-# 语音路由判定表
+# 语音路由
 
-> 归档。这是 Rime 自建语音环的行为契约，对应文件已在 v1.0.36 删除。
-> 现在的通话是 ElevenLabs Speech Engine，协议里没有「做完了再开口」，也不要按这张表改代码。
-> 现行说明见 `docs/VOICE_ARCHITECTURE.md`。
+现行契约。总图在 `docs/VOICE_ARCHITECTURE.md`。
 
-实现（已删除）：`src-tauri/resources/voice/router.ts`（判定）、`src/features/voice/model/voice-controller.ts`（执行）、
-`src-tauri/resources/voice/execution-context.ts`（发给 Pi 的消息）。
+Rime 那张判定表已经删了，在 `35b2f86^:docs/VOICE_ROUTING.md`。不要按它改代码，也不要恢复短语表。下面这张是现在要做的。
 
-这份表是行为契约。要加场景，先在这里加一行，再加一个用例；不要为新场景增加阈值。
+一次话语只走一条。Jev 一次只答一个分类。代码卡阈值，不匹配说法。缺回答、超时、没有密钥，都是 `speak`，不派活。
 
-## 一次话语只走一条流水线
+这张表只约束麦克风里的一句。开新会话、输入框对话不走这里，仍然是原来的 Pi。派发也不改那条会话的启动和系统提示，只是多一条跟手打出去一样的消息。
 
-| 流水线 | 由谁执行 | 发 Pi 消息 | 典型话语 |
+## 六条
+
+| 分类 | 谁做 | 碰桌面会话 | 开口 |
 | --- | --- | --- | --- |
-| 控制 | `VoiceController`，零模型 | 不发（abort/steer 除外） | 「别念了」「挂了吧」「看另一个会话」 |
-| 语音线 | Rime + 对话模型（无工具） | 不发 | 「你好」「谢谢」「嗯」「你在干嘛」 |
-| 派发 | Pi（一次一条消息） | 发 1 条 | 「重启采集器」「北京天气」「改成查行情」 |
-| 旁观（oncall） | 只读 `TaskView` + 事件订阅 | **不发** | 「做到哪了」「结果呢」「为什么这么改」 |
+| `control_voice` | 桌子 | 不碰 | 空响应，把这一轮关掉。客户端打断正在念的 |
+| `control_call` | 桌子 | 不碰 | 空响应，然后挂断。任务继续 |
+| `control_task` | 桌子 | `{ type: "abort" }`，不走 `stop()` | 「停了。」 |
+| `speak` | 嘴，没有工具 | 不碰 | 嘴的回答 |
+| `watch` | 桌子读投影 | 不发消息 | 嘴把投影说成一两句 |
+| `dispatch` | `sendPrompt` | 只发用户原话 | 固定一句「开始了。」或「排上了。」 |
+| `confirm` | `answerDialog` | 只回答已播报的那个 `request.id` | 「好。」 |
 
-旁观不产生消息是硬性要求：进度、结果、失败原因都已经在内存投影里，再问 Pi 一遍等于让它
-复述自己——慢、污染上下文，还会得到「我再看看」这种假进展。
+`control_*` 在表里分三行，Jev 的分类名就是这三个，不是一个「控制」再猜。
 
-## 四个问句，命中即停
+## 问句
+
+一次 SystemOne。状态只有这句、上一句已经念出来的话、以及绑定会话的三个事实：在不在跑、有没有已播报的确认、确认问的是什么。用户的字是数据，不是给 Jev 的指令。
+
+分类：
+
+| 值 | 是 | 不是 |
+| --- | --- | --- |
+| `control_voice` | 让这通通话别念了，活继续 | 停掉任务，或挂断 |
+| `control_call` | 结束这通通话 | 停掉任务 |
+| `control_task` | 停掉绑定会话里正在做的事 | 只是别念了 |
+| `watch` | 问已经在做的事做到哪了、结果是什么、为什么 | 一件新的要做的事 |
+| `dispatch` | 要一个还没有的结果，或要改正在做的事 | 闲聊，或问进度 |
+| `confirm` | 在回答刚才播报的那个确认 | 没有待确认时说「可以」 |
+| `speak` | 其余。闲聊、听不懂、没把握 | 任何要动手的事 |
+
+命中即停，按这个顺序解释，避免「做到哪了」变成派发：
 
 ```
-Q0 是在跟"这次通话"说话吗？        → control_voice / control_task / change_focus
-Q1 是在回答一个已播报的确认吗？    → reply_confirmation（控制消息，不是新任务）
-Q2 指的是"已有的工作"吗？          → query_progress / analyze_session / watch_task（零消息）
-Q3 要求一个"要拿到的结果"吗？      → dispatch_task / steer_task / queue_task / lookup（一条消息）
-Q4 其余                            → general_question；看起来像请求但没把握 → clarify（问一次）
+control_voice / control_call / control_task
+confirm          只有 pending 才可能
+watch
+dispatch
+speak
 ```
 
-Q2 必须排在 Q3 前面：「现在做到哪了」既有疑问词又指已有工作，顺序一反就变成派发。
+## 阈值
 
-## 谁能把工作交给 Pi
+Jev 给的是这个分类的概率。缺了当没有。
 
-- **只有主判断 `effect === "execute"` 可以。** 社交（`respond`）、澄清（`clarify`）、
-  缺失 `effect` 都不能，除非是「刚问过你一句」的澄清回答（`pendingRequest` 命中）。
-- 派发还必须有正向证据：
-
-| 意图 | 证据 |
+| 分类 | 最低 |
 | --- | --- |
-| `dispatch_task` / `steer_task` / `queue_task` | `actionability ≥ 0.75` |
-| `lookup` | `actionability ≥ 0.45` |
+| `dispatch` | 0.75 |
+| `control_task` | 0.85 |
+| `confirm` | 0.75，并且 `request.id` 就是刚才播报的那个 |
+| 其余 | 0.75。不到就 `speak` |
 
-- 写操作另有独立门槛（`validatedDecision`）：`dispatch`/`queue` 的 `mutation ≥ 0.7`，
-  `steer` 的 `mutation ≥ 0.8` 且 `deliveryConfidence ≥ 0.8`。证据不足时降级成 `clarify`，
-  由语音问一句，而不是赌一把。
-- `delivery` 缺失或非法不当作 `additional`，直接 `clarify("invalid_decision")`。
+`control_task` 更高，因为「别念了」听错就停掉活。不够就留在 `speak` 或 `control_voice`，不赌。
 
-## 缺失的判断标准不等于 0
-
-`commonConversationOnly` 以前缺省 `0.5`，低于阈值就派发——模型没返回、返回格式不对、
-或者中文短句没给分，都会变成「开一个 agent 回合」。现在：
-
-- 缺失 = `undefined`，不参与判定；
-- `mutation`/`actionability` 缺失时按 0 计算（安全方向），只导致更保守的结果；
-- 唯一允许的「默认动作」是留在语音线或问一句。
-
-## 派发消息长什么样
+## 派发的正文
 
 ```
 <用户原话>
 ```
 
-只在澄清续接时加三行桥接：
+没有前缀，没有「请用口语回答」。桌面会话怎么写由它自己的系统提示决定。念给人听的摘要是播报那一步的事。
 
-```
-Original request: …
-Voice clarification: …
-User clarification: …
-```
+在跑的时候：
 
-不再注入任何系统提示式前缀。之前那句
-`Answer the user's informational request as Pi, using the current conversation…` 有三个后果：
-出现在用户的工作会话里、把「用户在问信息」强加给「Ah.」、并且用
-`using the current conversation` 把 Pi 推向会话里的旧问题。
-
-## 去重
-
-派发前用 `(normalized request, kind, sessionFile)` 查 `TaskLedger`：
-
-| 记录状态 | 行为 |
+| Jev 还要给的投递 | 命令 |
 | --- | --- |
-| `queued` / `running` / `waiting` | 不发送，说「已经在跑」 |
-| `settled` 且是 `lookup` | 直接播报缓存结果，不产生新回合 |
-| `settled` 且是 `action` | 允许重新派发（同一句话再说一次是明确意图） |
-| 无记录 | 派发一条 |
+| `steer` | 这句是在改当前这一轮。`streamingBehavior: "steer"` |
+| `followUp` | 下一件。`streamingBehavior: "followUp"`，嘴说「排上了。」 |
 
-## 语言边界
+投递缺了，不当成 steer。在跑就 `followUp`。`deliveryFor` 说这轮其实没在跑，就按它退化后的 prompt 念「开始了。」
 
-STT 只有 en/es，且服务端不自动检测；TTS 也没有中文。中文语音进来时，判定与理解仍可能成立，
-但输出会被 `assertSpokenScript` 拦死。这是供应商能力边界，不是路由可以"猜"的地方：
-不要把非拉丁转写当成普通请求塞给 Pi。
+## 旁观读什么
 
-## 场景表
+绑定连接的快照就够：在不在跑、最后一条助手回复、当前工具名、待确认的问题。不把整份 transcript 送给嘴，不向 Pi 再问一遍。Pi 已经写在投影里的，再问就是让它复述。
 
-| 话语 | 状态 | 结果 |
-| --- | --- | --- |
-| 你好？ / Ah. / 谢谢 | 任意 | 语音线回答 |
-| 你在干嘛 | 空闲 | 语音线回答 |
-| 现在做到哪了 | 运行中 | 从 TaskView 播报，零消息 |
-| 结果呢 | 已 settled | 播报最近回复，零消息 |
-| 为什么这么改 | 任意 | 语音模型读 TaskView 解释，零消息 |
-| 继续做，完成告诉我 | 运行中 | 只观察，零消息 |
-| 重启采集器 | 任意 | 派发一条 |
-| 重启采集器（再说一次） | 运行中 | 说「已经在跑」，零消息 |
-| 北京现在天气怎么样 | 任意 | lookup 一条 |
-| 开始一个任务 | 任意 | 先问要做什么 |
-| 别念了 | 任意 | 停播，任务不动 |
-| 停掉当前任务 | 任意 | abort，零新任务 |
-| 可以（说过的确认） | 等待确认 | 通过 gateway 回答该确认 |
+## 播报不是一条路由
 
-## 测试
+结束、失败、要确认，不是用户的下一句话，不经过这张表。桌子听 `orbit-turn-settled` 和 `orbit-session-needs-input`，嘴收成一两句，按架构文档的嘴送出去。
 
-- `src/features/voice/model/router-routing.test.ts`：判定表本身（含回归：`你好？` 不再变 lookup）。
-- `tests/voice-routing.test.ts`：责任边界、缺失判断标准、确认身份、任务证据。
-- `src/features/voice/model/voice-controller.test.ts`：通话状态机、派发、去重、播报隔离。
+人接着说「可以」时才回到这张表，并且只有 `pending` 对得上才是 `confirm`。

@@ -7,7 +7,9 @@
  */
 import { Conversation, type VoiceConversation, type DisconnectionDetails } from "@elevenlabs/client"
 import { speechEngineToken } from "@/lib/rpc-projects"
+import { bindCall } from "./binding"
 import { probeSpeechEngine } from "./health"
+import { ANNOUNCE_PREFIX } from "./route"
 import { applyAgentPart, applyAgentSnapshot, disconnectNotice, upsertTurn, type CallTurn } from "./turns"
 
 export type { CallTurn }
@@ -71,6 +73,8 @@ export class VoiceCall {
     const epoch = ++this.epoch
     this.watchOutput(false)
     this.update({ state: "connecting", error: null, muted: false, turns: [], level: 0, outputLevel: 0 })
+    bindCall()
+    void import("./desk").then(module => module.startVoiceDesk())
     try {
       const health = await probeSpeechEngine()
       if (epoch !== this.epoch) return
@@ -121,7 +125,7 @@ export class VoiceCall {
           this.turns(upsertTurn(this.value.turns, { id: `user-${eventId}`, role: "user", text }, "replace"))
         },
         onMessage: ({ message, role, event_id, response_id }: { message: string; role: string; event_id?: number; response_id?: string }) => {
-          if (epoch !== this.epoch || !message.trim()) return
+          if (epoch !== this.epoch || !message.trim() || message.includes(ANNOUNCE_PREFIX)) return
           if (role === "user") {
             this.turns(upsertTurn(this.value.turns, { id: event_id === undefined ? "user-live" : `user-${event_id}`, role: "user", text: message.trim() }, "replace"), "thinking")
             return
@@ -159,9 +163,17 @@ export class VoiceCall {
     await conversation?.endSession().catch(() => undefined)
   }
 
-  /** 打断正在播放的回答。真正取消 Pi 那一轮发生在 speech-engine，这里只通知 ElevenLabs。 */
+  /** 打断正在播放的回答。任务取消发生在桌子上，这里只通知 ElevenLabs。 */
   interrupt() {
     this.conversation?.sendUserActivity()
+  }
+
+  /** Ask ElevenLabs to speak a sentence the user did not say. Returns false when the call is down. */
+  announce(sentence: string) {
+    const conversation = this.conversation
+    if (!conversation || this.value.state === "off") return false
+    conversation.sendUserMessage(`${ANNOUNCE_PREFIX}${sentence}`)
+    return true
   }
 
   setMuted(muted: boolean) {

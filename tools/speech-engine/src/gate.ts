@@ -1,4 +1,6 @@
 /**
+ * Unused by the call. The desk in `src/features/voice/model` asks Jev now.
+ *
  * Ask Jev whether this utterance needs the working agent.
  *
  * One yes/no question, no phrase list. A missing key, timeout, or bad answer

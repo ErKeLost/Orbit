@@ -18,6 +18,7 @@ import { OrbBoundary } from "./OrbBoundary";
 import { VoiceExchange } from "./VoiceExchange";
 import { useVoiceCall } from "../hooks/useVoiceCall";
 import { voiceCall, type CallState, type VoiceLogItem } from "../model/call";
+import { startVoiceDesk } from "../model/desk";
 import { Mic, MicOff } from "lucide-react";
 
 /** 状态 → ElevenLabs Orb 的状态。它只认这四种（null 就是闲置）。 */
@@ -70,6 +71,7 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
   // 首帧之后才点亮球：Three 的 canvas 是同步挂载的，直接显示会有一帧突兀的跳变。
   const [revealed, setRevealed] = useState(false);
   useEffect(() => {
+    startVoiceDesk();
     const frame = requestAnimationFrame(() => setRevealed(true));
     return () => cancelAnimationFrame(frame);
   }, []);

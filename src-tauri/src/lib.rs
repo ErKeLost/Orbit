@@ -485,6 +485,10 @@ pub fn run() {
             elevenlabs::speech_engine_token,
             #[cfg(desktop)]
             elevenlabs::speech_engine_check,
+            #[cfg(desktop)]
+            elevenlabs::voice_classify,
+            #[cfg(desktop)]
+            elevenlabs::speech_engine_speak,
             media::media_meta,
             media::read_media_file,
             pty_term::pty_spawn,

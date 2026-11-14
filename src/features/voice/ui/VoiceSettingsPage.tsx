@@ -139,7 +139,7 @@ export function VoiceSettingsPage() {
         </Row>
       </Group>
 
-      <Group title="服务端" description="Pi 那一端不在这个应用里：ElevenLabs 从云端连接到 tools/speech-engine，每次通话起一个独立的 pi --mode rpc 进程。重跑 up.sh 会写成低延迟配置。Realtime 模型不能接 Pi。">
+      <Group title="服务端" description="ElevenLabs 只负责听和说。转写交给本机管子，再由这个应用决定派不派给桌面上正在用的会话。不会另开一只 Pi，也不改输入框那条。">
         <Row
           anchorId="voice-health"
           label="本机服务"
@@ -147,7 +147,7 @@ export function VoiceSettingsPage() {
             health === null
               ? "正在问 127.0.0.1:3001…"
               : health.running
-                ? `运行中 · ${health.engineId} · 内存 ${health.rssMb} MB · 已接 ${health.calls} 通 · 已跑 ${Math.floor(health.uptimeSec / 60)} 分钟`
+                ? `运行中 · ${health.engineId} · ${health.desk ? "桌子已接上" : "桌子没接上"} · 内存 ${health.rssMb} MB · 已接 ${health.calls} 通`
                 : health.reason
           }
         >

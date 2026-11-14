@@ -7,7 +7,7 @@
  */
 const HEALTH_URL = "http://127.0.0.1:3001/health";
 
-export type EngineStatus = { engineId: string; cwd: string; calls: number; inFlight: number; rssMb: number; uptimeSec: number };
+export type EngineStatus = { engineId: string; cwd: string; calls: number; inFlight: number; rssMb: number; uptimeSec: number; desk?: boolean };
 export type EngineHealth = ({ running: true } & EngineStatus) | { running: false; reason: string };
 type HealthBody = { ok?: boolean } & Partial<EngineStatus>;
 
@@ -26,6 +26,7 @@ export async function probeSpeechEngine(timeoutMs = 1500): Promise<EngineHealth>
       cwd: String(body.cwd ?? ""),
       calls: Number(body.calls ?? 0),
       inFlight: Number(body.inFlight ?? 0),
+      desk: body.desk === true,
       rssMb: Number(body.rssMb ?? 0),
       uptimeSec: Number(body.uptimeSec ?? 0),
     };
