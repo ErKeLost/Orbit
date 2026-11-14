@@ -6,6 +6,18 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.42
+
+Typing in the composer no longer shakes the chat above it.
+
+Measuring the field used to collapse it for one layout. That grew the transcript, the browser clamped the scroll position, and stick-to-bottom pulled it back. The field now keeps its space while it is measured, and a one-pixel height wobble is ignored. Turns use their real height, so a viewport change cannot swap in a 240px stand-in and bounce the list.
+
+A search stays on screen after Working folds, as the pages it found. A `todowrite` plan stays too: the list sits in the turn, and the current item sits above the composer.
+
+Opening the app no longer reads the login keychain. Chromium cookies are decrypted only when you import them, with the password you type for that import. It is not saved, and the next launch does not ask again.
+
+The left rail still scrolls. The thumb stays hidden. Appearance picks a hue on a slider instead of a row of swatches.
+
 ## v1.0.41
 
 A voice call no longer starts its own Pi.
