@@ -125,12 +125,15 @@ jobs:
 
   intel:
     name: Intel target
-    # The release ships an x86_64-apple-darwin bundle, and until this job
+    # Paused with the Intel Mac package. The job is left in place so it can be
+    # turned back on; `if: false` keeps the Intel runner from starting.
+    if: false
+    # The release used to ship an x86_64-apple-darwin bundle, and until this job
     # existed nothing in CI compiled that target: `bun run check` and a host
     # `cargo check` both build for whatever the runner is. An Intel-only compile
-    # error would then first appear 43 minutes into a Release job. Native on an
-    # Intel runner on purpose — that is the architecture that ships, and a
-    # cross-check from arm64 would miss `cfg(target_arch)` and native deps.
+    # error would then first appear inside a Release job. Native on an
+    # Intel runner on purpose — a cross-check from arm64 would miss
+    # `cfg(target_arch)` and native deps.
     runs-on: macos-15-intel
     timeout-minutes: 60
     steps:

@@ -33,7 +33,7 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
               --title "Orbit $GITHUB_REF_NAME" --generate-notes \
-              --notes "Orbit installers for macOS 13+ (Apple Silicon and Intel), Linux, Windows, and Android. Desktop browser uses native Chromium (experimental CEF runtime) on macOS and Windows; Linux uses the system WebKitGTK runtime. macOS builds use fast ad-hoc signing and are not notarized; right-click the app on first install to approve it. Updating may require allowing Accessibility again."
+              --notes "Orbit installers for macOS 13+ (Apple Silicon), Linux, Windows, and Android. Desktop browser uses native Chromium (experimental CEF runtime) on macOS and Windows; Linux uses the system WebKitGTK runtime. macOS builds use fast ad-hoc signing and are not notarized; right-click the app on first install to approve it. Updating may require allowing Accessibility again. Intel Mac packages are paused."
           fi
 
   release:
@@ -56,17 +56,15 @@ jobs:
             args: --target aarch64-apple-darwin
             rust_targets: aarch64-apple-darwin
             timeout: 90
-          # CEF 151 requires macOS 13 on both architectures. Keep a native
-          # Intel job for Intel Macs that support that system version.
-          # It runs on an Intel runner on purpose rather than cross-compiling
-          # from the arm64 one: `sync-node-runtime` bundles the Node for
-          # `process.arch`, so an arm64 host would ship an arm64 Node inside an
-          # Intel app. `sync-worker` already follows `TAURI_ENV_TARGET`.
-          - name: macOS Intel
-            os: macos-15-intel
-            args: --target x86_64-apple-darwin
-            rust_targets: x86_64-apple-darwin
-            timeout: 120
+          # Intel Mac packages are paused. Restore this block to ship x86_64 again.
+          # It has to stay a native Intel runner, not a cross-compile: sync-node-runtime
+          # bundles the Node for process.arch, so an arm64 host would ship an arm64 Node
+          # inside an Intel app.
+          # - name: macOS Intel
+          #   os: macos-15-intel
+          #   args: --target x86_64-apple-darwin
+          #   rust_targets: x86_64-apple-darwin
+          #   timeout: 120
           - name: Linux x86_64
             os: ubuntu-24.04
             # deb/rpm here; the AppImage is a separate, bounded step below.
@@ -399,8 +397,9 @@ jobs:
           targets = {
               'darwin-aarch64': f'Orbit_{version}_aarch64.app.tar.gz',
               'darwin-aarch64-app': f'Orbit_{version}_aarch64.app.tar.gz',
-              'darwin-x86_64': f'Orbit_{version}_x64.app.tar.gz',
-              'darwin-x86_64-app': f'Orbit_{version}_x64.app.tar.gz',
+              # Intel Mac updater entries are paused with the macOS Intel job.
+              # 'darwin-x86_64': f'Orbit_{version}_x64.app.tar.gz',
+              # 'darwin-x86_64-app': f'Orbit_{version}_x64.app.tar.gz',
               'windows-x86_64': f'Orbit_{version}_x64-setup.exe',
               'windows-x86_64-nsis': f'Orbit_{version}_x64-setup.exe',
               'windows-x86_64-msi': f'Orbit_{version}_x64_en-US.msi',
@@ -469,7 +468,7 @@ jobs:
           names = {asset['name'] for asset in release['assets']}
           required_assets = {
               f'Orbit_{version}_aarch64.app.tar.gz', f'Orbit_{version}_aarch64.app.tar.gz.sig', f'Orbit_{version}_aarch64.dmg',
-              f'Orbit_{version}_x64.app.tar.gz', f'Orbit_{version}_x64.app.tar.gz.sig', f'Orbit_{version}_x64.dmg',
+              # f'Orbit_{version}_x64.app.tar.gz', f'Orbit_{version}_x64.app.tar.gz.sig', f'Orbit_{version}_x64.dmg',
               f'Orbit_{version}_x64-setup.exe', f'Orbit_{version}_x64-setup.exe.sig',
               f'Orbit_{version}_x64_en-US.msi', f'Orbit_{version}_x64_en-US.msi.sig',
               f'Orbit_{version}_amd64.deb', f'Orbit_{version}_amd64.deb.sig',
@@ -479,7 +478,7 @@ jobs:
           ids = {str(asset['id']) for asset in release['assets']}
           required_platforms = {
               'darwin-aarch64', 'darwin-aarch64-app',
-              'darwin-x86_64', 'darwin-x86_64-app',
+              # 'darwin-x86_64', 'darwin-x86_64-app',
               'windows-x86_64', 'windows-x86_64-nsis', 'windows-x86_64-msi',
               'linux-x86_64-deb', 'linux-x86_64-rpm',
           }

@@ -1,10 +1,14 @@
 # Desktop releases
 
 Pushing a `v*` tag starts the `Release Orbit` GitHub Actions workflow. It
-publishes Apple Silicon and Intel macOS, Linux x86_64, Windows, and Android ARM64
+publishes Apple Silicon macOS, Linux x86_64, Windows, and Android ARM64. Intel Mac packages are paused.
 artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
+
+## v1.0.46
+
+Intel Mac packages are paused. The release still builds Apple Silicon, Linux, Windows, and Android. The Intel job is commented out in the workflow, not deleted, so it can be turned back on.
 
 ## v1.0.45
 
