@@ -41,10 +41,14 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use crate::{
-    automations, bridge, computer_use, elevenlabs, git, github_inbox, gitlab, gui_settings,
-    image_config, mcp, media, notes, pi_session, preview, providers, pty_term, search, sessions_cmd,
-    text_gen, web_search,
+    automations, bridge, computer_use, git, github_inbox, gitlab, gui_settings, image_config, mcp,
+    media, notes, pi_session, preview, providers, pty_term, search, sessions_cmd, text_gen,
+    web_search,
 };
+// Speech Engine talks to ElevenLabs over desktop-only crates. The phone asks
+// the computer to run these commands; it does not compile them.
+#[cfg(desktop)]
+use crate::elevenlabs;
 #[cfg(target_os = "macos")]
 use crate::ax;
 
@@ -723,16 +727,23 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
         "ax_observe" => json(
             ax::ax_observe(text(&args, "appName")?, number::<usize>(&args, "maxNodes")?).await?,
         ),
+        #[cfg(desktop)]
         "speech_engine_config" => json(elevenlabs::speech_engine_config().await?),
+        #[cfg(desktop)]
         "save_speech_engine_config" => {
             json(elevenlabs::save_speech_engine_config(required(&args, "config")?).await?)
         }
+        #[cfg(desktop)]
         "save_speech_engine_api_key" => {
             json(elevenlabs::save_speech_engine_api_key(opt::<String>(&args, "apiKey")?).await?)
         }
+        #[cfg(desktop)]
         "speech_engine_token" => json(elevenlabs::speech_engine_token().await?),
+        #[cfg(desktop)]
         "speech_engine_check" => json(elevenlabs::speech_engine_check().await?),
+        #[cfg(desktop)]
         "speech_engine_health" => json(elevenlabs::speech_engine_health().await?),
+        #[cfg(desktop)]
         "speech_engine_desk" => json(
             elevenlabs::speech_engine_desk(
                 text(&args, "action")?,
@@ -743,7 +754,9 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
             )
             .await?,
         ),
+        #[cfg(desktop)]
         "voice_classify" => json(elevenlabs::voice_classify(required(&args, "request")?).await?),
+        #[cfg(desktop)]
         "speech_engine_speak" => json(elevenlabs::speech_engine_speak(text(&args, "text")?).await?),
         other => Err(format!("命令 {other} 没有远端实现")),
     }

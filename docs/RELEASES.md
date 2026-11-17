@@ -6,6 +6,12 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.48
+
+v1.0.47 did not publish. The Android package compiled the desktop speech-engine commands, and that module is not part of the phone build.
+
+Those commands still run on the computer. The phone only asks for them. The phone binary no longer compiles them.
+
 ## v1.0.47
 
 Dark windows are transparent. The desktop is frosted behind them.
