@@ -6,6 +6,16 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.45
+
+A reply can be quoted as a card, not a block of markdown. Drag a file pill into Finder. Copy a screenshot into another composer's draft.
+
+Office files, EPUB, SQLite, notebooks, archives, and fonts open as previews. Spreadsheet columns and rows can be resized from their edges.
+
+Settings can point titles, commit messages, pull request text, and voice cleanup at a cheap text model. Leave it off and commits still go through Pi once. An agent that needs a secret gets a private card; the value does not enter the chat. A settings credential can be a 1Password `op://` reference.
+
+The phone asks the computer whether voice is up, instead of looking for a server on itself. The left rail can start a new session. Reference checkouts live under `references/`.
+
 ## v1.0.44
 
 Scrollbars stay off. Scrolling does not.
