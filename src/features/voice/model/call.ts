@@ -28,12 +28,16 @@ export type CallSnapshot = {
 
 const empty: CallSnapshot = { state: "off", error: null, muted: false, turns: [], level: 0, outputLevel: 0, engineId: "" }
 
-type EarOptions = Omit<Parameters<typeof Conversation.startSession>[0], "conversationToken" | "signedUrl" | "connectionType" | "agentId">
+type EarSession = Parameters<typeof Conversation.startSession>[0]
+type EarOptions = Omit<EarSession, "conversationToken" | "signedUrl" | "connectionType" | "agentId">
 
 /**
  * UDP WebRTC dies on a VPN. Relay forces TURN (still WebRTC, but TCP-friendly),
  * and the signed URL is a plain WebSocket. One attempt at a time: a timed-out
  * session would keep the microphone.
+ *
+ * The two starts are different overloads. Spreading the callbacks does not
+ * narrow them, so each call is checked as one complete session config.
  */
 async function openEar(cred: { token: string; signedUrl?: string }, options: EarOptions) {
   const errors: string[] = []
@@ -43,7 +47,7 @@ async function openEar(cred: { token: string; signedUrl?: string }, options: Ear
       conversationToken: cred.token,
       connectionType: "webrtc",
       webRtc: { iceTransportPolicy: "relay" },
-    })
+    } as EarSession)
   } catch (error) {
     errors.push(error instanceof Error ? error.message : String(error))
   }
@@ -53,7 +57,7 @@ async function openEar(cred: { token: string; signedUrl?: string }, options: Ear
         ...options,
         signedUrl: cred.signedUrl,
         connectionType: "websocket",
-      })
+      } as EarSession)
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error))
     }
