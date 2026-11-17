@@ -104,9 +104,10 @@ function readBlur() {
 }
 
 function readBodyGlass() {
-  // 默认关闭：窗口玻璃要求窗口非不透明，macOS 合成器每帧都要和桌面混合，
-  // 这是「整台电脑跟着卡」的结构性成本。需要时在设置里打开，外观与以前一样。
-  return read(BODY_GLASS_KEY) === "true";
+  // Unset means on. The window is already transparent; this hangs the desktop
+  // blur behind it. An explicit "false" keeps a machine that turned it off.
+  const stored = read(BODY_GLASS_KEY);
+  return stored == null || stored === "true";
 }
 
 type AppearanceState = {
@@ -139,35 +140,39 @@ type AppearanceState = {
   restoreDefaults: () => void;
 };
 
-/** macOS native vibrancy, the same path Orbit uses (has-native-glass). */
+const IS_MAC_RUNTIME = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
+const IS_WIN_RUNTIME = typeof navigator !== "undefined" && /Win/i.test(navigator.platform);
+const GLASS_RUNTIME = IS_MAC_RUNTIME || IS_WIN_RUNTIME;
+
+/** Behind-window frost. Sidebar material blurs the page, not the desktop. */
 async function applyNativeGlass(state: Pick<AppearanceState, "scheme" | "blur" | "bodyGlass" | "sidebarOpacity">) {
   const root = document.documentElement;
-  // 低配档不挂原生活体模糊：带 vibrancy 的窗口必须是非不透明窗口，合成器要把
-  // 每一帧的内容和背后的桌面混合一次（Electron 版 t3code 用的就是不透明窗口）。
-  // 运行时自动降级（perf-monitor 量到持续低帧率）也一样撤掉。
-  // 而且默认就是关闭的：`bodyGlass` 是「窗口玻璃」的总开关，只有打开它才会挂
-  // vibrancy / 让侧栏半透明。
-  const eligible = state.scheme === "dark" && IS_MAC_RUNTIME && !isLowPerf && !isDegraded() && state.bodyGlass;
+  // A vibrancy window cannot be opaque: the compositor blends every frame with
+  // the desktop. Low-power and a sustained frame drop take it back off.
+  const eligible = state.scheme === "dark" && GLASS_RUNTIME && !isLowPerf && !isDegraded() && state.bodyGlass;
   root.classList.toggle("has-native-glass", eligible);
   root.classList.toggle("glass-body", eligible);
   root.style.setProperty("--sidebar-blur", `${state.blur}px`);
   if (!eligible) {
-    // 从深色切到浅色（或降级）时把已经挂上的 effect 撤掉，否则窗口会一直带着
-    // 一层没人看得见、但一直在算的模糊。
     if (!glassApplied) return;
     glassApplied = false;
     try {
       const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      await getCurrentWindow().setEffects({ effects: [] });
-    } catch { /* 没有 effect API（非 macOS / 旧版） */ }
+      const window = getCurrentWindow();
+      await window.setEffects({ effects: [] });
+      await window.setBackgroundColor(state.scheme === "light" ? [245, 245, 247, 255] : [18, 19, 23, 255]);
+    } catch { /* 没有 effect API（Linux / 旧版） */ }
     return;
   }
   try {
     const { getCurrentWindow, Effect, EffectState } = await import("@tauri-apps/api/window");
-    await getCurrentWindow().setEffects({
-      effects: [Effect.Sidebar],
-      state: EffectState.FollowsWindowActiveState,
-      radius: state.blur,
+    const window = getCurrentWindow();
+    // Alpha 0 makes the native window non-opaque, so the effect behind the
+    // page is the desktop, not a painted rectangle.
+    await window.setBackgroundColor([0, 0, 0, 0]);
+    await window.setEffects({
+      effects: [IS_WIN_RUNTIME ? Effect.Acrylic : Effect.UnderWindowBackground],
+      state: EffectState.Active,
     });
     glassApplied = true;
   } catch {
@@ -175,7 +180,6 @@ async function applyNativeGlass(state: Pick<AppearanceState, "scheme" | "blur" |
   }
 }
 
-const IS_MAC_RUNTIME = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 /** 窗口上是否真的挂着 vibrancy，撤掉时不必再发一次 IPC。 */
 let glassApplied = false;
 
@@ -195,10 +199,12 @@ function hookPerfDegrade() {
     glassApplied = false;
     void import("@tauri-apps/api/window")
       .then(async ({ getCurrentWindow }) => {
-        await getCurrentWindow().setEffects({ effects: [] });
+        const window = getCurrentWindow();
+        await window.setEffects({ effects: [] });
+        await window.setBackgroundColor([18, 19, 23, 255]);
       })
       .catch(() => {
-        /* 没有 effect API（非 macOS / 旧版） */
+        /* 没有 effect API（Linux / 旧版） */
       });
   });
 }
@@ -332,7 +338,7 @@ export const useAppearance = create<AppearanceState>((set, get) => ({
   },
   restoreDefaults: () => {
     for (const key of [HUE_KEY, SATURATION_KEY, LIGHTNESS_KEY, SIDEBAR_OPACITY_KEY, ACCENT_KEY, DIFF_KEY, BLUR_KEY, BODY_GLASS_KEY, UI_SCALE_KEY, EXCLUDED_KEY, CHAT_BG_KEY, CHAT_BG_OPACITY_KEY]) write(key, null);
-    set({ ...DEFAULT_APPEARANCE, accent: null, diffPalette: "default" as DiffPalette, blur: 24, bodyGlass: false, uiScale: 1, showExcludedFiles: false, chatBackground: null, chatBackgroundOpacity: 0.22 });
+    set({ ...DEFAULT_APPEARANCE, accent: null, diffPalette: "default" as DiffPalette, blur: 24, bodyGlass: true, uiScale: 1, showExcludedFiles: false, chatBackground: null, chatBackgroundOpacity: 0.22 });
   },
 }));
 

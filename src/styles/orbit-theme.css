@@ -219,6 +219,16 @@ html.has-native-glass:not(.theme-light) #root {
   background: color-mix(in srgb, var(--color-background-base) 0%, transparent);
 }
 
+/* The native view blurs the desktop. This wash is only a tint on top of it;
+the blur radius slider is that tint, not a corner radius. */
+html.has-native-glass:not(.theme-light) .workspace-background {
+  background: color-mix(
+    in srgb,
+    var(--color-background-base) calc(var(--sidebar-blur) * 0.6%),
+    transparent
+  );
+}
+
 .reorder-item {
   transform: translate3d(0, 0, 0);
   will-change: transform;

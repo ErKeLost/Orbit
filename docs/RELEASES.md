@@ -6,6 +6,14 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.47
+
+Dark windows are transparent. The desktop is frosted behind them.
+
+macOS uses the system under-window material. Windows uses Acrylic. The page no longer paints a solid canvas over that blur, so the wallpaper shows through. Light mode stays opaque, and a low-power or frame-dropped machine drops back to a solid window.
+
+Appearance calls the extra dark wash frost strength. Zero is the clearest. Window glass is on unless it was turned off.
+
 ## v1.0.46
 
 Intel Mac packages are paused. The release still builds Apple Silicon, Linux, Windows, and Android. The Intel job is commented out in the workflow, not deleted, so it can be turned back on.

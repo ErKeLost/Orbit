@@ -22,7 +22,7 @@ export const SETTINGS_INDEX: SettingIndexEntry[] = [
   { id: "saturation", section: "appearance", label: "饱和度", keywords: "着色强度 saturation" },
   { id: "dark-lightness", section: "appearance", label: "深色亮度", keywords: "暗色 亮度 lightness" },
   { id: "sidebar-opacity", section: "appearance", label: "侧栏不透明度", keywords: "透明 opacity 玻璃" },
-  { id: "blur", section: "appearance", label: "模糊半径", keywords: "毛玻璃 blur 背景" },
+  { id: "blur", section: "appearance", label: "磨砂浓淡", keywords: "毛玻璃 blur 背景 透明 磨砂" },
   { id: "body-glass", section: "appearance", label: "窗口玻璃", keywords: "半透明 主面板 毛玻璃 glass 透明度" },
   { id: "chat-background", section: "appearance", label: "聊天背景", keywords: "背景图 图片 wallpaper" },
   { id: "chat-background-opacity", section: "appearance", label: "背景不透明度", keywords: "背景图 图片 透明度 opacity wallpaper" },

@@ -250,7 +250,7 @@ export function AppearancePage() {
 
       <Section
         title="透明度"
-        description={glassUnavailable ? "浅色模式始终不透明，深色设置会被保留。" : "窗口玻璃默认关闭。打开后桌面会透过窗口。"}
+        description={glassUnavailable ? "浅色模式始终不透明，深色设置会被保留。" : "窗口本身是透明的。打开后，桌面壁纸在窗口背后磨砂，页面浮在上面。"}
       >
         <Surface className="divide-y divide-line px-4">
           <div data-setting-id="body-glass" className="flex items-center justify-between gap-4 py-3.5">
@@ -277,8 +277,8 @@ export function AppearancePage() {
           </div>
           <div data-setting-id="blur" className="flex items-center justify-between gap-6 py-3.5">
             <div className="min-w-0">
-              <h3 className="text-sm font-medium text-ink-1">模糊半径</h3>
-              <p className="mt-1 text-sm text-ink-3">窗口背后的背景模糊。</p>
+              <h3 className="text-sm font-medium text-ink-1">磨砂浓淡</h3>
+              <p className="mt-1 text-sm text-ink-3">桌面模糊是系统的。这个只加一层深色罩，0 最透。</p>
             </div>
             <Slider label="模糊半径" value={appearance.blur} display={String(appearance.blur)} min={0} max={60} onChange={appearance.setBlur} disabled={glassOff} />
           </div>
