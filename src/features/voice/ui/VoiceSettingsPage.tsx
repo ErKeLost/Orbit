@@ -16,9 +16,11 @@ import {
   type SpeechEngineCheck,
   type SpeechEngineConfig,
 } from "@/lib/rpc-projects";
+import { useWorkspace } from "@/lib/store";
 import { probeSpeechEngine, type EngineHealth } from "../model/health";
 
 export function VoiceSettingsPage() {
+  const mobile = useWorkspace((state) => state.runtimeTarget === "mobile");
   const [config, setConfig] = useState<SpeechEngineConfig | null>(null);
   const [keyDraft, setKeyDraft] = useState("");
   const [engineDraft, setEngineDraft] = useState("");
@@ -142,10 +144,12 @@ export function VoiceSettingsPage() {
       <Group title="服务端" description="ElevenLabs 只负责听和说。转写交给本机管子，再由这个应用决定派不派给桌面上正在用的会话。不会另开一只 Pi，也不改输入框那条。">
         <Row
           anchorId="voice-health"
-          label="本机服务"
+          label={mobile ? "电脑上的服务" : "本机服务"}
           description={
             health === null
-              ? "正在问 127.0.0.1:3001…"
+              ? mobile
+                ? "正在问电脑上的语音服务…"
+                : "正在问 127.0.0.1:3001…"
               : health.running
                 ? `运行中 · ${health.engineId} · ${health.desk ? "桌子已接上" : "桌子没接上"} · 内存 ${health.rssMb} MB · 已接 ${health.calls} 通`
                 : health.reason

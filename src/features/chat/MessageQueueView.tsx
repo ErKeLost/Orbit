@@ -1,10 +1,11 @@
 import { CornerDownRight, ListEnd, Trash } from "../../shared/ui/icons";
 
 /**
- * Orbit's queued-message card, fed by Pi's own queue (`queue_update`):
- * follow-ups wait for the turn to end, steering messages are already on their
- * way into the running turn. "Steer" promotes a follow-up; the trash removes
- * the whole queue back into the draft (Pi has no per-item delete).
+ * Queued messages, drawn as a footer inside the composer — not a second card
+ * riding above it. Follow-ups wait for the turn to end; steering messages are
+ * already on their way into the running turn. "Steer" promotes a follow-up;
+ * the trash removes the whole queue back into the draft (Pi has no per-item
+ * delete).
  *
  * `running` makes the row honest: steering messages are only consumed by a turn
  * that is actually running. Once the turn has settled, the row is not
@@ -30,40 +31,36 @@ export function MessageQueueView({
   ];
   if (rows.length === 0) return null;
   return (
-    <div className="px-2 text-ink-2" data-message-queue>
-      <div className="relative z-0 rounded-t-[10px] border border-b-0 border-line bg-fill-weak px-2 py-1" data-message-queue-card>
-        {rows.map((row, index) => (
-          <div key={`${row.kind}-${index}`} className={`flex min-h-7 items-center gap-2 text-xs ${index > 0 ? "border-t border-stroke" : ""}`}>
-            {row.kind === "steer" ? <CornerDownRight className="size-3.5 shrink-0" /> : <ListEnd className="size-3.5 shrink-0" />}
-            <div className="min-w-0 flex-1 py-1">
-              <div className="truncate text-ink-1" title={row.text.length > 200 ? `${row.text.slice(0, 200)}…` : row.text}>{row.text.trim() || "附件"}</div>
-            </div>
-            {row.kind === "steer" ? (
-              <span className="shrink-0 text-2xs text-ink-3">{running === false ? "下一轮送出" : "正在引导…"}</span>
-            ) : onSteer ? (
-              <button
-                type="button"
-                onClick={() => onSteer(row.text)}
-                className="flex h-6 shrink-0 items-center gap-1.5 rounded-md px-1.5 hover:bg-fill-strong hover:text-ink-1"
-              >
-                <CornerDownRight className="size-3.5" />
-                Steer
-              </button>
-            ) : null}
-            {onClear ? (
-              <button
-                type="button"
-                title="撤回排队的消息"
-                aria-label="撤回排队的消息"
-                onClick={onClear}
-                className="grid size-6 shrink-0 place-items-center rounded-md hover:bg-fill-strong hover:text-ink-1"
-              >
-                <Trash className="size-3.5" />
-              </button>
-            ) : null}
-          </div>
-        ))}
-      </div>
+    <div className="border-t border-stroke text-ink-2" data-message-queue data-message-queue-card>
+      {rows.map((row, index) => (
+        <div key={`${row.kind}-${index}`} className={`flex min-h-8 items-center gap-2 px-3 text-ui ${index > 0 ? "border-t border-stroke" : ""}`}>
+          {row.kind === "steer" ? <CornerDownRight className="size-3.5 shrink-0 text-ink-3" /> : <ListEnd className="size-3.5 shrink-0 text-ink-3" />}
+          <div className="min-w-0 flex-1 truncate text-ink-2" title={row.text.length > 200 ? `${row.text.slice(0, 200)}…` : row.text}>{row.text.trim() || "附件"}</div>
+          {row.kind === "steer" ? (
+            <span className="shrink-0 text-2xs text-ink-3">{running === false ? "下一轮送出" : "正在引导…"}</span>
+          ) : onSteer ? (
+            <button
+              type="button"
+              onClick={() => onSteer(row.text)}
+              className="flex h-6 shrink-0 items-center gap-1.5 rounded-md px-1.5 text-ink-2 hover:bg-fill-strong hover:text-ink-1"
+            >
+              <CornerDownRight className="size-3.5" />
+              引导
+            </button>
+          ) : null}
+          {onClear ? (
+            <button
+              type="button"
+              title="撤回排队的消息"
+              aria-label="撤回排队的消息"
+              onClick={onClear}
+              className="grid size-6 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1"
+            >
+              <Trash className="size-3.5" />
+            </button>
+          ) : null}
+        </div>
+      ))}
     </div>
   );
 }

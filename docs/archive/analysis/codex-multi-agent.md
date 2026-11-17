@@ -1,8 +1,8 @@
 # OpenAI Codex 多 Agent / 子 Agent / 委派的实现原理
 
-- 仓库：`/Users/work/pi-gui/vendor/codex`，commit `5009a99`（最新 main）。
+- 仓库：`/Users/work/pi-gui/references/codex`，commit `5009a99`（最新 main）。
 - 注：仓库里的 submodule 指针仍钉在 `669449b`；本文读的是上游 main 的 `5009a99`。
-- 证据路径约定：本文所有 `file:line` 均相对 `vendor/codex/codex-rs/`。
+- 证据路径约定：本文所有 `file:line` 均相对 `references/codex/codex-rs/`。
 - 结论均以真实代码为依据；无法从代码确认的标注「未确认」。
 
 ---

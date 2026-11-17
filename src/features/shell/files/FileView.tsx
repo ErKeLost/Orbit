@@ -8,6 +8,8 @@ import { saveFileDraft } from "../../../lib/file-save";
 import { useWorkspace } from "../../../lib/store";
 import { toast } from "../../../shared/ui/toast";
 import { formatBytes, mediaKind, type MediaKind } from "../../../lib/media";
+import { previewKind } from "../../files/preview/kind";
+import { DocumentPreview } from "../../files/preview/DocumentPreview";
 import { AudioAssetView } from "../../files/ui/AudioAssetView";
 import { ImageAssetView } from "../../files/ui/ImageAssetView";
 import { useMediaSrc } from "../../files/ui/media-source";
@@ -211,6 +213,7 @@ export function FileView({
   // A diff tab is a read-only view of a working-tree comparison, not a file.
   const diff = file?.diff;
   const kind = file && !review ? mediaKind(file.path) : null;
+  const preview = file && !review && kind == null ? previewKind(file.path) : null;
   // 目录不是「恰好没有扩展名的媒体」：扩展名里根本没有这个信息，只有 stat 有。
   // 所以每一条路径都问一次磁盘，同时接受标签页带过来的答案（树本来就知道那是
   // 文件夹），磁盘仍然是否决权更高的那个。
@@ -221,7 +224,7 @@ export function FileView({
   const isDirectory = stat.data?.isDir ?? file?.isDir ?? false;
   const missing = stat.isSuccess && stat.data === null;
   // 只对真正的文件读文本：目录读下去只会得到 `EISDIR (os error 21)`。
-  const textEnabled = file != null && !review && kind == null && !isDirectory;
+  const textEnabled = file != null && !review && kind == null && preview == null && !isDirectory;
   const markdown = file ? isMarkdownPath(file.path) : false;
   // Like Orbit, markdown documents open as preview and remember the mode per file.
   const [mode, setMode] = useMarkdownMode(file?.path ?? "", "preview");
@@ -297,6 +300,8 @@ export function FileView({
         <MissingFileNotice path={file.path} />
       ) : kind != null ? (
         <MediaView file={file} kind={kind} remote={remote} />
+      ) : preview ? (
+        <DocumentPreview path={file.path} kind={preview} name={file.name} />
       ) : markdown && contents.data != null ? (
         <MarkdownViewShell
           mode={mode}

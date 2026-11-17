@@ -132,13 +132,6 @@ const EXCLUDED: Record<string, string> = {
   save_speech_config: "writes the desktop's speech.json",
   save_speech_api_key: "writes the desktop's auth.json",
   transcribe_audio: "desktop voice input; the phone has no mic permission plumbing yet",
-  // 语音通话的声音链路在 ElevenLabs 那边，桌面只负责拿 token 和显示；手机端没有
-  // 这条 WebRTC 通路，也不该用桌面机器人的耳朵去听手机上的房间。
-  speech_engine_config: "reads the desktop's eleven.json; the phone has no agent dir",
-  save_speech_engine_config: "writes the desktop's eleven.json",
-  save_speech_engine_api_key: "writes the desktop's auth.json",
-  speech_engine_token: "mints a WebRTC token for the desktop call path",
-  speech_engine_check: "reads the account's plan from ElevenLabs",
   // 产物存在桌面端的 app_data 目录里，手机既没有那块盘也没有它的一份副本。
   // 手机要读产物是**应该做**的事，但那要在 Host 上开一条读通道，是另一件事。
   artifacts_list: "reads the desktop's app_data; the phone has no copy of that store",

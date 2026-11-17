@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { ChevronDown, Sparkles } from "../../shared/ui/icons";
+import { ChevronDown } from "../../shared/ui/icons";
 import {
   currentTodo,
-  formatTaskDuration,
+  todoFinished,
   todoProgress,
   type TaskChild,
   type TaskPlan,
@@ -15,109 +15,126 @@ function TodoGlyph({ status }: { status: TodoStatus }) {
   const active = status === "in_progress";
   const cancelled = status === "cancelled";
   return (
-    <svg
-      viewBox="0 0 16 16"
-      width="16"
-      height="16"
-      aria-hidden
-      className={`size-4 shrink-0 ${done ? "text-ink-1" : active ? "text-ink-2" : "text-ink-3"}`}
-    >
-      {status === "pending" ? (
-        <circle cx="8" cy="8" r="5.25" fill="none" stroke="currentColor" strokeWidth="1.25" strokeDasharray="2.2 2.4" />
-      ) : (
-        <circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" strokeWidth="1.25" />
-      )}
-      {active ? <path d="M8 3.2a4.8 4.8 0 0 0 0 9.6V3.2Z" fill="currentColor" /> : null}
-      {done ? <path d="M5 8.1 7.1 10.2 11.2 5.8" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" /> : null}
-      {cancelled ? <path d="M5.2 5.2 10.8 10.8M10.8 5.2 5.2 10.8" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" /> : null}
+    <svg viewBox="0 0 16 16" aria-hidden className={`size-3.5 shrink-0 ${active ? "text-accent" : "text-ink-3"}`}>
+      <circle cx="8" cy="8" r="6" fill={active ? "color-mix(in oklab, currentColor 16%, transparent)" : "none"} stroke="currentColor" strokeWidth="1.25" />
+      {active ? <circle cx="8" cy="8" r="2.2" fill="currentColor" /> : null}
+      {done ? <path d="M5 8.2 7.1 10.2 11 6" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round" /> : null}
+      {cancelled ? <path d="M5.5 5.5 10.5 10.5M10.5 5.5 5.5 10.5" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" /> : null}
     </svg>
   );
 }
 
-function ChildRow({ child }: { child: TaskChild }) {
-  const duration = formatTaskDuration(child.durationMs);
+function TaskRow({ todo }: { todo: Todo }) {
+  const done = todoFinished(todo);
+  const active = todo.status === "in_progress";
   return (
-    <div className="flex min-w-0 items-center gap-2 py-1 pl-6 text-ink-3">
-      <Sparkles className="size-3.5 shrink-0" strokeWidth={1.75} />
-      <span className="min-w-0 flex-1 truncate text-sm">{child.label}</span>
-      {duration ? <span className="shrink-0 text-xs tabular-nums">{duration}</span> : null}
+    <div className="flex h-6 min-w-0 items-center gap-2">
+      <TodoGlyph status={todo.status} />
+      <span className={`min-w-0 flex-1 truncate text-ui ${active ? "text-ink-1" : done ? "text-ink-3" : "text-ink-2"}`}>{todo.content}</span>
     </div>
   );
 }
 
-function TaskRow({ todo, activity, durationMs }: { todo: Todo; activity?: TaskChild[]; durationMs?: number }) {
-  const nested = todo.status === "in_progress" ? activity ?? [] : [];
-  const [open, setOpen] = useState(nested.length > 0);
-  const duration = formatTaskDuration(durationMs);
-  const done = todo.status === "completed" || todo.status === "cancelled";
-  const body = (
-    <>
-      <TodoGlyph status={todo.status} />
-      <span className={`min-w-0 flex-1 truncate text-sm ${done ? "text-ink-3" : "text-ink-1"}`}>{todo.content}</span>
-      {duration ? <span className="shrink-0 text-xs tabular-nums text-ink-3">{duration}</span> : null}
-      {nested.length ? (
-        <ChevronDown className={`size-3.5 shrink-0 text-ink-3 transition-transform ${open ? "" : "-rotate-90"}`} strokeWidth={1.75} />
-      ) : null}
-    </>
-  );
+function ToolFold({ activity }: { activity: TaskChild[] }) {
+  const [open, setOpen] = useState(false);
+  const running = activity.some((child) => child.running);
+  const label = running ? "工具进行中" : `${activity.length} 个工具`;
   return (
     <div>
-      {nested.length ? (
-        <button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)} className="flex w-full min-w-0 items-center gap-2.5 py-1.5 text-left">
-          {body}
-        </button>
-      ) : (
-        <div className="flex min-w-0 items-center gap-2.5 py-1.5">{body}</div>
-      )}
-      {open ? nested.map((child) => <ChildRow key={child.key} child={child} />) : null}
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={open ? "收起工具" : "展开工具"}
+        onClick={() => setOpen((value) => !value)}
+        className="flex h-6 w-full min-w-0 items-center gap-1.5 text-left text-2xs text-ink-3 hover:text-ink-2"
+      >
+        <ChevronDown className={`size-3 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} strokeWidth={1.75} />
+        <span className="min-w-0 truncate">{label}</span>
+      </button>
+      {open
+        ? activity.map((child) => (
+            <div key={child.key} className="flex h-5 min-w-0 items-center pl-5 text-2xs text-ink-3">
+              <span className="min-w-0 flex-1 truncate">{child.label}</span>
+            </div>
+          ))
+        : null}
     </div>
   );
 }
 
-/** The working plan, in the shape of the task card: count, bar, then the list. */
-export function TaskList({ plan }: { plan: TaskPlan }) {
-  const [open, setOpen] = useState(true);
-  const { done, total } = todoProgress(plan.todos);
-  const finished = total > 0 && done === total;
-  const duration = formatTaskDuration(plan.durationMs);
-  const fraction = total ? done / total : 0;
-  const count = finished ? `${done} tasks done` : total ? `${done} of ${total} done` : "updating";
-  return (
-    <section className="mx-4 mb-2 mt-1 min-w-0" aria-label="Tasks">
-      <button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)} className="flex w-full min-w-0 items-baseline gap-2 py-1 text-left">
-        <span className="text-sm font-semibold text-ink-1">Tasks</span>
-        <span className="min-w-0 flex-1 truncate text-sm text-ink-3">{plan.running && !total ? "正在写下…" : count}</span>
-        {duration ? <span className="shrink-0 text-xs tabular-nums text-ink-3">{duration}</span> : null}
-        <ChevronDown className={`size-3.5 shrink-0 self-center text-ink-3 transition-transform ${open ? "" : "-rotate-90"}`} strokeWidth={1.75} />
-      </button>
-      {open ? (
-        <>
-          <div className="my-2 h-0.5 overflow-hidden rounded-full bg-fill-strong" aria-hidden>
-            <div className="h-full bg-ink-1" style={{ width: `${Math.round(fraction * 100)}%` }} />
-          </div>
-          {plan.note ? <p className="pb-1.5 text-sm text-ink-2">{plan.note}</p> : null}
-          <div className="flex flex-col">
-            {plan.todos.map((todo, index) => (
-              <TaskRow key={`${todo.status}-${todo.content}-${index}`} todo={todo} activity={plan.children} durationMs={todo.status === "in_progress" ? plan.children.reduce((sum, child) => sum + (child.durationMs ?? 0), 0) || undefined : undefined} />
-            ))}
-          </div>
-        </>
-      ) : null}
-    </section>
-  );
+function Count({ done, total }: { done: number; total: number }) {
+  return <span className="shrink-0 text-2xs tabular-nums text-ink-3">{done}/{total}</span>;
 }
 
-/** The plan in hand, sitting just above the composer. */
-export function TodoPill({ todos }: { todos: readonly Todo[] }) {
-  const current = currentTodo(todos);
-  const { done, total } = todoProgress(todos);
-  if (!current || !total || done === total) return null;
+/**
+ * A status line on the composer's top edge, not a second card. One row at rest;
+ * the points open under it. No title, no progress rule.
+ */
+export function ComposerTasks({ plan }: { plan: TaskPlan }) {
+  const [open, setOpen] = useState(false);
+  const { done, total } = todoProgress(plan.todos);
+  const settled = total > 0 && plan.todos.every(todoFinished) && !plan.running;
+  if (settled || (!total && !plan.running)) return null;
+  const current = currentTodo(plan.todos);
+  const expandable = plan.todos.length > 1 || plan.children.length > 0;
+
+  if (!total) {
+    return (
+      <div className="flex h-8 items-center border-b border-stroke px-3 text-ui text-ink-3" data-composer-tasks>
+        正在写下…
+      </div>
+    );
+  }
+
+  if (!open) {
+    const row = (
+      <>
+        {current ? <TodoGlyph status={current.status} /> : null}
+        <span className={`min-w-0 flex-1 truncate text-ui ${current?.status === "in_progress" ? "text-ink-1" : "text-ink-2"}`}>
+          {current?.content}
+        </span>
+        <Count done={done} total={total} />
+        {expandable ? <ChevronDown className="size-3 shrink-0 -rotate-90 text-ink-3" strokeWidth={1.75} /> : null}
+      </>
+    );
+    return (
+      <div className="border-b border-stroke" data-composer-tasks>
+        {expandable ? (
+          <button
+            type="button"
+            aria-expanded={false}
+            aria-label="展开任务"
+            onClick={() => setOpen(true)}
+            className="flex h-8 w-full min-w-0 items-center gap-2 rounded-t-[11px] px-3 text-left hover:bg-fill"
+          >
+            {row}
+          </button>
+        ) : (
+          <div className="flex h-8 min-w-0 items-center gap-2 px-3">{row}</div>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className="mb-1.5 flex px-1">
-      <div className="inline-flex max-w-full items-center gap-2 rounded-full bg-fill px-2.5 py-1 text-sm text-ink-2">
-        <TodoGlyph status={current.status} />
-        <span className="min-w-0 truncate">{current.content}</span>
-        <span className="shrink-0 tabular-nums text-ink-3">{done}/{total}</span>
+    <div className="border-b border-stroke px-3 py-1" data-composer-tasks>
+      <div className="flex items-start gap-2">
+        <div className="scrollbar-none max-h-40 min-w-0 flex-1 overflow-y-auto overscroll-contain">
+          {plan.todos.map((todo, index) => (
+            <TaskRow key={`${todo.status}-${index}-${todo.content}`} todo={todo} />
+          ))}
+          {plan.children.length ? <ToolFold activity={plan.children} /> : null}
+        </div>
+        <button
+          type="button"
+          aria-expanded
+          aria-label="收起任务"
+          onClick={() => setOpen(false)}
+          className="flex h-6 shrink-0 items-center gap-0.5 rounded-md px-1 text-ink-3 hover:bg-fill hover:text-ink-2"
+        >
+          <Count done={done} total={total} />
+          <ChevronDown className="size-3" strokeWidth={1.75} />
+        </button>
       </div>
     </div>
   );

@@ -4,7 +4,7 @@
  *   PUBLIC_URL=https://xxx.trycloudflare.com bun run src/repoint.ts
  *
  * A quick tunnel gets a new hostname every restart. Re-pointing the existing engine
- * keeps the `seng_…` id. The same call also sets scribe_realtime, flash TTS, eager
+ * keeps the `seng_…` id. The same call also sets scribe_realtime, v4 Turbo, eager
  * turn-taking and a one-hour cap. Eleven Realtime models cannot be used here.
  */
 import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js"

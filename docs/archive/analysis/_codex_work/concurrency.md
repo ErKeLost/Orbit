@@ -1,6 +1,6 @@
 # Codex 多 Agent 并发模型与额度限制分析
 
-- 仓库：`/Users/work/pi-gui/vendor/codex`（`codex-rs`），commit `5009a99`（最新 main）。
+- 仓库：`/Users/work/pi-gui/references/codex`（`codex-rs`），commit `5009a99`（最新 main）。
 - 范围：`core/src/agent/**`、`core/src/config/mod.rs`、`core/src/rollout_budget.rs`、相关测试。
 - 每条结论后括号内为 `路径:行号` 证据；无法从代码直接确认的标注「未确认」。
 

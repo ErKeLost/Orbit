@@ -1,6 +1,6 @@
 # Codex 多 Agent：协议 / 事件 / 持久化 / 身份 分析
 
-- 仓库：`/Users/work/pi-gui/vendor/codex`（`codex-rs`），commit `5009a99`（最新 main）。
+- 仓库：`/Users/work/pi-gui/references/codex`（`codex-rs`），commit `5009a99`（最新 main）。
 - 范围：`protocol/src`、`rollout-trace/src`、`agent-graph-store`、`agent-identity`、`agent-roles`、`agent-message-board-client`、`state`、`core/src/agent/**`、`history`/`rollout`、`app-server-protocol`/`app-server`。
 - 证据格式为 `路径:行号`（相对仓库根）。无法从代码直接确认的标注「未确认」。
 

@@ -6,6 +6,7 @@ import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { base64ToBlob } from "../../lib/image-bytes";
+import { copyAttachmentTo, otherComposerTargets } from "../../features/chat/composerModel";
 import { readMediaFile } from "../../lib/media";
 import { desktopRuntime, ensureSessionModes, report, sendPrompt } from "../../lib/rpc";
 import { useWorkspace } from "../../lib/store";
@@ -155,6 +156,16 @@ export function ImageActionsMenu({ dataUrl, file, path, prompt, children }: Imag
           notify("图片已复制到剪贴板");
         }))}>复制图片</MenuItem>
         <MenuItem disabled={!path} onClick={() => pick(() => void run("copy-path", async () => { if (path) await navigator.clipboard.writeText(path); notify("文件路径已复制"); }))}>复制文件路径</MenuItem>
+        {otherComposerTargets(useWorkspace.getState().connectionId, useWorkspace.getState().liveSessions).slice(0, 4).map((target) => (
+          <MenuItem key={target.key} disabled={!decoded && !file} onClick={() => pick(() => void run("copy-composer", async () => {
+            const payload = decoded ?? (file ? await readMediaFile(file) : null);
+            if (!payload) return;
+            const base64 = "base64" in payload ? payload.base64 : payload.data;
+            const mimeType = "mimeType" in payload ? payload.mimeType : payload.mime;
+            copyAttachmentTo(target.key, { kind: "image", id: crypto.randomUUID(), name: suggestedName(path, mimeType), mimeType, blob: base64ToBlob(base64, mimeType) });
+            notify(`已复制到 ${target.title}`);
+          }))}>复制到 {target.title}</MenuItem>
+        ))}
         <MenuItem disabled={!prompt} onClick={() => pick(() => void run("copy-prompt", async () => { if (prompt) await navigator.clipboard.writeText(prompt); notify("提示词已复制"); }))}>复制提示词</MenuItem>
       </PointMenu>
     ) : null}

@@ -2,6 +2,7 @@ import type { ComponentPropsWithoutRef } from "react";
 import { FileTypeIcon } from "../features/shell/FileTypeIcon";
 import { useShell } from "../features/shell/shellStore";
 import { useWorkspace } from "../lib/store";
+import { applyFileDrag } from "../lib/file-drag";
 import { splitLocation, useWorkspacePath } from "../lib/markdown-paths";
 
 /**
@@ -42,6 +43,8 @@ export function PathChip({ node: _node, className, children, ...rest }: Componen
         type="button"
         title={line != null ? `${hit.path}:${line}` : hit.path}
         aria-label={`打开 ${hit.path}`}
+        draggable={!hit.isDir}
+        onDragStart={(event) => { if (!hit.isDir) applyFileDrag(event.dataTransfer, hit.path); }}
         onClick={() => openFile(hit.path, { pin: true, ...(hit.isDir ? { isDir: true } : {}) })}
         className="md-file-chip"
       >

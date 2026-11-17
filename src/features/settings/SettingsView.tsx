@@ -74,7 +74,9 @@ function SettingsSearch() {
 /** Orbit `SettingsView` frame: breadcrumb bar, page header, card groups. */
 export function SettingsView() {
   const page = useWorkspace((state) => state.settingsPage);
-  const desktop = useWorkspace((state) => state.runtimeTarget === "desktop");
+  const target = useWorkspace((state) => state.runtimeTarget);
+  const desktop = target === "desktop";
+  const onComputer = target === "desktop" || target === "mobile";
   const restoreDefaults = useAppearance((state) => state.restoreDefaults);
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const scroller = useRef<HTMLDivElement | null>(null);
@@ -105,7 +107,7 @@ export function SettingsView() {
   else if (page === "integrations") content = desktop ? <IntegrationsPage /> : <DesktopOnly what="第三方接入" />;
   else if (page === "computer-use") content = desktop ? <ComputerUsePage /> : <DesktopOnly what="电脑操作" />;
   else if (page === "browser") content = desktop ? <BrowserPage /> : <DesktopOnly what="浏览器" />;
-  else if (page === "voice") content = desktop ? <VoiceSettingsPage /> : <DesktopOnly what="语音 Agent" />;
+  else if (page === "voice") content = onComputer ? <VoiceSettingsPage /> : <DesktopOnly what="语音 Agent" />;
   else if (page === "screen") content = <ScreenSettingsPage />;
   else if (page === "pi-tools") content = <PiToolsPage />;
   else content = <GeneralSettingsPage />;

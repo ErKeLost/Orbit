@@ -40,5 +40,5 @@ export default defineConfig({
   // 用到才取（所有 `new Worker` 调用点本来就带 `{ type: "module" }`）。
   worker: { format: 'es' },
   build: { rollupOptions: { input: { main: path.resolve(import.meta.dirname, 'index.html'), quickComposer: path.resolve(import.meta.dirname, 'quick-composer.html') } } },
-  server: { port: Number(process.env.ORBIT_DEV_PORT ?? 5173), strictPort: true, host: '127.0.0.1', watch: { ignored: ['**/src-tauri/target/**', path.join(import.meta.dirname, 'work', '**')] } },
+  server: { port: Number(process.env.ORBIT_DEV_PORT ?? 5173), strictPort: true, host: '127.0.0.1', watch: { ignored: ['**/src-tauri/target/**', path.join(import.meta.dirname, 'work', '**'), path.join(import.meta.dirname, 'references', '**')] } },
 })

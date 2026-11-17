@@ -82,8 +82,39 @@ export function rememberDraft(key: string, draft: string): void {
   lruCache(draftCache, key, draft);
 }
 
+export const ATTACHMENTS_CHANGED = "orbit:attachments-changed";
+
 export function rememberAttachments(key: string, attachments: Attachment[]): void {
   lruCache(attachmentCache, key, attachments);
+}
+
+export function cloneAttachment(attachment: Attachment): Attachment {
+  if (attachment.kind === "image") {
+    return { ...attachment, id: crypto.randomUUID(), blob: attachment.blob.slice(0, attachment.blob.size, attachment.blob.type) };
+  }
+  return { ...attachment, id: crypto.randomUUID() };
+}
+
+/** Drop a screenshot (or any chip) onto another composer's draft. */
+export function copyAttachmentTo(key: string, attachment: Attachment): void {
+  if (!key) return;
+  rememberAttachments(key, [...recallAttachments(key), cloneAttachment(attachment)]);
+  window.dispatchEvent(new CustomEvent(ATTACHMENTS_CHANGED, { detail: key }));
+}
+
+export function otherComposerTargets(
+  currentKey: string,
+  sessions: readonly { connectionId?: string; path: string; title: string; cwd: string }[],
+): { key: string; title: string }[] {
+  const seen = new Set<string>();
+  const targets: { key: string; title: string }[] = [];
+  for (const session of sessions) {
+    const key = session.connectionId || session.cwd;
+    if (!key || key === currentKey || seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ key, title: session.title || "会话" });
+  }
+  return targets;
 }
 
 export function recallDraft(key: string): string {

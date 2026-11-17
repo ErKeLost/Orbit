@@ -1,7 +1,7 @@
 # Codex 多 Agent 消息投递、生命周期与结果回传机制分析
 
-- 分析对象：`/Users/work/pi-gui/vendor/codex`，commit `5009a99`（最新 main）。
-- 路径基准：下文 `file:line` 均相对 `vendor/codex/`（例如 `codex-rs/core/src/agent/control.rs:457`）。
+- 分析对象：`/Users/work/pi-gui/references/codex`，commit `5009a99`（最新 main）。
+- 路径基准：下文 `file:line` 均相对 `references/codex/`（例如 `codex-rs/core/src/agent/control.rs:457`）。
 - 方法：直接阅读生产代码为主，测试仅作行为佐证。凡无法从代码/测试确证者标「未确认」。
 
 ## 0. 总览（心智模型）

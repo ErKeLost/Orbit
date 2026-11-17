@@ -43,6 +43,9 @@ mod git;
 mod github_inbox;
 mod gitlab;
 mod image_config;
+mod preview;
+mod secrets;
+mod text_gen;
 mod web_search;
 mod speech;
 // 语音 Agent 的 STT/TTS 都建立在 tungstenite + openssl 上，那两个 crate 是桌面专属依赖
@@ -400,7 +403,12 @@ pub fn run() {
             attachments::clipboard_file_paths,
             attachments::read_file_attachment,
             attachments::save_media_file,
+            attachments::stage_drag_file,
             media::copy_media_file,
+            preview::preview_document,
+            text_gen::text_gen_config,
+            text_gen::save_text_gen,
+            text_gen::text_generate,
             pi_session::pi_oneshot,
             pi_session::pi_connect,
             pi_session::pi_send,
@@ -491,6 +499,10 @@ pub fn run() {
             elevenlabs::speech_engine_token,
             #[cfg(desktop)]
             elevenlabs::speech_engine_check,
+            #[cfg(desktop)]
+            elevenlabs::speech_engine_health,
+            #[cfg(desktop)]
+            elevenlabs::speech_engine_desk,
             #[cfg(desktop)]
             elevenlabs::voice_classify,
             #[cfg(desktop)]

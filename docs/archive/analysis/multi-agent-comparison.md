@@ -1,7 +1,7 @@
 # Codex vs Orbit/Pi：多 Agent 原理对照
 
 > 对照基线：
-> - Codex：`vendor/codex` @ `5009a99`（2026-10-17，已更新到最新 main）。行号相对 `vendor/codex/codex-rs/`。
+> - Codex：`references/codex` @ `5009a99`（2026-10-17，已更新到最新 main）。行号相对 `references/codex/codex-rs/`。
 > - Orbit/Pi：本仓库 `src-tauri/resources/subagents/` + `docs/MULTI_AGENT.md`。Pi 自身**没有** agent 概念，多 agent 是 Orbit 加的控制面。
 >
 > 详细单侧报告：`docs/archive/analysis/codex-multi-agent.md`、`docs/archive/analysis/pi-multi-agent.md`。

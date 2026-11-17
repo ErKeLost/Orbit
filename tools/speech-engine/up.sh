@@ -33,7 +33,9 @@ fi
 [ -n "${ELEVENLABS_API_KEY:-}" ] || { echo "没有 ElevenLabs API Key：在「设置 → 语音」里填，或导出 ELEVENLABS_API_KEY"; exit 1; }
 export ELEVENLABS_API_KEY
 
-"$CF" tunnel --url "http://localhost:${PORT}" --no-autoupdate >"$LOG_DIR/speech-engine-tunnel.log" 2>&1 &
+# http2, not quic. QUIC is UDP and dies the moment a VPN is on, which is
+# "接通前必须先关 VPN". TCP still gets through.
+"$CF" tunnel --url "http://localhost:${PORT}" --protocol http2 --no-autoupdate >"$LOG_DIR/speech-engine-tunnel.log" 2>&1 &
 TUNNEL=$!
 trap 'kill $TUNNEL 2>/dev/null || true; kill ${SERVER:-} 2>/dev/null || true' EXIT INT TERM
 

@@ -1,6 +1,6 @@
 # Codex 多 Agent「工具层」分析
 
-> 仓库：`/Users/work/pi-gui/vendor/codex`（main，commit `5009a99`）
+> 仓库：`/Users/work/pi-gui/references/codex`（main，commit `5009a99`）
 > 以下路径均相对于 `codex-rs/`；每条结论后附 `路径:行号` 证据。
 
 ---

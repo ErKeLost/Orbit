@@ -6,6 +6,7 @@
     "react/only-export-components": ["warn", { "allowConstantExport": true }]
   },
   "ignorePatterns": [
+    "references",
     "src-tauri/resources/browser-use/snapshot.js"
   ]
 }

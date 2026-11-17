@@ -12,12 +12,14 @@ import { answerDialog, deliveryFor, sendPrompt } from "@/lib/rpc-session"
 import { ack, announcementOf, classifyBody, decide, readAnswer, type Facts } from "./route"
 import { bindCall, noteAbort, noteDispatch, notePending, takeSettle, voiceBinding } from "./binding"
 import { voiceCall } from "./call"
+import { chunkDesk, claimDesk, endDesk, nextDesk, releaseDesk, spokenDesk } from "./pipe"
 
-const ROOT = "http://127.0.0.1:3001"
 type SettledDetail = { connectionId: string; sessionFile: string; error: string | null; aborted: boolean }
 type InputDetail = { connectionId: string; sessionFile: string }
 
 let started = false
+let owner: string | null = null
+let wakePoll: (() => void) | null = null
 
 export function startVoiceDesk() {
   if (started || typeof window === "undefined") return
@@ -27,24 +29,43 @@ export function startVoiceDesk() {
   void poll()
 }
 
+/** One live call owns the queue. Opening a second call replaces the owner. */
+export function holdDesk() {
+  startVoiceDesk()
+  if (!owner) owner = crypto.randomUUID()
+  const mine = owner
+  wakePoll?.()
+  wakePoll = null
+  void claimDesk(mine)
+  return mine
+}
+
+export function dropDesk(expected?: string) {
+  if (expected && owner !== expected) return
+  const mine = owner
+  owner = null
+  if (mine) void releaseDesk(mine)
+}
+
 async function poll() {
-  await fetch(`${ROOT}/desk/hello`, { method: "POST" }).catch(() => undefined)
   for (;;) {
+    const mine = owner
+    if (!mine) {
+      await new Promise<void>(resolve => {
+        wakePoll = resolve
+      })
+      continue
+    }
     try {
-      const response = await fetch(`${ROOT}/desk/next?timeout=20000`)
-      if (response.status === 204) continue
-      if (!response.ok) {
-        await wait(1000)
-        continue
-      }
-      const turn = (await response.json()) as { id?: string; said?: string; heard?: string }
-      if (!turn.id || !turn.said) continue
-      const text = await answer(turn.said, turn.heard ?? "")
-      if (text) await fetch(`${ROOT}/desk/chunk`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: turn.id, text }) })
-      await fetch(`${ROOT}/desk/end`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: turn.id }) })
+      await claimDesk(mine)
+      const turn = await nextDesk(mine, 20000)
+      if (owner !== mine || !turn) continue
+      const text = await answer(turn.said, turn.heard)
+      if (owner !== mine) continue
+      if (text) await chunkDesk(turn.id, text)
+      await endDesk(turn.id)
     } catch {
       await wait(1000)
-      await fetch(`${ROOT}/desk/hello`, { method: "POST" }).catch(() => undefined)
     }
   }
 }
@@ -236,8 +257,7 @@ export async function speakOut(sentence: string) {
 
 async function waitSpoken() {
   try {
-    const response = await fetch(`${ROOT}/desk/spoken`, { signal: AbortSignal.timeout(2000) })
-    return response.ok
+    return await spokenDesk()
   } catch {
     return false
   }

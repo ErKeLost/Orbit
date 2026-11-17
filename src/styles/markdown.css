@@ -1,6 +1,6 @@
 /*
  * 聊天 markdown 的外观。逐条移植自 t3code `apps/web/src/index.css` 的
- * `.chat-markdown` 段（见 t3code/ submodule），只把它的 token 换成了 Orbit 的：
+ * `.chat-markdown` 段（见 references/t3code），只把它的 token 换成了 Orbit 的：
  *
  *   --contrast-foreground      → --color-content
  *   --contrast-border          → --color-stroke / content 10%

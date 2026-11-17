@@ -48,8 +48,9 @@ import {
   type Phase,
   type TurnStep,
 } from "./turnModel";
-import { TaskList } from "./TaskList";
-import { isTodoStep, planFromSteps } from "./todos";
+import { quoteExcerpt, splitQuote } from "./quote";
+import { setQuote } from "./quoteStore";
+import { isTodoStep } from "./todos";
 
 const clockFormatter = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 
@@ -707,6 +708,7 @@ function TurnFooter({
   return (
     <div aria-label={label} className="flex w-full min-w-0 max-w-full items-center gap-2.5 overflow-hidden px-4 pb-3 pt-1 font-sans text-sm text-ink-3">
       <span className="flex shrink-0 items-center gap-1">
+        {copyText ? <button type="button" title="引用" aria-label="引用这条回复" className="rounded-md p-1 hover:bg-fill-strong hover:text-ink-2" onClick={() => setQuote({ role: "assistant", text: copyText })}>引用</button> : null}
         {copyText ? <CopyButton text={copyText} /> : <Check className="size-3.5" strokeWidth={1.75} />}
         {last ? <BranchButton message={last} /> : null}
       </span>
@@ -730,7 +732,9 @@ function TurnFooter({
 
 /** Orbit `UserMessageBlock` in its chat layout. */
 const UserMessage = memo(function UserMessage({ item }: { item: DisplayMessage }) {
-  const text = userText(item.message);
+  const split = splitQuote(userText(item.message));
+  const text = split.body;
+  const quote = split.quote;
   const photos = userImages(item.message);
   const [expanded, setExpanded] = useState(false);
   const [clamped, setClamped] = useState(false);
@@ -746,6 +750,12 @@ const UserMessage = memo(function UserMessage({ item }: { item: DisplayMessage }
   return (
     <div data-prompt-anchor={item.id} className="user-message-row group/usermsg flex flex-col items-end overflow-visible pl-14 pr-4 pt-3">
       <div className="user-message-hover-zone flex w-fit min-w-0 max-w-full flex-col items-end overflow-visible">
+        {quote ? (
+          <div className="mb-1 max-w-[min(100%,36rem)] rounded-md border border-line bg-fill-weak px-2.5 py-1.5">
+            <span className="block text-2xs text-ink-3">{quote.role === "assistant" ? "引用回复" : "引用消息"}</span>
+            <span className="block text-xs leading-5 text-ink-2">{quoteExcerpt(quote.text, 420)}</span>
+          </div>
+        ) : null}
         {photos.length ? (
           <div className="mb-1 flex max-w-full flex-wrap justify-end gap-1.5">
             {photos.map((photo, index) => (
@@ -783,6 +793,7 @@ const UserMessage = memo(function UserMessage({ item }: { item: DisplayMessage }
           </div>
         ) : null}
         <div className="user-message-actions flex h-6 items-center gap-1 pt-1 text-ink-3">
+          {text || quote ? <button type="button" title="引用" aria-label="引用" className="rounded-md p-1 hover:bg-fill-strong hover:text-ink-2" onClick={() => setQuote({ role: "user", text: quote ? `${quote.text}\n${text}` : text })}>引用</button> : null}
           {text ? <CopyButton text={text} label="复制消息" /> : null}
           {messageTime(item.message) ? (
             <time className="text-xs text-ink-3" dateTime={new Date(messageTime(item.message)!).toISOString()}>
@@ -853,13 +864,12 @@ type AssistantTurnProps = {
 const AssistantTurn = memo(
   function AssistantTurn({ items, tools, streaming, startedAt, elapsedMs, activity }: AssistantTurnProps) {
     const turn = useMemo(() => projectTurn(items, tools, streaming), [items, tools, streaming]);
-    const plan = useMemo(() => planFromSteps(turn.work, tools), [turn.work, tools]);
     const [workOverride, setWorkOverride] = useState<boolean | null>(null);
     const liveElapsed = useElapsed(startedAt, streaming);
     const hasWork = turn.work.length > 0 || Boolean(activity);
     // A search is the pages it found, not a step in the fold. The fold closes
-    // when the turn settles, and the results would go with it. The plan is the
-    // same kind of thing: it stays on screen after Working folds shut.
+    // when the turn settles, and the results would go with it. The plan lives
+    // on the composer, not in this turn.
     const searches = useMemo(() => turn.work.filter((step) => step.part && isSearchWidget(step.part, tools)), [turn.work, tools]);
     const foldWork = useMemo(() => turn.work.filter((step) => !searches.includes(step) && !isTodoStep(step, tools)), [turn.work, searches, tools]);
     const hasFold = foldWork.length > 0 || Boolean(activity);
@@ -923,7 +933,6 @@ const AssistantTurn = memo(
             )}
           </TurnRow>
         ) : null}
-        {plan ? <TaskList plan={plan} /> : null}
         {searches.length ? (
           <div className="flex min-w-0 flex-col gap-2 px-4 pt-1.5 pb-1">
             {searches.map((step) => (step.part ? <WebSearchTool key={step.key} part={step.part} tools={tools} /> : null))}

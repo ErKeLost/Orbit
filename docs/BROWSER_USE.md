@@ -16,7 +16,7 @@ Pi 使用与 t3code 桌面预览相同的 CDP relay 模式连接已存在的原�
 
 ## 页面操作
 
-快照来自 Playwright AI accessibility tree，包含 frame、ref、语义、href、输入值和媒体状态。同源与跨域 frame 均由 Chromium/Playwright 读取。导航、新快照和目标语义变化后需要刷新 ref。
+快照来自 Playwright AI accessibility tree，包含 frame、ref、语义、href、输入值和媒体状态，不附带坐标框。主文档正文不再重复贴一份；跨域 frame 的文本仍单独返回。取消脚本用的 CDP 会话按页面复用，不再每次快照都挂上再拆掉。ref 在控件未变时保持，包括后续快照；导航或控件语义变化后失效，且不回收旧 id。点击前做 hit test：被挡住、隐藏、禁用或在视口外则不发送，并说出挡住的元素。
 
 操作送达后由 Pi 观察页面验证，不能把点击、播放按钮、广告或登录墙当成任务完成。browser_evaluate 的执行时间有界，支持异步值，输出最多 64 KB；取消时终止执行中的页面脚本，再释放 session lease。普通 Pi session 和 Rime 的消息路由不因浏览器迁移而改变。
 

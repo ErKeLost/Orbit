@@ -284,12 +284,12 @@ function ProviderSettingsEditor({ profiles, initialProfile }: { profiles: UseQue
                 <div className="provider-row">
                   <span className="provider-row-label">基础 URL</span>
                   <code className="provider-row-value" title={selected.baseUrl}>{selected.baseUrl || (selected.native ? "Pi 原生端点" : "未配置")}</code>
-                  <span className="provider-connection-note"><Icon name="shield" />{selected.isOAuth ? "订阅已登录 · 自动续期" : selected.hasApiKey ? "凭据已保存在本地" : "未保存 API Key"}</span>
+                  <span className="provider-connection-note"><Icon name="shield" />{selected.isOAuth ? "订阅已登录 · 自动续期" : selected.secretRef ? "凭据来自 1Password" : selected.hasApiKey ? "凭据已保存在本地" : "未保存 API Key"}</span>
                 </div>
                 <div className="provider-row">
                   <span className="provider-row-label">{selected.isOAuth ? "账户认证" : "API Key"}</span>
-                  <code className="provider-row-value">{selected.isOAuth ? "OAuth" : selected.hasApiKey ? "••••••••••••••••" : "未设置"}</code>
-                  <span className="provider-connection-note">{selected.native ? "在上方订阅与账户中管理" : "在「编辑配置」中更新"}</span>
+                  <code className="provider-row-value" title={selected.secretRef || undefined}>{selected.isOAuth ? "OAuth" : selected.secretRef ? selected.secretRef : selected.hasApiKey ? "••••••••••••••••" : "未设置"}</code>
+                  <span className="provider-connection-note">{selected.secretRef ? "保存时用 op 读取，引用留在本机" : selected.native ? "在上方订阅与账户中管理" : "在「编辑配置」中更新"}</span>
                 </div>
               </div>
             </section>

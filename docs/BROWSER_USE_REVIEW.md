@@ -2,7 +2,7 @@
 
 > 下文记录迁移前的 Jev 浏览器实现，已被替换。当前设计见 [BROWSER_USE.md](BROWSER_USE.md)，其中性能与功能边界以当前文档为准。
 
-检查日期：2026-10-31。依据当前 Orbit 工作区和本地 `t3code/` 源码；本轮验证覆盖离线执行协议、DOM 输入和语音分段，未测真实网站账号登录成功率或生产延迟。
+检查日期：2026-10-31。依据当前 Orbit 工作区和本地 `references/t3code/` 源码；本轮验证覆盖离线执行协议、DOM 输入和语音分段，未测真实网站账号登录成功率或生产延迟。
 
 ## 已修复的确定问题
 
@@ -28,9 +28,9 @@
 
 - `src-tauri/resources/browser-use/view-driver.ts`、`browser-driver.ts`、`browser-engine.ts`
 - `src-tauri/src/browser_leases.rs`、`browser_view.rs`、`browser.rs`
-- `t3code/apps/desktop/src/preview/DesktopBrowserHost.ts`、`BrowserSession.ts`、`Manager.ts`
-- `t3code/apps/server/src/preview/ServerBrowser.ts`、`ServerBrowserPage.ts`
-- `t3code/apps/web/src/browser/HostedBrowserWebview.tsx`、`desktopTabLifetime.ts`
+- `references/t3code/apps/desktop/src/preview/DesktopBrowserHost.ts`、`BrowserSession.ts`、`Manager.ts`
+- `references/t3code/apps/server/src/preview/ServerBrowser.ts`、`ServerBrowserPage.ts`
+- `references/t3code/apps/web/src/browser/HostedBrowserWebview.tsx`、`desktopTabLifetime.ts`
 
 ## 建议按这个顺序优化
 

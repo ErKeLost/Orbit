@@ -3,7 +3,7 @@
  *
  * Eleven Realtime v1 Mini/Max cannot be attached to a Speech Engine or any custom
  * LLM. Pi has to stay on this path: WebRTC in the page, scribe_realtime for ASR,
- * a flash TTS model, and eager turn-taking. See
+ * a low-latency TTS model, and eager turn-taking. See
  * https://elevenlabs.io/docs/eleven-agents/customization/realtime-models
  */
 import type { ElevenLabs } from "@elevenlabs/elevenlabs-js"
@@ -43,7 +43,7 @@ function keywordsOf(current: string[] | undefined) {
 }
 
 export function realtimeEngineConfig(wsUrl: string, current?: { tts?: { voiceId?: string }; asr?: { keywords?: string[] } }) {
-  const modelId = (process.env.SPEECH_TTS_MODEL ?? "eleven_flash_v2_5") as ElevenLabs.TtsConversationalModel
+  const modelId = (process.env.SPEECH_TTS_MODEL ?? "eleven_v4_turbo") as ElevenLabs.TtsConversationalModel
   const language = process.env.SPEECH_LANGUAGE?.trim()
   const keywords = keywordsOf(current?.asr?.keywords)
   return {
@@ -57,7 +57,7 @@ export function realtimeEngineConfig(wsUrl: string, current?: { tts?: { voiceId?
     tts: {
       modelId,
       ...(current?.tts?.voiceId ? { voiceId: current.tts.voiceId } : {}),
-      // Flash is not a v3 model; expressive tags only add work before the first sound.
+      // Our mouth writes plain sentences. Tags would only delay the first sound.
       expressiveMode: false,
     },
     turn: {

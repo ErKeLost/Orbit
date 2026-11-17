@@ -1,6 +1,6 @@
 /**
  * 聊天 markdown 的统一管线。移植自 t3code
- * `packages/shared/src/markdownPipeline.ts`（见 t3code/ submodule）。
+ * `packages/shared/src/markdownPipeline.ts`（见 references/t3code）。
  *
  * 这一层的职责只有三件：把 agent 实际会写的东西补成 markdown（GitHub
  * alerts、被误判成缩进代码的列表续行、图片独占一行），把围栏语言和 meta

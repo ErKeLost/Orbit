@@ -1,4 +1,6 @@
+import { applyFileDrag } from "../../lib/file-drag";
 import { invoke } from "../../lib/native";
+import { generateText } from "../../lib/text-gen";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
@@ -23,17 +25,19 @@ import { ADD_NOTE_TO_CHAT_EVENT, appendNoteReference, type NoteComposerCard } fr
 import { ModelPicker } from "./ModelPicker";
 import { BranchPicker } from "./BranchPicker";
 import { MessageQueueView } from "./MessageQueueView";
-import { TodoPill } from "./TaskList";
-import { parseTodoKey, sessionTodoKey } from "./todos";
+import { ComposerTasks } from "./TaskList";
+import { parsePlanKey, sessionPlanKey } from "./todos";
 import { ComposerPalette, type PalettePick, type PaletteRequest } from "./ComposerPalette";
 import { DraftField, type DraftHandle } from "./ComposerDraftField";
 import { useComposerTokens } from "./composerTokens";
 import {
   appendDraftText,
+  ATTACHMENTS_CHANGED,
   attachmentNameFromPath,
   buildPromptMessage,
   canSubmitPrompt,
   clipboardImageName,
+  copyAttachmentTo,
   couldBeFileReference,
   contextMeterUsage,
   forgetDraft,
@@ -42,6 +46,7 @@ import {
   imageAttachment,
   insertPalettePick,
   isImagePath,
+  otherComposerTargets,
   pasteIntent,
   isLargePaste,
   pasteTooLarge,
@@ -64,6 +69,8 @@ import { expandMentionLabels } from "./fileMentions";
 import { ContextMeter } from "./ContextMeter";
 import { stepInputHistory, inputHistoryEntries } from "./input-history";
 import { loadPromptSuggestion, savePromptSuggestion, transcriptTurn } from "./promptSuggestion";
+import { encodeQuote, quoteExcerpt } from "./quote";
+import { setQuote, useQuote } from "./quoteStore";
 import { userText } from "./turnModel";
 import { SpeechInput } from "../../components/ai-elements/speech-input";
 import { ProjectPicker } from "./ProjectPicker";
@@ -128,11 +135,23 @@ async function nativeClipboardImage() {
 }
 
 /** Orbit `AttachmentChip`. */
-function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRemove: () => void }) {
+function AttachmentChip({ attachment, composerKey, onRemove }: { attachment: Attachment; composerKey: string; onRemove: () => void }) {
   const url = useMemo(() => (attachment.kind === "image" ? URL.createObjectURL(attachment.blob) : ""), [attachment]);
   useEffect(() => () => { if (url) URL.revokeObjectURL(url); }, [url]);
   const [preview, setPreview] = useState(false);
+  const [dragPath, setDragPath] = useState(attachment.kind === "file" ? attachment.path : "");
+  const [copyOpen, setCopyOpen] = useState(false);
+  const sessions = useWorkspace((state) => state.liveSessions);
+  const targets = otherComposerTargets(composerKey, sessions);
   const image = attachment.kind === "image";
+  useEffect(() => {
+    if (attachment.kind !== "image") return;
+    let cancelled = false;
+    void encodeBlobToBase64(attachment.blob).then((data) => invoke<string>("stage_drag_file", { name: attachment.name, data })).then((path) => {
+      if (!cancelled) setDragPath(path);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [attachment]);
   if (attachment.kind === "text") {
     // Codex 式的大粘贴：正文留在数据里，输入框只挂一张卡片。展开发生在发送时，
     // 所以字数再大也不会进 textarea、高亮层或 markdown 渲染。
@@ -190,7 +209,12 @@ function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRe
   }
   return (
     <>
-      <div className={`group relative flex min-w-0 items-center gap-1.5 rounded-md ${image ? "" : "bg-fill-strong py-0.5 pl-1 pr-1"}`} title={attachment.kind === "file" ? attachment.path : attachment.name}>
+      <div
+        className={`group relative flex min-w-0 items-center gap-1.5 rounded-md ${image ? "" : "bg-fill-strong py-0.5 pl-1 pr-1"}`}
+        title={attachment.kind === "file" ? attachment.path : attachment.name}
+        draggable={Boolean(dragPath)}
+        onDragStart={(event) => { if (dragPath) applyFileDrag(event.dataTransfer, dragPath); }}
+      >
         {image ? (
           <button type="button" aria-label={`全屏查看 ${attachment.name}`} onClick={() => setPreview(true)} className="shrink-0 cursor-zoom-in rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
             <img src={url} alt="" draggable={false} className="size-9 rounded-lg object-cover" />
@@ -203,6 +227,17 @@ function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRe
             <span className="min-w-0 max-w-[140px] truncate text-2xs leading-none text-ink-1">{attachment.name}</span>
           </>
         )}
+        {image ? (
+          <button
+            type="button"
+            title="复制到另一个输入框"
+            aria-label="复制到另一个输入框"
+            onClick={() => setCopyOpen((open) => !open)}
+            className="absolute -left-1 -top-1 grid size-5 place-items-center rounded-full bg-fill-strong text-ink-2 shadow-sm"
+          >
+            <Plus className="size-3" strokeWidth={2} />
+          </button>
+        ) : null}
         <button
           type="button"
           title="移除"
@@ -217,6 +252,24 @@ function AttachmentChip({ attachment, onRemove }: { attachment: Attachment; onRe
         >
           <X className="size-3" strokeWidth={2} />
         </button>
+        {copyOpen ? (
+          <div className="absolute left-0 top-full z-30 mt-1 min-w-36 rounded-md border border-line bg-fill p-1 shadow-sm">
+            {targets.length ? targets.map((target) => (
+              <button
+                key={target.key}
+                type="button"
+                className="block w-full truncate rounded px-2 py-1 text-left text-2xs text-ink-1 hover:bg-fill-strong"
+                onClick={() => {
+                  copyAttachmentTo(target.key, attachment);
+                  setCopyOpen(false);
+                  toast.success(`已复制到 ${target.title}`, { showTimestamp: false });
+                }}
+              >
+                {target.title}
+              </button>
+            )) : <p className="px-2 py-1 text-2xs text-ink-3">没有其他输入框</p>}
+          </div>
+        ) : null}
       </div>
       {image && preview ? <ImageLightbox src={url} alt={attachment.name} onClose={() => setPreview(false)} /> : null}
     </>
@@ -282,6 +335,7 @@ function ComposerAction({ busy, disabled, hasValue, onSend, onStop }: { busy: bo
 }
 
 export const Composer = memo(function Composer({ onSubmitted, centered = false, paneId = CHAT_PANE_ID }: { onSubmitted: () => void; centered?: boolean; paneId?: string }) {
+  const quote = useQuote();
   const project = useWorkspace((state) => state.cwd);
   const homeDir = useWorkspace((state) => state.homeDir);
   // Sends go to this pane's pi connection, not the shell's projected one.
@@ -361,6 +415,14 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
   const desktopMac = runtimeTarget === "desktop" && runtimePlatform === "macos";
 
   useEffect(() => { rememberAttachments(composerKey, attachments); }, [attachments, composerKey]);
+  useEffect(() => {
+    const onCopied = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== composerKey) return;
+      setAttachments(recallAttachments(composerKey));
+    };
+    window.addEventListener(ATTACHMENTS_CHANGED, onCopied);
+    return () => window.removeEventListener(ATTACHMENTS_CHANGED, onCopied);
+  }, [composerKey]);
 
   // A different session has a different history; drop any cursor into the old one.
   useEffect(() => {
@@ -527,7 +589,9 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
       const { images, files: fileChips, pastes } = splitAttachments(attachmentsAtSend);
       useWorkspace.getState().event({ type: "prompt_submitted" });
       const previewId = `queued-${crypto.randomUUID()}`;
-      const message = buildPromptMessage(text, fileChips, pastes);
+      const message = encodeQuote(quote ?? { role: "assistant", text: "" }, buildPromptMessage(text, fileChips, pastes));
+      const sentQuote = quote;
+      if (sentQuote) setQuote(null);
       const before = attachmentsAtSend;
       setAttachments([]);
       draftRef.current?.clear();
@@ -579,10 +643,11 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
           rememberDraft(composerKey, draftText);
           rememberAttachments(composerKey, before);
         }
+        if (sentQuote) setQuote(sentQuote);
         report(error);
       }
     },
-    [attachments, composerKey, mentionLabels, onSubmitted, project, running, target],
+    [attachments, composerKey, mentionLabels, onSubmitted, project, quote, running, target],
   );
 
   /** 把草稿交给 Pi 的扩展命令续写；结果由 `gui-suggest` 的 status 回来。 */
@@ -611,12 +676,19 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
   // 是「再说一次」而不是故障，不给 report（那会再弹一个红色错误 toast）。
   const transcribeRecording = useCallback(async (blob: Blob) => {
     try {
-      const { text, noSpeech } = await transcribeAudio(await encodeBlobToBase64(blob), blob.type || "audio/webm");
+      const heard = await transcribeAudio(await encodeBlobToBase64(blob), blob.type || "audio/webm");
+      const { text: raw, noSpeech } = heard;
       if (noSpeech) {
         toast.warning("没听到你说话", { description: "点开后正常说一句话再点停止；仍然失败就检查系统麦克风输入设备", showTimestamp: false });
         return "";
       }
-      return text;
+      const cleaned = await generateText([
+        "Clean up a voice transcript. Reply with ONLY the cleaned text.",
+        "Fix obvious recognition mistakes, drop filler, keep the user's meaning and language. Do not add anything they did not say.",
+        "",
+        raw,
+      ].join("\n")).catch(() => null);
+      return (cleaned || raw).trim();
     } catch (error) {
       report(error);
       toast.warning("语音转写失败", { description: error instanceof Error ? error.message : String(error) });
@@ -633,22 +705,12 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
 
   const context = contextMeterUsage(stats?.contextUsage);
   const queueVisible = queue.steering.length + queue.followUp.length > 0;
-  const todoKey = useWorkspace((state) => sessionTodoKey(state.transcript.messages, state.transcript.tools));
-  const todos = useMemo(() => parseTodoKey(todoKey), [todoKey]);
+  const planKey = useWorkspace((state) => sessionPlanKey(state.transcript.messages, state.transcript.tools));
+  const plan = useMemo(() => parsePlanKey(planKey), [planKey]);
 
   return (
     <div className={`relative mx-auto w-full max-w-4xl ${centered ? "" : "p-1.5 pt-0"}`} data-session-composer>
       {dialog ? <ExtensionDialog key={dialog.id} dialog={dialog} /> : null}
-      {queueVisible ? (
-        <MessageQueueView
-          steering={queue.steering}
-          followUp={queue.followUp}
-          running={running}
-          onSteer={(text) => void steerFollowUp(text, target).catch(report)}
-          onClear={() => void recallQueue(target).catch(report)}
-        />
-      ) : null}
-      {todos.length ? <TodoPill todos={todos} /> : null}
       <div className="relative overflow-visible">
         {palette && !plusOpen ? (
           <div className="absolute inset-x-0 bottom-full z-30 mb-1">
@@ -663,6 +725,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
           {fileDrag ? (
             <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-lg bg-accent/8 text-xs text-ink-2">拖放文件以附加</div>
           ) : null}
+          {plan ? <ComposerTasks plan={plan} /> : null}
           <div className="flex min-w-0 items-center gap-2.5 overflow-hidden px-3 pt-2.5">
             {/* 新会话（首页）：头部带项目选择器，发送前就能切项目 / 不在文件夹里工作。
                 会话开始后（centered=false）撤下选择器——中途切范围等于打断会话。 */}
@@ -674,10 +737,20 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
             </div>
           </div>
 
+          {quote ? (
+            <div className="mx-3 mt-2 flex items-start gap-2 rounded-md border border-line bg-fill px-2 py-1.5">
+              <span className="mt-0.5 w-0.5 self-stretch rounded-full bg-accent" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-2xs text-ink-3">{quote.role === "assistant" ? "引用回复" : "引用消息"}</span>
+                <span className="block truncate text-xs text-ink-1">{quoteExcerpt(quote.text)}</span>
+              </span>
+              <button type="button" aria-label="取消引用" onClick={() => setQuote(null)} className="grid size-4 place-items-center text-ink-3 hover:text-ink-1"><X className="size-3" /></button>
+            </div>
+          ) : null}
           {attachments.length ? (
             <div className="flex flex-wrap gap-1.5 px-3 pt-2">
               {attachments.map((item) => (
-                <AttachmentChip key={item.id} attachment={item} onRemove={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))} />
+                <AttachmentChip key={item.id} composerKey={composerKey} attachment={item} onRemove={() => setAttachments((current) => current.filter((entry) => entry.id !== item.id))} />
               ))}
             </div>
           ) : null}
@@ -877,6 +950,15 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
               />
             </div>
           </div>
+          {queueVisible ? (
+            <MessageQueueView
+              steering={queue.steering}
+              followUp={queue.followUp}
+              running={running}
+              onSteer={(text) => void steerFollowUp(text, target).catch(report)}
+              onClear={() => void recallQueue(target).catch(report)}
+            />
+          ) : null}
         </div>
       </div>
     </div>

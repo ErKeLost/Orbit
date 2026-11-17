@@ -33,6 +33,7 @@ import { InboxView } from "./features/inbox/InboxView";
 import { SearchView } from "./features/search/SearchView";
 import { AutomationsView } from "./features/automations/AutomationsView";
 import { useAutomationScheduler } from "./features/automations/useAutomationScheduler";
+import { useSessionTitles } from "./features/chat/sessionTitle";
 import { useBrowserViews } from "./features/browser/use-browser-views";
 import { PaneDropHint, PaneSash, SessionPaneHeader } from "./features/shell/PaneChrome";
 import { layoutLeaves, layoutSashes, leafIds, removePane, setSplitRatio as setSplitRatioLayout, type LayoutNode } from "./features/shell/paneLayout";
@@ -57,6 +58,7 @@ function useMobileLayout(forced: boolean) {
 
 function WorkArea() {
   const panel = useWorkspace((state) => state.panel);
+  useSessionTitles();
 
   // 把当前面板写到 <html>：性能监控在记录停顿/掉帧时要能说出「当时在哪个界面」。
   // 一次属性写，不在渲染路径上做别的事。

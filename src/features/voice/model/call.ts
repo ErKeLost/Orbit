@@ -28,6 +28,39 @@ export type CallSnapshot = {
 
 const empty: CallSnapshot = { state: "off", error: null, muted: false, turns: [], level: 0, outputLevel: 0, engineId: "" }
 
+type EarOptions = Omit<Parameters<typeof Conversation.startSession>[0], "conversationToken" | "signedUrl" | "connectionType" | "agentId">
+
+/**
+ * UDP WebRTC dies on a VPN. Relay forces TURN (still WebRTC, but TCP-friendly),
+ * and the signed URL is a plain WebSocket. One attempt at a time: a timed-out
+ * session would keep the microphone.
+ */
+async function openEar(cred: { token: string; signedUrl?: string }, options: EarOptions) {
+  const errors: string[] = []
+  try {
+    return await Conversation.startSession({
+      ...options,
+      conversationToken: cred.token,
+      connectionType: "webrtc",
+      webRtc: { iceTransportPolicy: "relay" },
+    })
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error))
+  }
+  if (cred.signedUrl) {
+    try {
+      return await Conversation.startSession({
+        ...options,
+        signedUrl: cred.signedUrl,
+        connectionType: "websocket",
+      })
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error))
+    }
+  }
+  throw new Error(`连不上语音。${errors.at(-1) ?? "没有可用通路"}。中继和 WebSocket 都试过了，不用关 VPN；若仍失败，看电脑上的语音服务是否在跑。`)
+}
+
 export class VoiceCall {
   private value: CallSnapshot = empty
   private listeners = new Set<() => void>()
@@ -74,24 +107,35 @@ export class VoiceCall {
     this.watchOutput(false)
     this.update({ state: "connecting", error: null, muted: false, turns: [], level: 0, outputLevel: 0 })
     bindCall()
-    void import("./desk").then(module => module.startVoiceDesk())
+    const desk = await import("./desk")
+    const held = desk.holdDesk()
     try {
       const health = await probeSpeechEngine()
-      if (epoch !== this.epoch) return
-      if (!health.running) return this.fail(health.reason)
-      const { token, engineId } = await speechEngineToken()
-      if (epoch !== this.epoch) return
+      if (epoch !== this.epoch) {
+        desk.dropDesk(held)
+        return
+      }
+      if (!health.running) {
+        desk.dropDesk(held)
+        return this.fail(health.reason)
+      }
+      const { token, engineId, signedUrl } = await speechEngineToken()
+      if (epoch !== this.epoch) {
+        desk.dropDesk(held)
+        return
+      }
       if (health.engineId && engineId && health.engineId !== engineId) {
+        desk.dropDesk(held)
         return this.fail(`正在跑的服务端认的是 ${health.engineId}，应用配的是 ${engineId}：两边不一致。重新跑一次 tools/speech-engine/up.sh。`)
       }
       this.update({ engineId })
-      const conversation = (await Conversation.startSession({
-        conversationToken: token,
+      const conversation = (await openEar({ token, signedUrl }, {
         stripAudioTags: true,
         onConnect: () => {
           if (epoch === this.epoch) this.update({ state: "listening" })
         },
         onDisconnect: (details: DisconnectionDetails) => {
+          desk.dropDesk(held)
           if (epoch !== this.epoch) return
           this.conversation = null
           this.watchOutput(false)
@@ -143,12 +187,14 @@ export class VoiceCall {
         textOnly: false,
       })) as VoiceConversation
       if (epoch !== this.epoch) {
+        desk.dropDesk(held)
         void conversation.endSession()
         return
       }
       this.conversation = conversation
       if (!this.value.error) this.update({ state: "listening" })
     } catch (error) {
+      desk.dropDesk(held)
       if (epoch !== this.epoch) return
       this.fail(error instanceof Error ? error.message : String(error))
     }
@@ -156,6 +202,7 @@ export class VoiceCall {
 
   async stop() {
     this.epoch++
+    void import("./desk").then(module => module.dropDesk())
     const conversation = this.conversation
     this.conversation = null
     this.watchOutput(false)

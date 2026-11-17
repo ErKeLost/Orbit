@@ -1,9 +1,20 @@
-[submodule "vendor/codex"]
-	path = vendor/codex
+# Read-only upstream checkouts. Not part of the Orbit build.
+# git submodule update --init
+[submodule "codex"]
+	path = references/codex
 	url = https://github.com/openai/codex.git
-[submodule "t3code"]
-	path = t3code
-	url = https://github.com/pingdotgg/t3code.git
 [submodule "monocode"]
-	path = monocode
+	path = references/monocode
 	url = https://github.com/hardbeat920/monocode
+[submodule "t3code"]
+	path = references/t3code
+	url = https://github.com/pingdotgg/t3code.git
+[submodule "browse"]
+	path = references/browse
+	url = https://github.com/anomalyco/browse.git
+[submodule "agent-browser"]
+	path = references/agent-browser
+	url = https://github.com/vercel-labs/agent-browser.git
+[submodule "opencode"]
+	path = references/opencode
+	url = https://github.com/anomalyco/opencode.git

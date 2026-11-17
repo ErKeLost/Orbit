@@ -12,7 +12,9 @@ export function ExtensionDialog({ dialog }: { dialog: UiRequest }) {
   const [choice, setChoice] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   if (!["confirm", "select", "input", "editor"].includes(dialog.method)) return null;
-  const title = "title" in dialog && dialog.title ? dialog.title : "Pi 扩展";
+  const rawTitle = "title" in dialog && dialog.title ? dialog.title : "Pi 扩展";
+  const secret = rawTitle.startsWith("orbit:secret");
+  const title = secret ? rawTitle.slice("orbit:secret".length).replace(/^[:\s]+/, "") || "需要一个密钥" : rawTitle;
 
   async function answer(data: { value?: string; confirmed?: boolean; cancelled?: boolean }) {
     setPending(true);
@@ -70,7 +72,22 @@ export function ExtensionDialog({ dialog }: { dialog: UiRequest }) {
               })}
             </div>
           ) : null}
-          {dialog.method === "input" || dialog.method === "editor" ? (
+          {secret ? (
+            <div className="mt-1.5">
+              <p className="text-2xs leading-4 text-ink-3">只保存在这台机器上，不会写入对话。</p>
+              <input
+                autoFocus
+                type="password"
+                value={value}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={(dialog as { placeholder?: string }).placeholder || "值，或 op://vault/item/field"}
+                onChange={(event) => setValue(event.target.value)}
+                className="mt-1.5 w-full rounded-md border border-line-strong bg-transparent px-2 py-1 text-xs text-ink-1 outline-none placeholder:text-ink-3"
+              />
+            </div>
+          ) : null}
+          {!secret && (dialog.method === "input" || dialog.method === "editor") ? (
             <textarea
               autoFocus
               value={value}
@@ -88,7 +105,7 @@ export function ExtensionDialog({ dialog }: { dialog: UiRequest }) {
             </button>
           ) : null}
           <button type="submit" disabled={!ready || pending} className="h-6 rounded-md bg-ink-1 px-2.5 text-2xs font-medium text-background-base hover:bg-ink-1/70 disabled:opacity-40">
-            {dialog.method === "confirm" ? "Confirm" : "Continue"}
+            {secret ? "保存" : dialog.method === "confirm" ? "Confirm" : "Continue"}
           </button>
         </div>
       </form>

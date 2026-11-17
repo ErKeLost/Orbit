@@ -35,6 +35,7 @@ import {
   Inbox as InboxIcon,
   ArrowDownCircle,
   Loader,
+  Plus,
   Search,
   Settings,
   SmartPhone,
@@ -43,6 +44,7 @@ import {
   Voice,
   type IconComponent,
 } from "../../../shared/ui/icons";
+import { currentShortcut, shortcutLabel } from "../../../lib/keybindings";
 import { DevModeSlot, IS_MAC, MOD, ResizeHandle, TabVisitNav } from "../chrome";
 import { TerminalSpinner } from "../TerminalSpinner";
 import { ProjectContextMenu } from "./ProjectContextMenu";
@@ -79,6 +81,33 @@ export function RailAction({ label, icon: Icon, onClick, active = false, shortcu
       <Icon className="size-4 shrink-0 opacity-70" strokeWidth={1.75} />
       <span className="min-w-0 flex-1 truncate text-sm font-medium leading-tight">{label}</span>
       {shortcut ? <span aria-hidden className="shrink-0 text-2xs text-ink-3">{shortcut}</span> : null}
+    </button>
+  );
+}
+
+/** 搜索上面的主操作：在当前项目（或主目录）开一条新会话。 */
+function RailNewSession({
+  disabled,
+  shortcut,
+  onClick,
+}: {
+  disabled?: boolean;
+  shortcut: string;
+  onClick: () => void;
+}) {
+  const label = shortcut ? `新会话 (${shortcut})` : "新会话";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={label}
+      aria-label={label}
+      className="rail-row relative mb-1 flex h-8 w-full items-center gap-2 rounded-md bg-ink-1 px-1.5 text-left text-background-base hover:bg-ink-1/85 disabled:cursor-default disabled:opacity-40"
+    >
+      <Plus className="size-4 shrink-0" strokeWidth={1.75} />
+      <span className="min-w-0 flex-1 truncate text-sm font-medium leading-tight">新会话</span>
+      {shortcut ? <span aria-hidden className="rail-shortcut shrink-0 text-2xs text-background-base/60">{shortcut}</span> : null}
     </button>
   );
 }
@@ -168,6 +197,13 @@ function ArchivedFooter({ projects }: { projects: Project[] }) {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const AGE_GROUPS = ["今天", "昨天", "最近 7 天", "更早"] as const;
 type AgeGroup = (typeof AGE_GROUPS)[number];
+type RailSession = { session: Session; project: string };
+/** 加号菜单里那一项：会话落在主目录，不属于任何注册项目。 */
+const LOOSE_LABEL = "不在文件夹里工作";
+
+function sameScope(a: string, b: string) {
+  return Boolean(a) && Boolean(b) && normalizeProjectPath(a) === normalizeProjectPath(b);
+}
 
 /**
  * 一条会话的最近活动落在哪一段。
@@ -183,6 +219,12 @@ function sessionAge(updatedAt: number, now: number): AgeGroup {
   if (updatedAt >= startOfToday) return "今天";
   if (updatedAt >= startOfToday - DAY_MS) return "昨天";
   return "最近 7 天";
+}
+
+function groupByAge(entries: RailSession[], now = Date.now()) {
+  const buckets = new Map<AgeGroup, RailSession[]>(AGE_GROUPS.map((label) => [label, []]));
+  for (const entry of entries) buckets.get(sessionAge(Date.parse(entry.session.modified), now))!.push(entry);
+  return AGE_GROUPS.map((label) => ({ label, items: buckets.get(label)! })).filter((group) => group.items.length > 0);
 }
 
 /** 项目栏里的会话行：标题 + 所属项目，右侧是运行状态或相对时间。 */
@@ -329,23 +371,31 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
     [liveSessions],
   );
   /**
-   * 会话区块只扫**当前**作用域：项目模式下是这个项目，主目录模式下是主目录。
-   * 别的项目的会话仍然活着（后台跑、被收养/休眠），只是不在这里列——要看它们，
-   * 从下面的项目列表切过去。
+   * 会话区块扫两处：当前项目，以及「不在文件夹里工作」的主目录。
+   * 无目录会话始终列在当前项目会话上面；人已经在主目录时不重复列。
+   * 别的项目的会话仍然活着，只是不在这里列——要看它们，从项目列表切过去。
    */
-  const sessionRoots = useMemo(() => (cwd ? [cwd] : []), [cwd]);
+  const sessionRoots = useMemo(() => {
+    const roots: string[] = [];
+    const push = (path: string) => {
+      if (!path || roots.some((item) => sameScope(item, path))) return;
+      roots.push(path);
+    };
+    push(homeDir);
+    push(cwd);
+    return roots;
+  }, [cwd, homeDir]);
   const sessionGroups = useProjectSessionGroups(sessionRoots);
 
-  /** 跨项目的最近会话（含还没落盘的活跃会话），新到旧；不设上限，列表随项目栏滚动。 */
+  /** 当前项目 + 无目录会话（含还没落盘的活跃会话），新到旧；不设上限，列表随项目栏滚动。 */
   const railSessions = useMemo(() => {
-    type RailSession = { session: Session; project: string };
     const entries: RailSession[] = [];
     const seen = new Set<string>();
     for (const group of sessionGroups) {
       const listed = group.query.data ?? [];
       const listedPaths = new Set(listed.map((session) => session.path));
       for (const live of liveSessions) {
-        if (live.cwd !== group.cwd || !live.path || listedPaths.has(live.path) || seen.has(live.path)) continue;
+        if (!sameScope(live.cwd, group.cwd) || !live.path || listedPaths.has(live.path) || seen.has(live.path)) continue;
         seen.add(live.path);
         entries.push({
           session: {
@@ -370,32 +420,37 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
   }, [sessionGroups, liveSessions]);
 
   /**
-   * 会话按最近活动分组。29 条排成一列、每条都一样重，读起来就是一堵墙；
+   * 当前就在主目录时，无目录会话就是这一列，不再单独顶上一块。
+   * 切到项目后，它们整块留在项目会话上面，不跟着日期分组混进去。
+   */
+  const viewingLooseScope = Boolean(homeDir && cwd && sameScope(cwd, homeDir));
+  const looseSessions = useMemo(
+    () => (homeDir ? railSessions.filter((entry) => sameScope(entry.project, homeDir)) : []),
+    [homeDir, railSessions],
+  );
+  const projectSessions = useMemo(
+    () => (viewingLooseScope ? railSessions : railSessions.filter((entry) => !homeDir || !sameScope(entry.project, homeDir))),
+    [homeDir, railSessions, viewingLooseScope],
+  );
+  /**
+   * 项目会话按最近活动分组。29 条排成一列、每条都一样重，读起来就是一堵墙；
    * 分成四段之后，每一段自己就有了边界，找东西靠位置而不是靠逐行读。
    */
-  const sessionAgeSections = useMemo(() => {
-    const now = Date.now();
-    const buckets = new Map<AgeGroup, typeof railSessions>(
-      AGE_GROUPS.map((label) => [label, [] as typeof railSessions]),
-    );
-    for (const entry of railSessions) {
-      buckets.get(sessionAge(Date.parse(entry.session.modified), now))!.push(entry);
-    }
-    return AGE_GROUPS.map((label) => ({ label, items: buckets.get(label)! })).filter(
-      (group) => group.items.length > 0,
-    );
-  }, [railSessions]);
+  const sessionAgeSections = useMemo(() => groupByAge(projectSessions), [projectSessions]);
 
-  /** 会话所属项目的展示名；主目录不是注册项目，单独给它名字。 */
+  /** 会话所属范围的展示名。无目录会话不是注册项目。 */
   const projectLabel = (path: string) => {
-    if (homeDir && path === homeDir) return "主目录";
+    if (homeDir && sameScope(path, homeDir)) return LOOSE_LABEL;
     return projects.find((project) => project.path === path)?.name ?? pathProjectName(path);
   };
 
-  async function openSession(session: Session) {
+  async function openSession(session: Session, scope?: string) {
     useWorkspace.getState().set({ panel: "chat" });
+    const from = scope || railSessions.find((entry) => entry.session.path === session.path)?.project || session.cwd;
+    const loose = Boolean(homeDir) && Boolean(from) && sameScope(from, homeDir);
     // 真实会话进 header 的标签页；首页只留给“新会话”。
-    await tabs.openSession(session);
+    // 无目录会话的 cwd 对齐主目录，否则从项目里点开会被当成这个项目的会话。
+    await tabs.openSession(loose ? { ...session, cwd: homeDir } : session.cwd ? session : { ...session, cwd: from });
   }
 
   /** 提交项目栏里的改名。列表面自己刷新（`renameSession` 会作废所有项目缓存）。 */
@@ -501,6 +556,15 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
         <>
           <div className="flex shrink-0 flex-col gap-0.5 px-2 pb-2 pt-1.5">
             {/* 侧栏不再有顶部的项目标题行：项目切换统一走下面的「项目」段。 */}
+            <RailNewSession
+              disabled={!cwd}
+              shortcut={shortcutLabel(currentShortcut("Session: New"))}
+              onClick={() => {
+                if (!cwd) return;
+                useWorkspace.getState().set({ panel: "chat" });
+                void tabs.create(cwd).catch(report);
+              }}
+            />
             <RailSearch onClick={onSearch} />
             <div className="mt-0.5" />
             {NAV
@@ -558,6 +622,30 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
                 </button>
                 {sessionsOpen ? (
                   <div className="flex flex-col pb-1">
+                    {!viewingLooseScope && looseSessions.length > 0 ? (
+                      <section aria-label={LOOSE_LABEL}>
+                        <h3 className="flex items-center gap-2 px-3 pb-1 pt-4 text-2xs font-medium text-ink-3">
+                          <span className="min-w-0 truncate">{LOOSE_LABEL}</span>
+                        </h3>
+                        <div className="flex flex-col gap-px px-2">
+                          {looseSessions.map(({ session, project }) => (
+                            <RailSessionCard
+                              key={session.path}
+                              session={session}
+                              projectLabel={LOOSE_LABEL}
+                              active={session.path === currentSessionFile}
+                              running={Boolean(liveSessions.find((live) => live.path === session.path)?.running)}
+                              renaming={renamingPath === session.path}
+                              onSelect={() => void openSession(session, project).catch(report)}
+                              onContextMenu={(event) => openSessionMenu(session, event)}
+                              onStartRename={() => setRenamingPath(session.path)}
+                              onCancelRename={() => setRenamingPath("")}
+                              onRename={(name) => commitRailRename(session, name)}
+                            />
+                          ))}
+                        </div>
+                      </section>
+                    ) : null}
                     {sessionAgeSections.map((group) => (
                       <section key={group.label} aria-label={group.label}>
                         {/* 分组标题：11px、40% 灰，只做分隔不做主角。 */}
@@ -573,7 +661,7 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
                               active={session.path === currentSessionFile}
                               running={Boolean(liveSessions.find((live) => live.path === session.path)?.running)}
                               renaming={renamingPath === session.path}
-                              onSelect={() => void openSession(session).catch(report)}
+                              onSelect={() => void openSession(session, project).catch(report)}
                               onContextMenu={(event) => openSessionMenu(session, event)}
                               onStartRename={() => setRenamingPath(session.path)}
                               onCancelRename={() => setRenamingPath("")}

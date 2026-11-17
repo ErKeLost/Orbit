@@ -5,6 +5,7 @@ import { Icon } from "../../../components/Icon";
 import { ImageEndpointDialog } from "../../../components/ImageEndpointDialog";
 import { toast as gooeyToast } from "../../../shared/ui/toast";
 import { imageConfig, refreshCapabilities, report, saveImageConfig, type ImageConfig, type ImageConfigKind, saveWebSearchApiKey, saveWebSearchConfig, webSearchConfig } from "../../../lib/rpc";
+import { saveTextGen, textGenConfig } from "../../../lib/text-gen";
 import { useWorkspace } from "../../../lib/store";
 import { availableMediaModels, parseCapabilities } from "../../../lib/capabilities";
 import "../../../styles/provider-page.css";
@@ -78,6 +79,12 @@ export function IntegrationsPage() {
   const config = useQuery({ queryKey: ["pi", "image-config"], queryFn: imageConfig, enabled: desktop });
   const webSearch = useQuery({ queryKey: ["pi", "web-search-config"], queryFn: webSearchConfig, enabled: desktop });
   const [endpointOpen, setEndpointOpen] = useState(false);
+  const textGen = useQuery({ queryKey: ["text-gen"], queryFn: textGenConfig, enabled: desktop });
+  const [textDraft, setTextDraft] = useState({ enabled: false, baseUrl: "http://127.0.0.1:11434/v1", model: "", apiKey: "" });
+  useEffect(() => {
+    if (!textGen.data) return;
+    setTextDraft({ enabled: textGen.data.enabled, baseUrl: textGen.data.baseUrl || "http://127.0.0.1:11434/v1", model: textGen.data.model, apiKey: "" });
+  }, [textGen.data]);
   const [webSearchDraft, setWebSearchDraft] = useState({ enabled: true, baseUrl: "", providerId: "", searchUrl: "", apiKey: "" });
 
   useEffect(() => {
@@ -199,12 +206,33 @@ export function IntegrationsPage() {
             </div>
             <div className="provider-row provider-row-form">
               <label className="provider-row-label">Search URL<Input aria-label="Web Search URL" value={webSearchDraft.searchUrl} disabled={!desktop} onChange={(event) => setWebSearchDraft(current => ({ ...current, searchUrl: event.target.value }))} placeholder="https://www.bing.com/search?q=" spellCheck={false} /></label>
-              <label className="provider-row-label">API Key<Input aria-label="Expand API Key" type="password" autoComplete="off" value={webSearchDraft.apiKey} disabled={!desktop} onChange={(event) => setWebSearchDraft(current => ({ ...current, apiKey: event.target.value }))} placeholder={webSearch.data?.hasApiKey ? "已保存，留空保持不变" : "粘贴 Expand API Key"} spellCheck={false} /></label>
+              <label className="provider-row-label">API Key<Input aria-label="Expand API Key" type="password" autoComplete="off" value={webSearchDraft.apiKey} disabled={!desktop} onChange={(event) => setWebSearchDraft(current => ({ ...current, apiKey: event.target.value }))} placeholder={webSearch.data?.hasApiKey ? "已保存，留空保持不变。也可粘贴 op://" : "粘贴 API Key，或 op://vault/item/field"} spellCheck={false} /></label>
             </div>
             <div className="provider-row">
               <span className="provider-row-label">凭据状态</span>
               <span className="provider-connection-note">{webSearch.data?.hasApiKey ? "已配置" : "未配置"}</span>
               <div className="provider-detail-actions"><Button variant="outline" disabled={!desktop} onClick={() => void saveWebSearch()}>保存配置</Button>{webSearch.data?.hasApiKey ? <Button variant="ghost" disabled={!desktop} onClick={() => void clearWebSearchKey()}>清除密钥</Button> : null}</div>
+            </div>
+          </div>
+        </section>
+        <section className="provider-card">
+          <header className="provider-card-head">
+            <div>
+              <h3>文本模型</h3>
+              <p>标题、提交说明、PR 文案和语音清理走这里。不启用时，提交说明仍用 Pi 一次性生成，不为了一句标题再开一轮 coding agent。</p>
+            </div>
+            <Toggle label="启用文本模型" on={textDraft.enabled} disabled={!desktop} onChange={(enabled) => setTextDraft((current) => ({ ...current, enabled }))} />
+          </header>
+          <div className="provider-card-rows">
+            <div className="provider-row provider-row-form">
+              <label className="provider-row-label">Base URL<Input aria-label="文本模型 Base URL" value={textDraft.baseUrl} disabled={!desktop} onChange={(event) => setTextDraft((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="http://127.0.0.1:11434/v1" spellCheck={false} /></label>
+              <label className="provider-row-label">模型<Input aria-label="文本模型" value={textDraft.model} disabled={!desktop} onChange={(event) => setTextDraft((current) => ({ ...current, model: event.target.value }))} placeholder="qwen2.5:7b" spellCheck={false} /></label>
+            </div>
+            <div className="provider-row provider-row-form">
+              <label className="provider-row-label">API Key<Input aria-label="文本模型 API Key" type="password" autoComplete="off" value={textDraft.apiKey} disabled={!desktop} onChange={(event) => setTextDraft((current) => ({ ...current, apiKey: event.target.value }))} placeholder={textGen.data?.hasApiKey ? "已保存，留空保持不变。也可粘贴 op://" : "本地模型通常不需要。也可粘贴 op://"} spellCheck={false} /></label>
+              <div className="provider-detail-actions">
+                <Button variant="outline" disabled={!desktop} onClick={() => void saveTextGen(textDraft).then(() => { setTextDraft((current) => ({ ...current, apiKey: "" })); void textGen.refetch(); gooeyToast.success("文本模型已保存", { showTimestamp: false }); }).catch((error) => gooeyToast.error(String(error instanceof Error ? error.message : error)))}>保存</Button>
+              </div>
             </div>
           </div>
         </section>

@@ -97,7 +97,7 @@ function activityLabel(action: string, target: string) {
 
 /**
  * The plan this turn is working from, plus the tool calls that followed the
- * latest write — those belong under the item in progress.
+ * latest write. The dock shows only the points; calls fold underneath.
  */
 export function planFromSteps(steps: readonly TurnStep[], tools: Record<string, Tool>): TaskPlan | null {
   let lastIndex = -1;
@@ -166,19 +166,99 @@ export function latestTodos(messages: readonly DisplayMessage[], tools: Record<s
   return found;
 }
 
-export function sessionTodoKey(messages: readonly DisplayMessage[], tools: Record<string, Tool>) {
-  return latestTodos(messages, tools).map((todo) => `${todo.status}:${todo.content}`).join("\n");
+/**
+ * The plan sitting on the composer: the latest successful write, and the tool
+ * calls that followed it until the next user message. A settled plan is still
+ * returned; the dock decides whether to keep showing it.
+ */
+export function latestPlan(messages: readonly DisplayMessage[], tools: Record<string, Tool>): TaskPlan | null {
+  let todos: Todo[] | null = null;
+  let writeMessage = -1;
+  let writePart = -1;
+  let durationMs: number | undefined;
+  let running = false;
+
+  for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+    const content = messages[messageIndex].message.content;
+    if (!Array.isArray(content)) continue;
+    for (let partIndex = 0; partIndex < content.length; partIndex += 1) {
+      const part = content[partIndex];
+      if (part.type !== "toolCall") continue;
+      const name = part.name ?? (part.id ? tools[part.id]?.name : "") ?? "";
+      if (!isTodoToolName(name)) continue;
+      const tool = part.id ? tools[part.id] : undefined;
+      if (tool?.isError) continue;
+      const next = todosFromCall(part, tool);
+      if (!next) continue;
+      todos = next;
+      writeMessage = messageIndex;
+      writePart = partIndex;
+      durationMs = tool?.durationMs;
+      running = Boolean(tool?.running);
+    }
+  }
+  if (!todos || (!todos.length && !running)) return null;
+
+  const children: TaskChild[] = [];
+  for (let messageIndex = Math.max(0, writeMessage); messageIndex < messages.length; messageIndex += 1) {
+    const item = messages[messageIndex];
+    if (messageIndex > writeMessage && item.message.role === "user") break;
+    const content = item.message.content;
+    if (!Array.isArray(content)) continue;
+    const start = messageIndex === writeMessage ? writePart + 1 : 0;
+    for (let partIndex = start; partIndex < content.length; partIndex += 1) {
+      const part = content[partIndex];
+      if (part.type !== "toolCall") continue;
+      const name = part.name ?? (part.id ? tools[part.id]?.name : "") ?? "";
+      if (isTodoToolName(name)) continue;
+      const labeled = toolLabel(part, tools);
+      const label = activityLabel(labeled.action, labeled.target);
+      if (!label) continue;
+      const child = part.id ? tools[part.id] : undefined;
+      children.push({
+        key: `${item.id}-${partIndex}`,
+        label,
+        durationMs: child?.durationMs,
+        running: Boolean(child?.running),
+      });
+    }
+  }
+
+  return { todos, durationMs, running, children };
 }
 
-export function parseTodoKey(key: string): Todo[] {
-  if (!key) return [];
-  return key.split("\n").flatMap((line) => {
-    const split = line.indexOf(":");
-    if (split < 0) return [];
-    const status = asStatus(line.slice(0, split));
-    const content = line.slice(split + 1);
-    return content ? [{ content, status }] : [];
-  });
+/** Stable composer selector. Unrelated transcript tokens do not change it. */
+export function sessionPlanKey(messages: readonly DisplayMessage[], tools: Record<string, Tool>) {
+  const plan = latestPlan(messages, tools);
+  if (!plan) return "";
+  return JSON.stringify([
+    plan.running ? 1 : 0,
+    plan.todos.map((todo) => [todo.status, todo.content]),
+    plan.children.map((child) => [child.running ? 1 : 0, child.label]),
+  ]);
+}
+
+export function parsePlanKey(key: string): TaskPlan | null {
+  if (!key) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(key);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const todos = todosFromValue(
+    Array.isArray(parsed[1]) ? parsed[1].map((row) => (Array.isArray(row) ? { status: row[0], content: row[1] } : null)) : null,
+  );
+  if (!todos) return null;
+  const children: TaskChild[] = [];
+  if (Array.isArray(parsed[2])) {
+    for (const [index, row] of parsed[2].entries()) {
+      if (!Array.isArray(row) || typeof row[1] !== "string" || !row[1]) continue;
+      children.push({ key: String(index), label: row[1], running: row[0] === 1 });
+    }
+  }
+  return { todos, running: parsed[0] === 1, children };
 }
 
 export function formatTaskDuration(elapsedMs: number | null | undefined) {

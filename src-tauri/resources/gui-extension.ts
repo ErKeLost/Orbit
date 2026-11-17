@@ -1,5 +1,6 @@
+import {execFileSync} from 'node:child_process'
 import {dirname,extname,join,resolve} from 'node:path'
-import {mkdirSync,readFileSync,realpathSync,writeFileSync} from 'node:fs'
+import {chmodSync,mkdirSync,readFileSync,realpathSync,writeFileSync} from 'node:fs'
 import {homedir} from 'node:os'
 import {pathToFileURL} from 'node:url'
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, McpServerConfig, ModelRouteRequest, ToolInfo } from '@earendil-works/pi-coding-agent'
@@ -1221,6 +1222,42 @@ export default async function (pi: ExtensionAPI) {
       return {
         content:[{type:'text' as const,text:summarizeTodos(todos)}],
         details:{todos},
+      }
+    },
+  })
+  pi.registerTool({
+    name:'request_secret',
+    label:'请求密钥',
+    description:'Ask the user for a token or password in a private card. The value is saved to a private file and is never written into the conversation. Use this instead of asking the user to paste a secret in chat.',
+    promptGuidelines:['需要 token、密码或 API key 时调用 request_secret，不要让用户把密钥贴进对话。','工具结果里只有私密文件路径。不要读取后把内容复述到回复里。'],
+    defaultActive:true,
+    parameters:{
+      type:'object',
+      properties:{
+        reason:{type:'string',description:'Why the secret is needed, shown on the card.'},
+        name:{type:'string',description:'Short name for the secret, such as GITHUB_TOKEN.'},
+      },
+      required:['reason'],
+    },
+    async execute(_toolCallId:string,params:unknown,_signal:AbortSignal|undefined,_onUpdate:unknown,ctx:ExtensionContext){
+      const reason=typeof (params as {reason?:unknown})?.reason==='string'?(params as {reason:string}).reason.trim():'需要一个密钥'
+      const answer=await ctx.ui.input(`orbit:secret: ${reason}`,'值，或 op://vault/item/field')
+      const given=answer?.trim()
+      if(!given)return {content:[{type:'text' as const,text:'用户没有提供密钥。'}],details:{saved:false}}
+      let value=given
+      if(value.startsWith('op://')){
+        if(/\s/.test(value))throw new Error('1Password 引用不能包含空格')
+        value=execFileSync('op',['read',value],{encoding:'utf8',timeout:20000}).trim()
+        if(!value)throw new Error('1Password 返回了空值')
+      }
+      const dir=join(homedir(),'.pi','agent','orbit-secrets')
+      mkdirSync(dir,{recursive:true})
+      const file=join(dir,`${Date.now().toString(36)}.secret`)
+      writeFileSync(file,value,{mode:0o600})
+      chmodSync(file,0o600)
+      return {
+        content:[{type:'text' as const,text:`密钥已写入私密文件 ${file}，没有进入对话。需要时从该文件读取，不要把内容复述出来。`}],
+        details:{saved:true,path:file},
       }
     },
   })

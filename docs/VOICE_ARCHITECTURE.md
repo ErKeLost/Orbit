@@ -52,7 +52,7 @@ Rime 当时好用，是因为它只做耳朵和嘴。派发、旁观、做完了
 | 嘴 | 桌子旁边的一只没有工具的生成 | 闲聊、进度的说法、结果摘要。不写会话，不声称自己干过活 |
 | 管子 | `tools/speech-engine` | 接 ElevenLabs 的 WS，把转写交给桌子，把桌子的字流式送回。不 spawn Pi |
 | 凭据 | `src-tauri/src/elevenlabs.rs` | 不变：key 在 `auth.json`，engine id 在 `eleven.json`，页面只拿短期 token |
-| 本地嘴 | 同上，挂断之后 | 通话已断时，用同一把 key、同一个 voice、`eleven_flash_v2_5` 把播报念出来 |
+| 本地嘴 | 同上，挂断之后 | 通话已断时，用同一把 key、同一个 voice、`eleven_v4_turbo` 把播报念出来 |
 
 Jev 从 `tools/speech-engine/src/gate.ts` 搬到桌子。管子不再需要 `TYPESAFE_API_KEY`。
 

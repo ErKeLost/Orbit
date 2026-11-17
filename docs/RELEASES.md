@@ -426,7 +426,7 @@ refuses the navigation.
 ## v1.0.31
 
 Chat markdown is rendered by `react-markdown` on a pipeline ported from t3code
-(the `t3code` submodule); `@lobehub/streamdown` is gone. The reader-visible
+(the `references/t3code` submodule); `@lobehub/streamdown` is gone. The reader-visible
 differences: GitHub alerts (`> [!NOTE]`, `[!WARNING]`, …) draw a colored note
 instead of a literal marker, headings carry `#anchor` ids and an in-page jump
 scrolls instead of navigating the hash route, tables get their own scroll shell

@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useWorkspace } from "../../../lib/store";
 import { changeSession, report } from "../../../lib/rpc";
 import { LAYER } from "../../../shared/lib/layers";
 import { DIALOG_POPOVER_OFFSET, PopoverLayerOffset } from "../../../shared/ui/PopoverLayer";
-import { Plus, Settings, SlidersHorizontal, X, MessageMultiple, PanelLeft, AppWindow, ChevronLeft } from "../../../shared/ui/icons";
+import { Plus, Settings, SlidersHorizontal, X, MessageMultiple, PanelLeft, AppWindow, ChevronLeft, Voice } from "../../../shared/ui/icons";
 import { ChatPane } from "../../chat/ChatPane";
 import { SettingsView } from "../../settings/SettingsView";
 import { SettingsNav } from "../../settings/SettingsNav";
@@ -19,6 +19,8 @@ import { observeKeyboardInset } from "../../../lib/keyboard-inset";
 import { observeSystemBarInsets } from "../../../lib/system-insets";
 import { installBackGesture, registerBackHandler } from "../../../lib/back-gesture";
 import { mergeProjectSessions, useProjectSessions } from "../../../hooks/use-project-sessions";
+
+const VoicePage = lazy(() => import("../../voice/ui/VoicePage").then((module) => ({ default: module.VoicePage })));
 
 /**
  * Android / narrow layout. The same Orbit surfaces, stacked: a 44px title
@@ -87,6 +89,14 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
       return true;
     });
   }, [showFile]);
+  // Leaving the page hangs up. The microphone is on this phone; a call with
+  // no control on screen would keep listening in the background.
+  useEffect(() => {
+    if (panel === "voice") return;
+    void import("../../voice/model/call").then((module) => {
+      if (module.voiceCall.getSnapshot().state !== "off") void module.voiceCall.stop();
+    });
+  }, [panel]);
   useEffect(() => {
     if (!screenPip) return;
     return registerBackHandler(() => {
@@ -116,6 +126,16 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
           </TitleIconButton>
         ) : null}
         <TitleIconButton
+          label={panel === "voice" ? "关闭语音" : "语音"}
+          active={panel === "voice"}
+          onClick={() => {
+            setChatSurface(true);
+            useWorkspace.getState().set({ panel: panel === "voice" ? "chat" : "voice" });
+          }}
+        >
+          <Voice className="size-4" strokeWidth={1.75} />
+        </TitleIconButton>
+        <TitleIconButton
           label={screenPip ? "关闭屏幕" : "打开屏幕"}
           active={screenPip}
           disabled={!online}
@@ -135,6 +155,10 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
           // The same editor pane the desktop shows: the phone only gives it the
           // whole surface instead of a cell in the pane grid.
           <FileView paneId={paneId} cwd={cwd} showGrip={false} />
+        ) : panel === "voice" ? (
+          <Suspense fallback={<div className="min-h-0 flex-1" />}>
+            <VoicePage visible />
+          </Suspense>
         ) : panel === "chat" ? (
           <div className="mobile-composer-dock flex min-h-0 flex-1 flex-col">
             <ChatPane withTerminal />

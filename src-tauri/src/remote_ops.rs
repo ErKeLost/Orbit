@@ -41,8 +41,9 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use crate::{
-    automations, bridge, computer_use, git, github_inbox, gitlab, gui_settings, image_config, mcp,
-    media, notes, pi_session, providers, pty_term, search, sessions_cmd, web_search,
+    automations, bridge, computer_use, elevenlabs, git, github_inbox, gitlab, gui_settings,
+    image_config, mcp, media, notes, pi_session, preview, providers, pty_term, search, sessions_cmd,
+    text_gen, web_search,
 };
 #[cfg(target_os = "macos")]
 use crate::ax;
@@ -125,6 +126,10 @@ pub const REMOTE_COMMANDS: &[&str] = &[
     "discover",
     "pi_send",
     "pi_oneshot",
+    "preview_document",
+    "text_gen_config",
+    "save_text_gen",
+    "text_generate",
     "pi_disconnect",
     "list_sessions",
     "delete_session",
@@ -180,6 +185,17 @@ pub const REMOTE_COMMANDS: &[&str] = &[
     "save_computer_use_config",
     "save_computer_use_cloudflare_token",
     "test_computer_use_decision",
+    // Voice: the phone holds the microphone. The key, the speech engine and the
+    // desk stay on this computer; these commands are how the phone reaches them.
+    "speech_engine_config",
+    "save_speech_engine_config",
+    "save_speech_engine_api_key",
+    "speech_engine_token",
+    "speech_engine_check",
+    "speech_engine_health",
+    "speech_engine_desk",
+    "voice_classify",
+    "speech_engine_speak",
     // The image-generation endpoint, as data. Pi's own provider config cannot
     // hold an image model — its model schema has no `type` discriminant — so this
     // file is where the provider, its models and its size presets live, and the
@@ -482,6 +498,15 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
             )
             .await?,
         ),
+        "preview_document" => json(preview::preview_document(text(&args, "path")?)?),
+        "text_gen_config" => json(text_gen::text_gen_config()),
+        "save_text_gen" => json(text_gen::save_text_gen(
+            args.get("enabled").and_then(|value| value.as_bool()).unwrap_or(false),
+            text(&args, "baseUrl").unwrap_or_default(),
+            text(&args, "model").unwrap_or_default(),
+            args.get("apiKey").and_then(|value| value.as_str()).map(str::to_string),
+        )?),
+        "text_generate" => json(text_gen::text_generate(text(&args, "prompt")?).await?),
         "pi_disconnect" => {
             let state = app.state::<bridge::Bridge>();
             pi_session::pi_disconnect(app.clone(), text(&args, "project")?, state);
@@ -698,6 +723,28 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
         "ax_observe" => json(
             ax::ax_observe(text(&args, "appName")?, number::<usize>(&args, "maxNodes")?).await?,
         ),
+        "speech_engine_config" => json(elevenlabs::speech_engine_config().await?),
+        "save_speech_engine_config" => {
+            json(elevenlabs::save_speech_engine_config(required(&args, "config")?).await?)
+        }
+        "save_speech_engine_api_key" => {
+            json(elevenlabs::save_speech_engine_api_key(opt::<String>(&args, "apiKey")?).await?)
+        }
+        "speech_engine_token" => json(elevenlabs::speech_engine_token().await?),
+        "speech_engine_check" => json(elevenlabs::speech_engine_check().await?),
+        "speech_engine_health" => json(elevenlabs::speech_engine_health().await?),
+        "speech_engine_desk" => json(
+            elevenlabs::speech_engine_desk(
+                text(&args, "action")?,
+                opt::<String>(&args, "owner")?,
+                opt::<String>(&args, "id")?,
+                opt::<String>(&args, "text")?,
+                opt::<u64>(&args, "timeout")?,
+            )
+            .await?,
+        ),
+        "voice_classify" => json(elevenlabs::voice_classify(required(&args, "request")?).await?),
+        "speech_engine_speak" => json(elevenlabs::speech_engine_speak(text(&args, "text")?).await?),
         other => Err(format!("命令 {other} 没有远端实现")),
     }
 }

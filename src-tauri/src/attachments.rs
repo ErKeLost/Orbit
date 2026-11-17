@@ -134,3 +134,17 @@ pub fn save_media_file(data: String, destination: String) -> Result<String, Stri
     std::fs::write(&path, bytes).map_err(|e| format!("写入 {} 失败：{e}", path.display()))?;
     Ok(path.to_string_lossy().into_owned())
 }
+
+/// Write a screenshot that only exists as bytes to a temp file Finder can take.
+#[tauri::command]
+pub fn stage_drag_file(name: String, data: String) -> Result<String, String> {
+    let safe = name
+        .split(|ch| matches!(ch, '/' | '\\' | ':' ))
+        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
+        .next_back()
+        .unwrap_or("file");
+    let dir = std::env::temp_dir().join("orbit-drag");
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let path = dir.join(safe);
+    save_media_file(data, path.to_string_lossy().into_owned())
+}

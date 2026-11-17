@@ -142,7 +142,7 @@ pub async fn speech_engine_token() -> Result<Value, String> {
     }
     let response = client()
         .get(format!("{API}/v1/convai/conversation/token?agent_id={engine}"))
-        .header("xi-api-key", key)
+        .header("xi-api-key", key.clone())
         .timeout(std::time::Duration::from_secs(15))
         .send()
         .await
@@ -156,7 +156,235 @@ pub async fn speech_engine_token() -> Result<Value, String> {
     if token.is_empty() {
         return Err("ElevenLabs 没有返回会话 token".into());
     }
-    Ok(json!({"token": token, "engineId": engine}))
+    let signed_url = signed_url(&key, &engine).await.unwrap_or_default();
+    // The mouth lives on the engine resource, not in this process. A failed
+    // upgrade must not block the call; the next `up.sh` writes the same default.
+    let _ = ensure_turbo(&key, &engine).await;
+    Ok(json!({"token": token, "signedUrl": signed_url, "engineId": engine}))
+}
+
+/// Point the existing engine at v4 Turbo without dropping its voice.
+async fn ensure_turbo(key: &str, engine: &str) -> Result<(), String> {
+    let response = client()
+        .get(format!("{API}/v1/speech-engine/{engine}"))
+        .header("xi-api-key", key)
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err("read engine".into());
+    }
+    let body: Value = response.json().await.unwrap_or(Value::Null);
+    let current = body
+        .pointer("/tts/model_id")
+        .or_else(|| body.pointer("/tts/modelId"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if current == "eleven_v4_turbo" {
+        return Ok(());
+    }
+    let mut tts = json!({
+        "model_id": "eleven_v4_turbo",
+        "expressive_mode": false,
+    });
+    if let Some(voice) = body
+        .pointer("/tts/voice_id")
+        .or_else(|| body.pointer("/tts/voiceId"))
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+    {
+        tts["voice_id"] = json!(voice);
+    }
+    let updated = client()
+        .patch(format!("{API}/v1/speech-engine/{engine}"))
+        .header("xi-api-key", key)
+        .json(&json!({ "tts": tts }))
+        .timeout(std::time::Duration::from_secs(8))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if updated.status().is_success() {
+        Ok(())
+    } else {
+        Err("upgrade".into())
+    }
+}
+
+/// WebSocket fallback. WebRTC is UDP and dies on a VPN; this URL is TCP.
+async fn signed_url(key: &str, engine: &str) -> Result<String, String> {
+    let response = client()
+        .get(format!("{API}/v1/convai/conversation/get-signed-url?agent_id={engine}"))
+        .header("xi-api-key", key)
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|error| format!("连接 ElevenLabs 失败：{error}"))?;
+    let status = response.status();
+    let body: Value = response.json().await.unwrap_or(Value::Null);
+    if !status.is_success() {
+        return Err(detail(status.as_u16(), &body));
+    }
+    body.get("signed_url")
+        .or_else(|| body.get("signedUrl"))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .filter(|value| value.starts_with("wss://") || value.starts_with("ws://"))
+        .ok_or_else(|| "ElevenLabs 没有返回 WebSocket 地址".to_string())
+}
+
+/// The speech engine lives on this computer. A phone cannot see 127.0.0.1:3001.
+#[tauri::command]
+pub async fn speech_engine_health() -> Result<Value, String> {
+    let response = match client()
+        .get("http://127.0.0.1:3001/health")
+        .timeout(std::time::Duration::from_millis(1500))
+        .send()
+        .await
+    {
+        Err(_) => {
+            return Ok(json!({
+                "running": false,
+                "reason": "语音服务没在运行（电脑上 127.0.0.1:3001 没人接）。在 tools/speech-engine 里跑一次 ./up.sh。"
+            }))
+        }
+        Ok(response) => response,
+    };
+    if !response.status().is_success() {
+        return Ok(json!({
+            "running": false,
+            "reason": format!("语音服务回了 {}，不是它该有的应答。", response.status())
+        }));
+    }
+    let body: Value = response.json().await.unwrap_or(Value::Null);
+    if body.get("ok") != Some(&Value::Bool(true)) {
+        return Ok(json!({
+            "running": false,
+            "reason": "127.0.0.1:3001 上有东西在听，但不是 speech-engine。"
+        }));
+    }
+    Ok(json!({
+        "running": true,
+        "ok": true,
+        "engineId": body.get("engineId").cloned().unwrap_or(Value::Null),
+        "cwd": body.get("cwd").cloned().unwrap_or(json!("")),
+        "calls": body.get("calls").cloned().unwrap_or(json!(0)),
+        "inFlight": body.get("inFlight").cloned().unwrap_or(json!(0)),
+        "desk": body.get("desk").cloned().unwrap_or(json!(false)),
+        "rssMb": body.get("rssMb").cloned().unwrap_or(json!(0)),
+        "uptimeSec": body.get("uptimeSec").cloned().unwrap_or(json!(0)),
+    }))
+}
+
+/// Proxy the local speech-engine desk. The phone holds the microphone; the
+/// desk still has to reach 127.0.0.1:3001, which only exists on this computer.
+/// `action` is a closed set so this cannot be turned into an open proxy.
+#[tauri::command]
+pub async fn speech_engine_desk(
+    action: String,
+    owner: Option<String>,
+    id: Option<String>,
+    text: Option<String>,
+    timeout: Option<u64>,
+) -> Result<Value, String> {
+    let timeout = timeout.unwrap_or(20).clamp(1, 20);
+    match action.trim() {
+        "hello" => desk_exchange("POST", "/desk/hello", Some(json!({})), 3).await,
+        "claim" => {
+            let owner = checked_owner(owner)?;
+            desk_exchange("POST", "/desk/claim", Some(json!({ "owner": owner })), 3).await
+        }
+        "release" => {
+            let owner = checked_owner(owner)?;
+            desk_exchange("POST", "/desk/release", Some(json!({ "owner": owner })), 3).await
+        }
+        "chunk" => {
+            let id = id.unwrap_or_default();
+            if !valid_turn(&id) {
+                return Err("缺少回合 id".into());
+            }
+            desk_exchange(
+                "POST",
+                "/desk/chunk",
+                Some(json!({ "id": id, "text": text.unwrap_or_default() })),
+                3,
+            )
+            .await
+        }
+        "end" => {
+            let id = id.unwrap_or_default();
+            if !valid_turn(&id) {
+                return Err("缺少回合 id".into());
+            }
+            desk_exchange("POST", "/desk/end", Some(json!({ "id": id })), 3).await
+        }
+        "next" => {
+            let owner = checked_owner(owner)?;
+            // The speech engine reads this as milliseconds. `timeout` here is seconds.
+            desk_exchange(
+                "GET",
+                &format!("/desk/next?timeout={}&owner={owner}", timeout * 1000),
+                None,
+                timeout + 2,
+            )
+            .await
+        }
+        "spoken" => desk_exchange("GET", "/desk/spoken", None, 3).await,
+        _ => Err("未知的语音桌子动作".into()),
+    }
+}
+
+fn checked_owner(owner: Option<String>) -> Result<String, String> {
+    let owner = owner.unwrap_or_default();
+    if !valid_owner(&owner) {
+        return Err("语音桌子的 owner 无效".into());
+    }
+    Ok(owner)
+}
+
+fn valid_owner(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn valid_turn(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+async fn desk_exchange(
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+    timeout_secs: u64,
+) -> Result<Value, String> {
+    let url = format!("http://127.0.0.1:3001{path}");
+    let request = match method {
+        "GET" => client().get(url),
+        "POST" => client().post(url),
+        _ => return Err("内部错误".into()),
+    };
+    let request = request.timeout(std::time::Duration::from_secs(timeout_secs));
+    let request = match body {
+        Some(body) => request.json(&body),
+        None => request,
+    };
+    let response = request.send().await.map_err(|_| {
+        "语音服务没在运行（电脑上 127.0.0.1:3001 没人接）。在 tools/speech-engine 里跑一次 ./up.sh。"
+            .to_string()
+    })?;
+    let status = response.status().as_u16();
+    if status == 204 {
+        return Ok(json!({ "status": 204 }));
+    }
+    let payload: Value = response.json().await.unwrap_or(Value::Null);
+    Ok(json!({ "status": status, "body": payload }))
 }
 
 /// Free-plan quota is what makes a call fail mid-sentence, so show it up front.
@@ -222,8 +450,9 @@ pub async fn voice_classify(request: Value) -> Result<Value, String> {
     Ok(payload)
 }
 
-/// Speak one sentence after the call has ended. Same key, flash model, the
-/// engine's own voice. Does not open a session and does not start Pi.
+/// Speak one sentence after the call has ended. Same key, same voice as the
+/// call, v4 Turbo so the hung-up mouth does not sound like a different person.
+/// Does not open a session and does not start Pi.
 #[tauri::command]
 pub async fn speech_engine_speak(text: String) -> Result<Value, String> {
     let sentence = text.trim().to_string();
@@ -244,7 +473,7 @@ pub async fn speech_engine_speak(text: String) -> Result<Value, String> {
         .header("xi-api-key", key)
         .json(&json!({
             "text": sentence,
-            "model_id": "eleven_flash_v2_5",
+            "model_id": "eleven_v4_turbo",
         }))
         .timeout(std::time::Duration::from_secs(20))
         .send()

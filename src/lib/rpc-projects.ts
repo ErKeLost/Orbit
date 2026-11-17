@@ -26,7 +26,7 @@ export type PiRuntimeSettingsView={driver:'pi';environment:'local';config:PiRunt
 export async function getPiRuntimeSettings():Promise<PiRuntimeSettingsView> { if(!desktopRuntime()) throw new Error('Pi 运行配置只在本机管理'); return invoke('get_pi_runtime_settings') }
 export async function savePiRuntimeSettings(config:PiRuntimeSettings):Promise<PiRuntimeSettingsView> { if(!desktopRuntime()) throw new Error('Pi 运行配置只在本机管理'); return invoke('save_pi_runtime_settings',{config}) }
 export async function probePiRuntime(config:PiRuntimeSettings):Promise<{ok:boolean;pi:string;version:string;source:string}> { if(!desktopRuntime()) throw new Error('Pi 运行配置只在本机管理'); return invoke('probe_pi_runtime',{config}) }
-export type ProviderProfile={id:string;name?:string;baseUrl?:string;modelsUrl?:string;api?:string;authHeader?:boolean;contextWindow?:number;modelEfforts?:Record<string,ModelEffort>;isDefault:boolean;defaultModel?:string;models?:ProviderModel[];hasApiKey:boolean;authType?:string;isOAuth?:boolean;native?:boolean;modelCount:number}
+export type ProviderProfile={id:string;name?:string;baseUrl?:string;modelsUrl?:string;api?:string;authHeader?:boolean;contextWindow?:number;modelEfforts?:Record<string,ModelEffort>;isDefault:boolean;defaultModel?:string;models?:ProviderModel[];hasApiKey:boolean;secretRef?:string|null;authType?:string;isOAuth?:boolean;native?:boolean;modelCount:number}
 /** Redacted credentials: raw OAuth tokens stay in Pi's auth.json. */
 export type ProviderAuth={id:string;name:string;type?:string;configured:boolean;oauth:boolean;expiresAt?:number;isSubscription:boolean}
 export type ProviderLoginPrompt={type:'text'|'secret'|'manual_code'|'select';message:string;placeholder?:string;options?:{id:string;label:string;description?:string}[]}
@@ -199,6 +199,6 @@ export async function speechEngineConfig():Promise<SpeechEngineConfig> { if(!wor
 export async function saveSpeechEngineConfig(patch:{engineId?:string|null}):Promise<SpeechEngineConfig> { if(!workspaceBackend()) throw new Error('语音通话请在电脑端设置'); return invoke<SpeechEngineConfig>('save_speech_engine_config',{config:patch}) }
 export async function saveSpeechEngineApiKey(apiKey:string|null):Promise<{hasCredential:boolean}> { if(!workspaceBackend()) throw new Error('语音密钥请在电脑端设置'); return invoke<{hasCredential:boolean}>('save_speech_engine_api_key',{apiKey}) }
 /** 每次开麦换一个 token；有效期很短，不要缓存。 */
-export async function speechEngineToken():Promise<{token:string;engineId:string}> { if(!workspaceBackend()) throw new Error('语音通话请在电脑端使用'); return invoke<{token:string;engineId:string}>('speech_engine_token') }
+export async function speechEngineToken():Promise<{token:string;engineId:string;signedUrl?:string}> { if(!workspaceBackend()) throw new Error('语音通话请在电脑端使用'); return invoke<{token:string;engineId:string;signedUrl?:string}>('speech_engine_token') }
 /** 免费额度就是通话会在半句时断掉的原因，设置页先把它显示出来。 */
 export async function speechEngineCheck():Promise<SpeechEngineCheck> { return invoke<SpeechEngineCheck>('speech_engine_check') }

@@ -737,10 +737,17 @@ fn store_provider_api_key_in(dir: &std::path::Path, provider: &str, api_key: Opt
     if !auth.is_object() { return Err("Pi auth.json 不是对象".into()); }
     ensure_api_key_editable(&auth, provider)?;
     match api_key.map(str::trim).filter(|key| !key.is_empty()) {
+        Some(key) if crate::secrets::is_op_reference(key) => {
+            let resolved = crate::secrets::read_op(key)?;
+            crate::secrets::remember_ref(dir, provider, key)?;
+            auth[provider] = json!({"type":"api_key","key":resolved});
+        }
         Some(key) => {
+            crate::secrets::forget_ref(dir, provider)?;
             auth[provider] = json!({"type":"api_key","key":key});
         }
         None => {
+            let _ = crate::secrets::forget_ref(dir, provider);
             let Some(object) = auth.as_object_mut() else {
                 return Err("Pi auth.json 不是对象".into());
             };
@@ -873,6 +880,7 @@ pub async fn list_provider_profiles(app: AppHandle) -> Result<Value, String> {
             "models": profile_models.cloned().unwrap_or_else(|| Value::Array(Vec::new())),
             "native": native && native_profile.is_some(),
             "hasApiKey": stored_api_key(&auth, &id).is_some(),
+            "secretRef": crate::secrets::ref_for(&dir, &id),
             "authType": auth_type(&auth, &id),
             "isOAuth": auth_type(&auth, &id) == Some("oauth"),
             "modelCount": profile_models.and_then(Value::as_array).map(Vec::len).unwrap_or(0)

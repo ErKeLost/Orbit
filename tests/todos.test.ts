@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Part, Tool } from "../src/lib/protocol";
 import type { TurnStep } from "../src/features/chat/turnModel";
-import { latestTodos, planFromSteps, todosFromValue } from "../src/features/chat/todos";
+import { latestPlan, latestTodos, parsePlanKey, planFromSteps, sessionPlanKey, todosFromValue } from "../src/features/chat/todos";
 
 const tool = (id: string, name: string, extra: Partial<Tool> = {}): Tool => ({ name, running: false, ...extra, args: extra.args });
 
@@ -51,5 +51,32 @@ describe("todowrite", () => {
       { id: "b", message: { role: "assistant", content: [failed] } },
     ];
     expect(latestTodos(messages, { bad: tool("bad", "todowrite", { isError: true }) })).toEqual([{ content: "Ship it", status: "pending" }]);
+  });
+
+  test("the composer plan keeps calls after the latest write, and stops at the next user turn", () => {
+    const write: Part = { type: "toolCall", id: "todo-1", name: "todowrite", arguments: { todos: [
+      { content: "Wire the room", status: "in_progress" },
+      { content: "Draw the match", status: "pending" },
+    ] } };
+    const read: Part = { type: "toolCall", id: "read-1", name: "read", arguments: { path: "vite.config.ts" } };
+    const later: Part = { type: "toolCall", id: "read-2", name: "read", arguments: { path: "package.json" } };
+    const messages = [
+      { id: "u1", message: { role: "user", content: "build it" } },
+      { id: "a1", message: { role: "assistant", content: [write, read] } },
+      { id: "u2", message: { role: "user", content: "continue" } },
+      { id: "a2", message: { role: "assistant", content: [later] } },
+    ];
+    const tools = {
+      "todo-1": tool("todo-1", "todowrite"),
+      "read-1": tool("read-1", "read", { running: true }),
+      "read-2": tool("read-2", "read"),
+    };
+    const plan = latestPlan(messages, tools);
+    expect(plan?.todos.map((todo) => todo.content)).toEqual(["Wire the room", "Draw the match"]);
+    expect(plan?.children.map((child) => child.label)).toEqual(["Reading vite.config.ts"]);
+    expect(plan?.children[0]?.running).toBe(true);
+    const key = sessionPlanKey(messages, tools);
+    expect(parsePlanKey(key)?.children.map((child) => child.label)).toEqual(["Reading vite.config.ts"]);
+    expect(sessionPlanKey(messages, tools)).toBe(key);
   });
 });

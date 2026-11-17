@@ -41,14 +41,15 @@ function readBody(request: IncomingMessage): Promise<string> {
   })
 }
 
-async function posted(request: IncomingMessage): Promise<{ id?: string; text?: string }> {
+async function posted(request: IncomingMessage): Promise<{ id?: string; text?: string; owner?: string }> {
   const text = await readBody(request)
   if (!text.trim()) return {}
   try {
-    const body = JSON.parse(text) as { id?: unknown; text?: unknown }
+    const body = JSON.parse(text) as { id?: unknown; text?: unknown; owner?: unknown }
     return {
       id: typeof body.id === "string" ? body.id : undefined,
       text: typeof body.text === "string" ? body.text : undefined,
+      owner: typeof body.owner === "string" ? body.owner : undefined,
     }
   } catch {
     return {}
@@ -124,9 +125,29 @@ const server = createServer((request, response) => {
     json(response, 200, { ok: true })
     return
   }
+  if (path === "/desk/claim" && request.method === "POST") {
+    void posted(request).then(body => {
+      if (!body.owner) {
+        json(response, 400, { error: "missing owner" })
+        return
+      }
+      desk.claim(body.owner)
+      json(response, 200, { ok: true })
+    })
+    return
+  }
+  if (path === "/desk/release" && request.method === "POST") {
+    void posted(request).then(body => {
+      if (body.owner) desk.release(body.owner)
+      json(response, 200, { ok: true })
+    })
+    return
+  }
   if (path === "/desk/next" && request.method === "GET") {
-    const timeout = Number(new URL(request.url ?? "", "http://127.0.0.1").searchParams.get("timeout") ?? 20000)
-    void desk.next(Math.min(20000, Math.max(1, timeout))).then(turn => {
+    const url = new URL(request.url ?? "", "http://127.0.0.1")
+    const timeout = Number(url.searchParams.get("timeout") ?? 20000)
+    const owner = url.searchParams.get("owner") ?? undefined
+    void desk.next(Math.min(20000, Math.max(1, timeout)), owner).then(turn => {
       if (!turn) {
         cors(response)
         response.writeHead(204).end()

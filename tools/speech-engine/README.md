@@ -47,7 +47,7 @@ Engine 的 `ws_url`（`src/repoint.ts`），所以重跑一次不会换 `seng_�
 | `PI_SYSTEM_PROMPT` | 替换默认的口语系统提示 |
 | `FILLER` / `FILLER_AFTER_MS` | Pi 迟于这个时间没出字时先说的一句，默认 700ms |
 | `SPEECH_LANGUAGE` | 可选。不设就不锁语言，通话跟用户说的语言走 |
-| `SPEECH_TTS_MODEL` | 合成模型，默认 `eleven_flash_v2_5` |
+| `SPEECH_TTS_MODEL` | 合成模型，默认 `eleven_v4_turbo` |
 | `SPEECH_MAX_SECONDS` | 单通最长秒数，默认 3600，官方上限 7200 |
 | `PORT` / `WS_PATH` | 监听地址，默认 `3001` `/ws` |
 | `MEMORY_LIMIT_MB` | 内存哨兵，超过就自己退出等重启，默认 4096 |

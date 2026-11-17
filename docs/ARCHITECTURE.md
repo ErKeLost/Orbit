@@ -160,3 +160,17 @@ Rust 侧 `remote_ops.rs` 是默认拒绝的安全边界：`REMOTE_COMMANDS` 列�
   复制 `lib/store` 的工作区投影。
 - `docs/` 一个主题一个文件，跨文档用相对路径链接；`docs/archive/` 只放历史记录，
   新文档不要往 archive 里写。
+
+## 8. 仓库根目录
+
+Orbit 自己的代码留在仓库根上。上游检出和打过补丁的依赖分开，不要再堆在根目录或混进同一个 `vendor/`。
+
+| 目录 | 是什么 | 会不会进构建 |
+| --- | --- | --- |
+| `src/`、`src-tauri/` | 应用本体 | 会 |
+| `references/` | 只读 git submodule：`t3code`、`monocode`、`codex`、`browse`、`agent-browser`、`opencode`（浅克隆） | 不会。CI 不检出；需要对照时 `git submodule update --init` |
+| `vendor/` | 打过补丁、用 path 依赖编译进去的 crate | 会 |
+| `crates/`、`tools/`、`relay/`、`website/` | 库、语音引擎、中继、站点 | 各自独立 |
+| `work/` | 本地草稿，已 gitignore | 不会 |
+
+对照结论写进 `docs/`，不要把功能改在 `references/` 里。

@@ -23,6 +23,8 @@ type Waiter<T> = { resolve: (value: T) => void; timer: ReturnType<typeof setTime
 
 export class Desk {
   attached = false
+  /** The call that is allowed to take turns. Empty means nobody has claimed. */
+  owner: string | null = null
   private queue: Array<{ id: string; said: string; heard: string }> = []
   private pending = new Map<string, { push: (text: string) => void; finish: () => void }>()
   private nextWaiter: Waiter<{ id: string; said: string; heard: string } | null> | null = null
@@ -30,6 +32,15 @@ export class Desk {
 
   hello() {
     this.attached = true
+  }
+
+  claim(owner: string) {
+    this.owner = owner
+    this.attached = true
+  }
+
+  release(owner: string) {
+    if (this.owner === owner) this.owner = null
   }
 
   enqueue(said: string, heard: string, signal: AbortSignal): { id: string; spoken: AsyncGenerator<string> } {
@@ -82,7 +93,12 @@ export class Desk {
     return { id, spoken }
   }
 
-  next(timeoutMs: number): Promise<{ id: string; said: string; heard: string } | null> {
+  next(timeoutMs: number, owner?: string): Promise<{ id: string; said: string; heard: string } | null> {
+    // A claimed call owns the queue. Another poller waits out the timeout
+    // instead of spinning, and does not take the turn.
+    if (this.owner && owner !== this.owner) {
+      return new Promise(resolve => setTimeout(() => resolve(null), timeoutMs))
+    }
     this.attached = true
     const ready = this.queue.shift()
     if (ready) return Promise.resolve(ready)
