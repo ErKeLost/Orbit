@@ -6,6 +6,12 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.50
+
+A queued steer and a quote sit inside the composer, not as black cards above it.
+
+The steer is a footer row in the box: the words, 「正在引导…」, and the recall. The quote is a row above the draft, on the composer's own surface. Neither paints an opaque card over the wallpaper.
+
 ## v1.0.49
 
 The agent can ask while it works. The composer becomes a question card: one prompt at a time, choices plus a typed answer. Dismissing the card ends the turn. The answers stay in the transcript.

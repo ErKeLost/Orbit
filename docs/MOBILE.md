@@ -142,7 +142,7 @@ are handled in `src/lib` rather than left to look like user-facing failures:
 * **A queued message needs a running turn to be consumed.** Pi drains
   steering/follow-up queues at the start of a turn and after each tool call, so a
   message queued when no turn is actually running waits for the *next* turn and
-  then arrives out of order — on screen it is the row above the composer that says
+  then arrives out of order — on screen it is the row inside the composer that says
   「正在引导…」 forever, or 「附件」 for an image with no text. The UI's `running`
   lags one event behind Pi (more on a flaky connection), so `sendPrompt` asks Pi
   (`get_state.isStreaming`) before queueing and degrades to a plain prompt when it

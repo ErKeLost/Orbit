@@ -70,7 +70,7 @@ import { ContextMeter } from "./ContextMeter";
 import { stepInputHistory, inputHistoryEntries } from "./input-history";
 import { loadPromptSuggestion, savePromptSuggestion, transcriptTurn } from "./promptSuggestion";
 import { encodeQuote } from "./quote";
-import { QuoteCard } from "./QuoteCard";
+import { ComposerQuote } from "./QuoteCard";
 import { setQuote, useQuote } from "./quoteStore";
 import { userText } from "./turnModel";
 import { SpeechInput } from "../../components/ai-elements/speech-input";
@@ -721,20 +721,6 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
             <ComposerPalette request={palette} onPick={insertPick} onClose={() => setPalette(null)} />
           </div>
         ) : null}
-        {quote || queueVisible ? (
-          <div className="relative z-20 -mb-2 flex w-full flex-col items-start gap-1.5 px-3">
-            {queueVisible ? (
-              <MessageQueueView
-                steering={queue.steering}
-                followUp={queue.followUp}
-                running={running}
-                onSteer={(text) => void steerFollowUp(text, target).catch(report)}
-                onClear={() => void recallQueue(target).catch(report)}
-              />
-            ) : null}
-            {quote ? <QuoteCard text={quote.text} onClear={() => setQuote(null)} floating /> : null}
-          </div>
-        ) : null}
         <div
           ref={boxRef}
           data-composer-box
@@ -754,6 +740,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
               <ContextMeter usage={context} compacting={compacting} />
             </div>
           </div>
+
+          {quote ? <ComposerQuote text={quote.text} role={quote.role} onClear={() => setQuote(null)} /> : null}
 
           {attachments.length ? (
             <div className="flex flex-wrap gap-1.5 px-3 pt-2">
@@ -958,6 +946,15 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
               />
             </div>
           </div>
+          {queueVisible ? (
+            <MessageQueueView
+              steering={queue.steering}
+              followUp={queue.followUp}
+              running={running}
+              onSteer={(text) => void steerFollowUp(text, target).catch(report)}
+              onClear={() => void recallQueue(target).catch(report)}
+            />
+          ) : null}
         </div>
       </div>
     </div>

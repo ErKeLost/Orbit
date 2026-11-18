@@ -4053,7 +4053,7 @@ dependencies = [
 
 [[package]]
 name = "orbit"
-version = "1.0.49"
+version = "1.0.50"
 dependencies = [
  "aes-gcm",
  "apple-cf",

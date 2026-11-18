@@ -2,20 +2,50 @@ import { Quote, X } from "../../shared/ui/icons";
 import { quoteExcerpt } from "./quote";
 
 /**
- * A quote is a solid card, not a hollow outline with a caption.
- * The mark is an icon; the words are the quoted text itself.
+ * A quote attached to the draft. It lives in the composer box, on the same
+ * surface as the field — not a card parked on the ledge above it.
  */
+export function ComposerQuote({
+  text,
+  role,
+  onClear,
+}: {
+  text: string;
+  role: "user" | "assistant";
+  onClear: () => void;
+}) {
+  const excerpt = quoteExcerpt(text, 220);
+  return (
+    <div role="group" aria-label="引用" className="mx-3 mt-2 flex items-start gap-2 rounded-md border border-line bg-fill px-2 py-1.5">
+      <span className="mt-0.5 w-0.5 self-stretch rounded-full bg-accent" />
+      <span className="min-w-0 flex-1">
+        <span className="block text-2xs text-ink-3">{role === "assistant" ? "引用回复" : "引用消息"}</span>
+        <span className="block line-clamp-2 break-words text-xs leading-5 text-ink-1" title={excerpt.endsWith("\u2026") ? text : undefined}>
+          {excerpt}
+        </span>
+      </span>
+      <button
+        type="button"
+        title="取消引用"
+        aria-label="取消引用"
+        onClick={onClear}
+        className="grid size-5 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1"
+      >
+        <X className="size-3" />
+      </button>
+    </div>
+  );
+}
+
+/** Sent quotes stay in the message flow, above the bubble. */
 export function QuoteCard({
   text,
   onClear,
-  floating = false,
   lines = 2,
   className = "",
 }: {
   text: string;
   onClear?: () => void;
-  /** Sits on the composer. Transcript quotes stay in the message flow. */
-  floating?: boolean;
   lines?: 2 | 4;
   className?: string;
 }) {
@@ -26,10 +56,6 @@ export function QuoteCard({
       aria-label="引用"
       className={`flex w-fit max-w-[min(100%,36rem)] items-center gap-2.5 rounded-xl border border-line bg-surface-card py-2 pl-3 dark:bg-surface-raised ${
         onClear ? "pr-1.5" : "pr-3"
-      } ${
-        floating
-          ? "shadow-[0_8px_24px_-10px_rgb(15_23_42/0.18),0_1px_2px_rgb(15_23_42/0.06)] dark:shadow-[0_10px_28px_-12px_rgb(0_0_0/0.55)]"
-          : ""
       } ${className}`}
     >
       <Quote className="size-3.5 shrink-0 text-ink-3" aria-hidden />

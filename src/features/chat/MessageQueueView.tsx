@@ -1,11 +1,10 @@
 import { CornerDownRight, ListEnd, Trash } from "../../shared/ui/icons";
 
 /**
- * Queued messages sit above the composer, same ledge as a quote — not a footer
- * inside the box. Follow-ups wait for the turn to end; steering messages are
- * already on their way into the running turn. "Steer" promotes a follow-up;
- * the trash removes the whole queue back into the draft (Pi has no per-item
- * delete).
+ * Queued messages are a footer inside the composer — not a card riding above
+ * it. Follow-ups wait for the turn to end; steering messages are already on
+ * their way into the running turn. "Steer" promotes a follow-up; the trash
+ * removes the whole queue back into the draft (Pi has no per-item delete).
  *
  * `running` makes the row honest: steering messages are only consumed by a turn
  * that is actually running. Once the turn has settled, the row is not
@@ -31,14 +30,11 @@ export function MessageQueueView({
   ];
   if (rows.length === 0) return null;
   return (
-    <div className="flex w-full flex-col items-start gap-1.5" data-message-queue data-message-queue-card>
+    <div className="border-t border-stroke text-ink-2" data-message-queue>
       {rows.map((row, index) => (
-        <div
-          key={`${row.kind}-${index}`}
-          className="flex w-fit max-w-[min(100%,36rem)] items-center gap-2.5 rounded-xl border border-line bg-surface-card py-1.5 pl-3 pr-1.5 text-ui shadow-[0_8px_24px_-10px_rgb(15_23_42/0.18),0_1px_2px_rgb(15_23_42/0.06)] dark:bg-surface-raised dark:shadow-[0_10px_28px_-12px_rgb(0_0_0/0.55)]"
-        >
+        <div key={`${row.kind}-${index}`} className={`flex min-h-8 items-center gap-2 px-3 text-ui ${index > 0 ? "border-t border-stroke" : ""}`}>
           {row.kind === "steer" ? <CornerDownRight className="size-3.5 shrink-0 text-ink-3" /> : <ListEnd className="size-3.5 shrink-0 text-ink-3" />}
-          <div className="min-w-0 truncate font-medium text-ink-1" title={row.text.length > 200 ? `${row.text.slice(0, 200)}…` : row.text}>{row.text.trim() || "附件"}</div>
+          <div className="min-w-0 flex-1 truncate text-ink-2" title={row.text.length > 200 ? `${row.text.slice(0, 200)}…` : row.text}>{row.text.trim() || "附件"}</div>
           {row.kind === "steer" ? (
             <span className="shrink-0 text-2xs text-ink-3">{running === false ? "下一轮送出" : "正在引导…"}</span>
           ) : onSteer ? (
