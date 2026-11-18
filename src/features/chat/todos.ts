@@ -96,8 +96,8 @@ function activityLabel(action: string, target: string) {
 }
 
 /**
- * The plan this turn is working from, plus the tool calls that followed the
- * latest write. The dock shows only the points; calls fold underneath.
+ * The plan this turn is working from. The composer dock shows the points
+ * only — tool calls that followed the write stay in the transcript.
  */
 export function planFromSteps(steps: readonly TurnStep[], tools: Record<string, Tool>): TaskPlan | null {
   let lastIndex = -1;

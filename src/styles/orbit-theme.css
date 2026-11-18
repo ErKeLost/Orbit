@@ -346,15 +346,6 @@ html.has-native-glass:not(.theme-light) .sidebar-glass {
   );
 }
 
-/* AppKit fills the shared tint as the window grows. Painting it here too
-   would compound the opacity; wait for the native host's acknowledgement. */
-html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
-  .workspace-background,
-html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
-  .sidebar-glass {
-  background: color-mix(in srgb, var(--color-background-base) 0%, transparent);
-}
-
 /* The activity dot sits at (23px, 9px) in a 32px button. Its icon is
    centered at (8px, 8px), so this cuts a 2px gap around the 6px dot. */
 .compact-rail-icon-with-dot {
@@ -1352,11 +1343,6 @@ html.has-native-glass.glass-body:not(.theme-light) .body-glass {
     var(--color-background-base) calc(var(--sidebar-opacity) * 100%),
     transparent
   );
-}
-
-html.is-mac.has-native-glass.has-native-glass-tint.glass-body:not(.theme-light)
-  .body-glass {
-  background: color-mix(in srgb, var(--color-background-base) 0%, transparent);
 }
 
 textarea,

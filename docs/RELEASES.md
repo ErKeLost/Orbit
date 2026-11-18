@@ -6,6 +6,12 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.51
+
+The window opacity slider was changing a tint behind an opaque Chromium page, so 15% still looked solid black. The page background is cleared again after the first paint, and the slider washes the window itself.
+
+A secret prompt sits in the composer, not as a second card above it. The task list in the composer shows the points only. The new-session button uses white text on the accent fill.
+
 ## v1.0.50
 
 A queued steer and a quote sit inside the composer, not as black cards above it.

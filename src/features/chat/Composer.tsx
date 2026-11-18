@@ -713,8 +713,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
   const asking = dialog?.method === "select" && "title" in dialog && dialog.title === QUESTION_TITLE;
   return (
     <div className={`relative mx-auto w-full max-w-4xl ${centered ? "" : "p-1.5 pt-0"}`} data-session-composer>
-      {dialog ? <ExtensionDialog key={dialog.id} dialog={dialog} /> : null}
-      {/* OpenCode replaces the composer with the question dock until it is answered. */}
+      {asking && dialog ? <ExtensionDialog key={dialog.id} dialog={dialog} /> : null}
+      {/* A question replaces the composer. A secret or other prompt is a section of the same box. */}
       <div className="relative overflow-visible" hidden={asking} inert={asking ? true : undefined}>
         {palette && !plusOpen ? (
           <div className="absolute inset-x-0 bottom-full z-30 mb-1">
@@ -729,6 +729,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
           {fileDrag ? (
             <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-lg bg-accent/8 text-xs text-ink-2">拖放文件以附加</div>
           ) : null}
+          {dialog && !asking ? <ExtensionDialog key={dialog.id} dialog={dialog} embedded /> : null}
           {plan ? <ComposerTasks plan={plan} /> : null}
           <div className="flex min-w-0 items-center gap-2.5 overflow-hidden px-3 pt-2.5">
             {/* 新会话（首页）：头部带项目选择器，发送前就能切项目 / 不在文件夹里工作。

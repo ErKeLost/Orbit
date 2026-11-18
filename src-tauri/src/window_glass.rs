@@ -24,6 +24,10 @@ pub fn set_window_glass_enabled(
     background: Rgb,
     opacity: Option<f64>,
 ) -> bool {
+    if enabled {
+        // The webview layer otherwise keeps an opaque fill over the glass.
+        let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
+    }
     set_page_transparent(&window, enabled);
     #[cfg(target_os = "macos")]
     {
@@ -56,33 +60,54 @@ pub fn set_window_background_blur(window: WebviewWindow, radius: u32) {
     let _ = (window, radius);
 }
 
-/// Chromium paints an opaque page color under transparent CSS unless told not
-/// to. The DevTools override is the supported lever; it does not require the
-/// Emulation domain to be enabled.
+/// Chromium paints an opaque page under transparent CSS unless told not to.
+/// A posted DevTools message is easy to lose (the command returns before the
+/// browser applies it, and the first composite paints the opaque colour back).
+/// Send it, then apply it again on the browser host and ask for a new frame.
 fn set_page_transparent(window: &WebviewWindow, transparent: bool) {
     #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "linux")))]
     {
-        use tauri_runtime_cef::{WebviewCefExt, allocate_devtools_message_id};
-        let Ok(id) = allocate_devtools_message_id() else {
+        use cef::{ImplBrowser, ImplBrowserHost};
+        use tauri_runtime_cef::WebviewCefExt;
+        let Some(payload) = devtools_background_override(transparent) else {
             return;
         };
-        let payload = if transparent {
-            serde_json::json!({
-                "id": id,
-                "method": "Emulation.setDefaultBackgroundColorOverride",
-                "params": { "color": { "r": 0, "g": 0, "b": 0, "a": 0 } }
-            })
-        } else {
-            serde_json::json!({
-                "id": id,
-                "method": "Emulation.setDefaultBackgroundColorOverride",
-                "params": {}
-            })
-        };
-        let _ = window.send_dev_tools_message(payload.to_string().as_bytes());
+        if let Err(error) = window.send_dev_tools_message(payload.as_bytes()) {
+            log::warn!("glass: page background override was not accepted: {error}");
+        }
+        if transparent {
+            let bytes = payload.into_bytes();
+            let _ = window.with_cef_webview(move |webview| {
+                let Some(host) = webview.browser().host() else {
+                    return;
+                };
+                let _ = host.send_dev_tools_message(Some(&bytes));
+                host.was_resized();
+            });
+        }
     }
     #[cfg(any(target_os = "android", target_os = "ios", target_os = "linux"))]
     let _ = (window, transparent);
+}
+
+#[cfg(not(any(target_os = "android", target_os = "ios", target_os = "linux")))]
+fn devtools_background_override(transparent: bool) -> Option<String> {
+    use tauri_runtime_cef::allocate_devtools_message_id;
+    let id = allocate_devtools_message_id().ok()?;
+    let payload = if transparent {
+        serde_json::json!({
+            "id": id,
+            "method": "Emulation.setDefaultBackgroundColorOverride",
+            "params": { "color": { "r": 0, "g": 0, "b": 0, "a": 0 } }
+        })
+    } else {
+        serde_json::json!({
+            "id": id,
+            "method": "Emulation.setDefaultBackgroundColorOverride",
+            "params": {}
+        })
+    };
+    Some(payload.to_string())
 }
 
 #[cfg(target_os = "macos")]
@@ -166,11 +191,14 @@ mod macos {
         }
 
         set_glass_enabled(&label, true);
-        let opacity = opacity.filter(|value| value.is_finite()).unwrap_or(1.0).clamp(0.0, 1.0);
+        let _ = opacity;
         install_glass(&ns_window);
-        paint_tint(&ns_window, &srgb(background, opacity));
-        // The tint view owns the colour. A hair of alpha on the window itself
-        // keeps the shadow from going square, the same trick MonoCode uses.
+        // The page wash owns the slider. A solid tint here sits behind an
+        // opaque Chromium page and never shows, then stacks once that page
+        // is actually clear. A hair of alpha only keeps the window shadow.
+        paint_tint(&ns_window, &srgb(background, 0.01));
+        // A hair of alpha on the window itself keeps the shadow from going
+        // square, the same trick MonoCode uses.
         ns_window.setOpaque(false);
         ns_window.setBackgroundColor(Some(&NSColor::clearColor().colorWithAlphaComponent(0.01)));
         ns_window.setHasShadow(true);
@@ -240,27 +268,29 @@ mod macos {
         });
     }
 
-    /// Chromium resets the view background after the first composite. One
-    /// follow-up is enough; a newer glass call cancels the previous ticket.
+    /// Chromium paints an opaque page back after the first composite. Repeat
+    /// the clear until a newer glass call cancels this ticket.
     fn schedule_punch(window: WebviewWindow) {
         let ticket = PUNCH_TICKET.fetch_add(1, Ordering::Relaxed) + 1;
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(180));
-            if PUNCH_TICKET.load(Ordering::Relaxed) != ticket || !glass_enabled(&window) {
-                return;
-            }
-            set_page_transparent(&window, true);
-            let refresh = window.clone();
-            let _ = window.run_on_main_thread(move || {
-                if PUNCH_TICKET.load(Ordering::Relaxed) != ticket || !glass_enabled(&refresh) {
+            for delay in [180_u64, 520, 900] {
+                std::thread::sleep(Duration::from_millis(delay));
+                if PUNCH_TICKET.load(Ordering::Relaxed) != ticket || !glass_enabled(&window) {
                     return;
                 }
-                if let Some(ns_window) = ns_window(&refresh) {
-                    raise_page(&ns_window);
-                    punch(&ns_window);
-                }
-                apply_blur(&refresh, BLUR_RADIUS.load(Ordering::Relaxed));
-            });
+                set_page_transparent(&window, true);
+                let refresh = window.clone();
+                let _ = window.run_on_main_thread(move || {
+                    if PUNCH_TICKET.load(Ordering::Relaxed) != ticket || !glass_enabled(&refresh) {
+                        return;
+                    }
+                    if let Some(ns_window) = ns_window(&refresh) {
+                        raise_page(&ns_window);
+                        punch(&ns_window);
+                    }
+                    apply_blur(&refresh, BLUR_RADIUS.load(Ordering::Relaxed));
+                });
+            }
         });
     }
 

@@ -4,7 +4,6 @@ import {
   currentTodo,
   todoFinished,
   todoProgress,
-  type TaskChild,
   type TaskPlan,
   type Todo,
   type TodoStatus,
@@ -35,33 +34,6 @@ function TaskRow({ todo }: { todo: Todo }) {
   );
 }
 
-function ToolFold({ activity }: { activity: TaskChild[] }) {
-  const [open, setOpen] = useState(false);
-  const running = activity.some((child) => child.running);
-  const label = running ? "工具进行中" : `${activity.length} 个工具`;
-  return (
-    <div>
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-label={open ? "收起工具" : "展开工具"}
-        onClick={() => setOpen((value) => !value)}
-        className="flex h-6 w-full min-w-0 items-center gap-1.5 text-left text-2xs text-ink-3 hover:text-ink-2"
-      >
-        <ChevronDown className={`size-3 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} strokeWidth={1.75} />
-        <span className="min-w-0 truncate">{label}</span>
-      </button>
-      {open
-        ? activity.map((child) => (
-            <div key={child.key} className="flex h-5 min-w-0 items-center pl-5 text-2xs text-ink-3">
-              <span className="min-w-0 flex-1 truncate">{child.label}</span>
-            </div>
-          ))
-        : null}
-    </div>
-  );
-}
-
 function Count({ done, total }: { done: number; total: number }) {
   return <span className="shrink-0 text-2xs tabular-nums text-ink-3">{done}/{total}</span>;
 }
@@ -76,7 +48,7 @@ export function ComposerTasks({ plan }: { plan: TaskPlan }) {
   const settled = total > 0 && plan.todos.every(todoFinished) && !plan.running;
   if (settled || (!total && !plan.running)) return null;
   const current = currentTodo(plan.todos);
-  const expandable = plan.todos.length > 1 || plan.children.length > 0;
+  const expandable = plan.todos.length > 1;
 
   if (!total) {
     return (
@@ -123,7 +95,6 @@ export function ComposerTasks({ plan }: { plan: TaskPlan }) {
           {plan.todos.map((todo, index) => (
             <TaskRow key={`${todo.status}-${index}-${todo.content}`} todo={todo} />
           ))}
-          {plan.children.length ? <ToolFold activity={plan.children} /> : null}
         </div>
         <button
           type="button"

@@ -6,10 +6,12 @@ import { QUESTION_TITLE, questionsFromPayload } from "../../../src-tauri/resourc
 import { QuestionDialog } from "./QuestionDialog";
 
 /**
- * Pi extension UI requests (`select`, `confirm`, `input`, `editor`) in
- * Orbit's QuestionForm card, docked above the composer.
+ * Pi extension UI requests (`select`, `confirm`, `input`, `editor`).
+ *
+ * A question replaces the composer until it is answered. Everything else is a
+ * section of the composer box — not a second card parked above it.
  */
-export function ExtensionDialog({ dialog }: { dialog: UiRequest }) {
+export function ExtensionDialog({ dialog, embedded = false }: { dialog: UiRequest; embedded?: boolean }) {
   const [value, setValue] = useState(dialog.method === "editor" ? (dialog as { prefill?: string }).prefill ?? "" : "");
   const [choice, setChoice] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -37,9 +39,8 @@ export function ExtensionDialog({ dialog }: { dialog: UiRequest }) {
   return (
     <form
       data-question-form
-      data-composer-box
-      className="mb-1.5 rounded-lg border border-line bg-fill-weak px-3 py-2.5 backdrop-blur-sm has-focus:border-line-strong"
-        onSubmit={(event) => {
+      className={embedded ? "border-b border-stroke px-3 py-2.5" : "mb-1.5 rounded-lg border border-line bg-fill-weak px-3 py-2.5 backdrop-blur-sm has-focus:border-line-strong"}
+      onSubmit={(event) => {
           event.preventDefault();
           if (dialog.method === "confirm") void answer({ confirmed: true });
           else if (dialog.method === "select" && choice) void answer({ value: choice });
