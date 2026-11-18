@@ -440,6 +440,10 @@ impl RuntimePaths {
                 "Request budget helper",
             ),
             (
+                &resources_dir.join("question.ts"),
+                "Question tool helper",
+            ),
+            (
                 &resources_dir.join("workspace.ts"),
                 "Workspace roots helper",
             ),

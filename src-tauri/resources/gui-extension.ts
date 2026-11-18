@@ -13,6 +13,7 @@ import {applyRequestBudget,resolveRequestBudgetSettings} from './request-budget.
 import type {BudgetMessage,RequestBudgetSettings} from './request-budget.ts'
 import {enableFastSearchTools,FAST_SEARCH_GUIDELINE} from './search-tools.ts'
 import {enableWebSearchTool,registerWebSearch,resolveWebSearchSettings} from './web-search.ts'
+import {QUESTION_DESCRIPTION,QUESTION_DISMISSED,QUESTION_TITLE,answersFromValue,formatQuestionAnswers,parseQuestions,questionPayload} from './question.ts'
 // Pi official docs/extensions.md: registerCommand, getAllTools, setActiveTools,
 // ExtensionCommandContext.navigateTree and setLabel. Loaded only by this GUI.
 export const SESSION_META_TYPE='pi-gui-session-meta'
@@ -1186,17 +1187,15 @@ export default async function (pi: ExtensionAPI) {
     const title=value.title?.trim()||(kind==='html'?'未命名页面':'未命名文档')
     return {id,kind,title,body}
   }
-  // OpenCode 的 todowrite：计划不落库，最近一次调用的完整列表就是当前计划。
-  // Pi 没有这个工具，也没有配对的 todoread——读计划就是看上一次写入。
+  // OpenCode 的 todowrite：计划不落库，最近一次调用的完整列表就是当前计划。没有 todoread。
   pi.registerTool({
     name:'todowrite',
     label:'更新任务',
-    description:'Create and update the session todo list. The user sees it as your working plan. Send the full list on every call; it replaces the previous one.',
+    description:'Create and update a todo list for the current session. The user sees it as your working plan.\n\nUse it proactively when a task has 3 or more distinct steps, or when the user gives several tasks or asks for a todo list. Skip it for a single simple task or a purely conversational request. When in doubt, use it.\n\n- Send the full list on every call; it replaces the previous one.\n- Mark items `in_progress` when you start them and `completed` as soon as they\'re actually done.\n- Only call it when the list changes.',
     promptSnippet:'维护当前会话的任务列表',
     promptGuidelines:[
-      '任务有 3 个以上彼此不同的步骤，或用户一次给了好几件事、或明确要一份待办时，用 todowrite。单步的小事和纯聊天不要用。拿不准就用。',
-      '每次调用都发送完整列表，它会替换上一份。开始做某一项时把它标成 in_progress，真正做完立刻标 completed。列表没变化就不要再调。',
-      '同一时间只标一项 in_progress。不要用这个工具去读文件或执行命令。',
+      'Use todowrite proactively when a task has 3 or more distinct steps, or when the user gives several tasks or asks for a todo list. Skip it for a single simple task or a purely conversational request. When in doubt, use it.',
+      'Send the full list on every call; it replaces the previous one. Mark items in_progress when you start them and completed as soon as they are actually done. Only call it when the list changes.',
     ],
     defaultActive:true,
     parameters:{
@@ -1204,12 +1203,12 @@ export default async function (pi: ExtensionAPI) {
       properties:{
         todos:{
           type:'array',
-          description:'The updated todo list.',
+          description:'The updated todo list',
           items:{
             type:'object',
             properties:{
               content:{type:'string',description:'Brief description of the task'},
-              status:{type:'string',enum:['pending','in_progress','completed','cancelled'],description:'Current status of the task'},
+              status:{type:'string',enum:['pending','in_progress','completed','cancelled'],description:'Current status of the task: pending, in_progress, completed, cancelled'},
             },
             required:['content','status'],
           },
@@ -1222,6 +1221,67 @@ export default async function (pi: ExtensionAPI) {
       return {
         content:[{type:'text' as const,text:summarizeTodos(todos)}],
         details:{todos},
+      }
+    },
+  })
+  pi.registerTool({
+    name:'question',
+    label:'提问',
+    description:QUESTION_DESCRIPTION,
+    promptSnippet:'做事中向用户提问并等回答',
+    promptGuidelines:[
+      'Use question to gather preferences, clarify ambiguity, or choose a direction while working. Do not use it for a token, password, or API key; use request_secret.',
+      'A "Type your own answer" option is added automatically; do not include a separate free-form option. Set multiple: true to allow more than one choice. Put a recommended option first and end its label with "(Recommended)".',
+    ],
+    executionMode:'sequential',
+    defaultActive:true,
+    parameters:{
+      type:'object',
+      properties:{
+        questions:{
+          type:'array',
+          minItems:1,
+          description:'Questions to ask',
+          items:{
+            type:'object',
+            properties:{
+              question:{type:'string',description:'Complete question'},
+              header:{type:'string',description:'Very short label (max 30 chars)'},
+              options:{
+                type:'array',
+                description:'Available choices',
+                items:{
+                  type:'object',
+                  properties:{
+                    label:{type:'string',description:'Display text (1-5 words, concise)'},
+                    description:{type:'string',description:'Explanation of choice'},
+                  },
+                  required:['label','description'],
+                },
+              },
+              multiple:{type:'boolean',description:'Allow selecting multiple choices'},
+            },
+            required:['question','header','options'],
+          },
+        },
+      },
+      required:['questions'],
+    },
+    async execute(_toolCallId:string,params:unknown,_signal:AbortSignal|undefined,_onUpdate:unknown,ctx:ExtensionContext){
+      const questions=parseQuestions(params)
+      // A client without a form cannot ask. That reason is model-facing, so the turn continues.
+      if(!ctx.hasUI)throw new Error('没有界面可以提问')
+      const value=await ctx.ui.select(QUESTION_TITLE,[questionPayload(questions)])
+      // OpenCode dies on a bare dismissal so the model never sees it; abort ends the turn the same way.
+      if(!value){
+        ctx.abort()
+        throw new Error(QUESTION_DISMISSED)
+      }
+      const answers=answersFromValue(value,questions)
+      return {
+        content:[{type:'text' as const,text:formatQuestionAnswers(questions,answers)}],
+        details:{answers},
+        structuredContent:{answers},
       }
     },
   })

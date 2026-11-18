@@ -69,13 +69,15 @@ import { expandMentionLabels } from "./fileMentions";
 import { ContextMeter } from "./ContextMeter";
 import { stepInputHistory, inputHistoryEntries } from "./input-history";
 import { loadPromptSuggestion, savePromptSuggestion, transcriptTurn } from "./promptSuggestion";
-import { encodeQuote, quoteExcerpt } from "./quote";
+import { encodeQuote } from "./quote";
+import { QuoteCard } from "./QuoteCard";
 import { setQuote, useQuote } from "./quoteStore";
 import { userText } from "./turnModel";
 import { SpeechInput } from "../../components/ai-elements/speech-input";
 import { ProjectPicker } from "./ProjectPicker";
 import { WorkspaceRoots } from "./WorkspaceRoots";
 import { ExtensionDialog } from "../../components/panels/ExtensionDialog";
+import { QUESTION_TITLE } from "../../../src-tauri/resources/question";
 
 /**
  * Picked files → attachments that can actually be sent, plus the ones that were
@@ -708,13 +710,29 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
   const planKey = useWorkspace((state) => sessionPlanKey(state.transcript.messages, state.transcript.tools));
   const plan = useMemo(() => parsePlanKey(planKey), [planKey]);
 
+  const asking = dialog?.method === "select" && "title" in dialog && dialog.title === QUESTION_TITLE;
   return (
     <div className={`relative mx-auto w-full max-w-4xl ${centered ? "" : "p-1.5 pt-0"}`} data-session-composer>
       {dialog ? <ExtensionDialog key={dialog.id} dialog={dialog} /> : null}
-      <div className="relative overflow-visible">
+      {/* OpenCode replaces the composer with the question dock until it is answered. */}
+      <div className="relative overflow-visible" hidden={asking} inert={asking ? true : undefined}>
         {palette && !plusOpen ? (
           <div className="absolute inset-x-0 bottom-full z-30 mb-1">
             <ComposerPalette request={palette} onPick={insertPick} onClose={() => setPalette(null)} />
+          </div>
+        ) : null}
+        {quote || queueVisible ? (
+          <div className="relative z-20 -mb-2 flex w-full flex-col items-start gap-1.5 px-3">
+            {queueVisible ? (
+              <MessageQueueView
+                steering={queue.steering}
+                followUp={queue.followUp}
+                running={running}
+                onSteer={(text) => void steerFollowUp(text, target).catch(report)}
+                onClear={() => void recallQueue(target).catch(report)}
+              />
+            ) : null}
+            {quote ? <QuoteCard text={quote.text} onClear={() => setQuote(null)} floating /> : null}
           </div>
         ) : null}
         <div
@@ -737,16 +755,6 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
             </div>
           </div>
 
-          {quote ? (
-            <div className="mx-3 mt-2 flex items-start gap-2 rounded-md border border-line bg-fill px-2 py-1.5">
-              <span className="mt-0.5 w-0.5 self-stretch rounded-full bg-accent" />
-              <span className="min-w-0 flex-1">
-                <span className="block text-2xs text-ink-3">{quote.role === "assistant" ? "引用回复" : "引用消息"}</span>
-                <span className="block truncate text-xs text-ink-1">{quoteExcerpt(quote.text)}</span>
-              </span>
-              <button type="button" aria-label="取消引用" onClick={() => setQuote(null)} className="grid size-4 place-items-center text-ink-3 hover:text-ink-1"><X className="size-3" /></button>
-            </div>
-          ) : null}
           {attachments.length ? (
             <div className="flex flex-wrap gap-1.5 px-3 pt-2">
               {attachments.map((item) => (
@@ -950,15 +958,6 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
               />
             </div>
           </div>
-          {queueVisible ? (
-            <MessageQueueView
-              steering={queue.steering}
-              followUp={queue.followUp}
-              running={running}
-              onSteer={(text) => void steerFollowUp(text, target).catch(report)}
-              onClear={() => void recallQueue(target).catch(report)}
-            />
-          ) : null}
         </div>
       </div>
     </div>

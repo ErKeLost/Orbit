@@ -13,6 +13,7 @@ import { ack, announcementOf, classifyBody, decide, readAnswer, type Facts } fro
 import { bindCall, noteAbort, noteDispatch, notePending, takeSettle, voiceBinding } from "./binding"
 import { voiceCall } from "./call"
 import { chunkDesk, claimDesk, endDesk, nextDesk, releaseDesk, spokenDesk } from "./pipe"
+import { QUESTION_TITLE, questionsFromPayload } from "../../../../src-tauri/resources/question"
 
 type SettledDetail = { connectionId: string; sessionFile: string; error: string | null; aborted: boolean }
 type InputDetail = { connectionId: string; sessionFile: string }
@@ -204,6 +205,10 @@ function runningTool(transcript: Transcript) {
 }
 
 function dialogAsk(request: UiRequest) {
+  if (request.method === "select" && request.title === QUESTION_TITLE) {
+    const questions = questionsFromPayload(request.options[0] ?? "")
+    if (questions?.length) return questions.map((item) => item.question).join("\n")
+  }
   if ("message" in request && request.message) return request.message
   if ("title" in request && request.title) return request.title
   return "需要你确认一件事。"

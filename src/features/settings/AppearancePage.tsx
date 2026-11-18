@@ -250,7 +250,7 @@ export function AppearancePage() {
 
       <Section
         title="透明度"
-        description={glassUnavailable ? "浅色模式始终不透明，深色设置会被保留。" : "窗口本身是透明的。打开后，桌面壁纸在窗口背后磨砂，页面浮在上面。"}
+        description={glassUnavailable ? "浅色模式始终不透明，深色设置会被保留。" : "打开后，桌面从整个窗口透出来。不透明度是罩有多实，磨砂是背后糊成什么样。"}
       >
         <Surface className="divide-y divide-line px-4">
           <div data-setting-id="body-glass" className="flex items-center justify-between gap-4 py-3.5">
@@ -262,11 +262,11 @@ export function AppearancePage() {
           </div>
           <div data-setting-id="sidebar-opacity" className="flex items-center justify-between gap-6 py-3.5">
             <div className="min-w-0">
-              <h3 className="text-sm font-medium text-ink-1">侧栏不透明度</h3>
-              <p className="mt-1 text-sm text-ink-3">项目栏与其他玻璃面板。</p>
+              <h3 className="text-sm font-medium text-ink-1">窗口不透明度</h3>
+              <p className="mt-1 text-sm text-ink-3">整窗有多实。越低，桌面透得越多。</p>
             </div>
             <Slider
-              label="侧栏不透明度"
+              label="窗口不透明度"
               value={Math.round(appearance.sidebarOpacity * 100)}
               display={`${Math.round(appearance.sidebarOpacity * 100)}%`}
               min={15}
@@ -278,7 +278,7 @@ export function AppearancePage() {
           <div data-setting-id="blur" className="flex items-center justify-between gap-6 py-3.5">
             <div className="min-w-0">
               <h3 className="text-sm font-medium text-ink-1">磨砂浓淡</h3>
-              <p className="mt-1 text-sm text-ink-3">桌面模糊是系统的。这个只加一层深色罩，0 最透。</p>
+              <p className="mt-1 text-sm text-ink-3">窗口背后的桌面模糊。0 没有磨砂，最透。</p>
             </div>
             <Slider label="模糊半径" value={appearance.blur} display={String(appearance.blur)} min={0} max={60} onChange={appearance.setBlur} disabled={glassOff} />
           </div>

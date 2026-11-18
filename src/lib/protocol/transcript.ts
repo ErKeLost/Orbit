@@ -52,6 +52,9 @@ function toolCodeDetails(toolName:string,value:unknown):Tool['details']|undefine
   if(typeof details.id==='string')kept.id=details.id
   if(typeof details.kind==='string')kept.kind=details.kind
   if(typeof details.title==='string')kept.title=details.title
+  if(toolName==='question'&&Array.isArray(details.answers)){
+    kept.answers=details.answers.map(row=>Array.isArray(row)?row.filter((item):item is string=>typeof item==='string'):[])
+  }
   return Object.keys(kept).length?kept:undefined
 }
 export function formatTranscriptError(raw: string): string {

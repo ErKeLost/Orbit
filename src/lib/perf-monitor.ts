@@ -307,7 +307,7 @@ function markDegraded(reason: string): void {
   degradeReason = reason;
   if (typeof document !== "undefined") document.documentElement.dataset.perfDegraded = "1";
   if (typeof console !== "undefined") {
-    console.warn(`[perf] 自动降级：${reason}。已停掉装饰动画并撤掉窗口 vibrancy。`);
+    console.warn(`[perf] 自动降级：${reason}。已停掉装饰动画。窗口玻璃仍跟着外观设置走。`);
   }
   for (const listener of degradeListeners) {
     try {

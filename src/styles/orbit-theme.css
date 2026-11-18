@@ -219,12 +219,19 @@ html.has-native-glass:not(.theme-light) #root {
   background: color-mix(in srgb, var(--color-background-base) 0%, transparent);
 }
 
-/* The native view blurs the desktop. This wash is only a tint on top of it;
-the blur radius slider is that tint, not a corner radius. */
+/* Opaque until glass is on. The Tailwind utility used to win this and hide
+   the slider: the wash has to be the whole window, not a 0.6% veil. */
+.workspace-background {
+  background: var(--color-background-base);
+}
+
+/* Opacity is the window wash. Blur is the native desktop frost, not this
+   percentage — a blur of 0 used to make the page fully transparent over an
+   opaque window, which looks identical to solid black. */
 html.has-native-glass:not(.theme-light) .workspace-background {
   background: color-mix(
     in srgb,
-    var(--color-background-base) calc(var(--sidebar-blur) * 0.6%),
+    var(--color-background-base) calc(var(--sidebar-opacity) * 100%),
     transparent
   );
 }

@@ -449,7 +449,7 @@ export default function App() {
   }
 
   return (
-    <div className="workspace-background flex h-full flex-col bg-background-base text-ink-1">
+    <div className="workspace-background body-glass flex h-full flex-col text-ink-1">
       {/* Browser tabs are pane tabs, so they need no wrapper of their own. */}
       <div className="flex min-h-0 min-w-0 flex-1">
         {projectRailOpen ? (

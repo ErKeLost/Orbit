@@ -2,6 +2,8 @@ import { useState } from "react";
 import type { UiRequest } from "../../lib/protocol";
 import { answerDialog, report } from "../../lib/rpc";
 import { Check, MessageSquare } from "../../shared/ui/icons";
+import { QUESTION_TITLE, questionsFromPayload } from "../../../src-tauri/resources/question";
+import { QuestionDialog } from "./QuestionDialog";
 
 /**
  * Pi extension UI requests (`select`, `confirm`, `input`, `editor`) in
@@ -12,6 +14,10 @@ export function ExtensionDialog({ dialog }: { dialog: UiRequest }) {
   const [choice, setChoice] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   if (!["confirm", "select", "input", "editor"].includes(dialog.method)) return null;
+  if (dialog.method === "select" && dialog.title === QUESTION_TITLE) {
+    const questions = questionsFromPayload(dialog.options[0] ?? "");
+    if (questions) return <QuestionDialog dialog={dialog} questions={questions} />;
+  }
   const rawTitle = "title" in dialog && dialog.title ? dialog.title : "Pi 扩展";
   const secret = rawTitle.startsWith("orbit:secret");
   const title = secret ? rawTitle.slice("orbit:secret".length).replace(/^[:\s]+/, "") || "需要一个密钥" : rawTitle;
@@ -29,9 +35,10 @@ export function ExtensionDialog({ dialog }: { dialog: UiRequest }) {
 
   const ready = dialog.method === "select" ? choice != null : dialog.method === "confirm" ? true : value.trim().length > 0;
   return (
-    <div className="px-1.5 pb-1.5" data-question-form>
-      <form
-        className="rounded-lg border border-line bg-fill-weak px-3 py-2.5"
+    <form
+      data-question-form
+      data-composer-box
+      className="mb-1.5 rounded-lg border border-line bg-fill-weak px-3 py-2.5 backdrop-blur-sm has-focus:border-line-strong"
         onSubmit={(event) => {
           event.preventDefault();
           if (dialog.method === "confirm") void answer({ confirmed: true });
@@ -42,7 +49,7 @@ export function ExtensionDialog({ dialog }: { dialog: UiRequest }) {
         <div className="flex items-center gap-1.5">
           <MessageSquare className="size-3.5 shrink-0 text-ink-3" strokeWidth={1.75} />
           <span className="min-w-0 flex-1 truncate text-2xs text-ink-3">{title}</span>
-          <button type="button" disabled={pending} className="h-6 shrink-0 rounded-md px-1.5 text-2xs text-ink-2 hover:bg-fill-strong hover:text-ink-1" onClick={() => void answer({ cancelled: true })}>
+          <button type="button" disabled={pending} className="h-7 shrink-0 rounded-md px-2 text-2xs text-ink-2 hover:bg-fill-strong hover:text-ink-1 disabled:opacity-40" onClick={() => void answer({ cancelled: true })}>
             Skip
           </button>
         </div>
@@ -59,14 +66,14 @@ export function ExtensionDialog({ dialog }: { dialog: UiRequest }) {
                     aria-pressed={active}
                     onClick={() => setChoice(option)}
                     onDoubleClick={() => void answer({ value: option })}
-                    className={`flex w-full items-start gap-2 rounded-md border px-2 py-1.5 text-left focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${
-                      active ? "border-line-strong bg-selection" : "border-line hover:bg-fill"
+                    className={`flex w-full items-start gap-2 rounded-md border px-2.5 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${
+                      active ? "border-line-strong bg-accent-soft" : "border-line hover:bg-fill"
                     }`}
                   >
-                    <span aria-hidden className={`mt-0.5 grid size-3.5 shrink-0 place-items-center rounded-full border ${active ? "border-line bg-ink-1 text-background-base" : "border-line-strong"}`}>
+                    <span aria-hidden className={`mt-0.5 grid size-3.5 shrink-0 place-items-center rounded-full border ${active ? "border-accent bg-accent text-accent-foreground" : "border-line-strong"}`}>
                       {active ? <Check className="size-2.5" strokeWidth={2.5} /> : null}
                     </span>
-                    <span className="block min-w-0 flex-1 text-xs leading-snug text-ink-1">{option}</span>
+                    <span className="block min-w-0 flex-1 text-ui text-ink-1">{option}</span>
                   </button>
                 );
               })}
@@ -83,7 +90,7 @@ export function ExtensionDialog({ dialog }: { dialog: UiRequest }) {
                 spellCheck={false}
                 placeholder={(dialog as { placeholder?: string }).placeholder || "值，或 op://vault/item/field"}
                 onChange={(event) => setValue(event.target.value)}
-                className="mt-1.5 w-full rounded-md border border-line-strong bg-transparent px-2 py-1 text-xs text-ink-1 outline-none placeholder:text-ink-3"
+                className="mt-1.5 w-full rounded-md border border-line bg-transparent px-2 py-1 text-ui text-ink-1 outline-none placeholder:text-ink-3 focus:border-line-strong"
               />
             </div>
           ) : null}
@@ -94,21 +101,20 @@ export function ExtensionDialog({ dialog }: { dialog: UiRequest }) {
               rows={dialog.method === "editor" ? 6 : 2}
               placeholder={dialog.method === "input" ? (dialog as { placeholder?: string }).placeholder : ""}
               onChange={(event) => setValue(event.target.value)}
-              className="mt-1.5 w-full resize-y rounded-md border border-line-strong bg-transparent px-2 py-1 text-xs text-ink-1 outline-none placeholder:text-ink-3 focus:border-line-strong"
+              className="mt-1.5 w-full resize-y rounded-md border border-line bg-transparent px-2 py-1 text-ui text-ink-1 outline-none placeholder:text-ink-3 focus:border-line-strong"
             />
           ) : null}
         </div>
         <div className="mt-2.5 flex items-center justify-end gap-2">
           {dialog.method === "confirm" ? (
-            <button type="button" disabled={pending} className="h-6 shrink-0 rounded-md px-1.5 text-2xs text-ink-2 hover:bg-fill-strong hover:text-ink-1" onClick={() => void answer({ confirmed: false })}>
+            <button type="button" disabled={pending} className="h-7 shrink-0 rounded-md px-2 text-2xs text-ink-2 hover:bg-fill-strong hover:text-ink-1 disabled:opacity-40" onClick={() => void answer({ confirmed: false })}>
               No
             </button>
           ) : null}
-          <button type="submit" disabled={!ready || pending} className="h-6 rounded-md bg-ink-1 px-2.5 text-2xs font-medium text-background-base hover:bg-ink-1/70 disabled:opacity-40">
+          <button type="submit" disabled={!ready || pending} className="primary-action h-7 rounded-md px-2.5 text-2xs font-medium">
             {secret ? "保存" : dialog.method === "confirm" ? "Confirm" : "Continue"}
           </button>
         </div>
-      </form>
-    </div>
+    </form>
   );
 }

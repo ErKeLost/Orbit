@@ -18,6 +18,7 @@ pub mod disclaim;
 /// input injection have per-platform implementations, and non-macOS targets
 /// report that they are unavailable instead of failing to build.
 mod screen;
+mod window_glass;
 pub mod browser;
 pub mod browser_view;
 #[cfg(desktop)]
@@ -517,6 +518,8 @@ pub fn run() {
             pty_term::pty_kill_all,
             search::search_files,
             search::search_sessions,
+            window_glass::set_window_glass_enabled,
+            window_glass::set_window_background_blur,
             quick_composer::quick_toggle,
             quick_composer::quick_hide,
             quick_composer::quick_send,

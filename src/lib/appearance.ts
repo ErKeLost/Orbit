@@ -1,8 +1,7 @@
 import { create } from "zustand";
 import { setTheme as setNativeTheme } from "@tauri-apps/api/app";
 import { nativeThemePreference, themeColor, type ResolvedTheme } from "./theme";
-import { isLowPerf } from "./perf-tier";
-import { isDegraded, onPerfDegrade } from "./perf-monitor";
+
 
 /**
  * Orbit's appearance model, ported: one hue, one saturation, one dark
@@ -100,7 +99,7 @@ function accentForeground(color: string) {
 export const UI_SCALE_PERCENTS = Array.from({ length: 16 }, (_, i) => Math.round((0.5 + i * 0.1) * 100));
 
 function readBlur() {
-  return clamp(loadNumber(BLUR_KEY, 24), 1, 64);
+  return clamp(loadNumber(BLUR_KEY, 24), 0, 64);
 }
 
 function readBodyGlass() {
@@ -144,71 +143,125 @@ const IS_MAC_RUNTIME = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.tes
 const IS_WIN_RUNTIME = typeof navigator !== "undefined" && /Win/i.test(navigator.platform);
 const GLASS_RUNTIME = IS_MAC_RUNTIME || IS_WIN_RUNTIME;
 
-/** Behind-window frost. Sidebar material blurs the page, not the desktop. */
-async function applyNativeGlass(state: Pick<AppearanceState, "scheme" | "blur" | "bodyGlass" | "sidebarOpacity">) {
-  const root = document.documentElement;
-  // A vibrancy window cannot be opaque: the compositor blends every frame with
-  // the desktop. Low-power and a sustained frame drop take it back off.
-  const eligible = state.scheme === "dark" && GLASS_RUNTIME && !isLowPerf && !isDegraded() && state.bodyGlass;
-  root.classList.toggle("has-native-glass", eligible);
-  root.classList.toggle("glass-body", eligible);
-  root.style.setProperty("--sidebar-blur", `${state.blur}px`);
-  if (!eligible) {
-    if (!glassApplied) return;
-    glassApplied = false;
-    try {
-      const { getCurrentWindow } = await import("@tauri-apps/api/window");
-      const window = getCurrentWindow();
-      await window.setEffects({ effects: [] });
-      await window.setBackgroundColor(state.scheme === "light" ? [245, 245, 247, 255] : [18, 19, 23, 255]);
-    } catch { /* 没有 effect API（Linux / 旧版） */ }
-    return;
-  }
-  try {
-    const { getCurrentWindow, Effect, EffectState } = await import("@tauri-apps/api/window");
-    const window = getCurrentWindow();
-    // Alpha 0 makes the native window non-opaque, so the effect behind the
-    // page is the desktop, not a painted rectangle.
-    await window.setBackgroundColor([0, 0, 0, 0]);
-    await window.setEffects({
-      effects: [IS_WIN_RUNTIME ? Effect.Acrylic : Effect.UnderWindowBackground],
-      state: EffectState.Active,
-    });
-    glassApplied = true;
-  } catch {
-    root.classList.remove("has-native-glass", "glass-body");
-  }
+type Rgb = { r: number; g: number; b: number };
+
+/** The theme colour, resolved the way the page paints it (OKLCH, not the HSL bootstrap). */
+function windowBackgroundRgb(): Rgb {
+  const probe = document.createElement("span");
+  probe.style.color = "var(--color-background-base)";
+  document.documentElement.appendChild(probe);
+  const parsed = getComputedStyle(probe).color;
+  probe.remove();
+  const match = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(parsed);
+  if (!match) return { r: 18, g: 19, b: 23 };
+  return { r: Math.round(Number(match[1])), g: Math.round(Number(match[2])), b: Math.round(Number(match[3])) };
 }
 
-/** 窗口上是否真的挂着 vibrancy，撤掉时不必再发一次 IPC。 */
+/** Latest requested glass state. Slider drags coalesce instead of stacking IPC. */
+let glassPending: Pick<AppearanceState, "scheme" | "blur" | "bodyGlass" | "sidebarOpacity"> | null = null;
+let glassRunning = false;
+/** Native glass is on, so turning it off has to tell the window. */
 let glassApplied = false;
 
 /**
- * 量到持续低帧率时立刻把 vibrancy 撤掉，不等下一次主题变化。
+ * MonoCode's glass: the opacity slider is the native tint over the whole
+ * window, and the blur slider is the desktop blur behind it. CSS only washes
+ * the page until the native side confirms it painted that tint; painting both
+ * would stack the opacity.
  *
- * 整窗活体模糊是「整个电脑跟着卡」的结构性成本：窗口必须非不透明，合成器每帧
- * 都要和桌面混合。装饰动画一停，这条混合链上的重算频率也跟着降下来。
+ * The toggle is the off switch. A low-power tier used to ignore it, which is
+ * why the sliders looked dead while the switch stayed on.
  */
-let degradeHooked = false;
-function hookPerfDegrade() {
-  if (degradeHooked || typeof window === "undefined") return;
-  degradeHooked = true;
-  onPerfDegrade(() => {
-    document.documentElement.classList.remove("has-native-glass", "glass-body");
+function applyNativeGlass(state: Pick<AppearanceState, "scheme" | "blur" | "bodyGlass" | "sidebarOpacity">) {
+  glassPending = state;
+  if (glassRunning) return;
+  glassRunning = true;
+  void drainNativeGlass();
+}
+
+async function drainNativeGlass() {
+  while (glassPending) {
+    const state = glassPending;
+    glassPending = null;
+    await applyNativeGlassNow(state);
+  }
+  glassRunning = false;
+  if (glassPending) void drainNativeGlass();
+}
+
+async function applyNativeGlassNow(state: Pick<AppearanceState, "scheme" | "blur" | "bodyGlass" | "sidebarOpacity">) {
+  const root = document.documentElement;
+  const eligible = state.scheme === "dark" && GLASS_RUNTIME && state.bodyGlass;
+  root.classList.toggle("glass-body", eligible);
+  root.style.setProperty("--sidebar-blur", `${state.blur}px`);
+  root.style.setProperty("--window-opacity", String(state.sidebarOpacity));
+  if (!eligible) {
+    root.classList.remove("has-native-glass", "has-native-glass-tint");
     if (!glassApplied) return;
     glassApplied = false;
-    void import("@tauri-apps/api/window")
-      .then(async ({ getCurrentWindow }) => {
-        const window = getCurrentWindow();
-        await window.setEffects({ effects: [] });
-        await window.setBackgroundColor([18, 19, 23, 255]);
-      })
-      .catch(() => {
-        /* 没有 effect API（Linux / 旧版） */
-      });
-  });
+    await disableNativeGlass(state.scheme);
+    return;
+  }
+  // Mark applied before the await so a queued "off" still tells the window
+  // to go opaque. The enable call may already have landed by then.
+  glassApplied = true;
+  // The wash tracks the slider immediately. Native confirmation clears it.
+  root.classList.add("has-native-glass");
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const nativeTint = await invoke<boolean>("set_window_glass_enabled", {
+      enabled: true,
+      background: windowBackgroundRgb(),
+      opacity: state.sidebarOpacity,
+    });
+    await invoke("set_window_background_blur", { radius: Math.round(state.blur) });
+    // A newer state already replaced this one; don't publish a stale tint.
+    if (glassPending) return;
+    root.classList.toggle("has-native-glass-tint", nativeTint === true);
+    glassApplied = true;
+    if (IS_WIN_RUNTIME) {
+      const { getCurrentWindow, Effect, EffectState } = await import("@tauri-apps/api/window");
+      const win = getCurrentWindow();
+      await win.setBackgroundColor([0, 0, 0, 0]);
+      await win.setEffects({ effects: [Effect.Acrylic], state: EffectState.Active });
+    }
+  } catch {
+    if (glassPending) return;
+    root.classList.remove("has-native-glass-tint");
+    // Older shells have no glass command. A clear window plus the CSS wash
+    // still lets the opacity slider show the desktop through the page.
+    if (!IS_WIN_RUNTIME) {
+      try {
+        const { getCurrentWindow, Effect, EffectState } = await import("@tauri-apps/api/window");
+        const win = getCurrentWindow();
+        await win.setBackgroundColor([0, 0, 0, 0]);
+        await win.setEffects({ effects: [Effect.UnderWindowBackground], state: EffectState.Active });
+      } catch { /* browser preview */ }
+    }
+  }
 }
-hookPerfDegrade();
+
+async function disableNativeGlass(scheme: AppearanceState["scheme"]) {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("set_window_glass_enabled", {
+      enabled: false,
+      background: windowBackgroundRgb(),
+    });
+    await invoke("set_window_background_blur", { radius: 0 });
+  } catch { /* browser preview, or the command is not on this runtime */ }
+  try {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const win = getCurrentWindow();
+    await win.setEffects({ effects: [] });
+    await win.setBackgroundColor(scheme === "light" ? [245, 245, 247, 255] : windowBackgroundRgbArray());
+  } catch { /* 没有 effect API（Linux / 旧版） */ }
+}
+
+function windowBackgroundRgbArray(): [number, number, number, number] {
+  const color = windowBackgroundRgb();
+  return [color.r, color.g, color.b, 255];
+}
 
 function applyToDocument(state: Pick<AppearanceState, "scheme" | "hue" | "saturation" | "darkLightness" | "sidebarOpacity" | "accent" | "diffPalette" | "blur" | "bodyGlass">) {
   const root = document.documentElement;

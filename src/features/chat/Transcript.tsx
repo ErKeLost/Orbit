@@ -17,6 +17,7 @@ import {
   Copy,
   CursorMagicSelection,
   GitBranch,
+  Quote,
   Loader,
   Minus,
   PenLine,
@@ -48,9 +49,12 @@ import {
   type Phase,
   type TurnStep,
 } from "./turnModel";
-import { quoteExcerpt, splitQuote } from "./quote";
+import { splitQuote } from "./quote";
+import { QuoteCard } from "./QuoteCard";
 import { setQuote } from "./quoteStore";
 import { isTodoStep } from "./todos";
+import { QuestionResult } from "./QuestionResult";
+import { isPendingQuestion, isQuestionStep } from "./questionStep";
 
 const clockFormatter = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 
@@ -519,6 +523,12 @@ function StepRow({ step, tools }: { step: TurnStep; tools: Record<string, Tool> 
   if (step.kind === "image" && step.part) return <InlineImage part={step.part} />;
   if (step.part) {
     if (isTodoStep(step, tools)) return null;
+    if (isQuestionStep(step, tools) && step.part) {
+      if (isPendingQuestion(step, tools)) return null;
+      const questionTool = tools[step.part.id ?? ""];
+      if (questionTool?.isError && !String(questionTool.result ?? "").includes("dismissed this question")) return <ToolRow part={step.part} tools={tools} />;
+      return <QuestionResult part={step.part} tool={questionTool} />;
+    }
     // 产物写完就是那张卡片；还在跑或者失败的时候仍然是一行工具调用。
     const tool = tools[step.part.id ?? ""];
     if (isSearchWidget(step.part, tools)) {
@@ -551,6 +561,8 @@ function PhaseGroup({ phase, tools, live, defaultOpen = false }: { phase: Phase;
   const title = phaseTitle(phase, tools, live);
 
   if (!phase.headline && phase.steps.length === 1) {
+    if (isPendingQuestion(phase.steps[0], tools)) return null;
+    if (isQuestionStep(phase.steps[0], tools)) return <StepRow step={phase.steps[0]} tools={tools} />;
     return (
       <div className="flex min-w-0 items-start gap-1.5">
         <PhaseIcon kind={phase.kind} className="mt-[7px]" />
@@ -708,7 +720,17 @@ function TurnFooter({
   return (
     <div aria-label={label} className="flex w-full min-w-0 max-w-full items-center gap-2.5 overflow-hidden px-4 pb-3 pt-1 font-sans text-sm text-ink-3">
       <span className="flex shrink-0 items-center gap-1">
-        {copyText ? <button type="button" title="引用" aria-label="引用这条回复" className="rounded-md p-1 hover:bg-fill-strong hover:text-ink-2" onClick={() => setQuote({ role: "assistant", text: copyText })}>引用</button> : null}
+        {copyText ? (
+          <button
+            type="button"
+            title="引用"
+            aria-label="引用这条回复"
+            className="rounded-md p-1 text-ink-3 hover:bg-fill-strong hover:text-ink-2"
+            onClick={() => setQuote({ role: "assistant", text: copyText })}
+          >
+            <Quote className="size-3.5" strokeWidth={1.75} />
+          </button>
+        ) : null}
         {copyText ? <CopyButton text={copyText} /> : <Check className="size-3.5" strokeWidth={1.75} />}
         {last ? <BranchButton message={last} /> : null}
       </span>
@@ -750,12 +772,7 @@ const UserMessage = memo(function UserMessage({ item }: { item: DisplayMessage }
   return (
     <div data-prompt-anchor={item.id} className="user-message-row group/usermsg flex flex-col items-end overflow-visible pl-14 pr-4 pt-3">
       <div className="user-message-hover-zone flex w-fit min-w-0 max-w-full flex-col items-end overflow-visible">
-        {quote ? (
-          <div className="mb-1 max-w-[min(100%,36rem)] rounded-md border border-line bg-fill-weak px-2.5 py-1.5">
-            <span className="block text-2xs text-ink-3">{quote.role === "assistant" ? "引用回复" : "引用消息"}</span>
-            <span className="block text-xs leading-5 text-ink-2">{quoteExcerpt(quote.text, 420)}</span>
-          </div>
-        ) : null}
+        {quote ? <QuoteCard text={quote.text} lines={4} className="mb-1.5" /> : null}
         {photos.length ? (
           <div className="mb-1 flex max-w-full flex-wrap justify-end gap-1.5">
             {photos.map((photo, index) => (
@@ -793,7 +810,17 @@ const UserMessage = memo(function UserMessage({ item }: { item: DisplayMessage }
           </div>
         ) : null}
         <div className="user-message-actions flex h-6 items-center gap-1 pt-1 text-ink-3">
-          {text || quote ? <button type="button" title="引用" aria-label="引用" className="rounded-md p-1 hover:bg-fill-strong hover:text-ink-2" onClick={() => setQuote({ role: "user", text: quote ? `${quote.text}\n${text}` : text })}>引用</button> : null}
+          {text || quote ? (
+            <button
+              type="button"
+              title="引用"
+              aria-label="引用"
+              className="rounded-md p-1 hover:bg-fill-strong hover:text-ink-2"
+              onClick={() => setQuote({ role: "user", text: quote ? `${quote.text}\n${text}` : text })}
+            >
+              <Quote className="size-3.5" strokeWidth={1.75} />
+            </button>
+          ) : null}
           {text ? <CopyButton text={text} label="复制消息" /> : null}
           {messageTime(item.message) ? (
             <time className="text-xs text-ink-3" dateTime={new Date(messageTime(item.message)!).toISOString()}>
@@ -871,7 +898,10 @@ const AssistantTurn = memo(
     // when the turn settles, and the results would go with it. The plan lives
     // on the composer, not in this turn.
     const searches = useMemo(() => turn.work.filter((step) => step.part && isSearchWidget(step.part, tools)), [turn.work, tools]);
-    const foldWork = useMemo(() => turn.work.filter((step) => !searches.includes(step) && !isTodoStep(step, tools)), [turn.work, searches, tools]);
+    const foldWork = useMemo(
+      () => turn.work.filter((step) => !searches.includes(step) && !isTodoStep(step, tools) && !isPendingQuestion(step, tools)),
+      [turn.work, searches, tools],
+    );
     const hasFold = foldWork.length > 0 || Boolean(activity);
     const answered = turn.answer.length > 0;
     // Work folds behind the "worked for" line. While a turn is running the fold

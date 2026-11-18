@@ -385,6 +385,11 @@ export function toolLabel(part: Part, tools: Record<string, Tool>): ToolLabel {
   if (kind === "search") return { action: /list|ls/i.test(name) ? "List" : "Search", target: first(["pattern", "query", "glob", "path"]), file: false };
   if (kind === "command") return { action: "Run", target: first(["command", "cmd", "script"]), file: false };
   if (kind === "computer") return { action: "Computer", target: first(["goal", "app", "url", "target"]), file: false };
+  if (name === "question") {
+    const questions = args.questions;
+    const firstQuestion = Array.isArray(questions) && questions[0] && typeof questions[0] === "object" ? (questions[0] as { question?: unknown }).question : "";
+    return { action: "Ask", target: typeof firstQuestion === "string" ? firstQuestion.replace(/\s+/g, " ").trim() : "", file: false };
+  }
   return { action: name, target: first(["path", "query", "command", "input", "url", "name"]), file: false };
 }
 

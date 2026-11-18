@@ -1,6 +1,6 @@
 [package]
 name = "orbit"
-version = "1.0.48"
+version = "1.0.49"
 default-run = "orbit"
 description = "A local desktop workspace for Orbit"
 authors = ["you"]
@@ -111,13 +111,15 @@ tokio-openssl = "=0.6.5"
 # the engine in this release.
 [target.'cfg(target_os = "macos")'.dependencies]
 xa11y = "=0.15.0"
-objc2-app-kit = { version = "=0.3.2", features = ["NSRunningApplication", "NSWorkspace"] }
-objc2-foundation = { version = "=0.3.2", features = ["NSURL", "NSString", "NSArray"] }
+objc2-app-kit = { version = "=0.3.2", features = ["NSColor", "NSResponder", "NSRunningApplication", "NSUserInterfaceItemIdentification", "NSView", "NSVisualEffectView", "NSWindow", "NSWorkspace"] }
+objc2-foundation = { version = "=0.3.2", features = ["NSArray", "NSString", "NSValue", "NSURL"] }
+objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["CALayer"] }
 block2 = "=0.6.2"
 # Screen channel (docs/SCREEN.md): ScreenCaptureKit capture, CoreMedia/CoreVideo
 # pixel buffers, and macOS screen-recording permission probes. VideoToolbox
 # encoding for the H.264 phase is added together with the WebRTC transport.
-objc2 = "=0.6.4"
+objc2 = { version = "=0.6.4", features = ["exception"] }
+raw-window-handle = "=0.6.2"
 objc2-core-foundation = { version = "=0.3.2", features = ["CFArray", "CFDictionary", "CFNumber", "CFString", "CFCGTypes"] }
 objc2-core-graphics = { version = "=0.3.2", features = ["CGDirectDisplay", "CGWindow", "CGEvent"] }
 objc2-core-media = { version = "=0.3.2", features = ["CMTime", "CMSampleBuffer", "objc2-core-video"] }
