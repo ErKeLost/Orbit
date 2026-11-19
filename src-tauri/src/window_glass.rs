@@ -1,11 +1,31 @@
-//! Window glass, the way MonoCode does it: a native tint and a desktop blur
-//! behind the page, not a CSS variable that only restyles the sidebar.
+//! Window glass: the desktop the page paints for itself.
 //!
-//! The page has to be see-through for that material to show. On CEF that means
-//! the window is non-opaque, Chromium's page background is cleared, and the
-//! webview's own layer is not painted opaque on top of the tint.
+//! The window cannot be see-through on this runtime, and clearing the page does
+//! not change that. The desktop app renders in CEF's *windowed* mode, and CEF
+//! only enables transparent painting for windowless (off-screen) browsers:
+//! `cef_browser_settings_t.background_color` documents that an alpha-0 page for
+//! a windowed browser falls back to `cef_settings_t.background_color`, and an
+//! alpha-0 value *there* becomes opaque white. `Emulation
+//! .setDefaultBackgroundColorOverride` — what this module used to send through
+//! DevTools — clears the *document's* background (it is the
+//! transparent-screenshot switch, `Page.captureScreenshot omitBackground`), not
+//! the compositor fill. So the `NSVisualEffectView` installed under the page was
+//! always covered, and re-sending the override at 180/520/900 ms could not win
+//! against a fill that is opaque by contract.
+//!
+//! So the window stays opaque and the page paints the desktop itself: this file
+//! captures what is *behind* the window (every window below it inside the
+//! window's own rect) and hands it over as a JPEG. The page blurs it and washes
+//! it with the theme colour, which turns both sliders into plain CSS — the blur
+//! radius and the opacity never cross IPC — and one capture per move, resize or
+//! focus keeps the sample current.
+//!
+//! `CGWindowListCreateImage` is deprecated on macOS 14 in favour of
+//! ScreenCaptureKit. It is kept here because it is synchronous, one call, and
+//! already returns exactly "what is below this window"; ScreenCaptureKit streams
+//! would need a filter per display and a run loop for the same rectangle.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tauri::WebviewWindow;
 
 #[derive(Clone, Copy, Deserialize)]
@@ -15,8 +35,32 @@ pub struct Rgb {
     pub b: u8,
 }
 
-/// `true` when this process painted the shared tint, so the page can stop
-/// painting the same wash again.
+/// One capture of the desktop behind the window.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlassSample {
+    /// Base64 JPEG of the window's rect, desktop composited underneath.
+    pub data: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The page's own background colour, kept so a sample's uncovered corners fall
+/// back to the window colour instead of black.
+static FALLBACK: std::sync::Mutex<Rgb> = std::sync::Mutex::new(Rgb { r: 18, g: 19, b: 23 });
+
+fn fallback() -> Rgb {
+    *FALLBACK.lock().unwrap_or_else(|error| error.into_inner())
+}
+
+/// Glass state for the window itself.
+///
+/// Returns `false`: no native tint is painted any more, so the page must not
+/// assume a second wash behind it. The command stays because the window still
+/// has to be made opaque here (CEF's window is created non-opaque from
+/// `transparent: true`, and a transparent window would show the real desktop
+/// sliding under a sample that lags a frame behind), and because Windows still
+/// gets its acrylic from it.
 #[tauri::command]
 pub fn set_window_glass_enabled(
     window: WebviewWindow,
@@ -24,14 +68,16 @@ pub fn set_window_glass_enabled(
     background: Rgb,
     opacity: Option<f64>,
 ) -> bool {
-    if enabled {
-        // The webview layer otherwise keeps an opaque fill over the glass.
-        let _ = window.set_background_color(Some(tauri::window::Color(0, 0, 0, 0)));
+    if let Ok(mut slot) = FALLBACK.lock() {
+        *slot = background;
     }
-    set_page_transparent(&window, enabled);
     #[cfg(target_os = "macos")]
     {
-        return macos::set_enabled(&window, enabled, background, opacity);
+        let paint = window.clone();
+        let color = background;
+        let _ = macos::on_main(&window, move || macos::keep_opaque(&paint, color));
+        let _ = (enabled, opacity);
+        false
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -46,252 +92,120 @@ pub fn set_window_glass_enabled(
             background.b,
             alpha,
         )));
-        let _ = opacity;
         false
     }
 }
 
-/// Gaussian radius of the desktop behind the window. `0` is no frost.
+/// Kept for the shared command surface: the wry build (`--features glass-wry`)
+/// uses this radius on the window's vibrancy backing. This build blurs in CSS
+/// instead, so the page's `--sidebar-blur` already did the work.
 #[tauri::command]
 pub fn set_window_background_blur(window: WebviewWindow, radius: u32) {
-    #[cfg(target_os = "macos")]
-    macos::set_blur(&window, radius.min(64) as u8);
-    #[cfg(not(target_os = "macos"))]
     let _ = (window, radius);
 }
 
-/// Chromium paints an opaque page under transparent CSS unless told not to.
-/// A posted DevTools message is easy to lose (the command returns before the
-/// browser applies it, and the first composite paints the opaque colour back).
-/// Send it, then apply it again on the browser host and ask for a new frame.
-fn set_page_transparent(window: &WebviewWindow, transparent: bool) {
-    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "linux")))]
+/// The desktop behind this window, encoded for the page's glass layer.
+///
+/// Called when the glass toggle turns on and whenever the window moves, resizes,
+/// changes scale or comes back to the front, because the desktop behind a moved
+/// window is a different picture. The capture and the JPEG encode run off the UI
+/// thread, so a window drag never waits on them.
+#[tauri::command]
+pub async fn glass_desktop_sample(window: WebviewWindow) -> Result<Option<GlassSample>, String> {
+    #[cfg(target_os = "macos")]
     {
-        use cef::{ImplBrowser, ImplBrowserHost};
-        use tauri_runtime_cef::WebviewCefExt;
-        let Some(payload) = devtools_background_override(transparent) else {
-            return;
-        };
-        if let Err(error) = window.send_dev_tools_message(payload.as_bytes()) {
-            log::warn!("glass: page background override was not accepted: {error}");
-        }
-        if transparent {
-            let bytes = payload.into_bytes();
-            let _ = window.with_cef_webview(move |webview| {
-                let Some(host) = webview.browser().host() else {
-                    return;
-                };
-                let _ = host.send_dev_tools_message(Some(&bytes));
-                host.was_resized();
-            });
-        }
+        let target_window = window.clone();
+        let target = macos::on_main(&window, move || macos::window_target(&target_window))
+            .ok_or_else(|| "窗口不可用".to_string())??;
+        let color = fallback();
+        let sample = tauri::async_runtime::spawn_blocking(move || macos::capture(&target, color))
+            .await
+            .map_err(|error| format!("桌面取样线程失败：{error}"))??;
+        Ok(Some(sample))
     }
-    #[cfg(any(target_os = "android", target_os = "ios", target_os = "linux"))]
-    let _ = (window, transparent);
-}
-
-#[cfg(not(any(target_os = "android", target_os = "ios", target_os = "linux")))]
-fn devtools_background_override(transparent: bool) -> Option<String> {
-    use tauri_runtime_cef::allocate_devtools_message_id;
-    let id = allocate_devtools_message_id().ok()?;
-    let payload = if transparent {
-        serde_json::json!({
-            "id": id,
-            "method": "Emulation.setDefaultBackgroundColorOverride",
-            "params": { "color": { "r": 0, "g": 0, "b": 0, "a": 0 } }
-        })
-    } else {
-        serde_json::json!({
-            "id": id,
-            "method": "Emulation.setDefaultBackgroundColorOverride",
-            "params": {}
-        })
-    };
-    Some(payload.to_string())
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        // `None` = this build has no sampling; the page keeps painting itself.
+        Ok(None)
+    }
 }
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use super::{Rgb, set_page_transparent};
-    use std::cell::Cell;
-    use std::collections::HashSet;
-    use std::ffi::{c_char, c_int, c_void};
-    use std::sync::atomic::{AtomicU32, AtomicU8, Ordering};
-    use std::sync::{Mutex, OnceLock};
-    use std::time::Duration;
+    use super::{GlassSample, Rgb};
+    use std::ffi::c_void;
 
     use objc2::rc::Retained;
-    use objc2::runtime::AnyObject;
-    use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
-    use objc2_app_kit::{
-        NSAutoresizingMaskOptions, NSColor, NSUserInterfaceItemIdentification, NSView,
-        NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
-        NSWindow, NSWindowOrderingMode,
-    };
-    use objc2_foundation::{NSArray, NSNumber, NSString};
-    use objc2_quartz_core::CALayer;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSColor, NSScreen, NSView, NSWindow};
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use tauri::{WebviewWindow, WindowEvent};
+    use tauri::WebviewWindow;
 
-    const BACKING_ID: &str = "orbit.glass-backing";
-    const TINT_ID: &str = "orbit.glass-tint";
-    const BLUR_MAX: u8 = 64;
-
-    static BLUR_RADIUS: AtomicU8 = AtomicU8::new(0);
-    static PUNCH_TICKET: AtomicU32 = AtomicU32::new(0);
-    static GLASS_WINDOWS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-    static HOOKED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-
-    type CgsConnection = usize;
-    type SetBlurFn = unsafe extern "C" fn(CgsConnection, c_int, c_int) -> c_int;
-    type ConnectionFn = unsafe extern "C" fn() -> CgsConnection;
-
-    unsafe extern "C" {
-        fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+    /// Everything the capture needs, read on the main thread so the blocking
+    /// part never touches AppKit.
+    pub struct Target {
+        window_id: u32,
+        /// The window's rect in CoreGraphics' global space: origin at the top
+        /// left of the main display, y growing down.
+        rect: CGRect,
     }
 
-    const RTLD_DEFAULT: *mut c_void = -2isize as *mut c_void;
+    // ---- CoreGraphics -------------------------------------------------
+    // Declared here on purpose: these five entry points are stable C ABI, and
+    // the typed wrappers in `objc2-core-graphics` need binding features this
+    // crate does not build (CGImage, CGContext). The structs come from
+    // `objc2-core-foundation`, which does match the C layout.
+    type CGImageRef = *mut c_void;
+    type CGContextRef = *mut c_void;
+    type CGColorSpaceRef = *mut c_void;
 
-    pub fn set_enabled(window: &WebviewWindow, enabled: bool, background: Rgb, opacity: Option<f64>) -> bool {
-        let label = window.label().to_string();
-        let window = window.clone();
-        let hopped = window.clone();
-        let result = on_main(&window, move || apply(hopped, enabled, background, opacity, label));
-        result.unwrap_or(false)
+    const OPTION_ON_SCREEN_BELOW_WINDOW: u32 = 1 << 2;
+    const IMAGE_BOUNDS_IGNORE_FRAMING: u32 = 1 << 0;
+    const IMAGE_SHOULD_BE_OPAQUE: u32 = 1 << 1;
+    const IMAGE_NOMINAL_RESOLUTION: u32 = 1 << 4;
+    /// `kCGImageAlphaPremultipliedLast` — RGBA in memory.
+    const ALPHA_PREMULTIPLIED_LAST: u32 = 1;
+    /// `kCGBitmapByteOrder32Big` — the byte order the JPEG encoder expects.
+    const BITMAP_BYTE_ORDER_32_BIG: u32 = 4 << 12;
+
+    extern "C" {
+        fn CGWindowListCreateImage(
+            screen_bounds: CGRect,
+            list_option: u32,
+            window_id: u32,
+            image_option: u32,
+        ) -> CGImageRef;
+        fn CGImageGetWidth(image: CGImageRef) -> usize;
+        fn CGImageGetHeight(image: CGImageRef) -> usize;
+        fn CGImageRelease(image: CGImageRef);
+        fn CGColorSpaceCreateDeviceRGB() -> CGColorSpaceRef;
+        fn CGColorSpaceRelease(space: CGColorSpaceRef);
+        fn CGBitmapContextCreate(
+            data: *mut c_void,
+            width: usize,
+            height: usize,
+            bits_per_component: usize,
+            bytes_per_row: usize,
+            space: CGColorSpaceRef,
+            bitmap_info: u32,
+        ) -> CGContextRef;
+        fn CGContextDrawImage(context: CGContextRef, rect: CGRect, image: CGImageRef);
+        fn CGContextRelease(context: CGContextRef);
     }
 
-    pub fn set_blur(window: &WebviewWindow, radius: u8) {
-        let radius = radius.min(BLUR_MAX);
-        BLUR_RADIUS.store(radius, Ordering::Relaxed);
-        let window = window.clone();
-        let hopped = window.clone();
-        let _ = on_main(&window, move || {
-            if glass_enabled(&hopped) {
-                apply_blur(&hopped, radius);
-            }
-        });
-    }
-
-    fn apply(window: WebviewWindow, enabled: bool, background: Rgb, opacity: Option<f64>, label: String) -> bool {
-        ensure_hook(&window);
-        let Some(ns_window) = ns_window(&window) else {
-            set_glass_enabled(&label, false);
-            return false;
-        };
-        if !enabled {
-            set_glass_enabled(&label, false);
-            hide_glass(&ns_window);
-            apply_blur(&window, 0);
-            let solid = srgb(background, 1.0);
-            ns_window.setOpaque(true);
-            ns_window.setBackgroundColor(Some(&solid));
-            ns_window.setHasShadow(true);
-            ns_window.invalidateShadow();
-            return false;
-        }
-
-        set_glass_enabled(&label, true);
-        let _ = opacity;
-        install_glass(&ns_window);
-        // The page wash owns the slider. A solid tint here sits behind an
-        // opaque Chromium page and never shows, then stacks once that page
-        // is actually clear. A hair of alpha only keeps the window shadow.
-        paint_tint(&ns_window, &srgb(background, 0.01));
-        // A hair of alpha on the window itself keeps the shadow from going
-        // square, the same trick MonoCode uses.
-        ns_window.setOpaque(false);
-        ns_window.setBackgroundColor(Some(&NSColor::clearColor().colorWithAlphaComponent(0.01)));
-        ns_window.setHasShadow(true);
-        ns_window.invalidateShadow();
-        raise_page(&ns_window);
-        punch(&ns_window);
-        apply_blur(&window, BLUR_RADIUS.load(Ordering::Relaxed));
-        schedule_punch(window);
-        true
-    }
-
-    fn on_main<T: Send + 'static>(window: &WebviewWindow, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    pub fn on_main<T: Send + 'static>(
+        window: &WebviewWindow,
+        work: impl FnOnce() -> T + Send + 'static,
+    ) -> Option<T> {
         let (tx, rx) = std::sync::mpsc::channel();
-        window.run_on_main_thread(move || {
-            let _ = tx.send(f());
-        }).ok()?;
+        window
+            .run_on_main_thread(move || {
+                let _ = tx.send(work());
+            })
+            .ok()?;
         rx.recv().ok()
-    }
-
-    fn glass_windows() -> &'static Mutex<HashSet<String>> {
-        GLASS_WINDOWS.get_or_init(|| Mutex::new(HashSet::new()))
-    }
-
-    fn set_glass_enabled(label: &str, enabled: bool) {
-        let mut windows = glass_windows().lock().unwrap_or_else(|err| err.into_inner());
-        if enabled {
-            windows.insert(label.to_string());
-        } else {
-            windows.remove(label);
-        }
-    }
-
-    fn glass_enabled(window: &WebviewWindow) -> bool {
-        glass_windows()
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .contains(window.label())
-    }
-
-    fn ensure_hook(window: &WebviewWindow) {
-        let mut hooked = HOOKED
-            .get_or_init(|| Mutex::new(HashSet::new()))
-            .lock()
-            .unwrap_or_else(|err| err.into_inner());
-        if !hooked.insert(window.label().to_string()) {
-            return;
-        }
-        drop(hooked);
-        let tracked = window.clone();
-        tracked.clone().on_window_event(move |event| {
-            if !matches!(
-                event,
-                WindowEvent::Resized(_) | WindowEvent::Focused(true) | WindowEvent::ScaleFactorChanged { .. }
-            ) {
-                return;
-            }
-            let refresh = tracked.clone();
-            let _ = tracked.run_on_main_thread(move || {
-                if !glass_enabled(&refresh) {
-                    return;
-                }
-                if let Some(ns_window) = ns_window(&refresh) {
-                    raise_page(&ns_window);
-                    punch(&ns_window);
-                }
-            });
-        });
-    }
-
-    /// Chromium paints an opaque page back after the first composite. Repeat
-    /// the clear until a newer glass call cancels this ticket.
-    fn schedule_punch(window: WebviewWindow) {
-        let ticket = PUNCH_TICKET.fetch_add(1, Ordering::Relaxed) + 1;
-        std::thread::spawn(move || {
-            for delay in [180_u64, 520, 900] {
-                std::thread::sleep(Duration::from_millis(delay));
-                if PUNCH_TICKET.load(Ordering::Relaxed) != ticket || !glass_enabled(&window) {
-                    return;
-                }
-                set_page_transparent(&window, true);
-                let refresh = window.clone();
-                let _ = window.run_on_main_thread(move || {
-                    if PUNCH_TICKET.load(Ordering::Relaxed) != ticket || !glass_enabled(&refresh) {
-                        return;
-                    }
-                    if let Some(ns_window) = ns_window(&refresh) {
-                        raise_page(&ns_window);
-                        punch(&ns_window);
-                    }
-                    apply_blur(&refresh, BLUR_RADIUS.load(Ordering::Relaxed));
-                });
-            }
-        });
     }
 
     fn ns_window(window: &WebviewWindow) -> Option<Retained<NSWindow>> {
@@ -306,301 +220,156 @@ mod macos {
         unsafe { &*view }.window()
     }
 
-    fn srgb(color: Rgb, alpha: f64) -> Retained<NSColor> {
-        NSColor::colorWithSRGBRed_green_blue_alpha(
-            color.r as f64 / 255.0,
-            color.g as f64 / 255.0,
-            color.b as f64 / 255.0,
-            alpha.clamp(0.0, 1.0),
-        )
-    }
-
-    fn identified<'a>(content: &'a NSView, id: &str) -> Option<Retained<NSView>> {
-        let marker = NSString::from_str(id);
-        content.subviews().iter().find(|view| view.identifier().as_deref() == Some(&marker))
-    }
-
-    fn install_glass(window: &NSWindow) {
-        let Some(content) = window.contentView() else {
-            return;
-        };
-        if identified(&content, BACKING_ID).is_some() {
-            if let Some(backing) = identified(&content, BACKING_ID) {
-                backing.setHidden(false);
-            }
-            if let Some(tint) = identified(&content, TINT_ID) {
-                tint.setHidden(false);
-            }
-            return;
-        }
-        let Some(mtm) = MainThreadMarker::new() else {
-            return;
-        };
-        let backing = WindowBackdrop::new(content.bounds(), mtm);
-        backing.setIdentifier(Some(&NSString::from_str(BACKING_ID)));
-        backing.setAutoresizingMask(
-            NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
-        );
-        content.addSubview_positioned_relativeTo(&backing, NSWindowOrderingMode::Below, None);
-
-        let tint = NSView::initWithFrame(NSView::alloc(mtm), content.bounds());
-        tint.setIdentifier(Some(&NSString::from_str(TINT_ID)));
-        tint.setWantsLayer(true);
-        tint.setAutoresizingMask(
-            NSAutoresizingMaskOptions::ViewWidthSizable | NSAutoresizingMaskOptions::ViewHeightSizable,
-        );
-        content.addSubview_positioned_relativeTo(&tint, NSWindowOrderingMode::Above, Some(&backing));
-    }
-
-    fn hide_glass(window: &NSWindow) {
-        let Some(content) = window.contentView() else {
-            return;
-        };
-        if let Some(backing) = identified(&content, BACKING_ID) {
-            backing.setHidden(true);
-        }
-        if let Some(tint) = identified(&content, TINT_ID) {
-            tint.setHidden(true);
-        }
-    }
-
-    fn paint_tint(window: &NSWindow, color: &NSColor) {
-        let Some(content) = window.contentView() else {
-            return;
-        };
-        let Some(tint) = identified(&content, TINT_ID) else {
-            return;
-        };
-        tint.setHidden(false);
-        if let Some(layer) = tint.layer() {
-            layer.setOpaque(false);
-            layer.setBackgroundColor(Some(&color.CGColor()));
-        }
-    }
-
-    /// The glass views must stay under the page. Inserting them can land above
-    /// a view Chromium added in the same turn.
-    fn raise_page(window: &NSWindow) {
-        let Some(content) = window.contentView() else {
-            return;
-        };
-        let page: Vec<Retained<NSView>> = content
-            .subviews()
-            .iter()
-            .filter(|view| !is_glass(view))
-            .collect();
-        for view in page {
-            content.addSubview_positioned_relativeTo(&view, NSWindowOrderingMode::Above, None);
-        }
-    }
-
-    fn is_glass(view: &NSView) -> bool {
-        matches!(
-            view.identifier().as_deref().map(|value| value.to_string()).as_deref(),
-            Some(BACKING_ID | TINT_ID)
-        )
-    }
-
-    /// Clear the views we host, and ask Chromium's render view for a clear
-    /// background. The DevTools override is what makes the compositor itself
-    /// transparent; this stops the NSView under it painting black on top.
-    fn punch(window: &NSWindow) {
-        let Some(content) = window.contentView() else {
-            return;
-        };
-        clear_layer(&content);
-        punch_view(&content, 0);
-    }
-
-    fn punch_view(view: &NSView, depth: u8) {
-        if depth > 8 {
-            return;
-        }
-        for child in view.subviews().iter() {
-            if is_glass(&child) {
-                continue;
-            }
-            clear_layer(&child);
-            let class_name = child.class().name().to_string_lossy();
-            if class_name.contains("RenderWidget") || class_name.contains("WebContents") || class_name.contains("Cef")
-            {
-                let clear = NSColor::clearColor();
-                let _ = objc2::exception::catch(std::panic::AssertUnwindSafe(|| unsafe {
-                    let _: () = msg_send![&*child, setBackgroundColor: &*clear];
-                }));
-            }
-            punch_view(&child, depth + 1);
-        }
-    }
-
-    fn clear_layer(view: &NSView) {
-        let Some(layer) = view.layer() else {
-            return;
-        };
-        layer.setOpaque(false);
-        layer.setBackgroundColor(Some(&NSColor::clearColor().CGColor()));
-    }
-
-    fn apply_blur(window: &WebviewWindow, radius: u8) {
+    /// Opaque window, painted with the page's own colour.
+    ///
+    /// The webview covers the whole content view, so this colour only shows for
+    /// the frame between the window appearing and the first desktop sample
+    /// arriving — which must not be the desktop, or the window would look like
+    /// it is sliding over the wallpaper.
+    pub fn keep_opaque(window: &WebviewWindow, color: Rgb) {
         let Some(ns_window) = ns_window(window) else {
             return;
         };
-        let Some(content) = ns_window.contentView() else {
-            return;
-        };
-        let patched = identified(&content, BACKING_ID).and_then(|view| {
-            let backdrop = view.downcast_ref::<WindowBackdrop>()?;
-            backdrop.setHidden(radius == 0);
-            Some(backdrop.set_radius(radius))
-        });
-        // Two blurs stack. The backdrop owns the radius when it accepted one;
-        // otherwise the WindowServer blur is the slider.
-        let legacy = if patched == Some(true) { 0 } else { radius };
-        set_cgs_blur(&ns_window, legacy);
+        ns_window.setOpaque(true);
+        ns_window.setBackgroundColor(Some(&srgb(color)));
+        ns_window.setHasShadow(true);
+        ns_window.invalidateShadow();
     }
 
-    fn set_cgs_blur(window: &NSWindow, radius: u8) {
-        let Some(set_blur) = set_blur_fn() else {
-            return;
-        };
-        let Some(connection) = cgs_connection() else {
-            return;
-        };
-        let number = window.windowNumber();
-        if number <= 0 {
-            return;
+    fn srgb(color: Rgb) -> Retained<NSColor> {
+        NSColor::colorWithSRGBRed_green_blue_alpha(
+            f64::from(color.r) / 255.0,
+            f64::from(color.g) / 255.0,
+            f64::from(color.b) / 255.0,
+            1.0,
+        )
+    }
+
+    pub fn window_target(window: &WebviewWindow) -> Result<Target, String> {
+        let ns_window = ns_window(window).ok_or_else(|| "取不到窗口".to_string())?;
+        let content = ns_window
+            .contentView()
+            .ok_or_else(|| "窗口没有内容视图".to_string())?;
+        // The page sits in the content view, so the sample has to start where
+        // the content view starts — with `titleBarStyle: Overlay` that is the
+        // window's top edge, but reading it beats assuming it.
+        let on_screen = ns_window.convertRectToScreen(content.convertRect_toView(content.bounds(), None));
+        let mtm = MainThreadMarker::new().ok_or_else(|| "不在主线程".to_string())?;
+        // AppKit's global space has its origin at the bottom left of the *primary*
+        // display; CoreGraphics counts down from that display's top edge. It has to
+        // be `screens[0]`, not `mainScreen`: `mainScreen` follows keyboard focus, so
+        // on a second monitor it would report that display's height and shift the
+        // capture by the difference.
+        let primary = NSScreen::screens(mtm)
+            .firstObject()
+            .ok_or_else(|| "取不到主屏".to_string())?;
+        let primary_height = primary.frame().size.height;
+        let origin = CGPoint::new(
+            on_screen.origin.x,
+            primary_height - (on_screen.origin.y + on_screen.size.height),
+        );
+        let size = CGSize::new(on_screen.size.width, on_screen.size.height);
+        Ok(Target {
+            window_id: ns_window.windowNumber() as u32,
+            rect: CGRect::new(origin, size),
+        })
+    }
+
+    pub fn capture(target: &Target, color: Rgb) -> Result<GlassSample, String> {
+        // The same permission the screen channel needs, so a user who granted it
+        // once gets glass for free and the other way round reports the same thing.
+        if !crate::screen::capture::permission_granted() {
+            return Err("屏幕录制权限没有开".into());
         }
+        // Nominal (1x) on purpose: this layer *is* the frost, its whole job is to
+        // be soft, and a Retina capture would be four times the JPEG, four times
+        // the decode, and four times the texture for pixels the blur removes.
+        let image = unsafe {
+            CGWindowListCreateImage(
+                target.rect,
+                OPTION_ON_SCREEN_BELOW_WINDOW,
+                target.window_id,
+                IMAGE_BOUNDS_IGNORE_FRAMING | IMAGE_SHOULD_BE_OPAQUE | IMAGE_NOMINAL_RESOLUTION,
+            )
+        };
+        if image.is_null() {
+            return Err("系统没有把桌面交给这个窗口（屏幕录制权限）".into());
+        }
+        let width = unsafe { CGImageGetWidth(image) };
+        let height = unsafe { CGImageGetHeight(image) };
+        if width == 0 || height == 0 {
+            unsafe { CGImageRelease(image) };
+            return Err("桌面取样是空的".into());
+        }
+
+        // Opaque fill first: JPEG has no alpha, and anything the capture leaves
+        // uncovered has to become the window colour rather than black.
+        let row_bytes = width * 4;
+        let mut pixels = vec![0u8; row_bytes * height];
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel[0] = color.r;
+            pixel[1] = color.g;
+            pixel[2] = color.b;
+            pixel[3] = 255;
+        }
+
+        let space = unsafe { CGColorSpaceCreateDeviceRGB() };
+        let context = unsafe {
+            CGBitmapContextCreate(
+                pixels.as_mut_ptr().cast(),
+                width,
+                height,
+                8,
+                row_bytes,
+                space,
+                ALPHA_PREMULTIPLIED_LAST | BITMAP_BYTE_ORDER_32_BIG,
+            )
+        };
+        if context.is_null() {
+            unsafe {
+                CGImageRelease(image);
+                CGColorSpaceRelease(space);
+            }
+            return Err("建不出位图上下文".into());
+        }
+
+        // A bitmap context fills top-down in memory, so the buffer reads as an
+        // upright image: no flip needed before encoding.
         unsafe {
-            set_blur(connection, number as c_int, radius as c_int);
-        }
-    }
-
-    fn set_blur_fn() -> Option<SetBlurFn> {
-        static FN: OnceLock<Option<SetBlurFn>> = OnceLock::new();
-        *FN.get_or_init(|| dlsym_fn(b"CGSSetWindowBackgroundBlurRadius\0"))
-    }
-
-    fn cgs_connection() -> Option<CgsConnection> {
-        static FN: OnceLock<Option<ConnectionFn>> = OnceLock::new();
-        let function = (*FN.get_or_init(|| {
-            dlsym_fn(b"CGSDefaultConnectionForThread\0").or_else(|| dlsym_fn(b"CGSMainConnectionID\0"))
-        }))?;
-        let connection = unsafe { function() };
-        (connection != 0).then_some(connection)
-    }
-
-    fn dlsym_fn<T>(symbol: &[u8]) -> Option<T> {
-        unsafe {
-            let ptr = dlsym(RTLD_DEFAULT, symbol.as_ptr().cast());
-            if ptr.is_null() {
-                None
-            } else {
-                Some(std::mem::transmute_copy(&ptr))
-            }
-        }
-    }
-
-    struct WindowBackdropIvars {
-        radius: Cell<u8>,
-    }
-
-    define_class!(
-        #[unsafe(super(NSVisualEffectView))]
-        #[name = "OrbitWindowBackdrop"]
-        #[ivars = WindowBackdropIvars]
-        struct WindowBackdrop;
-
-        impl WindowBackdrop {
-            #[unsafe(method(updateLayer))]
-            fn update_layer(&self) {
-                unsafe {
-                    let _: () = msg_send![super(self), updateLayer];
-                }
-                self.configure_layers();
-            }
-        }
-    );
-
-    impl WindowBackdrop {
-        fn new(frame: objc2_foundation::NSRect, mtm: MainThreadMarker) -> Retained<Self> {
-            let allocated = Self::alloc(mtm).set_ivars(WindowBackdropIvars {
-                radius: Cell::new(BLUR_RADIUS.load(Ordering::Relaxed)),
-            });
-            let view: Retained<Self> = unsafe { msg_send![super(allocated), initWithFrame: frame] };
-            view.setMaterial(NSVisualEffectMaterial::UnderWindowBackground);
-            view.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
-            view.setState(NSVisualEffectState::Active);
-            view.setWantsLayer(true);
-            view
+            CGContextDrawImage(
+                context,
+                CGRect::new(
+                    CGPoint::new(0.0, 0.0),
+                    CGSize::new(width as f64, height as f64),
+                ),
+                image,
+            );
+            CGContextRelease(context);
+            CGColorSpaceRelease(space);
+            CGImageRelease(image);
         }
 
-        /// `true` when a blur filter actually took the radius.
-        fn set_radius(&self, radius: u8) -> bool {
-            self.ivars().radius.set(radius);
-            let patched = self.configure_layers();
-            self.setNeedsDisplay(true);
-            patched
+        let mut rgb = Vec::with_capacity(width * height * 3);
+        for pixel in pixels.chunks_exact(4) {
+            rgb.extend_from_slice(&pixel[..3]);
         }
 
-        fn configure_layers(&self) -> bool {
-            let Some(layer) = self.layer() else {
-                return false;
-            };
-            let configured = objc2::exception::catch(std::panic::AssertUnwindSafe(|| {
-                configure_backdrop_layer(&layer, self.ivars().radius.get())
-            }));
-            configured.unwrap_or(false)
-        }
-    }
+        let mut jpeg = Vec::new();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 74);
+        encoder
+            .encode(
+                &rgb,
+                width as u32,
+                height as u32,
+                image::ExtendedColorType::Rgb8,
+            )
+            .map_err(|error| format!("桌面取样编码失败：{error}"))?;
 
-    /// AppKit's material blur ignores the slider until its private Gaussian
-    /// filter is replaced. Same approach as MonoCode: drop the saturation
-    /// filter (our tint is the colour) and install a copied blur at our radius.
-    fn configure_backdrop_layer(layer: &CALayer, radius: u8) -> bool {
-        layer.setBackgroundColor(None);
-        let mut patched = false;
-        if layer.class().name().to_bytes() == b"CAChameleonLayer" {
-            layer.setHidden(true);
-        } else if let Some(filters) = layer.filters() {
-            let mut retained = Vec::with_capacity(filters.len());
-            let mut changed = false;
-            for filter in filters.iter() {
-                let description: Retained<NSString> = unsafe { msg_send![&*filter, description] };
-                let description = description.to_string();
-                if description.contains("Saturat") {
-                    changed = true;
-                    continue;
-                }
-                if description.contains("Blur") {
-                    let key = NSString::from_str("inputRadius");
-                    let current: Option<Retained<NSNumber>> = unsafe { msg_send![&*filter, valueForKey: &*key] };
-                    patched = true;
-                    if current.as_ref().map(|value| value.doubleValue()) != Some(f64::from(radius)) {
-                        let replacement: Retained<AnyObject> = unsafe { msg_send![&*filter, copy] };
-                        let value = NSNumber::numberWithDouble(f64::from(radius));
-                        unsafe {
-                            let _: () = msg_send![&*replacement, setValue: &*value, forKey: &*key];
-                        }
-                        retained.push(replacement);
-                        changed = true;
-                        continue;
-                    }
-                }
-                retained.push(filter);
-            }
-            if changed {
-                unsafe {
-                    layer.setFilters(Some(&NSArray::from_retained_slice(&retained)));
-                }
-            }
-        }
-        if let Some(children) = unsafe { layer.sublayers() } {
-            for child in children.iter() {
-                if configure_backdrop_layer(&child, radius) {
-                    patched = true;
-                }
-            }
-        }
-        patched
+        use base64::Engine as _;
+        Ok(GlassSample {
+            data: base64::engine::general_purpose::STANDARD.encode(&jpeg),
+            width: width as u32,
+            height: height as u32,
+        })
     }
 }

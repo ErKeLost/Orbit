@@ -1,9 +1,11 @@
-import { useRef, type ReactNode } from "react";
+import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ImagePlus } from "../../shared/ui/icons";
 import { SecondaryButton, Segmented, Select, Slider, Toggle } from "../../shared/ui/controls";
 import { UI_SCALE_PERCENTS, useAppearance, type DiffPalette, type ThemePreference } from "../../lib/appearance";
+import { desktopSampleState, requestDesktopSample, subscribeDesktopSample } from "../../lib/desktop-glass";
+import { invoke } from "../../lib/native";
 import { useShell } from "../shell/shellStore";
 
 function hueName(hue: number) {
@@ -93,6 +95,40 @@ const THEME_CARDS: { id: ThemeCard; label: string }[] = [
   { id: "dark", label: "深色" },
   { id: "high-contrast", label: "高对比" },
 ];
+
+/** The one row that says whether the desktop behind the window actually arrived. */
+function DesktopSampleRow() {
+  const sample = useSyncExternalStore(subscribeDesktopSample, desktopSampleState, desktopSampleState);
+  const [asking, setAsking] = useState(false);
+  const detail = sample.unsupported
+    ? "这一版由系统做玻璃：桌面在不透明层下面被 macOS 直接模糊，移动窗口时它是连续的。"
+    : sample.ready && !sample.error
+      ? `最近一次 ${new Date(sample.at).toLocaleTimeString()} · 移动或缩放窗口会重新抓一次。`
+      : sample.error ?? "正在抓窗口背后的桌面…";
+  const ask = async () => {
+    setAsking(true);
+    try {
+      await invoke("screen_request_permission");
+      requestDesktopSample(600);
+    } catch {
+      // No permission bridge: the next window move retries the capture anyway.
+    }
+    setAsking(false);
+  };
+  return (
+    <div data-setting-id="desktop-sample" className="flex items-start justify-between gap-4 py-3.5">
+      <div className="min-w-0">
+        <h3 className="text-sm font-medium text-ink-1">桌面取样</h3>
+        <p className="mt-1 text-sm text-ink-3">{detail}</p>
+      </div>
+      {sample.error && !sample.unsupported ? (
+        <SecondaryButton disabled={asking} onClick={() => void ask()}>
+          {asking ? "等待系统…" : "开启屏幕录制"}
+        </SecondaryButton>
+      ) : null}
+    </div>
+  );
+}
 
 /** Appearance, in the task-card language: preview tiles, then a color card. */
 export function AppearancePage() {
@@ -250,7 +286,11 @@ export function AppearancePage() {
 
       <Section
         title="透明度"
-        description={glassUnavailable ? "浅色模式始终不透明，深色设置会被保留。" : "打开后，桌面从整个窗口透出来。不透明度是罩有多实，磨砂是背后糊成什么样。"}
+        description={
+          glassUnavailable
+            ? "浅色模式始终不透明，深色设置会被保留。"
+            : "深色模式下桌面从整个窗口透出来：磨砂是背后糊的程度，不透明度是主题色罩得多实。"
+        }
       >
         <Surface className="divide-y divide-line px-4">
           <div data-setting-id="body-glass" className="flex items-center justify-between gap-4 py-3.5">
@@ -282,6 +322,7 @@ export function AppearancePage() {
             </div>
             <Slider label="模糊半径" value={appearance.blur} display={String(appearance.blur)} min={0} max={60} onChange={appearance.setBlur} disabled={glassOff} />
           </div>
+          {glassOff ? null : <DesktopSampleRow />}
         </Surface>
       </Section>
 

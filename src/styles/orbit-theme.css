@@ -212,11 +212,41 @@ html:not(.is-mac) #root {
 }
 
 /* Tint-less transparent rather than `transparent`, which browsers interpolate
-   through black and would dim the page on the way in and out of glass. */
+   through black and would dim the page on the way in and out of glass.
+
+   Nothing is expected to show through the *window* here — the app runs on CEF
+   in windowed mode, where Chromium's own fill is opaque. What these three have
+   to stop painting is the page's canvas, so the sampled-desktop layer below
+   (`.desktop-glass-layer`, z-index -1) is the bottom of the stack instead of
+   Chromium's white. That layer carries the theme colour itself, so a capture
+   that has not arrived yet still reads as the window it replaces. */
 html.has-native-glass:not(.theme-light),
 html.has-native-glass:not(.theme-light) body,
 html.has-native-glass:not(.theme-light) #root {
   background: color-mix(in srgb, var(--color-background-base) 0%, transparent);
+}
+
+/* The desktop behind the window, painted by the page.
+
+   `lib/desktop-glass.ts` keeps a JPEG of what is behind the window in here and
+   refreshes it on move, resize and focus. Everything the frost slider and the
+   opacity slider do happens on this layer, which is why they are instant: the
+   blur is a CSS filter and the wash is the `.workspace-background` rule below.
+
+   The overscan is for the blur: a filter samples past the edge, so a 60px
+   radius on an exactly-sized layer bleeds the base colour in on all four sides. */
+.desktop-glass-layer {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-color: var(--color-background-base);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  transform: scale(1.06);
+  transform-origin: center;
+  filter: blur(var(--sidebar-blur, 30px)) saturate(1.12) brightness(0.94);
 }
 
 /* Opaque until glass is on. The Tailwind utility used to win this and hide
@@ -225,9 +255,9 @@ html.has-native-glass:not(.theme-light) #root {
   background: var(--color-background-base);
 }
 
-/* Opacity is the window wash. Blur is the native desktop frost, not this
-   percentage — a blur of 0 used to make the page fully transparent over an
-   opaque window, which looks identical to solid black. */
+/* Opacity is the wash over the sampled desktop: the rest of the stack is
+   transparent, so `--sidebar-opacity` is literally how much of the window's
+   colour covers the desktop. */
 html.has-native-glass:not(.theme-light) .workspace-background {
   background: color-mix(
     in srgb,
@@ -344,6 +374,47 @@ html.has-native-glass:not(.theme-light) .sidebar-glass {
     var(--surface-sunken) calc(var(--sidebar-opacity) * 100%),
     transparent
   );
+}
+
+/* The title strip is window chrome, not a surface: it was paving the sunken
+   tone over the glass and leaving an opaque band across the top of the window.
+   Pane tabs and the browser column's strip share this class, so they all take
+   the same wash — and go fully clear once the native material owns the tint. */
+html.has-native-glass:not(.theme-light) .tab-strip {
+  background: color-mix(
+    in srgb,
+    var(--surface-sunken) calc(var(--sidebar-opacity) * 100%),
+    transparent
+  );
+}
+
+/* The active tab is the page's own sheet, and under glass the page is clear —
+   so the tab has to be clear too, or it reads as an opaque chip floating in a
+   transparent strip. Its hairlines and ink still mark it as active. */
+html.has-native-glass:not(.theme-light) .tab-strip [role="tab"][aria-selected="true"] {
+  background: color-mix(
+    in srgb,
+    var(--color-background-base) calc(var(--sidebar-opacity) * 100%),
+    transparent
+  );
+}
+
+html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
+  .tab-strip [role="tab"][aria-selected="true"] {
+  background: transparent;
+}
+
+/* The native side painted the tint (the `glass-wry` build: MonoCode's vibrancy
+   under a transparent page). Stop washing in CSS on top of it — two washes
+   stack, and that build's glass is the system material plus the window's own
+   alpha, nothing else. This is what makes it identical to MonoCode. */
+html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
+  .workspace-background,
+html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
+  .sidebar-glass,
+html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
+  .tab-strip {
+  background: color-mix(in srgb, var(--color-background-base) 0%, transparent);
 }
 
 /* The activity dot sits at (23px, 9px) in a 32px button. Its icon is
@@ -1343,6 +1414,11 @@ html.has-native-glass.glass-body:not(.theme-light) .body-glass {
     var(--color-background-base) calc(var(--sidebar-opacity) * 100%),
     transparent
   );
+}
+
+html.is-mac.has-native-glass.has-native-glass-tint.glass-body:not(.theme-light)
+  .body-glass {
+  background: color-mix(in srgb, var(--color-background-base) 0%, transparent);
 }
 
 textarea,

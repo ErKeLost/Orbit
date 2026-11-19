@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { setTheme as setNativeTheme } from "@tauri-apps/api/app";
+import { installDesktopGlass, setDesktopGlassEnabled } from "./desktop-glass";
 import { nativeThemePreference, themeColor, type ResolvedTheme } from "./theme";
 
 
@@ -164,13 +165,16 @@ let glassRunning = false;
 let glassApplied = false;
 
 /**
- * MonoCode's glass: the opacity slider is the native tint over the whole
- * window, and the blur slider is the desktop blur behind it. CSS only washes
- * the page until the native side confirms it painted that tint; painting both
- * would stack the opacity.
+ * Window glass, as it can actually work on this runtime.
  *
- * The toggle is the off switch. A low-power tier used to ignore it, which is
- * why the sliders looked dead while the switch stayed on.
+ * The window is not see-through: Chromium (CEF, windowed) always fills it, so
+ * no CSS here can reveal what is behind. `desktop-glass.ts` paints a capture of
+ * the desktop into `.desktop-glass-layer` instead, and both sliders are CSS over
+ * that layer — the frost is `--sidebar-blur`, the wash is `--sidebar-opacity`.
+ * Neither goes through IPC, so dragging them is immediate and cannot be lost.
+ *
+ * The toggle is the off switch: it drops the layer and tells the window to go
+ * back to its own colour.
  */
 function applyNativeGlass(state: Pick<AppearanceState, "scheme" | "blur" | "bodyGlass" | "sidebarOpacity">) {
   glassPending = state;
@@ -193,8 +197,13 @@ async function applyNativeGlassNow(state: Pick<AppearanceState, "scheme" | "blur
   const root = document.documentElement;
   const eligible = state.scheme === "dark" && GLASS_RUNTIME && state.bodyGlass;
   root.classList.toggle("glass-body", eligible);
+  // Both sliders are plain CSS on the sampled desktop. Published before the
+  // IPC below so a slider drag never waits for the shell.
   root.style.setProperty("--sidebar-blur", `${state.blur}px`);
-  root.style.setProperty("--window-opacity", String(state.sidebarOpacity));
+  root.style.setProperty("--sidebar-opacity", String(state.sidebarOpacity));
+  // Windows keeps its acrylic: the window itself is see-through there (the
+  // wash below has something to show), so it must not get the sample layer.
+  setDesktopGlassEnabled(eligible && IS_MAC_RUNTIME);
   if (!eligible) {
     root.classList.remove("has-native-glass", "has-native-glass-tint");
     if (!glassApplied) return;
@@ -203,12 +212,16 @@ async function applyNativeGlassNow(state: Pick<AppearanceState, "scheme" | "blur
     return;
   }
   // Mark applied before the await so a queued "off" still tells the window
-  // to go opaque. The enable call may already have landed by then.
+  // to go back to its own colour. The enable call may already have landed.
   glassApplied = true;
-  // The wash tracks the slider immediately. Native confirmation clears it.
   root.classList.add("has-native-glass");
   try {
     const { invoke } = await import("@tauri-apps/api/core");
+    // Two backends answer this: the CEF build keeps the window opaque behind the
+    // sampled desktop (a see-through window would show the real desktop sliding
+    // under a capture that lags a frame); the wry build installs MonoCode's
+    // vibrancy under a transparent page and reports `true` because it painted
+    // the shared tint itself. Windows takes its acrylic from here either way.
     const nativeTint = await invoke<boolean>("set_window_glass_enabled", {
       enabled: true,
       background: windowBackgroundRgb(),
@@ -217,6 +230,8 @@ async function applyNativeGlassNow(state: Pick<AppearanceState, "scheme" | "blur
     await invoke("set_window_background_blur", { radius: Math.round(state.blur) });
     // A newer state already replaced this one; don't publish a stale tint.
     if (glassPending) return;
+    // Only when the native side painted the tint may the page stop washing: two
+    // washes stack, and MonoCode's glass is the native one alone.
     root.classList.toggle("has-native-glass-tint", nativeTint === true);
     glassApplied = true;
     if (IS_WIN_RUNTIME) {
@@ -226,18 +241,8 @@ async function applyNativeGlassNow(state: Pick<AppearanceState, "scheme" | "blur
       await win.setEffects({ effects: [Effect.Acrylic], state: EffectState.Active });
     }
   } catch {
-    if (glassPending) return;
-    root.classList.remove("has-native-glass-tint");
-    // Older shells have no glass command. A clear window plus the CSS wash
-    // still lets the opacity slider show the desktop through the page.
-    if (!IS_WIN_RUNTIME) {
-      try {
-        const { getCurrentWindow, Effect, EffectState } = await import("@tauri-apps/api/window");
-        const win = getCurrentWindow();
-        await win.setBackgroundColor([0, 0, 0, 0]);
-        await win.setEffects({ effects: [Effect.UnderWindowBackground], state: EffectState.Active });
-      } catch { /* browser preview */ }
-    }
+    // A shell without the command still gets the CSS side: the sample layer is
+    // drawn by the page and does not need the shell at all.
   }
 }
 
@@ -401,6 +406,9 @@ let installed = false;
 export function installAppearance(nativeSync: () => boolean) {
   if (installed) return;
   installed = true;
+  // The desktop sample follows the window, not the theme, so it starts once
+  // for the process rather than on every appearance change.
+  void installDesktopGlass();
   const sync = () => {
     const state = useAppearance.getState();
     applyToDocument(state);
