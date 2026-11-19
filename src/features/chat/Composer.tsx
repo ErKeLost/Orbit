@@ -721,6 +721,16 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
             <ComposerPalette request={palette} onPick={insertPick} onClose={() => setPalette(null)} />
           </div>
         ) : null}
+        {/* 排队中的消息在输入框上面：它还没进这一轮，不属于要打字的那个盒子。 */}
+        {queueVisible ? (
+          <MessageQueueView
+            steering={queue.steering}
+            followUp={queue.followUp}
+            running={running}
+            onSteer={(text) => void steerFollowUp(text, target).catch(report)}
+            onClear={() => void recallQueue(target).catch(report)}
+          />
+        ) : null}
         <div
           ref={boxRef}
           data-composer-box
@@ -947,15 +957,6 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
               />
             </div>
           </div>
-          {queueVisible ? (
-            <MessageQueueView
-              steering={queue.steering}
-              followUp={queue.followUp}
-              running={running}
-              onSteer={(text) => void steerFollowUp(text, target).catch(report)}
-              onClear={() => void recallQueue(target).catch(report)}
-            />
-          ) : null}
         </div>
       </div>
     </div>

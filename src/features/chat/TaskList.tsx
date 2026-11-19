@@ -34,17 +34,13 @@ function TaskRow({ todo }: { todo: Todo }) {
   );
 }
 
-function Count({ done, total }: { done: number; total: number }) {
-  return <span className="shrink-0 text-2xs tabular-nums text-ink-3">{done}/{total}</span>;
-}
-
 /**
  * A status line on the composer's top edge, not a second card. One row at rest;
  * the points open under it. No title, no progress rule.
  */
 export function ComposerTasks({ plan }: { plan: TaskPlan }) {
   const [open, setOpen] = useState(false);
-  const { done, total } = todoProgress(plan.todos);
+  const { total } = todoProgress(plan.todos);
   const settled = total > 0 && plan.todos.every(todoFinished) && !plan.running;
   if (settled || (!total && !plan.running)) return null;
   const current = currentTodo(plan.todos);
@@ -65,7 +61,7 @@ export function ComposerTasks({ plan }: { plan: TaskPlan }) {
         <span className={`min-w-0 flex-1 truncate text-ui ${current?.status === "in_progress" ? "text-ink-1" : "text-ink-2"}`}>
           {current?.content}
         </span>
-        <Count done={done} total={total} />
+        {/* One icon, no count: how many of how many is what the list itself shows. */}
         {expandable ? <ChevronDown className="size-3 shrink-0 -rotate-90 text-ink-3" strokeWidth={1.75} /> : null}
       </>
     );
@@ -101,10 +97,9 @@ export function ComposerTasks({ plan }: { plan: TaskPlan }) {
           aria-expanded
           aria-label="收起任务"
           onClick={() => setOpen(false)}
-          className="flex h-6 shrink-0 items-center gap-0.5 rounded-md px-1 text-ink-3 hover:bg-fill hover:text-ink-2"
+          className="grid size-6 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-fill hover:text-ink-2"
         >
-          <Count done={done} total={total} />
-          <ChevronDown className="size-3" strokeWidth={1.75} />
+          <ChevronDown className="size-3 rotate-180" strokeWidth={1.75} />
         </button>
       </div>
     </div>

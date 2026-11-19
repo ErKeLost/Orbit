@@ -1,10 +1,11 @@
 import { CornerDownRight, ListEnd, Trash } from "../../shared/ui/icons";
 
 /**
- * Queued messages are a footer inside the composer — not a card riding above
- * it. Follow-ups wait for the turn to end; steering messages are already on
- * their way into the running turn. "Steer" promotes a follow-up; the trash
- * removes the whole queue back into the draft (Pi has no per-item delete).
+ * Queued messages ride *above* the composer, as their own row: they are words
+ * that have not reached the turn yet, so they are not part of the box the user
+ * is typing into. Follow-ups wait for the turn to end; steering messages are
+ * already on their way into the running turn. "Steer" promotes a follow-up; the
+ * trash removes the whole queue back into the draft (Pi has no per-item delete).
  *
  * `running` makes the row honest: steering messages are only consumed by a turn
  * that is actually running. Once the turn has settled, the row is not
@@ -30,7 +31,7 @@ export function MessageQueueView({
   ];
   if (rows.length === 0) return null;
   return (
-    <div className="border-t border-stroke text-ink-2" data-message-queue>
+    <div className="mb-1.5 overflow-hidden rounded-lg border border-line bg-fill-weak text-ink-2" data-message-queue>
       {rows.map((row, index) => (
         <div key={`${row.kind}-${index}`} className={`flex min-h-8 items-center gap-2 px-3 text-ui ${index > 0 ? "border-t border-stroke" : ""}`}>
           {row.kind === "steer" ? <CornerDownRight className="size-3.5 shrink-0 text-ink-3" /> : <ListEnd className="size-3.5 shrink-0 text-ink-3" />}

@@ -622,11 +622,9 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
                 </button>
                 {sessionsOpen ? (
                   <div className="flex flex-col pb-1">
+                    {/* 无目录会话直接排在「会话」下面：它们就是最近的几条，不再单挂一行说明。 */}
                     {!viewingLooseScope && looseSessions.length > 0 ? (
                       <section aria-label={LOOSE_LABEL}>
-                        <h3 className="flex items-center gap-2 px-3 pb-1 pt-4 text-2xs font-medium text-ink-3">
-                          <span className="min-w-0 truncate">{LOOSE_LABEL}</span>
-                        </h3>
                         <div className="flex flex-col gap-px px-2">
                           {looseSessions.map(({ session, project }) => (
                             <RailSessionCard
@@ -646,10 +644,15 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
                         </div>
                       </section>
                     ) : null}
-                    {sessionAgeSections.map((group) => (
+                    {sessionAgeSections.map((group, index) => (
                       <section key={group.label} aria-label={group.label}>
-                        {/* 分组标题：11px、40% 灰，只做分隔不做主角。 */}
-                        <h3 className="flex items-center gap-2 px-3 pb-1 pt-4 text-2xs font-medium text-ink-3">
+                        {/* 分组标题：11px、40% 灰，只做分隔不做主角。第一个分组紧贴
+                            「会话」，那圈 pt-4 在这里只是一道空档，收掉。 */}
+                        <h3
+                          className={`flex items-center gap-2 px-3 pb-1 text-2xs font-medium text-ink-3 ${
+                            index === 0 && (viewingLooseScope || looseSessions.length === 0) ? "pt-0.5" : "pt-4"
+                          }`}
+                        >
                           <span className="min-w-0 truncate">{group.label}</span>
                         </h3>
                         <div className="flex flex-col gap-px px-2">
