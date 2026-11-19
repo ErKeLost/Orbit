@@ -6,6 +6,14 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.52
+
+The page under the sliders was opaque, so no setting made the desktop visible. It now paints the desktop behind the window into its own layer, and frost and opacity are drawn on that: moving the sliders changes what you see immediately, and nothing can be lost between the window and the page. Appearance grows a desktop-sample row that says when the last capture happened, and asks for screen recording only if a capture failed.
+
+A `glass-wry` build is the other mechanism, for development: the page is genuinely see-through there and macOS blurs the real desktop behind it. It has no in-window browser column.
+
+A queued message sits above the composer, outside the box being typed in. The task strip no longer counts itself — the open list is the count. Sessions without a directory sit straight under 「会话」.
+
 ## v1.0.51
 
 The window opacity slider was changing a tint behind an opaque Chromium page, so 15% still looked solid black. The page background is cleared again after the first paint, and the slider washes the window itself.
