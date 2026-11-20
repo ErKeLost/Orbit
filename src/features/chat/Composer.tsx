@@ -721,16 +721,6 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
             <ComposerPalette request={palette} onPick={insertPick} onClose={() => setPalette(null)} />
           </div>
         ) : null}
-        {/* 排队中的消息在输入框上面：它还没进这一轮，不属于要打字的那个盒子。 */}
-        {queueVisible ? (
-          <MessageQueueView
-            steering={queue.steering}
-            followUp={queue.followUp}
-            running={running}
-            onSteer={(text) => void steerFollowUp(text, target).catch(report)}
-            onClear={() => void recallQueue(target).catch(report)}
-          />
-        ) : null}
         <div
           ref={boxRef}
           data-composer-box
@@ -803,9 +793,9 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
                     }}
                   >
                     <ImagePlus className="mt-0.5 size-3.5 shrink-0 text-ink-2" strokeWidth={1.75} />
-                    <span className="min-w-0">
+                    <span className="min-w-0 flex-1">
                       <span className="block text-ui font-medium leading-5">文件</span>
-                      <span className="mt-0.5 block text-2xs leading-4 text-ink-3">
+                      <span className="mt-0.5 block truncate text-2xs leading-4 text-ink-3" title={runtimeTarget === "desktop" ? "图片、视频、文档…从磁盘选择，或直接粘贴" : "从磁盘选择图片，或直接粘贴截图"}>
                         {runtimeTarget === "desktop" ? "图片、视频、文档…从磁盘选择，或直接粘贴" : "从磁盘选择图片，或直接粘贴截图"}
                       </span>
                     </span>
@@ -823,8 +813,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
                   >
                     <Sparkles className={`mt-0.5 size-3.5 shrink-0 ${suggestEnabled ? "text-accent" : "text-ink-2"}`} strokeWidth={1.75} />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-ui font-medium leading-5">提示词联想</span>
-                      <span className="mt-0.5 block text-2xs leading-4 text-ink-3">每轮回答结束后，猜你下一句想说什么填进输入框；打字过程不会调用模型。Tab 或 → 采纳，Esc 忽略。每轮只算一次模型调用</span>
+                      <span className="block truncate text-ui font-medium leading-5">提示词联想</span>
+                      <span className="mt-0.5 block truncate text-2xs leading-4 text-ink-3" title="每轮回答结束后，猜你下一句想说什么填进输入框；打字过程不会调用模型。Tab 或 → 采纳，Esc 忽略。每轮只算一次模型调用">每轮回答结束后，猜你下一句想说什么填进输入框；打字过程不会调用模型。Tab 或 → 采纳，Esc 忽略。每轮只算一次模型调用</span>
                     </span>
                     {suggestEnabled && suggestAvailable ? <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent" /> : null}
                   </button>
@@ -840,8 +830,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
                   >
                     <Ungroup className={`mt-0.5 size-3.5 shrink-0 ${multiAgent ? "text-accent" : "text-ink-2"}`} strokeWidth={1.75} />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-ui font-medium leading-5">多 agent 协作</span>
-                      <span className="mt-0.5 block text-2xs leading-4 text-ink-3">可委派子 agent 并行处理</span>
+                      <span className="block truncate text-ui font-medium leading-5">多 agent 协作</span>
+                      <span className="mt-0.5 block truncate text-2xs leading-4 text-ink-3" title="可委派子 agent 并行处理">可委派子 agent 并行处理</span>
                     </span>
                     {multiAgent ? <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent" /> : null}
                   </button>
@@ -859,8 +849,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
                     >
                       <CursorMagicSelection className={`mt-0.5 size-3.5 shrink-0 ${computerUse ? "text-accent" : "text-ink-2"}`} strokeWidth={1.75} />
                       <span className="min-w-0 flex-1">
-                        <span className="block text-ui font-medium leading-5">操作电脑</span>
-                        <span className="mt-0.5 block text-2xs leading-4 text-ink-3">用自然语言让助手点选本机界面</span>
+                        <span className="block truncate text-ui font-medium leading-5">操作电脑</span>
+                        <span className="mt-0.5 block truncate text-2xs leading-4 text-ink-3" title="用自然语言让助手点选本机界面">用自然语言让助手点选本机界面</span>
                       </span>
                       {computerUse ? <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent" /> : null}
                     </button>
@@ -878,8 +868,8 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
                   >
                     <Globe className={`mt-0.5 size-3.5 shrink-0 ${browserUse ? "text-accent" : "text-ink-2"}`} strokeWidth={1.75} />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-ui font-medium leading-5">操作浏览器</span>
-                      <span className="mt-0.5 block text-2xs leading-4 text-ink-3">在右侧第三栏里用真实 Chrome 打开并操作网页</span>
+                      <span className="block truncate text-ui font-medium leading-5">操作浏览器</span>
+                      <span className="mt-0.5 block truncate text-2xs leading-4 text-ink-3" title="在右侧第三栏里用真实 Chrome 打开并操作网页">在右侧第三栏里用真实 Chrome 打开并操作网页</span>
                     </span>
                     {browserUse ? <span className="mt-1 size-1.5 shrink-0 rounded-full bg-accent" /> : null}
                   </button>
@@ -957,6 +947,16 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
               />
             </div>
           </div>
+          {/* 排队中的消息是盒子里的一行页脚：不另画一张卡片浮在输入框上面。 */}
+          {queueVisible ? (
+            <MessageQueueView
+              steering={queue.steering}
+              followUp={queue.followUp}
+              running={running}
+              onSteer={(text) => void steerFollowUp(text, target).catch(report)}
+              onClear={() => void recallQueue(target).catch(report)}
+            />
+          ) : null}
         </div>
       </div>
     </div>

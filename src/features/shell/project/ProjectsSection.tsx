@@ -74,31 +74,29 @@ type SortableApi = ReturnType<typeof useAnimatedReorder>;
  * The label was noise — a rail that says "还没有项目" in text is asking the
  * reader to interpret instead of act. The icon is the action itself when a
  * picker is available, and a quiet placeholder when it is not (a phone, where
- * the picker lives on the desktop).
+ * the picker lives on the desktop). It sits in the middle of the leftover
+ * rail, not pinned to the top-left of a blank stretch.
  */
 function EmptyProjects({ onAdd }: { onAdd?: () => void }) {
-  const className =
-    "ml-1.5 grid size-8 place-items-center rounded-control border border-dashed border-line-strong text-ink-3";
-  if (!onAdd) {
-    return (
-      <div className="px-2 pb-2">
-        <div className={className} aria-hidden>
+  const tile =
+    "grid size-8 place-items-center rounded-control border border-dashed border-line-strong text-ink-3";
+  return (
+    <div className="flex flex-1 items-center justify-center px-2 pb-2">
+      {onAdd ? (
+        <button
+          type="button"
+          title="打开文件夹"
+          aria-label="打开文件夹"
+          onClick={onAdd}
+          className={`${tile} hover:border-accent/50 hover:bg-fill hover:text-ink-1`}
+        >
+          <FolderPlus className="size-4" strokeWidth={1.75} />
+        </button>
+      ) : (
+        <div className={tile} aria-hidden>
           <FolderPlus className="size-4" strokeWidth={1.75} />
         </div>
-      </div>
-    );
-  }
-  return (
-    <div className="px-2 pb-2">
-      <button
-        type="button"
-        title="打开文件夹"
-        aria-label="打开文件夹"
-        onClick={onAdd}
-        className={`${className} hover:border-accent/50 hover:bg-fill hover:text-ink-1`}
-      >
-        <FolderPlus className="size-4" strokeWidth={1.75} />
-      </button>
+      )}
     </div>
   );
 }
@@ -222,7 +220,10 @@ export function ProjectsSection({
   const sortable = useAnimatedReorder(paths, (ids) => onReorder(ids), "y");
   const running = useMemo(() => new Set(runningPaths), [runningPaths]);
   return (
-    <section aria-label="项目" className="mb-2 shrink-0">
+    <section
+      aria-label="项目"
+      className={projects.length === 0 ? "mb-2 flex flex-1 flex-col" : "mb-2 shrink-0"}
+    >
       <SectionHeader
         label="项目"
         onAdd={onAdd}

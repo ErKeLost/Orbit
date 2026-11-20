@@ -121,14 +121,24 @@ describe("ProjectsSection", () => {
     expect(home).toBe(1);
   });
 
-  it("没有项目时给一个图标入口，不写「还没有项目」也不报 0", async () => {
+  it("没有项目时图标居中，不写「还没有项目」也不报 0", async () => {
     await render({ projects: [] });
     expect(container.textContent).not.toContain("还没有项目");
     expect(container.textContent?.trim()).toBe("项目");
+    const section = container.querySelector("section");
+    expect(section?.className).toContain("flex-1");
     const empty = iconButton("打开文件夹");
     expect(empty).not.toBeNull();
+    expect(empty?.parentElement?.className).toContain("items-center");
+    expect(empty?.parentElement?.className).toContain("justify-center");
     await click(empty);
     expect(added).toBe(1);
+  });
+
+  it("有项目时列表贴在分段标题下，不把空态撑满", async () => {
+    await render();
+    expect(container.querySelector("section")?.className).not.toContain("flex-1");
+    expect(iconButton("打开文件夹")).toBeNull();
   });
 
   it("右键一行打开项目菜单，不是浏览器的默认菜单", async () => {

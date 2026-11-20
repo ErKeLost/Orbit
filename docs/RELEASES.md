@@ -6,6 +6,14 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.53
+
+The colour system is MonoCode's. The default is a neutral grey: hue 240, saturation 0, dark lightness 9. Named themes write `--wt-*` and the stylesheet overrides text, accent, links, headings and code colours. Glass washes use the same formulas: an opaque rail mixes the background 10% toward black, and a glass rail is the theme colour at the window opacity.
+
+A debug build keeps its Chromium profile in `~/.pi/agent/browser-dev`, so `tauri dev` can run beside the installed app. They still share the bundle id and the sessions under `~/.pi/agent`.
+
+The empty home no longer paints its galaxy plate while window glass is on. A queued message is a footer row inside the composer, not a card above it. An empty project rail centres its add button. The running indicator is a dashed circle. Window glass stays off until it is turned on.
+
 ## v1.0.52
 
 The page under the sliders was opaque, so no setting made the desktop visible. It now paints the desktop behind the window into its own layer, and frost and opacity are drawn on that: moving the sliders changes what you see immediately, and nothing can be lost between the window and the page. Appearance grows a desktop-sample row that says when the last capture happened, and asks for screen recording only if a capture failed.

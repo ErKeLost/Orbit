@@ -16,6 +16,7 @@ export type SettingIndexEntry = {
 export const SETTINGS_INDEX: SettingIndexEntry[] = [
   // 外观
   { id: "theme", section: "appearance", label: "主题", keywords: "深色 浅色 跟随系统 dark light theme" },
+  { id: "workspace-theme", section: "appearance", label: "配色", keywords: "harbor moss ember orchid workspace theme 主题色 配色" },
   { id: "accent", section: "appearance", label: "强调色", keywords: "主题色 accent 发送按钮 气泡 颜色" },
   { id: "diff-colors", section: "appearance", label: "Diff 颜色", keywords: "色盲 高对比 增删行 红 绿 diff palette" },
   { id: "hue", section: "appearance", label: "色相", keywords: "色调 hue 颜色" },

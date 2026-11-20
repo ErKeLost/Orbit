@@ -37,20 +37,28 @@
      readable text on the theme background, `-bg`/`-gutter` are row tints.
      Palettes below swap them; diff UI must also show a +/- glyph so color is
      never the only cue. */
-  --color-diff-add: var(--positive);
-  --color-diff-add-fg: color-mix(in oklab, var(--positive) 55%, var(--ink-1));
-  --color-diff-add-bg: color-mix(in oklab, var(--positive) 15%, transparent);
-  --color-diff-add-gutter: color-mix(
-    in oklab,
-    var(--positive) 25%,
+  --color-diff-add: #10b981;
+  --color-diff-add-fg: #6ee7b7;
+  --color-diff-add-bg: color-mix(
+    in srgb,
+    var(--color-diff-add) 15%,
     transparent
   );
-  --color-diff-del: var(--negative);
-  --color-diff-del-fg: color-mix(in oklab, var(--negative) 55%, var(--ink-1));
-  --color-diff-del-bg: color-mix(in oklab, var(--negative) 15%, transparent);
+  --color-diff-add-gutter: color-mix(
+    in srgb,
+    var(--color-diff-add) 25%,
+    transparent
+  );
+  --color-diff-del: #f43f5e;
+  --color-diff-del-fg: #fda4af;
+  --color-diff-del-bg: color-mix(
+    in srgb,
+    var(--color-diff-del) 15%,
+    transparent
+  );
   --color-diff-del-gutter: color-mix(
-    in oklab,
-    var(--negative) 25%,
+    in srgb,
+    var(--color-diff-del) 25%,
     transparent
   );
 }
@@ -87,29 +95,76 @@
 }
 
 :root {
-  /* Durations come from the token scale; these names stay for existing rules. */
-  --motion-feedback-duration: var(--dur-1);
-  --motion-enter-duration: var(--dur-2);
-  --motion-reorder-duration: var(--dur-2);
-  --motion-tab-close-duration: var(--dur-2);
-  --motion-ease-out: var(--ease);
-  --motion-tab-ease-out: var(--ease);
+  /* MonoCode's motion. These names stay for existing rules. */
+  --motion-feedback-duration: 120ms;
+  --motion-enter-duration: 200ms;
+  --motion-reorder-duration: 160ms;
+  --motion-tab-close-duration: 200ms;
+  --motion-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-tab-ease-out: cubic-bezier(0.3333, 0.6667, 0.6667, 1);
 
   /* Appearance slider defaults; `appearance.ts` writes the live values. */
-  --theme-hue: 255;
-  --theme-saturation: 16%;
-  --theme-saturation-unit: 16;
-  --theme-dark-lightness: 8%;
-  --theme-lightness-unit: 8;
+  --theme-hue: 240;
+  --theme-saturation: 0%;
+  --theme-dark-lightness: 9%;
 
   --sidebar-opacity: 0.85;
   --window-background-opacity: 0.4;
   --chat-background-empty-opacity: 0.24;
   --chat-background-session-opacity: 0.24;
+  /* The Haze fades its artwork out toward the composer. */
+  --chat-background-fade-mask: linear-gradient(
+    to bottom,
+    #000 0 19%,
+    rgb(0 0 0 / 94%) 30%,
+    rgb(0 0 0 / 72%) 42%,
+    rgb(0 0 0 / 42%) 54%,
+    rgb(0 0 0 / 16%) 66%,
+    rgb(0 0 0 / 4%) 78%,
+    transparent 90%
+  );
+  --chat-background-session-fade-mask: linear-gradient(
+    to bottom,
+    #000 0 18%,
+    transparent 76%
+  );
+  /*
+   * The Haze also darkens toward the bottom, so it reads as gone by the
+   * middle. Plain images have no overlay; these masks bake that darkening in.
+   */
+  --chat-background-image-fade-mask: linear-gradient(
+    to bottom,
+    #000 0 19%,
+    rgb(0 0 0 / 79%) 30%,
+    rgb(0 0 0 / 50%) 42%,
+    rgb(0 0 0 / 20%) 54%,
+    rgb(0 0 0 / 5%) 64%,
+    transparent 72%
+  );
+  --chat-background-image-session-fade-mask: linear-gradient(
+    to bottom,
+    #000 0 18%,
+    rgb(0 0 0 / 61%) 32%,
+    rgb(0 0 0 / 32%) 47%,
+    rgb(0 0 0 / 11%) 62%,
+    transparent 72%
+  );
 
-  /* Links and headings use the token roles, not hues of their own. */
-  --link-color: var(--accent-ink);
-  --color-markdown-heading: var(--ink-1);
+  /* Code colours for the editor, diffs and previews. VS Code Dark+. */
+  --code-font-size: 12.5px;
+  --syntax-keyword: #569cd6;
+  --syntax-callable: #dcdcaa;
+  --syntax-string: #ce9178;
+  --syntax-type: #4ec9b0;
+  --syntax-tag: #569cd6;
+  --syntax-number: #b5cea8;
+  --syntax-comment: #6a9955;
+  --syntax-property: #9cdcfe;
+  --syntax-meta: #dcdcaa;
+  --syntax-invalid: #f44747;
+
+  --link-color: #7dd3fc;
+  --color-markdown-heading: #f9a8c9;
 }
 
 html {
@@ -117,7 +172,20 @@ html {
 }
 
 html.theme-light {
-  --link-color: var(--accent-ink);
+  --link-color: hsl(211 92% 40%);
+  --color-markdown-heading: #be185d;
+  --color-diff-add-fg: #047857;
+  --color-diff-del-fg: #be123c;
+  --syntax-keyword: #0000ff;
+  --syntax-callable: #795e26;
+  --syntax-string: #a31515;
+  --syntax-type: #267f99;
+  --syntax-tag: #800000;
+  --syntax-number: #098658;
+  --syntax-comment: #008000;
+  --syntax-property: #001080;
+  --syntax-meta: #795e26;
+  --syntax-invalid: #cd3131;
   color-scheme: light;
 }
 
@@ -246,7 +314,7 @@ html.has-native-glass:not(.theme-light) #root {
   background-size: 100% 100%;
   transform: scale(1.06);
   transform-origin: center;
-  filter: blur(var(--sidebar-blur, 30px)) saturate(1.12) brightness(0.94);
+  filter: blur(var(--sidebar-blur, 24px)) saturate(1.12) brightness(0.94);
 }
 
 /* Opaque until glass is on. The Tailwind utility used to win this and hide
@@ -358,32 +426,45 @@ html.has-native-glass:not(.theme-light) .workspace-background {
 }
 
 .sidebar-glass {
-  /* The rail is one step below the page, not the page darkened by hand. */
-  background: var(--surface-sunken);
+  background: color-mix(in srgb, var(--color-background-base) 90%, black);
   transition: background-color var(--motion-feedback-duration)
     var(--motion-ease-out);
 }
 
 html.theme-light .sidebar-glass {
-  background: var(--surface-sunken);
+  background: var(--color-background-base);
 }
 
 html.has-native-glass:not(.theme-light) .sidebar-glass {
+  background: hsl(
+    var(--theme-hue) var(--theme-saturation) var(--background-lightness) /
+      var(--sidebar-opacity)
+  );
+}
+
+/* A named theme replaces the hue tint. Glass then washes that surface at the
+   same opacity, instead of rebuilding it from hue/saturation. */
+html.has-workspace-theme.has-native-glass:not(.theme-light) .sidebar-glass {
   background: color-mix(
-    in oklab,
-    var(--surface-sunken) calc(var(--sidebar-opacity) * 100%),
+    in srgb,
+    var(--wt-dark-surface) calc(var(--sidebar-opacity) * 100%),
     transparent
   );
 }
 
-/* The title strip is window chrome, not a surface: it was paving the sunken
-   tone over the glass and leaving an opaque band across the top of the window.
-   Pane tabs and the browser column's strip share this class, so they all take
-   the same wash — and go fully clear once the native material owns the tint. */
+/* The title strip is window chrome. It takes the same wash as the sidebar,
+   or it leaves an opaque band across the top of the glass. */
 html.has-native-glass:not(.theme-light) .tab-strip {
+  background: hsl(
+    var(--theme-hue) var(--theme-saturation) var(--background-lightness) /
+      var(--sidebar-opacity)
+  );
+}
+
+html.has-workspace-theme.has-native-glass:not(.theme-light) .tab-strip {
   background: color-mix(
     in srgb,
-    var(--surface-sunken) calc(var(--sidebar-opacity) * 100%),
+    var(--wt-dark-surface) calc(var(--sidebar-opacity) * 100%),
     transparent
   );
 }
@@ -404,10 +485,8 @@ html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
   background: transparent;
 }
 
-/* The native side painted the tint (the `glass-wry` build: MonoCode's vibrancy
-   under a transparent page). Stop washing in CSS on top of it — two washes
-   stack, and that build's glass is the system material plus the window's own
-   alpha, nothing else. This is what makes it identical to MonoCode. */
+/* AppKit fills the shared tint as the window grows. Painting it here too
+   would compound the opacity; wait for the native host's acknowledgement. */
 html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
   .workspace-background,
 html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
@@ -415,6 +494,100 @@ html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
 html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
   .tab-strip {
   background: color-mix(in srgb, var(--color-background-base) 0%, transparent);
+}
+
+/* A workspace theme (workspaceThemes.ts) replaces the hue/saturation tint with
+   its own text, accent, markdown and code colours. Strokes and selections mix
+   from `--color-content`, so they follow. Orbit has no inset shell, so the
+   same variables paint the window rather than only `html.layout-inset`. */
+html.has-workspace-theme {
+  --color-content: var(--wt-dark-content);
+  --color-background-base: var(--wt-dark-surface);
+  --color-accent: var(--wt-dark-accent);
+  --link-color: var(--wt-dark-link);
+  --color-markdown-heading: var(--wt-dark-heading);
+  --syntax-keyword: var(--wt-dark-syntax-keyword);
+  --syntax-callable: var(--wt-dark-syntax-callable);
+  --syntax-string: var(--wt-dark-syntax-string);
+  --syntax-type: var(--wt-dark-syntax-type);
+  --syntax-tag: var(--wt-dark-syntax-tag);
+  --syntax-number: var(--wt-dark-syntax-number);
+  --syntax-comment: var(--wt-dark-syntax-comment);
+  --syntax-property: var(--wt-dark-syntax-property);
+  --syntax-meta: var(--wt-dark-syntax-meta);
+  --syntax-invalid: var(--wt-dark-syntax-invalid);
+  --color-stroke: color-mix(in srgb, var(--wt-dark-content) 7%, transparent);
+  --surface-canvas: var(--wt-dark-surface);
+  --surface-sunken: var(--wt-dark-surface);
+  --surface-card: var(--wt-dark-panel-solid);
+  --surface-raised: color-mix(in srgb, var(--wt-dark-content) 8%, var(--wt-dark-surface));
+  --surface-overlay: color-mix(in srgb, var(--wt-dark-content) 12%, var(--wt-dark-surface));
+  --ink-1: var(--wt-dark-content);
+  --ink-2: color-mix(in srgb, var(--wt-dark-content) 62%, var(--wt-dark-surface));
+  --ink-3: color-mix(in srgb, var(--wt-dark-content) 42%, var(--wt-dark-surface));
+  --line: var(--color-stroke);
+  --accent: var(--wt-dark-accent);
+  --accent-ink: var(--wt-dark-link);
+  --color-surface: var(--wt-dark-surface);
+  --color-surface-canvas: var(--wt-dark-surface);
+  --color-surface-sunken: var(--wt-dark-surface);
+  --color-surface-card: var(--wt-dark-panel-solid);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-overlay: var(--surface-overlay);
+  --color-ink-1: var(--wt-dark-content);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-accent-ink: var(--wt-dark-link);
+}
+
+html.has-workspace-theme.theme-light {
+  --color-content: var(--wt-light-content);
+  --color-background-base: var(--wt-light-surface);
+  --color-accent: var(--wt-light-accent);
+  --link-color: var(--wt-light-link);
+  --color-markdown-heading: var(--wt-light-heading);
+  --syntax-keyword: var(--wt-light-syntax-keyword);
+  --syntax-callable: var(--wt-light-syntax-callable);
+  --syntax-string: var(--wt-light-syntax-string);
+  --syntax-type: var(--wt-light-syntax-type);
+  --syntax-tag: var(--wt-light-syntax-tag);
+  --syntax-number: var(--wt-light-syntax-number);
+  --syntax-comment: var(--wt-light-syntax-comment);
+  --syntax-property: var(--wt-light-syntax-property);
+  --syntax-meta: var(--wt-light-syntax-meta);
+  --syntax-invalid: var(--wt-light-syntax-invalid);
+  --color-stroke: color-mix(in srgb, var(--wt-light-content) 7%, transparent);
+  --surface-canvas: var(--wt-light-surface);
+  --surface-sunken: var(--wt-light-surface);
+  --surface-card: var(--wt-light-panel-solid);
+  --surface-raised: var(--wt-light-panel-solid);
+  --surface-overlay: var(--wt-light-panel-solid);
+  --ink-1: var(--wt-light-content);
+  --ink-2: color-mix(in srgb, var(--wt-light-content) 62%, var(--wt-light-surface));
+  --ink-3: color-mix(in srgb, var(--wt-light-content) 42%, var(--wt-light-surface));
+  --line: var(--color-stroke);
+  --accent: var(--wt-light-accent);
+  --accent-ink: var(--wt-light-link);
+  --color-surface: var(--wt-light-surface);
+  --color-surface-canvas: var(--wt-light-surface);
+  --color-surface-sunken: var(--wt-light-surface);
+  --color-surface-card: var(--wt-light-panel-solid);
+  --color-surface-raised: var(--wt-light-panel-solid);
+  --color-surface-overlay: var(--wt-light-panel-solid);
+  --color-ink-1: var(--wt-light-content);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-accent-ink: var(--wt-light-link);
+}
+
+html.has-workspace-theme .sidebar-glass {
+  background: var(--wt-dark-surface);
+}
+
+html.has-workspace-theme.theme-light .sidebar-glass {
+  background: var(--wt-light-surface);
 }
 
 /* The activity dot sits at (23px, 9px) in a 32px button. Its icon is
@@ -456,9 +629,16 @@ html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
+  -webkit-mask-image: var(--chat-background-image-fade-mask);
+  mask-image: var(--chat-background-image-fade-mask);
   opacity: 0;
   transition: opacity var(--motion-feedback-duration) var(--motion-ease-out);
   pointer-events: none;
+}
+
+.chat-pane-background[data-session-empty="false"]::before {
+  -webkit-mask-image: var(--chat-background-image-session-fade-mask);
+  mask-image: var(--chat-background-image-session-fade-mask);
 }
 
 /* Each masked copy samples the same artwork; only the image is blurred. */
@@ -1589,6 +1769,47 @@ html.theme-light .orbit-galaxy-surface [data-composer-box] {
   box-shadow: 0 1px 3px color-mix(in srgb, var(--color-content) 4%, transparent);
 }
 
+/*
+ * Glass drops the page paper, and the composer is only an 8% wash. Over a
+ * busy desktop the placeholder, model name and toolbar icons disappear.
+ * The card stays frosted; the rest of the window does not.
+ */
+html.glass-body:not(.theme-light) [data-composer-box] {
+  background: color-mix(in srgb, var(--color-background-base) 92%, transparent);
+  border-color: color-mix(in srgb, var(--color-content) 18%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(1.15);
+  backdrop-filter: blur(20px) saturate(1.15);
+  box-shadow:
+    0 10px 28px rgb(0 0 0 / 0.38),
+    inset 0 1px 0 color-mix(in srgb, var(--color-content) 10%, transparent);
+}
+
+html.glass-body:not(.theme-light) [data-composer-box] button.text-ink-3 {
+  color: var(--ink-1);
+}
+
+html.glass-body:not(.theme-light) [data-composer-box] button.bg-selection {
+  background-color: color-mix(
+    in srgb,
+    var(--color-content) 16%,
+    var(--color-background-base)
+  );
+}
+
+html.glass-body:not(.theme-light) [data-composer-box] .composer-field::placeholder {
+  color: color-mix(in srgb, var(--color-content) 72%, transparent);
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--color-content) 72%,
+    transparent
+  );
+}
+
+html.glass-body:not(.theme-light) [data-composer-box] .primary-action:disabled {
+  background: color-mix(in srgb, #fff 84%, var(--color-background-base));
+  color: #141414;
+}
+
 /* Solid primary actions share the composer submit treatment. */
 .primary-action:not(:disabled) {
   background: white;
@@ -1754,15 +1975,15 @@ header[data-tauri-drag-region] button {
   border-radius: 999px;
   background: linear-gradient(
     90deg,
-    oklch(0.7 0.16 0),
-    oklch(0.72 0.16 40),
-    oklch(0.78 0.15 85),
-    oklch(0.72 0.15 145),
-    oklch(0.7 0.13 190),
-    oklch(0.66 0.15 250),
-    oklch(0.64 0.16 300),
-    oklch(0.68 0.16 340),
-    oklch(0.7 0.16 360)
+    hsl(0 70% 58%),
+    hsl(40 70% 58%),
+    hsl(85 70% 58%),
+    hsl(145 70% 58%),
+    hsl(190 70% 58%),
+    hsl(250 70% 58%),
+    hsl(300 70% 58%),
+    hsl(340 70% 58%),
+    hsl(360 70% 58%)
   );
   outline: none;
 }
@@ -1773,7 +1994,7 @@ header[data-tauri-drag-region] button {
   height: 18px;
   border-radius: 999px;
   border: 3px solid var(--color-background-base);
-  background: oklch(0.7 0.16 var(--hue, 255));
+  background: hsl(var(--hue, 240) 70% 58%);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-content) 35%, transparent);
   cursor: pointer;
 }

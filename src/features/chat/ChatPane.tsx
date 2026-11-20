@@ -18,7 +18,7 @@ import { AgentActivityFeed } from "../../components/agents/AgentActivityFeed";
 import { GalaxyDotBackground } from "../background/GalaxyDotBackground";
 import { TerminalDock } from "../terminal/TerminalDock";
 import { CHAT_PANE_ID, useShell } from "../shell/shellStore";
-import { useAppearance } from "../../lib/appearance";
+import { useAppearance, windowGlassOn } from "../../lib/appearance";
 import { ErrorRow, InitialWorking, TranscriptGroupView, TranscriptSkeleton, type TranscriptGroup } from "./Transcript";
 import { Composer } from "./Composer";
 import { PromptOutline } from "./PromptOutline";
@@ -126,6 +126,9 @@ function EmptySession({ cwd, onSubmitted }: { cwd: string; onSubmitted: () => vo
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const projects = useProjects((state) => state.projects);
   const homeDir = useWorkspace((state) => state.homeDir);
+  // The plate is an opaque canvas. While the window is glass it would hide the
+  // desktop the toggle just revealed, so the home page keeps only the composer.
+  const glass = useAppearance(windowGlassOn);
   const project = cwd && cwd !== homeDir ? (projects.find((item) => item.path === cwd)?.name ?? cwd.split(/[\\/]/).filter(Boolean).at(-1)) : null;
   const title = project ? `What should we work on in ${project}?` : "What should we work on?";
   return (
@@ -133,7 +136,7 @@ function EmptySession({ cwd, onSubmitted }: { cwd: string; onSubmitted: () => vo
     // plate is printed on dark paper with light ink, so it reads the same in
     // light and dark mode instead of turning into white-edged squares.
     <div ref={lockOverscroll} className="orbit-galaxy-surface relative flex h-full min-h-0 overflow-y-auto overscroll-none">
-      <GalaxyDotBackground />
+      {glass ? null : <GalaxyDotBackground />}
       <div className="pointer-events-none relative z-10 mx-auto flex w-full max-w-4xl flex-1 flex-col justify-center px-1.5 py-12">
         <div className="pointer-events-auto mb-4 px-2.5">
           <h1 className="truncate text-lg text-ink-1" title={project ? cwd : undefined}>{title}</h1>

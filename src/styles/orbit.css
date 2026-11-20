@@ -1553,21 +1553,29 @@ html.theme-light [data-composer-box] {
  * composer 到底层画布一起保持一致。
  */
 .orbit-galaxy-surface {
-  /* 子树重新钉回暗色语义 token：新的铺色本身不区分明暗，这里换的是
-     surface / ink 的取值，而不是把 HSL 里的两个数字改小。 */
-  --surface-canvas: oklch(0.19 0.012 285);
-  --surface-sunken: oklch(0.155 0.012 285);
-  --surface-card: oklch(0.225 0.012 285);
-  --surface-raised: oklch(0.265 0.013 285);
-  --surface-overlay: oklch(0.3 0.013 285);
-  --ink-1: oklch(0.95 0.006 285);
-  --ink-2: oklch(0.78 0.008 285);
-  --ink-3: oklch(0.63 0.01 285);
-  --line: color-mix(in oklab, var(--ink-1) 9%, transparent);
-  --line-strong: color-mix(in oklab, var(--ink-1) 18%, transparent);
-  --fill-weak: color-mix(in oklab, var(--ink-1) 4%, transparent);
-  --fill: color-mix(in oklab, var(--ink-1) 7%, transparent);
-  --fill-strong: color-mix(in oklab, var(--ink-1) 11%, transparent);
+  /* 首页永远钉在 MonoCode 的默认深色上，不跟着 light/dark 或色相走。
+     浅色主题的白纸会从格子缝里透出来。 */
+  --theme-hue: 240;
+  --theme-saturation: 0%;
+  --background-lightness: 9%;
+  --content-lightness: 92%;
+  --color-skill: #e8c547;
+  --color-mention: #38bdf8;
+  --link-color: #7dd3fc;
+  --color-markdown-heading: #f9a8c9;
+  --surface-canvas: hsl(240 0% 9%);
+  --surface-sunken: #0d0d0d;
+  --surface-card: #141414;
+  --surface-raised: #1c1c1c;
+  --surface-overlay: #242424;
+  --ink-1: #ebebeb;
+  --ink-2: #a3a3a3;
+  --ink-3: #737373;
+  --line: color-mix(in srgb, #ebebeb 7%, transparent);
+  --line-strong: color-mix(in srgb, #ebebeb 18%, transparent);
+  --fill-weak: color-mix(in srgb, #ebebeb 8%, transparent);
+  --fill: color-mix(in srgb, #ebebeb 10%, transparent);
+  --fill-strong: color-mix(in srgb, #ebebeb 12%, transparent);
   /*
    * 别名也要在这一层重新声明一遍。
    *
@@ -1596,13 +1604,13 @@ html.theme-light [data-composer-box] {
   --color-fill-strong: var(--fill-strong);
   /* 这一屏永远是深色底，强调色和状态色也跟着用深色主题那一档：
      浅色主题的深蓝强调色在这一屏上会沉进背景里。 */
-  --accent: oklch(0.66 0.155 255);
-  --accent-ink: oklch(0.8 0.12 255);
-  --accent-fg: oklch(0.19 0.02 255);
-  --accent-soft: color-mix(in oklab, var(--accent) 16%, transparent);
-  --positive: oklch(0.74 0.14 158);
-  --negative: oklch(0.66 0.19 25);
-  --warning: oklch(0.8 0.13 82);
+  --accent: hsl(211 92% 62%);
+  --accent-ink: #7dd3fc;
+  --accent-fg: #0b0d13;
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --positive: #10b981;
+  --negative: #f43f5e;
+  --warning: #f5a524;
   --color-accent: var(--accent);
   --color-accent-ink: var(--accent-ink);
   --color-accent-foreground: var(--accent-fg);
@@ -1610,13 +1618,16 @@ html.theme-light [data-composer-box] {
   --color-negative: var(--negative);
   --color-warning: var(--warning);
   --color-danger: var(--negative);
-  --color-skill: var(--accent-ink);
-  --color-mention: var(--accent-ink);
-  --link-color: var(--accent-ink);
-  --color-markdown-heading: var(--ink-1);
   color-scheme: dark;
   background: var(--surface-canvas);
   color: var(--ink-1);
+}
+
+/* The plate is the thing that hides the desktop. Glass keeps the ink tokens
+   above and drops the paper, so the home page shows the same wash as the rest
+   of the window. */
+html.glass-body:not(.theme-light) .orbit-galaxy-surface {
+  background: transparent;
 }
 
 /* 分栏 diff 里没有对应行的那一半：斜线纹理占位（Codex 同款）。 */

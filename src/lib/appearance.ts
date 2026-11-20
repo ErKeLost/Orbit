@@ -2,12 +2,17 @@ import { create } from "zustand";
 import { setTheme as setNativeTheme } from "@tauri-apps/api/app";
 import { installDesktopGlass, setDesktopGlassEnabled } from "./desktop-glass";
 import { nativeThemePreference, themeColor, type ResolvedTheme } from "./theme";
-
+import {
+  applyWorkspaceTheme,
+  isWorkspaceThemeId,
+  WORKSPACE_THEME_DEFAULT,
+  type WorkspaceThemeId,
+} from "../features/settings/model/workspaceThemes";
 
 /**
- * Orbit's appearance model, ported: one hue, one saturation, one dark
- * lightness, and a light class. Every surface color in `styles/orbit-theme.css`
- * derives from these, so a theme change is four variables, not a stylesheet.
+ * MonoCode's appearance model: one hue, one saturation, one dark lightness,
+ * and a light class. Named themes write `--wt-*` and the stylesheet overrides
+ * the roles; default leaves the HSL tint in charge.
  */
 export type ThemePreference = "system" | "light" | "dark";
 
@@ -24,13 +29,11 @@ const DIFF_KEY = "orbit.diffPalette";
 const HUE_KEY = "orbit.themeHue";
 const SATURATION_KEY = "orbit.themeSaturation";
 const LIGHTNESS_KEY = "orbit.themeDarkLightness";
+const WORKSPACE_THEME_KEY = "orbit.workspaceTheme";
 const SIDEBAR_OPACITY_KEY = "orbit.sidebarOpacity";
 
-/**
- * 墨蓝色调：色相 226、饱和度 14%、底色亮度 8%。三个值一起决定整条中性色阶
- * （见 styles/orbit-theme.css 的 @theme static），不是只给页面刷一层蓝。
- */
-export const DEFAULT_APPEARANCE = { hue: 255, saturation: 16, darkLightness: 8, sidebarOpacity: 0.85 };
+/** MonoCode's neutral default: hue 240, saturation 0%, dark lightness 9%. */
+export const DEFAULT_APPEARANCE = { hue: 240, saturation: 0, darkLightness: 9, sidebarOpacity: 0.85 };
 
 function read(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -103,11 +106,15 @@ function readBlur() {
   return clamp(loadNumber(BLUR_KEY, 24), 0, 64);
 }
 
+/** Unset means off. The window stays opaque until the user asks for glass. */
+export const BODY_GLASS_DEFAULT = false;
+
+export function bodyGlassFromStorage(stored: string | null) {
+  return stored == null ? BODY_GLASS_DEFAULT : stored === "true";
+}
+
 function readBodyGlass() {
-  // Unset means on. The window is already transparent; this hangs the desktop
-  // blur behind it. An explicit "false" keeps a machine that turned it off.
-  const stored = read(BODY_GLASS_KEY);
-  return stored == null || stored === "true";
+  return bodyGlassFromStorage(read(BODY_GLASS_KEY));
 }
 
 type AppearanceState = {
@@ -117,7 +124,8 @@ type AppearanceState = {
   saturation: number;
   darkLightness: number;
   sidebarOpacity: number;
-  /** Null = the theme's own accent (Orbit's first swatch). */
+  workspaceTheme: WorkspaceThemeId;
+  /** Null = the theme's own accent (`hsl(211 92% 62%)`, or the workspace theme's). */
   accent: string | null;
   diffPalette: DiffPalette;
   blur: number;
@@ -135,6 +143,7 @@ type AppearanceState = {
   setChatBackgroundOpacity: (opacity: number) => void;
   setPreference: (preference: ThemePreference) => void;
   setTint: (patch: Partial<Pick<AppearanceState, "hue" | "saturation" | "darkLightness" | "sidebarOpacity">>) => void;
+  setWorkspaceTheme: (theme: WorkspaceThemeId) => void;
   setAccent: (accent: string | null) => void;
   setDiffPalette: (palette: DiffPalette) => void;
   restoreDefaults: () => void;
@@ -143,6 +152,11 @@ type AppearanceState = {
 const IS_MAC_RUNTIME = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 const IS_WIN_RUNTIME = typeof navigator !== "undefined" && /Win/i.test(navigator.platform);
 const GLASS_RUNTIME = IS_MAC_RUNTIME || IS_WIN_RUNTIME;
+
+/** Dark mode on a runtime that can actually show the desktop through the window. */
+export function windowGlassOn(state: Pick<AppearanceState, "scheme" | "bodyGlass">) {
+  return state.scheme === "dark" && GLASS_RUNTIME && state.bodyGlass;
+}
 
 type Rgb = { r: number; g: number; b: number };
 
@@ -195,7 +209,7 @@ async function drainNativeGlass() {
 
 async function applyNativeGlassNow(state: Pick<AppearanceState, "scheme" | "blur" | "bodyGlass" | "sidebarOpacity">) {
   const root = document.documentElement;
-  const eligible = state.scheme === "dark" && GLASS_RUNTIME && state.bodyGlass;
+  const eligible = windowGlassOn(state);
   root.classList.toggle("glass-body", eligible);
   // Both sliders are plain CSS on the sampled desktop. Published before the
   // IPC below so a slider drag never waits for the shell.
@@ -259,7 +273,7 @@ async function disableNativeGlass(scheme: AppearanceState["scheme"]) {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
     const win = getCurrentWindow();
     await win.setEffects({ effects: [] });
-    await win.setBackgroundColor(scheme === "light" ? [245, 245, 247, 255] : windowBackgroundRgbArray());
+    await win.setBackgroundColor(scheme === "light" ? [247, 247, 247, 255] : windowBackgroundRgbArray());
   } catch { /* 没有 effect API（Linux / 旧版） */ }
 }
 
@@ -268,9 +282,10 @@ function windowBackgroundRgbArray(): [number, number, number, number] {
   return [color.r, color.g, color.b, 255];
 }
 
-function applyToDocument(state: Pick<AppearanceState, "scheme" | "hue" | "saturation" | "darkLightness" | "sidebarOpacity" | "accent" | "diffPalette" | "blur" | "bodyGlass">) {
+function applyToDocument(state: Pick<AppearanceState, "scheme" | "hue" | "saturation" | "darkLightness" | "sidebarOpacity" | "workspaceTheme" | "accent" | "diffPalette" | "blur" | "bodyGlass">) {
   const root = document.documentElement;
-  void applyNativeGlass(state);
+  // Theme variables first, so the glass probe reads the colour the page paints.
+  applyWorkspaceTheme(state.workspaceTheme, root);
   if (state.accent) {
     root.classList.add("has-user-accent");
     root.style.setProperty("--user-accent-color", state.accent);
@@ -278,12 +293,14 @@ function applyToDocument(state: Pick<AppearanceState, "scheme" | "hue" | "satura
     // 强调色接管 --color-accent：Working 状态、加载图标、焦点环这些原来固定
     // 蓝色的 UI 全部跟着主题强调色走，而不是只有气泡和发送按钮。
     root.style.setProperty("--color-accent", state.accent);
+    root.style.setProperty("--accent", state.accent);
     root.style.setProperty("--color-accent-foreground", accentForeground(state.accent));
   } else {
     root.classList.remove("has-user-accent");
     root.style.removeProperty("--user-accent-color");
     root.style.removeProperty("--user-accent-foreground");
     root.style.removeProperty("--color-accent");
+    root.style.removeProperty("--accent");
     root.style.removeProperty("--color-accent-foreground");
   }
   root.classList.toggle("diff-palette-colorblind", state.diffPalette === "colorblind");
@@ -296,23 +313,19 @@ function applyToDocument(state: Pick<AppearanceState, "scheme" | "hue" | "satura
   root.style.setProperty("--theme-hue", String(state.hue));
   root.style.setProperty("--theme-saturation", `${state.saturation}%`);
   root.style.setProperty("--theme-dark-lightness", `${state.darkLightness}%`);
-  // The token ramp does its math in OKLCH, where chroma and lightness are
-  // numbers, not percentages. Publish the raw values next to the display ones.
-  root.style.setProperty("--theme-saturation-unit", String(state.saturation));
-  root.style.setProperty("--theme-lightness-unit", String(state.darkLightness));
   root.style.setProperty("--sidebar-opacity", String(state.sidebarOpacity));
   document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute("content", themeColor[state.scheme]);
+  void applyNativeGlass(state);
 }
 
 const initialPreference = loadThemePreference();
 
 /**
- * Orbit 原样的默认色板（中性灰 + 240 色相）。它不是用户挑过的值，而是升级前写进
- * localStorage 的初始值；换 token 后如果继续沿用，新色板在别人的机器上永远看不到。
- * 三个值全中才算旧默认，用户自己调过的任何一个都不动。
+ * The previous OKLCH ramp wrote its own default into localStorage. Those three
+ * numbers together are not a choice the user made; a customised value stays.
  */
 const LEGACY_DEFAULT_TINTS = [
-  { hue: 240, saturation: 0, darkLightness: 9 },
+  { hue: 255, saturation: 16, darkLightness: 8 },
   { hue: 226, saturation: 14, darkLightness: 8 },
 ];
 
@@ -328,15 +341,26 @@ function initialTint() {
       tint.saturation === legacy.saturation &&
       tint.darkLightness === legacy.darkLightness,
   );
-  return isLegacyDefault
-    ? { hue: DEFAULT_APPEARANCE.hue, saturation: DEFAULT_APPEARANCE.saturation, darkLightness: DEFAULT_APPEARANCE.darkLightness }
-    : tint;
+  if (!isLegacyDefault) return tint;
+  write(HUE_KEY, String(DEFAULT_APPEARANCE.hue));
+  write(SATURATION_KEY, String(DEFAULT_APPEARANCE.saturation));
+  write(LIGHTNESS_KEY, String(DEFAULT_APPEARANCE.darkLightness));
+  return {
+    hue: DEFAULT_APPEARANCE.hue,
+    saturation: DEFAULT_APPEARANCE.saturation,
+    darkLightness: DEFAULT_APPEARANCE.darkLightness,
+  };
+}
+
+function initialWorkspaceTheme(): WorkspaceThemeId {
+  return isWorkspaceThemeId(read(WORKSPACE_THEME_KEY)) ? read(WORKSPACE_THEME_KEY) as WorkspaceThemeId : WORKSPACE_THEME_DEFAULT;
 }
 
 export const useAppearance = create<AppearanceState>((set, get) => ({
   preference: initialPreference,
   scheme: resolveColorScheme(initialPreference),
   ...initialTint(),
+  workspaceTheme: initialWorkspaceTheme(),
   sidebarOpacity: clamp(loadNumber(SIDEBAR_OPACITY_KEY, DEFAULT_APPEARANCE.sidebarOpacity), 0.15, 1),
   accent: readAccent(),
   diffPalette: readDiffPalette(),
@@ -358,6 +382,10 @@ export const useAppearance = create<AppearanceState>((set, get) => ({
     write(LIGHTNESS_KEY, String(next.darkLightness));
     write(SIDEBAR_OPACITY_KEY, String(next.sidebarOpacity));
     set(patch);
+  },
+  setWorkspaceTheme: workspaceTheme => {
+    write(WORKSPACE_THEME_KEY, workspaceTheme === WORKSPACE_THEME_DEFAULT ? null : workspaceTheme);
+    set({ workspaceTheme });
   },
   setAccent: accent => {
     write(ACCENT_KEY, accent);
@@ -395,8 +423,8 @@ export const useAppearance = create<AppearanceState>((set, get) => ({
     set({ chatBackgroundOpacity });
   },
   restoreDefaults: () => {
-    for (const key of [HUE_KEY, SATURATION_KEY, LIGHTNESS_KEY, SIDEBAR_OPACITY_KEY, ACCENT_KEY, DIFF_KEY, BLUR_KEY, BODY_GLASS_KEY, UI_SCALE_KEY, EXCLUDED_KEY, CHAT_BG_KEY, CHAT_BG_OPACITY_KEY]) write(key, null);
-    set({ ...DEFAULT_APPEARANCE, accent: null, diffPalette: "default" as DiffPalette, blur: 24, bodyGlass: true, uiScale: 1, showExcludedFiles: false, chatBackground: null, chatBackgroundOpacity: 0.22 });
+    for (const key of [HUE_KEY, SATURATION_KEY, LIGHTNESS_KEY, WORKSPACE_THEME_KEY, SIDEBAR_OPACITY_KEY, ACCENT_KEY, DIFF_KEY, BLUR_KEY, BODY_GLASS_KEY, UI_SCALE_KEY, EXCLUDED_KEY, CHAT_BG_KEY, CHAT_BG_OPACITY_KEY]) write(key, null);
+    set({ ...DEFAULT_APPEARANCE, workspaceTheme: WORKSPACE_THEME_DEFAULT, accent: null, diffPalette: "default" as DiffPalette, blur: 24, bodyGlass: BODY_GLASS_DEFAULT, uiScale: 1, showExcludedFiles: false, chatBackground: null, chatBackgroundOpacity: 0.22 });
   },
 }));
 

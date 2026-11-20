@@ -1,102 +1,113 @@
 /*
- * Orbit design tokens.
+ * Design tokens, matched to MonoCode.
  *
- * Three layers, in order:
+ * The live palette is one HSL tint: `--theme-hue`, `--theme-saturation` and
+ * `--background-lightness` / `--content-lightness`. Strokes and selections are
+ * the content colour mixed into transparent, not a separate grey ramp.
+ * Named themes do not edit these numbers. `workspaceThemes.ts` writes
+ * `--wt-*`, and `orbit-theme.css` overrides the roles below when
+ * `html.has-workspace-theme` is set.
  *
- *   1. primitives  — the raw ramp: neutral steps, accent steps, semantic hues,
- *                    radii, type sizes, durations. Nothing in the app reads
- *                    these directly except the layer below.
- *   2. semantics   — what a surface or a piece of text *is*: sunken, canvas,
- *                    card, raised, overlay; ink-1/2/3; hairline; accent.
- *                    Components use only this layer.
- *   3. aliases     — the older Orbit names (`--color-background-base`,
- *                    `--color-content`, `--color-stroke`, `--color-selection*`)
- *                    mapped onto (2), so the several thousand existing rules
- *                    keep working while they are migrated file by file.
- *
- * The neutral ramp is one hue with a fixed chroma curve: the Appearance tint
- * sliders feed `--tint-hue`, `--tint-chroma` and the canvas lightness, so a
- * theme change shifts the whole stack instead of repainting one card. Values
- * are OKLCH, so a lightness step is a perceptual step and the same steps work
- * in both themes.
+ * Semantic names (`surface-*`, `ink-*`, `fill-*`) stay so existing utilities
+ * keep working. They now read the MonoCode roles instead of an OKLCH ramp.
  */
 
 :root {
-  /* ---- primitives: tint inputs -------------------------------------- */
-  /* Unitless numbers, published by src/lib/appearance.ts. */
-  --tint-hue: var(--theme-hue, 255);
-  --tint-chroma: min(0.03, calc(var(--theme-saturation-unit, 16) * 0.0008));
-  --tint-chroma-soft: calc(var(--tint-chroma) * 0.55);
-  /* 0% is near black, 8% (the default) is a night-work canvas with room
-     above it: four visible steps, not four blacks. */
-  --surface-canvas-l: calc(0.05 + var(--theme-lightness-unit, 8) * 0.02);
-  /* Step size of the ramp. Wide enough that a card reads as a card without
-     a shadow, in both themes. */
-  --surface-step-1: 0.045;
-  --surface-step-2: 0.09;
-  --surface-step-3: 0.13;
+  /* Unitless inputs, published by src/lib/appearance.ts. */
+  --theme-hue: 240;
+  --theme-saturation: 0%;
+  --theme-dark-lightness: 9%;
+  --background-lightness: var(--theme-dark-lightness);
+  --content-lightness: 92%;
 
-  /* ---- primitives: motion ------------------------------------------- */
+  /* Interactive fills. Light mode lowers these in `html.theme-light`. */
+  --selection-subtle-strength: 8%;
+  --selection-strength: 10%;
+  --selection-strong-strength: 12%;
+  --selection-hover-strength: 15%;
+  --selection-emphasis-strength: 20%;
+
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --dur-1: 140ms;
-  --dur-2: 220ms;
-  --dur-3: 380ms;
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 360ms;
 }
 
 @theme static {
-  /* ---- semantics: surfaces (dark) ----------------------------------- */
-  --surface-sunken: oklch(
-    calc(var(--surface-canvas-l) - var(--surface-step-1)) var(--tint-chroma-soft)
-      var(--tint-hue)
+  /* ---- MonoCode roles ------------------------------------------------ */
+  --color-background-base: hsl(
+    var(--theme-hue) var(--theme-saturation) var(--background-lightness)
   );
-  --surface-canvas: oklch(
-    var(--surface-canvas-l) var(--tint-chroma-soft) var(--tint-hue)
+  --color-content: hsl(
+    var(--theme-hue) var(--theme-saturation) var(--content-lightness)
   );
-  --surface-card: oklch(
-    calc(var(--surface-canvas-l) + var(--surface-step-1)) var(--tint-chroma-soft)
-      var(--tint-hue)
+  /* Structural separators: border-stroke, divide-stroke, or bg-stroke. */
+  --color-stroke: color-mix(in srgb, var(--color-content) 7%, transparent);
+  --color-selection-subtle: color-mix(
+    in srgb,
+    var(--color-content) var(--selection-subtle-strength),
+    transparent
   );
-  --surface-raised: oklch(
-    calc(var(--surface-canvas-l) + var(--surface-step-2))
-      var(--tint-chroma-soft) var(--tint-hue)
+  --color-selection: color-mix(
+    in srgb,
+    var(--color-content) var(--selection-strength),
+    transparent
   );
-  --surface-overlay: oklch(
-    calc(var(--surface-canvas-l) + var(--surface-step-3))
-      var(--tint-chroma-soft) var(--tint-hue)
+  --color-selection-strong: color-mix(
+    in srgb,
+    var(--color-content) var(--selection-strong-strength),
+    transparent
   );
+  --color-selection-hover: color-mix(
+    in srgb,
+    var(--color-content) var(--selection-hover-strength),
+    transparent
+  );
+  --color-selection-emphasis: color-mix(
+    in srgb,
+    var(--color-content) var(--selection-emphasis-strength),
+    transparent
+  );
+  /* Fixed blue, not the background hue. A custom accent or a workspace
+     theme replaces it. */
+  --color-accent: hsl(211 92% 62%);
+  --color-skill: #e8c547;
+  --color-mention: #38bdf8;
+
+  /* ---- semantics: surfaces ------------------------------------------ */
+  /* Dark shell is the page mixed toward black, the same step MonoCode uses
+     for an opaque sidebar. Cards sit on the solid panel, not a lightness ramp. */
+  --surface-canvas: var(--color-background-base);
+  --surface-sunken: color-mix(in srgb, var(--color-background-base) 90%, black);
+  --surface-card: color-mix(in srgb, var(--color-content) 5%, var(--color-background-base));
+  --surface-raised: color-mix(in srgb, var(--color-content) 8%, var(--color-background-base));
+  --surface-overlay: color-mix(in srgb, var(--color-content) 12%, var(--color-background-base));
 
   /* ---- semantics: text and lines ------------------------------------ */
-  --ink-1: oklch(0.95 0.006 var(--tint-hue));
-  --ink-2: oklch(0.78 0.008 var(--tint-hue));
-  --ink-3: oklch(0.63 0.01 var(--tint-hue));
-  /* One hairline, one stronger line for a focused control. */
-  --line: color-mix(in oklab, var(--ink-1) 9%, transparent);
-  --line-strong: color-mix(in oklab, var(--ink-1) 18%, transparent);
+  --ink-1: var(--color-content);
+  --ink-2: color-mix(in srgb, var(--color-content) 62%, var(--color-background-base));
+  --ink-3: color-mix(in srgb, var(--color-content) 42%, var(--color-background-base));
+  --line: var(--color-stroke);
+  --line-strong: color-mix(in srgb, var(--color-content) 18%, transparent);
 
   /* ---- semantics: interactive fills -------------------------------- */
-  /* Translucent so glass surfaces and the scene behind them still read.
-     Use these instead of `bg-content/6`, whose 6 was never on a scale. */
-  --fill-weak: color-mix(in oklab, var(--ink-1) 4%, transparent);
-  --fill: color-mix(in oklab, var(--ink-1) 7%, transparent);
-  --fill-strong: color-mix(in oklab, var(--ink-1) 11%, transparent);
+  --fill-weak: var(--color-selection-subtle);
+  --fill: var(--color-selection);
+  --fill-strong: var(--color-selection-strong);
   --fill-solid: var(--ink-1);
 
   /* ---- semantics: accent ------------------------------------------- */
-  --accent: oklch(0.66 0.155 var(--tint-hue));
-  --accent-ink: oklch(0.8 0.12 var(--tint-hue));
-  --accent-fg: oklch(0.19 0.02 var(--tint-hue));
-  --accent-soft: color-mix(in oklab, var(--accent) 16%, transparent);
+  --accent: var(--color-accent);
+  --accent-ink: var(--link-color, #7dd3fc);
+  --accent-fg: #0b0d13;
+  --accent-soft: color-mix(in srgb, var(--color-accent) 16%, transparent);
 
-  /* ---- semantics: status ------------------------------------------- */
-  --positive: oklch(0.74 0.14 158);
-  --negative: oklch(0.66 0.19 25);
-  --warning: oklch(0.8 0.13 82);
+  /* Diff marker hues. `-fg` is swapped for light mode in orbit-theme.css. */
+  --positive: #10b981;
+  --negative: #f43f5e;
+  --warning: #f5a524;
 
-  /* ---- primitives: type scale --------------------------------------
-     Tailwind's scale plus the two sizes this app actually needs: a label
-     below 12px and the 13px UI size that sits between sm and base. The app
-     used to ship 8, 9, 10, 10.5, 11, 11.5, 12, 12.5, 13 and 14px; that is
-     drift, not a scale. */
+  /* ---- primitives: type scale -------------------------------------- */
   --text-2xs: 11px;
   --text-2xs--line-height: 16px;
   --text-ui: 13px;
@@ -113,16 +124,12 @@
   --radius-card: 12px;
   --radius-panel: 16px;
 
-  /* ---- primitives: depth ------------------------------------------- */
-  /* Dark depth is a surface step plus a hairline; these are only for things
-     that genuinely float (menus, dialogs, drag previews). No color glow. */
   --shadow-menu: 0 12px 32px rgb(0 0 0 / 0.45), 0 1px 0
-    color-mix(in oklab, var(--ink-1) 7%, transparent) inset;
+    color-mix(in srgb, var(--color-content) 7%, transparent) inset;
   --shadow-dialog: 0 24px 64px rgb(0 0 0 / 0.55);
 }
 
 @theme {
-  /* Tailwind utilities (bg-surface-card, text-ink-2, border-line, …). */
   --color-surface-sunken: var(--surface-sunken);
   --color-surface: var(--surface-canvas);
   --color-surface-canvas: var(--surface-canvas);
@@ -137,64 +144,36 @@
   --color-fill-weak: var(--fill-weak);
   --color-fill: var(--fill);
   --color-fill-strong: var(--fill-strong);
-  --color-accent: var(--accent);
   --color-accent-ink: var(--accent-ink);
   --color-accent-foreground: var(--accent-fg);
   --color-accent-soft: var(--accent-soft);
-  /* Text on a saturated status fill (red/green/amber), same rule as accent. */
   --color-on-status: var(--accent-fg);
   --color-positive: var(--positive);
   --color-negative: var(--negative);
   --color-warning: var(--warning);
   --color-danger: var(--negative);
-
-  /* ---- layer 3: aliases for the existing stylesheet ---------------- */
-  --color-background-base: var(--surface-canvas);
-  --color-content: var(--ink-1);
-  --color-stroke: var(--line);
-  --color-selection-subtle: var(--fill-weak);
-  --color-selection: var(--fill);
-  --color-selection-strong: var(--fill-strong);
-  --color-selection-hover: var(--fill-strong);
-  --color-selection-emphasis: color-mix(in oklab, var(--ink-1) 16%, transparent);
-  --color-skill: var(--accent-ink);
-  --color-mention: var(--accent-ink);
 }
 
 html.theme-light {
-  /*
-   * Light is the same stack, mirrored — and it has to be *bright*.
-   *
-   * The first pass put the canvas at 0.975 with a blue tint, which reads as a
-   * grey page: cards at 1.0 barely separated and every label looked washed. A
-   * light workspace wants white paper (0.985, almost neutral), cards that are
-   * actually white, and ink that starts near black so contrast does the
-   * separating instead of a grey veil.
-   */
-  --surface-sunken: oklch(0.96 0.004 var(--tint-hue));
-  --surface-canvas: oklch(0.985 0.002 var(--tint-hue));
-  --surface-card: oklch(1 0 0);
-  --surface-raised: oklch(0.955 0.005 var(--tint-hue));
-  --surface-overlay: oklch(0.94 0.006 var(--tint-hue));
+  --background-lightness: 97%;
+  --content-lightness: 18%;
+  --selection-subtle-strength: 5%;
+  --selection-strength: 6%;
+  --selection-strong-strength: 7%;
+  --selection-hover-strength: 10%;
+  --selection-emphasis-strength: 14%;
 
-  --ink-1: oklch(0.21 0.018 var(--tint-hue));
-  --ink-2: oklch(0.39 0.017 var(--tint-hue));
-  --ink-3: oklch(0.49 0.015 var(--tint-hue));
-  --line: color-mix(in oklab, var(--ink-1) 12%, transparent);
-  --line-strong: color-mix(in oklab, var(--ink-1) 22%, transparent);
+  /* Light shell is the page itself. Cards are white, not a darker step. */
+  --surface-sunken: var(--color-background-base);
+  --surface-card: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-overlay: #ffffff;
 
-  --fill-weak: color-mix(in oklab, var(--ink-1) 3%, transparent);
-  --fill: color-mix(in oklab, var(--ink-1) 5%, transparent);
-  --fill-strong: color-mix(in oklab, var(--ink-1) 8%, transparent);
-
-  --accent: oklch(0.55 0.16 var(--tint-hue));
-  --accent-ink: oklch(0.47 0.16 var(--tint-hue));
-  --accent-fg: oklch(0.99 0.005 var(--tint-hue));
-  --accent-soft: color-mix(in oklab, var(--accent) 12%, transparent);
-
-  --positive: oklch(0.58 0.14 158);
-  --negative: oklch(0.53 0.19 25);
-  --warning: oklch(0.6 0.12 78);
+  --color-skill: #a07c10;
+  --color-mention: #0284c7;
+  --accent-fg: #ffffff;
+  --accent-soft: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  --warning: #b45309;
 
   --shadow-menu: 0 12px 32px rgb(15 23 42 / 0.12), 0 1px 2px
     rgb(15 23 42 / 0.06);

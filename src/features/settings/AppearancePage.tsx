@@ -4,6 +4,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { ImagePlus } from "../../shared/ui/icons";
 import { SecondaryButton, Segmented, Select, Slider, Toggle } from "../../shared/ui/controls";
 import { UI_SCALE_PERCENTS, useAppearance, type DiffPalette, type ThemePreference } from "../../lib/appearance";
+import { WORKSPACE_THEMES, type WorkspacePalette } from "./model/workspaceThemes";
 import { desktopSampleState, requestDesktopSample, subscribeDesktopSample } from "../../lib/desktop-glass";
 import { invoke } from "../../lib/native";
 import { useShell } from "../shell/shellStore";
@@ -24,7 +25,7 @@ function hueName(hue: number) {
   return names.find(([edge]) => wrapped <= edge)?.[1] ?? "Blue";
 }
 
-const HUE_DOTS = [252, 285, 330, 15, 35, 70, 145, 175] as const;
+const ACCENT_SWATCHES = ["#4da3f5", "#6fbf73", "#f08a4b", "#b57cf0", "#e7798f", "#d9b25c", "#3fc1b5", "#7aa7ff"] as const;
 
 type ThemeCard = ThemePreference | "high-contrast";
 
@@ -135,6 +136,7 @@ export function AppearancePage() {
   const appearance = useAppearance();
   const glassUnavailable = appearance.scheme === "light";
   const glassOff = glassUnavailable || !appearance.bodyGlass;
+  const namedTheme = appearance.workspaceTheme !== "default";
   const collapsedRailMode = useShell((state) => state.collapsedRailMode);
   const setCollapsedRailMode = useShell((state) => state.setCollapsedRailMode);
   const customRef = useRef<HTMLInputElement>(null);
@@ -156,7 +158,6 @@ export function AppearancePage() {
 
   function pickHue(hue: number) {
     appearance.setTint({ hue });
-    if (appearance.accent) appearance.setAccent(null);
   }
 
   return (
@@ -179,39 +180,56 @@ export function AppearancePage() {
         </Surface>
       </Section>
 
+      <Section title="配色" description="每套都有自己的深色和浅色。默认继续用下面的色相和饱和度。">
+        <Surface className="p-3">
+          <div data-setting-id="workspace-theme" role="radiogroup" aria-label="配色" className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {WORKSPACE_THEMES.map((theme) => {
+              const active = appearance.workspaceTheme === theme.id;
+              const palette = appearance.scheme === "light" ? theme.light : theme.dark;
+              return (
+                <button
+                  key={theme.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => appearance.setWorkspaceTheme(theme.id)}
+                  className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 text-left ${active ? "border-ink-1 bg-fill" : "border-line"}`}
+                >
+                  <WorkspaceThemeSwatch palette={palette} />
+                  <span className={`text-sm ${active ? "text-ink-1" : "text-ink-3"}`}>{theme.id === "default" ? "默认" : theme.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </Surface>
+      </Section>
+
       <Section title="颜色">
         <Surface className="px-4 py-4">
           <div data-setting-id="accent">
             <h3 className="text-sm font-medium text-ink-1">强调色</h3>
-            <p className="mt-1 text-sm text-ink-3">按钮、链接和你的消息。</p>
-            <div data-setting-id="hue" className="mt-4 flex items-center gap-3">
-              <input
-                type="range"
-                min={0}
-                max={360}
-                value={appearance.hue}
-                aria-label="色相"
-                className="appearance-hue min-w-0 flex-1"
-                style={{ ["--hue" as string]: String(appearance.hue) }}
-                onChange={(event) => pickHue(Number(event.target.value))}
-              />
-              <span className="w-20 shrink-0 text-right text-sm tabular-nums text-ink-2">
-                {appearance.accent ? "自定义" : `${hueName(appearance.hue)} ${appearance.hue}°`}
-              </span>
-            </div>
+            <p className="mt-1 text-sm text-ink-3">按钮和你的消息。不选则用当前配色自己的强调色。</p>
             <div role="radiogroup" aria-label="强调色" className="mt-3 flex items-center gap-2.5">
-              {HUE_DOTS.map((hue) => {
-                const active = !appearance.accent && Math.abs(appearance.hue - hue) < 8;
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!appearance.accent}
+                aria-label="配色默认"
+                onClick={() => appearance.setAccent(null)}
+                className={`size-5 shrink-0 rounded-full bg-accent ${!appearance.accent ? "ring-2 ring-ink-1 ring-offset-2 ring-offset-background-base" : ""}`}
+              />
+              {ACCENT_SWATCHES.map((color) => {
+                const active = appearance.accent?.toLowerCase() === color;
                 return (
                   <button
-                    key={hue}
+                    key={color}
                     type="button"
                     role="radio"
                     aria-checked={active}
-                    aria-label={hueName(hue)}
-                    onClick={() => pickHue(hue)}
+                    aria-label={color}
+                    onClick={() => appearance.setAccent(color)}
                     className={`size-5 shrink-0 rounded-full ${active ? "ring-2 ring-ink-1 ring-offset-2 ring-offset-background-base" : ""}`}
-                    style={{ background: `oklch(0.66 0.16 ${hue})` }}
+                    style={{ background: color }}
                   />
                 );
               })}
@@ -219,7 +237,7 @@ export function AppearancePage() {
                 type="button"
                 aria-label="自定义强调色"
                 onClick={() => customRef.current?.click()}
-                className={`size-5 shrink-0 rounded-full ${appearance.accent ? "ring-2 ring-ink-1 ring-offset-2 ring-offset-background-base" : ""}`}
+                className={`size-5 shrink-0 rounded-full ${appearance.accent && !ACCENT_SWATCHES.includes(appearance.accent.toLowerCase() as (typeof ACCENT_SWATCHES)[number]) ? "ring-2 ring-ink-1 ring-offset-2 ring-offset-background-base" : ""}`}
                 style={{ background: appearance.accent ?? "conic-gradient(from 0deg, #f87171, #fbbf24, #34d399, #38bdf8, #a78bfa, #f472b6, #f87171)" }}
               />
               <input ref={customRef} type="color" aria-hidden tabIndex={-1} className="size-0 opacity-0" onChange={(event) => appearance.setAccent(event.target.value)} />
@@ -228,10 +246,33 @@ export function AppearancePage() {
 
           <div className="my-4 h-px bg-line" />
 
+          <div data-setting-id="hue" className={namedTheme ? "opacity-40" : ""}>
+            <h3 className="text-sm font-medium text-ink-1">背景色相</h3>
+            <p className="mt-1 text-sm text-ink-3">{namedTheme ? "当前配色自己带颜色，切回默认后这些滑杆才起作用。" : "给中性底色上一层色相。0% 饱和度时看不出来。"}</p>
+            <div className="mt-4 flex items-center gap-3">
+              <input
+                type="range"
+                min={0}
+                max={360}
+                value={appearance.hue}
+                aria-label="背景色相"
+                disabled={namedTheme}
+                className="appearance-hue min-w-0 flex-1 disabled:cursor-not-allowed"
+                style={{ ["--hue" as string]: String(appearance.hue) }}
+                onChange={(event) => pickHue(Number(event.target.value))}
+              />
+              <span className="w-20 shrink-0 text-right text-sm tabular-nums text-ink-2">
+                {hueName(appearance.hue)} {appearance.hue}°
+              </span>
+            </div>
+          </div>
+
+          <div className="my-4 h-px bg-line" />
+
           <div data-setting-id="saturation" className="flex items-center gap-6">
             <div className="min-w-0 flex-1">
               <h3 className="text-sm font-medium text-ink-1">背景着色</h3>
-              <p className="mt-1 text-sm text-ink-3">强调色在背景里露出多少。</p>
+              <p className="mt-1 text-sm text-ink-3">色相在背景里露出多少。</p>
             </div>
             <Slider
               label="背景着色"
@@ -240,6 +281,7 @@ export function AppearancePage() {
               min={0}
               max={100}
               onChange={(value) => appearance.setTint({ saturation: value })}
+              disabled={namedTheme}
             />
           </div>
 
@@ -248,7 +290,7 @@ export function AppearancePage() {
           <div data-setting-id="dark-lightness" className="flex items-center gap-6">
             <div className="min-w-0 flex-1">
               <h3 className="text-sm font-medium text-ink-1">深色亮度</h3>
-              <p className="mt-1 text-sm text-ink-3">{glassUnavailable ? "只影响深色模式，你的设置会被保留。" : "越低越暗，0 为纯黑。"}</p>
+              <p className="mt-1 text-sm text-ink-3">{namedTheme ? "由配色决定。" : glassUnavailable ? "只影响深色模式，你的设置会被保留。" : "越低越暗，0 为纯黑。"}</p>
             </div>
             <Slider
               label="深色亮度"
@@ -257,7 +299,7 @@ export function AppearancePage() {
               min={0}
               max={30}
               onChange={(value) => appearance.setTint({ darkLightness: value })}
-              disabled={glassUnavailable}
+              disabled={glassUnavailable || namedTheme}
             />
           </div>
         </Surface>
@@ -296,7 +338,7 @@ export function AppearancePage() {
           <div data-setting-id="body-glass" className="flex items-center justify-between gap-4 py-3.5">
             <div className="min-w-0">
               <h3 className="text-sm font-medium text-ink-1">窗口玻璃</h3>
-              <p className="mt-1 text-sm text-ink-3">开启后启用下面的不透明度与模糊。</p>
+              <p className="mt-1 text-sm text-ink-3">开启后启用下面的不透明度与模糊，首页不再铺星系背景。</p>
             </div>
             <Toggle label="Window glass" on={appearance.bodyGlass} onChange={appearance.setBodyGlass} disabled={glassUnavailable} />
           </div>
@@ -402,5 +444,19 @@ export function AppearancePage() {
         </Surface>
       </Section>
     </>
+  );
+}
+
+/** The shell, the card inside it and the accent, at the size of a menu icon. */
+function WorkspaceThemeSwatch({ palette }: { palette: WorkspacePalette }) {
+  return (
+    <span
+      aria-hidden
+      className="relative block size-4 shrink-0 overflow-hidden rounded-[4px] border border-content/15"
+      style={{ background: palette.surface }}
+    >
+      <span className="absolute inset-y-[3px] right-0 left-[5px] rounded-l-[2px]" style={{ background: palette.panelSolid }} />
+      <span className="absolute top-[6px] left-[8px] size-[5px] rounded-full" style={{ background: palette.accent }} />
+    </span>
   );
 }

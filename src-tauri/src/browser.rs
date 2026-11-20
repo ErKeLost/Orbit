@@ -16,7 +16,19 @@ pub fn browser_dir() -> Result<PathBuf, String> {
     if let Some(root) = std::env::var_os("ORBIT_BROWSER_HOME") {
         return Ok(PathBuf::from(root));
     }
-    Ok(home_dir()?.join(".pi/agent/browser"))
+    // Debug builds must not share the installed app's Chromium profile.
+    // CEF refuses to start when another process holds `~/.pi/agent/browser/cef`.
+    let relative = if cfg!(debug_assertions) {
+        ".pi/agent/browser-dev"
+    } else {
+        ".pi/agent/browser"
+    };
+    let path = home_dir()?.join(relative);
+    if cfg!(debug_assertions) {
+        // Pi and browser-use read this variable instead of the Rust default.
+        std::env::set_var("ORBIT_BROWSER_HOME", &path);
+    }
+    Ok(path)
 }
 #[cfg(unix)]
 fn process_alive(pid: i32) -> bool {
