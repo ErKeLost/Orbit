@@ -743,7 +743,7 @@ function TurnFooter({
       {completedAt != null ? (
         <span className="flex shrink-0 items-center gap-2.5">
           {dot}
-          <span className="shrink-0 text-ink-3">{clockFormatter.format(new Date(completedAt))}</span>
+          <span className="shrink-0 whitespace-nowrap text-ink-3 tabular-nums">{clockFormatter.format(new Date(completedAt))}</span>
         </span>
       ) : null}
     </div>
@@ -809,7 +809,7 @@ const UserMessage = memo(function UserMessage({ item }: { item: DisplayMessage }
             ) : null}
           </div>
         ) : null}
-        <div className="user-message-actions flex h-6 items-center gap-1 pt-1 text-ink-3">
+        <div className="user-message-actions flex h-6 shrink-0 items-center gap-1 pt-1 text-ink-3">
           {text || quote ? (
             <button
               type="button"
@@ -823,7 +823,7 @@ const UserMessage = memo(function UserMessage({ item }: { item: DisplayMessage }
           ) : null}
           {text ? <CopyButton text={text} label="复制消息" /> : null}
           {messageTime(item.message) ? (
-            <time className="text-xs text-ink-3" dateTime={new Date(messageTime(item.message)!).toISOString()}>
+            <time className="shrink-0 whitespace-nowrap text-xs text-ink-3 tabular-nums" dateTime={new Date(messageTime(item.message)!).toISOString()}>
               {clockFormatter.format(new Date(messageTime(item.message)!))}
             </time>
           ) : null}
@@ -871,7 +871,7 @@ function CompactionNotice({ message }: { message: PiMessage }) {
 
 export function ErrorRow({ error }: { error: string }) {
   return (
-    <div role="alert" className="mx-4 my-1 rounded-lg border border-negative/25 bg-negative/8 px-3 py-2 text-ui leading-relaxed text-negative">
+    <div role="alert" className="mx-4 my-1 min-w-0 overflow-hidden rounded-lg border border-negative/25 bg-negative/8 px-3 py-2 text-ui leading-relaxed break-words text-negative [overflow-wrap:anywhere]">
       {formatTranscriptError(error)}
     </div>
   );

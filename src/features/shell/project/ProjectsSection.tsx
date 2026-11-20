@@ -74,14 +74,14 @@ type SortableApi = ReturnType<typeof useAnimatedReorder>;
  * The label was noise — a rail that says "还没有项目" in text is asking the
  * reader to interpret instead of act. The icon is the action itself when a
  * picker is available, and a quiet placeholder when it is not (a phone, where
- * the picker lives on the desktop). It sits in the middle of the leftover
- * rail, not pinned to the top-left of a blank stretch.
+ * the picker lives on the desktop). Centered in the section, not stretched
+ * through the leftover rail — that gap was pushing 会话 to the bottom.
  */
 function EmptyProjects({ onAdd }: { onAdd?: () => void }) {
   const tile =
-    "grid size-8 place-items-center rounded-control border border-dashed border-line-strong text-ink-3";
+    "grid size-12 place-items-center rounded-control border border-dashed border-line-strong text-ink-3";
   return (
-    <div className="flex flex-1 items-center justify-center px-2 pb-2">
+    <div className="flex justify-center px-2 py-2">
       {onAdd ? (
         <button
           type="button"
@@ -90,11 +90,11 @@ function EmptyProjects({ onAdd }: { onAdd?: () => void }) {
           onClick={onAdd}
           className={`${tile} hover:border-accent/50 hover:bg-fill hover:text-ink-1`}
         >
-          <FolderPlus className="size-4" strokeWidth={1.75} />
+          <FolderPlus className="size-6" strokeWidth={1.75} />
         </button>
       ) : (
         <div className={tile} aria-hidden>
-          <FolderPlus className="size-4" strokeWidth={1.75} />
+          <FolderPlus className="size-6" strokeWidth={1.75} />
         </div>
       )}
     </div>
@@ -222,7 +222,7 @@ export function ProjectsSection({
   return (
     <section
       aria-label="项目"
-      className={projects.length === 0 ? "mb-2 flex flex-1 flex-col" : "mb-2 shrink-0"}
+      className="mb-2 shrink-0"
     >
       <SectionHeader
         label="项目"

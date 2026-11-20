@@ -126,11 +126,12 @@ describe("ProjectsSection", () => {
     expect(container.textContent).not.toContain("还没有项目");
     expect(container.textContent?.trim()).toBe("项目");
     const section = container.querySelector("section");
-    expect(section?.className).toContain("flex-1");
+    expect(section?.className).not.toContain("flex-1");
     const empty = iconButton("打开文件夹");
     expect(empty).not.toBeNull();
-    expect(empty?.parentElement?.className).toContain("items-center");
+    expect(empty?.className).toContain("size-12");
     expect(empty?.parentElement?.className).toContain("justify-center");
+    expect(empty?.parentElement?.className).not.toContain("flex-1");
     await click(empty);
     expect(added).toBe(1);
   });

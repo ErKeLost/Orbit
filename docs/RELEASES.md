@@ -6,6 +6,12 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.54
+
+An empty project list no longer stretches to fill the rail. The add control is a larger dashed tile, centered under 「项目」, and 「会话」 sits directly beneath it.
+
+A short user prompt no longer wraps its clock. The time stays on one line under the bubble, in the flow, instead of being clamped to the bubble width and painted over the next message. A provider error wraps inside its own row.
+
 ## v1.0.53
 
 The colour system is MonoCode's. The default is a neutral grey: hue 240, saturation 0, dark lightness 9. Named themes write `--wt-*` and the stylesheet overrides text, accent, links, headings and code colours. Glass washes use the same formulas: an opaque rail mixes the background 10% toward black, and a glass rail is the theme colour at the window opacity.
