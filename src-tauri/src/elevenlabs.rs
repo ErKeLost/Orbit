@@ -434,7 +434,7 @@ pub async fn voice_classify(request: Value) -> Result<Value, String> {
         .post(format!("{base}/v1/systemone"))
         .bearer_auth(key)
         .json(&body)
-        .timeout(std::time::Duration::from_millis(800))
+        .timeout(std::time::Duration::from_millis(2000))
         .send()
         .await
         .map_err(|error| format!("Jev 请求失败：{error}"))?;

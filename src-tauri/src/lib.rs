@@ -537,6 +537,10 @@ pub fn run() {
             #[cfg(desktop)]
             rime::rime_prism_nudge,
             #[cfg(desktop)]
+            rime::rime_prism_hold,
+            #[cfg(desktop)]
+            rime::rime_prism_tool_result,
+            #[cfg(desktop)]
             rime::rime_prism_close,
             media::media_meta,
             media::read_media_file,

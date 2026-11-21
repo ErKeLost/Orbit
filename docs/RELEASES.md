@@ -6,6 +6,12 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.57
+
+A voice call that Rime cannot finish is handed to Pi with the call so far. If no desktop session is open, this opens one in the current project. Rime says it is checking the specific thing — the wording comes from a prompt, not a fixed sentence — then speaks Pi's result when the work is done.
+
+A finished reply is no longer reported as an interruption. That was the red "played before the session was last quiet" line.
+
 ## v1.0.56
 
 v1.0.55 did not publish. The call classes used parameter properties, which this project's typecheck rejects. The fields are ordinary now.

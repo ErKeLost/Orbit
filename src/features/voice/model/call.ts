@@ -6,8 +6,10 @@ import { Channel } from "@tauri-apps/api/core"
 import { invoke } from "@/lib/native"
 import { mobileRuntime } from "@/lib/runtime"
 import { bindCall } from "./binding"
-import { handToAgent } from "./handoff"
+import { taskOf } from "./brief"
+import { askAgent, handToAgent } from "./handoff"
 import { PcmPlayer } from "./pcm-player"
+import { quietPrismError } from "./prism-fault"
 import { PrismMic } from "./prism-mic"
 import { upsertTurn, type CallTurn } from "./turns"
 
@@ -26,7 +28,17 @@ export type CallSnapshot = {
 
 const empty: CallSnapshot = { state: "off", error: null, muted: false, turns: [], level: 0, outputLevel: 0, engineId: "" }
 
-type PrismEvent = { kind?: string; text?: string; audio?: string; itemId?: string; message?: string }
+type PrismEvent = {
+  kind?: string
+  text?: string
+  audio?: string
+  itemId?: string
+  message?: string
+  code?: string
+  callId?: string
+  responseId?: string
+  arguments?: string
+}
 
 export class VoiceCall {
   private value: CallSnapshot = empty
@@ -38,6 +50,9 @@ export class VoiceCall {
   private epoch = 0
   private sent = new Set<string>()
   private replyId = ""
+  private said = ""
+  private jevTimer = 0
+  private handoffGen = 0
 
   getSnapshot = () => this.value
   subscribe = (listener: () => void) => {
@@ -104,14 +119,23 @@ export class VoiceCall {
       this.update({ state: "listening" })
       return
     }
+    if (event.kind === "tool_pending") {
+      this.handoffGen++
+      window.clearTimeout(this.jevTimer)
+      return
+    }
+    if (event.kind === "tool_call") {
+      this.handoffGen++
+      window.clearTimeout(this.jevTimer)
+      void this.onTool(event)
+      return
+    }
     if (event.kind === "transcript" && event.text) {
+      this.said = event.text
       this.turns(upsertTurn(this.value.turns, { id: `user-${this.value.turns.length}`, role: "user", text: event.text }, "replace"), "listening")
       if (!this.sent.has(event.text)) {
         this.sent.add(event.text)
-        const said = event.text
-        void handToAgent(said).then(result => {
-          if (result === "no-session") this.announce("没有正在用的会话。")
-        })
+        this.armFallback(event.text)
       }
       return
     }
@@ -127,9 +151,41 @@ export class VoiceCall {
       if (this.value.state !== "speaking") this.update({ state: "speaking" })
       return
     }
-    if (event.kind === "error" && event.message) this.update({ error: event.message })
+    if (event.kind === "error" && event.message && !quietPrismError(event.code, event.message)) this.update({ error: event.message })
     if (event.kind === "closed" && this.value.state !== "off" && this.value.state !== "connecting") {
       this.fail(this.value.error || "语音连接已断开")
+    }
+  }
+
+  private armFallback(text: string) {
+    window.clearTimeout(this.jevTimer)
+    const gen = ++this.handoffGen
+    this.jevTimer = window.setTimeout(() => {
+      if (gen !== this.handoffGen) return
+      void handToAgent(text, this.value.turns).then(result => {
+        if (gen !== this.handoffGen) return
+        if (result === "no-project") this.announce("没有打开的项目。")
+      })
+    }, 1200)
+  }
+
+  private async onTool(event: PrismEvent) {
+    const task = taskOf(event.arguments, this.said)
+    const result = await askAgent(task, this.value.turns)
+    const spoken = result.spoken || "还在做，好了告诉你。"
+    if (!event.callId || !event.responseId) {
+      if (!result.pending) this.announce(spoken)
+      return
+    }
+    try {
+      const fate = await invoke<string>("rime_prism_tool_result", {
+        callId: event.callId,
+        responseId: event.responseId,
+        output: spoken,
+      })
+      if (fate !== "continued") this.announce(spoken)
+    } catch {
+      this.announce(spoken)
     }
   }
 
@@ -140,6 +196,8 @@ export class VoiceCall {
 
   async stop() {
     this.epoch++
+    this.handoffGen++
+    window.clearTimeout(this.jevTimer)
     this.mic?.stop()
     this.mic = null
     this.player.stop()
@@ -156,6 +214,13 @@ export class VoiceCall {
   announce(sentence: string) {
     if (this.value.state === "off" || !sentence.trim()) return false
     void invoke("rime_prism_nudge", { text: sentence }).catch(() => undefined)
+    return true
+  }
+
+  /** Name the specific request, then hand it to Pi. Not a fixed holding line. */
+  hold(said: string) {
+    if (this.value.state === "off" || !said.trim()) return false
+    void invoke("rime_prism_hold", { text: said }).catch(() => undefined)
     return true
   }
 

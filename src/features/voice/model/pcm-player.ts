@@ -40,16 +40,24 @@ export class PcmPlayer {
     this.sources.add(source)
     source.onended = () => {
       this.sources.delete(source)
-      if (!this.sources.size) this.onLevel(0)
+      if (this.sources.size) return
+      const now = this.context
+      if (!now || now.currentTime >= this.playhead - 0.05) this.itemId = ""
+      this.onLevel(0)
     }
     this.onLevel(0.4)
   }
 
-  /** Stop local playback. Returns how many milliseconds of this reply were heard. */
+  /**
+   * Stop local playback. A report is only for audio that was actually playing.
+   * A finished reply is an earlier stretch; reporting it makes Prism say the
+   * reply played before the session was last quiet.
+   */
   stop(): { itemId: string; heardMs: number } {
     const context = this.context
-    const heardMs = context && this.itemId ? Math.max(0, Math.round((context.currentTime - this.heardOrigin) * 1000)) : 0
-    const itemId = this.itemId
+    const playing = this.sources.size > 0
+    const heardMs = playing && context && this.itemId ? Math.max(0, Math.round((context.currentTime - this.heardOrigin) * 1000)) : 0
+    const itemId = playing ? this.itemId : ""
     for (const source of this.sources) {
       try { source.stop() } catch { /* already stopped */ }
     }

@@ -139,8 +139,8 @@ export function gateBody(said: string) {
         type: "noul",
         instructions: "Should `said` be given to the working agent as a task to do?",
         criteria: {
-          true: { what: "A result that is not done yet, or a change to work already running." },
-          false: { what: "Chat, a progress question, or not sure." },
+          true: { what: "Needs a result this voice cannot produce: weather, search, files, code, the project, or a change to work already running." },
+          false: { what: "Chat, a greeting, a progress question, or not sure." },
         },
       },
     },
