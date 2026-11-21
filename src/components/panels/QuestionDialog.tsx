@@ -208,7 +208,7 @@ export function QuestionDialog({ dialog, questions }: { dialog: UiRequest; quest
       data-question-form
       data-composer-box
       data-component="session-question-dock"
-      className="rounded-lg border border-line bg-fill-weak px-3 py-2.5 backdrop-blur-sm has-focus:border-line-strong"
+      className="overflow-hidden rounded-lg border border-line bg-fill-weak px-3 py-2.5 backdrop-blur-sm has-focus:border-line-strong"
       onSubmit={(event) => {
         event.preventDefault();
         advance();
@@ -285,9 +285,7 @@ export function QuestionDialog({ dialog, questions }: { dialog: UiRequest; quest
                 event.preventDefault();
                 selectOption(index);
               }}
-              className={`flex w-full cursor-pointer items-start gap-2 rounded-md border px-2.5 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${
-                picked ? "border-line-strong bg-accent-soft" : "border-line hover:bg-fill"
-              }`}
+              className="question-option flex w-full cursor-pointer items-start gap-2 px-2.5 py-2 text-left"
             >
               <Mark multi={multi} picked={picked} />
               <span className="min-w-0 flex-1">
@@ -301,7 +299,7 @@ export function QuestionDialog({ dialog, questions }: { dialog: UiRequest; quest
         <div
           data-custom="true"
           data-picked={draft.customOn}
-          className={`flex min-h-10 items-center gap-2 rounded-md border px-2.5 transition-colors ${draft.customOn ? "border-line-strong bg-accent-soft" : "border-line"}`}
+          className="question-option flex min-h-10 items-center gap-2 px-2.5"
           onClick={(event) => {
             if (event.target !== event.currentTarget || pending) return;
             setFocus(options.length);
@@ -320,7 +318,7 @@ export function QuestionDialog({ dialog, questions }: { dialog: UiRequest; quest
             disabled={pending}
             onFocus={() => setFocus(options.length)}
             onClick={customToggle}
-            className="grid size-4 shrink-0 place-items-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
+            className="grid size-4 shrink-0 place-items-center disabled:opacity-40"
           >
             <Mark multi={multi} picked={draft.customOn} />
           </button>
@@ -398,7 +396,7 @@ function Mark({ multi, picked }: { multi: boolean; picked: boolean }) {
 
 function Shortcut({ n }: { n: number }) {
   return (
-    <kbd className="grid h-5 min-w-5 place-items-center self-center rounded-keycap border border-line bg-fill-weak px-1 text-2xs leading-none text-ink-3">
+    <kbd className="grid h-5 min-w-5 place-items-center self-center rounded-keycap border px-1 text-2xs leading-none">
       {n}
     </kbd>
   );

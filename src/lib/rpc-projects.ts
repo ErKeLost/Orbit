@@ -186,12 +186,8 @@ export async function saveSpeechApiKey(provider:string|undefined,apiKey:string|n
 export async function transcribeAudio(audioBase64:string,mimeType:string):Promise<{text:string;transport:string;noSpeech?:boolean}> { if(!workspaceBackend()) throw new Error('语音输入请在电脑端使用'); return invoke<{text:string;transport:string;noSpeech?:boolean}>('transcribe_audio',{audioBase64,mimeType}) }
 
 /**
- * 语音通话（ElevenLabs Speech Engine）—— 与上面的听写**互不相干**：听写是
- * 「一段录音 → 一个字输入框」，通话是「一直开着的双向语音流」。
- *
- * 声音的一切都归 ElevenLabs：麦克风、断句、打断、识别、合成。前端只需要一个短期
- * WebRTC token；长期 API Key 留在 Rust 里。Pi 那一端在 `tools/speech-engine`：
- * ElevenLabs 会从云端连过去，每通电话起一个独立的 `pi --mode rpc` 进程。
+ * 语音通话走 Rime Prism。断句、打断、闲聊、出声都在他们那边。
+ * Jev 只判这句要不要交给桌面上那条 Pi。Key 留在 Rust 里。
  */
 export type SpeechEngineConfig = { engineId:string; configured:boolean; hasCredential:boolean }
 export type SpeechEngineCheck = { ok:boolean; tier?:string; characterCount?:number; characterLimit?:number }

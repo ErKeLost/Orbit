@@ -1,8 +1,9 @@
 import { CornerDownRight, ListEnd, Trash } from "../../shared/ui/icons";
 
 /**
- * Queued messages are a footer row group *inside* the composer box — the same
- * hairline and surface as the field, never a card riding above it. The words
+ * Queued messages sit at the *top* of the composer box — the same hairline
+ * and surface as the field, never a card riding above it and never a footer
+ * under the toolbar. The words
  * still have not reached the turn: follow-ups wait for it, steering messages
  * are already on their way into the running turn. "Steer" promotes a
  * follow-up; the trash removes the whole queue back into the draft (Pi has no
@@ -34,7 +35,7 @@ export function MessageQueueView({
   if (rows.length === 0) return null;
   const inFlight = running !== false;
   return (
-    <div role="group" aria-label="排队中的消息" className="border-t border-line px-2 py-1" data-message-queue>
+    <div role="group" aria-label="排队中的消息" className="border-b border-line px-2 py-1" data-message-queue>
       <ul className="max-h-32 overflow-y-auto overscroll-contain">
         {rows.map((row, index) => (
           <li

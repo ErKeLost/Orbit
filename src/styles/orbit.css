@@ -1117,6 +1117,86 @@ nav[aria-label="Projects"] button {
   box-shadow: 0 1px 3px color-mix(in srgb, var(--color-content) 4%, transparent);
 }
 
+/*
+ * Question dock. WebKit paints `outline` as a rectangle and drops
+ * border-radius once outline-offset is set, so the accent stroke and the
+ * frosted corner leak past the card. Clip to the card radius, and draw
+ * focus inside the option radius with a real border plus an inset shadow.
+ */
+[data-component="session-question-dock"] {
+  overflow: hidden;
+  border-radius: var(--radius-lg);
+}
+
+[data-component="session-question-dock"] :focus-visible {
+  outline: none;
+}
+
+.question-option {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+  transition:
+    background-color var(--dur-1) var(--ease),
+    border-color var(--dur-1) var(--ease),
+    box-shadow var(--dur-1) var(--ease);
+}
+
+button.question-option {
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.question-option:hover:not([data-picked="true"]):not(:focus-visible):not(:focus-within) {
+  border-color: var(--line-strong);
+  background: var(--fill);
+}
+
+.question-option:focus-visible,
+.question-option:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+.question-option[data-picked="true"] {
+  border-color: color-mix(in srgb, var(--accent) 46%, transparent);
+  background: var(--accent-soft);
+  box-shadow: none;
+}
+
+.question-option[data-picked="true"]:focus-visible,
+.question-option[data-picked="true"]:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+[data-component="session-question-dock"] kbd {
+  border-radius: var(--radius-keycap);
+  border-color: var(--line);
+  background: var(--surface-raised);
+  color: var(--ink-3);
+}
+
+[data-component="session-question-dock"] button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, transparent);
+}
+
+[data-component="session-question-dock"] .question-option button:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+[data-component="session-question-dock"] .primary-action:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
 html.theme-light [data-composer-box] {
   box-shadow:
     0 2px 10px color-mix(in srgb, var(--color-content) 6%, transparent),

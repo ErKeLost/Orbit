@@ -1,6 +1,6 @@
 /**
- * The desk. ElevenLabs asks this process what to say. Work goes out through
- * the same commands the composer already uses. Nothing here opens a session.
+ * The desk. Prism speaks. This file only hears the working session finish,
+ * and says the result back through the same mouth. Nothing here opens a session.
  */
 import type { UiRequest } from "@/lib/protocol"
 import type { Transcript } from "@/lib/protocol"
@@ -12,7 +12,7 @@ import { answerDialog, deliveryFor, sendPrompt } from "@/lib/rpc-session"
 import { ack, announcementOf, classifyBody, decide, readAnswer, type Facts } from "./route"
 import { bindCall, noteAbort, noteDispatch, notePending, takeSettle, voiceBinding } from "./binding"
 import { voiceCall } from "./call"
-import { chunkDesk, claimDesk, endDesk, nextDesk, releaseDesk, spokenDesk } from "./pipe"
+import { chunkDesk, claimDesk, endDesk, nextDesk, releaseDesk } from "./pipe"
 import { QUESTION_TITLE, questionsFromPayload } from "../../../../src-tauri/resources/question"
 
 type SettledDetail = { connectionId: string; sessionFile: string; error: string | null; aborted: boolean }
@@ -241,36 +241,17 @@ async function onNeedsInput(detail: InputDetail | undefined) {
   await speakOut(dialogAsk(request))
 }
 
-/** Call is up: one mouth, through ElevenLabs. Call is down: local flash TTS. */
+/** Call is up: Prism says it. Call is down: one Coda sentence, same key. */
 export async function speakOut(sentence: string) {
   const text = sentence.trim()
   if (!text) return
-  if (!voiceCall.announce(text)) {
-    await playLocal(text)
-    return
-  }
-  const heard = await waitSpoken()
-  if (heard) return
-  const wasMuted = voiceCall.getSnapshot().muted
-  voiceCall.setMuted(true)
-  try {
-    await playLocal(text)
-  } finally {
-    if (!wasMuted) voiceCall.setMuted(false)
-  }
-}
-
-async function waitSpoken() {
-  try {
-    return await spokenDesk()
-  } catch {
-    return false
-  }
+  if (voiceCall.announce(text)) return
+  await playLocal(text)
 }
 
 async function playLocal(text: string) {
   try {
-    const spoken = await invoke<{ audioBase64: string }>("speech_engine_speak", { text })
+    const spoken = await invoke<{ audioBase64: string }>("rime_speak", { text })
     if (!spoken.audioBase64) return
     const audio = new Audio(`data:audio/mpeg;base64,${spoken.audioBase64}`)
     await audio.play()

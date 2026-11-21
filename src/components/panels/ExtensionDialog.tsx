@@ -39,7 +39,7 @@ export function ExtensionDialog({ dialog, embedded = false }: { dialog: UiReques
   return (
     <form
       data-question-form
-      className={embedded ? "border-b border-stroke px-3 py-2.5" : "mb-1.5 rounded-lg border border-line bg-fill-weak px-3 py-2.5 backdrop-blur-sm has-focus:border-line-strong"}
+      className={embedded ? "border-b border-stroke px-3 py-2.5" : "mb-1.5 overflow-hidden rounded-lg border border-line bg-fill-weak px-3 py-2.5 backdrop-blur-sm has-focus:border-line-strong"}
       onSubmit={(event) => {
           event.preventDefault();
           if (dialog.method === "confirm") void answer({ confirmed: true });
@@ -65,11 +65,10 @@ export function ExtensionDialog({ dialog, embedded = false }: { dialog: UiReques
                     key={option}
                     type="button"
                     aria-pressed={active}
+                    data-picked={active}
                     onClick={() => setChoice(option)}
                     onDoubleClick={() => void answer({ value: option })}
-                    className={`flex w-full items-start gap-2 rounded-md border px-2.5 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${
-                      active ? "border-line-strong bg-accent-soft" : "border-line hover:bg-fill"
-                    }`}
+                    className="question-option flex w-full items-start gap-2 px-2.5 py-2 text-left"
                   >
                     <span aria-hidden className={`mt-0.5 grid size-3.5 shrink-0 place-items-center rounded-full border ${active ? "border-accent bg-accent text-accent-foreground" : "border-line-strong"}`}>
                       {active ? <Check className="size-2.5" strokeWidth={2.5} /> : null}

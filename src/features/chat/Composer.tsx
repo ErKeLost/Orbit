@@ -729,6 +729,16 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
           {fileDrag ? (
             <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center rounded-lg bg-accent/8 text-xs text-ink-2">拖放文件以附加</div>
           ) : null}
+          {/* 排队 / 引导是盒子顶部的一行，不是工具栏下面的页脚，也不另画一张卡片浮在输入框上面。 */}
+          {queueVisible ? (
+            <MessageQueueView
+              steering={queue.steering}
+              followUp={queue.followUp}
+              running={running}
+              onSteer={(text) => void steerFollowUp(text, target).catch(report)}
+              onClear={() => void recallQueue(target).catch(report)}
+            />
+          ) : null}
           {dialog && !asking ? <ExtensionDialog key={dialog.id} dialog={dialog} embedded /> : null}
           {plan ? <ComposerTasks plan={plan} /> : null}
           <div className="flex min-w-0 items-center gap-2.5 overflow-hidden px-3 pt-2.5">
@@ -947,16 +957,6 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
               />
             </div>
           </div>
-          {/* 排队中的消息是盒子里的一行页脚：不另画一张卡片浮在输入框上面。 */}
-          {queueVisible ? (
-            <MessageQueueView
-              steering={queue.steering}
-              followUp={queue.followUp}
-              running={running}
-              onSteer={(text) => void steerFollowUp(text, target).catch(report)}
-              onClear={() => void recallQueue(target).catch(report)}
-            />
-          ) : null}
         </div>
       </div>
     </div>

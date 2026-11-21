@@ -1,54 +1,26 @@
 /**
  * 设置 → 语音。
  *
- * 通话本身没有可调的音频参数了：断句、打断、语速、音色全在 ElevenLabs 那边，
- * 音色绑在 Speech Engine 资源上。这里只剩两件真正属于本机的事——
- * 那把 API Key，和 Pi 那边的服务端地址（engine id）。
+ * 断句、打断、闲聊、出声都在 Rime Prism。这里只留那把 Key。
+ * Jev 只判这句要不要交给桌面上正在用的会话。
  */
 import { useEffect, useState } from "react";
 import { toast } from "../../../shared/ui/toast";
 import { Group, Input, Row, SecondaryButton } from "../../../shared/ui/controls";
-import {
-  saveSpeechEngineApiKey,
-  saveSpeechEngineConfig,
-  speechEngineCheck,
-  speechEngineConfig,
-  type SpeechEngineCheck,
-  type SpeechEngineConfig,
-} from "@/lib/rpc-projects";
-import { useWorkspace } from "@/lib/store";
-import { probeSpeechEngine, type EngineHealth } from "../model/health";
+import { invoke } from "@/lib/native";
 
 export function VoiceSettingsPage() {
-  const mobile = useWorkspace((state) => state.runtimeTarget === "mobile");
-  const [config, setConfig] = useState<SpeechEngineConfig | null>(null);
+  const [hasKey, setHasKey] = useState(false);
   const [keyDraft, setKeyDraft] = useState("");
-  const [engineDraft, setEngineDraft] = useState("");
   const [saving, setSaving] = useState(false);
-  const [checking, setChecking] = useState(false);
-  const [report, setReport] = useState<SpeechEngineCheck | null>(null);
-  const [health, setHealth] = useState<EngineHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const probe = async () => setHealth(await probeSpeechEngine());
 
   useEffect(() => {
     let live = true;
-    void speechEngineConfig()
-      .then(value => {
-        if (!live) return;
-        setConfig(value);
-        setEngineDraft(value.engineId);
-      })
-      .catch((cause: unknown) => {
-        if (live) setError(cause instanceof Error ? cause.message : String(cause));
-      });
-    void probeSpeechEngine().then(value => {
-      if (live) setHealth(value);
-    });
-    return () => {
-      live = false;
-    };
+    void invoke<{ hasCredential?: boolean }>("rime_config")
+      .then(value => { if (live) setHasKey(value.hasCredential === true) })
+      .catch((cause: unknown) => { if (live) setError(cause instanceof Error ? cause.message : String(cause)) });
+    return () => { live = false };
   }, []);
 
   const saveKey = async () => {
@@ -56,10 +28,10 @@ export function VoiceSettingsPage() {
     if (!key || saving) return;
     setSaving(true);
     try {
-      const result = await saveSpeechEngineApiKey(key);
-      setConfig(current => (current ? { ...current, hasCredential: result.hasCredential } : current));
+      const result = await invoke<{ hasCredential?: boolean }>("save_rime_api_key", { apiKey: key });
+      setHasKey(result.hasCredential === true);
       setKeyDraft("");
-      toast.success("已保存 ElevenLabs API Key");
+      toast.success("已保存 Rime API Key");
     } catch (cause) {
       toast.error("保存密钥失败", { description: cause instanceof Error ? cause.message : String(cause) });
     } finally {
@@ -67,50 +39,17 @@ export function VoiceSettingsPage() {
     }
   };
 
-  const saveEngine = async () => {
-    if (saving) return;
-    setSaving(true);
-    try {
-      const next = await saveSpeechEngineConfig({ engineId: engineDraft.trim() || null });
-      setConfig(next);
-      setEngineDraft(next.engineId);
-      toast.success("已保存 Speech Engine");
-    } catch (cause) {
-      toast.error("保存 Speech Engine 失败", { description: cause instanceof Error ? cause.message : String(cause) });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const check = async () => {
-    if (checking) return;
-    setChecking(true);
-    setReport(null);
-    try {
-      setReport(await speechEngineCheck());
-    } catch (cause) {
-      toast.error("检查失败", { description: cause instanceof Error ? cause.message : String(cause) });
-    } finally {
-      setChecking(false);
-    }
-  };
-
-  const hasKey = config?.hasCredential ?? false;
-  const remaining = report && typeof report.characterLimit === "number" && typeof report.characterCount === "number"
-    ? `${Math.max(0, report.characterLimit - report.characterCount).toLocaleString()} / ${report.characterLimit.toLocaleString()}`
-    : null;
-
   return (
     <div className="flex flex-col gap-6">
       {error ? <p className="text-xs text-negative">{error}</p> : null}
 
       <Group title="凭据" description="API Key 存在 Pi 的 auth.json 里，只在后端使用，页面拿不到它。">
-        <Row anchorId="voice-key" label="ElevenLabs API Key" description={hasKey ? "已保存。填新的会覆盖。" : "还没有保存，语音页会拒绝开麦。"}>
+        <Row anchorId="voice-key" label="Rime API Key" description={hasKey ? "已保存。填新的会覆盖。" : "还没有保存，语音页会拒绝开麦。"}>
           <div className="flex items-center gap-2">
             <Input
               type="password"
               autoComplete="off"
-              placeholder={hasKey ? "•••••••• 已保存" : "sk_…"}
+              placeholder={hasKey ? "•••••••• 已保存" : "rime_…"}
               value={keyDraft}
               onChange={event => setKeyDraft(event.target.value)}
             />
@@ -119,50 +58,11 @@ export function VoiceSettingsPage() {
             </SecondaryButton>
           </div>
         </Row>
-        <Row
-          anchorId="voice-engine"
-          label="Speech Engine ID"
-          description="第一次跑 tools/speech-engine/up.sh 会生成 seng_… 并写进 eleven.json。语音链路是：浏览器 ↔ ElevenLabs ↔ 本机 127.0.0.1 的 speech-engine。"
-        >
-          <div className="flex items-center gap-2">
-            <Input placeholder="seng_…" value={engineDraft} onChange={event => setEngineDraft(event.target.value)} />
-            <SecondaryButton disabled={saving || engineDraft.trim() === (config?.engineId ?? "")} onClick={() => void saveEngine()}>
-              保存
-            </SecondaryButton>
-          </div>
-        </Row>
       </Group>
 
-      <Group title="连接检查" description="只读一次账户信息：确认 Key 有效，并看免费额度还剩多少。">
-        <Row anchorId="voice-check" label="账户与额度" description={remaining ? `剩余 ${remaining} 字符（${report?.tier ?? "?"} 计划）` : "免费计划约 1 万字符/月，通话按分钟消耗积分。"}>
-          <SecondaryButton disabled={!hasKey || checking} onClick={() => void check()}>
-            {checking ? "检查中…" : "检查"}
-          </SecondaryButton>
-        </Row>
-      </Group>
-
-      <Group title="服务端" description="ElevenLabs 只负责听和说。转写交给本机管子，再由这个应用决定派不派给桌面上正在用的会话。不会另开一只 Pi，也不改输入框那条。">
-        <Row
-          anchorId="voice-health"
-          label={mobile ? "电脑上的服务" : "本机服务"}
-          description={
-            health === null
-              ? mobile
-                ? "正在问电脑上的语音服务…"
-                : "正在问 127.0.0.1:3001…"
-              : health.running
-                ? `运行中 · ${health.engineId} · ${health.desk ? "桌子已接上" : "桌子没接上"} · 内存 ${health.rssMb} MB · 已接 ${health.calls} 通`
-                : health.reason
-          }
-        >
-          <div className="flex items-center gap-2">
-            <span className={`size-2 rounded-full ${health === null ? "bg-ink-3" : health.running ? "bg-positive" : "bg-negative"}`} aria-hidden />
-            <SecondaryButton onClick={() => void probe()}>重新检查</SecondaryButton>
-          </div>
-        </Row>
-        <Row label="启动方式" description="up.sh 顺序是：起隧道 → 把 wss 地址和低延迟配置写回已有 Engine → 起服务。隧道换了地址，重跑一次就好，不需要改 Engine ID。">
-          <code className="text-xs text-ink-3">tools/speech-engine</code>
-        </Row>
+      <Group title="这一通怎么走" description="麦、断句、打断、闲聊、出声都是 Rime Prism。Jev 只回答一件事：这句要不要交给桌面上正在用的那条会话。不够把握就不交。">
+        <Row label="语言" description="Prism 现在只说英语，听也只按英语。中文说进去它不会按中文回。这是他们现在的边界，不是这边还能补的。" />
+        <Row label="音色" description="通话用 aurora。挂断之后的一句播报用 Coda 的 celeste，同一把 Key。" />
       </Group>
     </div>
   );

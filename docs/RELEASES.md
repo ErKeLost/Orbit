@@ -6,6 +6,14 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.55
+
+A queued steer sits at the top of the composer box, above the branch row, not under the toolbar. The hairline is the bottom edge of that row.
+
+Question options keep their accent stroke inside the rounded card. WebKit no longer paints a rectangular outline past the frosted corner.
+
+A voice call is Rime Prism. The microphone, turn-taking, interruption and speech stay there. Jev only decides whether the words go to the session that was open when the mic came on. Settings keep one Rime key; the ElevenLabs engine id is gone.
+
 ## v1.0.54
 
 An empty project list no longer stretches to fill the rail. The add control is a larger dashed tile, centered under 「项目」, and 「会话」 sits directly beneath it.

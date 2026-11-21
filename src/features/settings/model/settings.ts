@@ -35,9 +35,7 @@ export const SETTINGS_INDEX: SettingIndexEntry[] = [
   { id: "relay", section: "general", label: "公网中转配置", keywords: "阿里云 relay 外网 5G 中转" },
   { id: "host", section: "general", label: "Host 运行", keywords: "电脑 host 开启" },
   // 语音 Agent
-  { id: "voice-key", section: "voice", label: "ElevenLabs API Key", keywords: "elevenlabs 语音 key 密钥 speech engine token" },
-  { id: "voice-engine", section: "voice", label: "Speech Engine ID", keywords: "seng speech engine 语音服务 地址" },
-  { id: "voice-check", section: "voice", label: "语音账户与额度", keywords: "elevenlabs 额度 检查 诊断 剩余 字符" },
+  { id: "voice-key", section: "voice", label: "Rime API Key", keywords: "rime prism 语音 key 密钥" },
   // 第三方接入
   { id: "image-endpoint", section: "integrations", label: "图片端点", keywords: "火山方舟 base url provider 端点" },
   { id: "image-default-model", section: "integrations", label: "默认出图模型", keywords: "模型 切换 seedream generate_image image model" },

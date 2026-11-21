@@ -4,9 +4,8 @@
  * 没开始的时候整页就是那颗球，点它开始；开始之后球缩到顶部继续当控制键，下面那块
  * 位置展示最近一轮对话。用户消息独立保留，AI 回复限制高度并在内部滚动。
  *
- * 声音链路在 ElevenLabs 那边（麦克风、断句、打断、识别、合成），这里只有展示与
- * 三个动作：开始、打断、结束。页面本身保持改动前的样子——它看起来是对的，就不该
- * 因为底层换了实现而跟着换一副长相。
+ * 声音在 Rime Prism：断句、打断、闲聊、出声。Jev 只判要不要把这句交给 Pi。
+ * 页面还是一颗球。
  */
 import { useEffect, useState } from "react";
 import { Orb, type AgentState } from "@/components/ui/orb";
@@ -21,7 +20,7 @@ import { voiceCall, type CallState, type VoiceLogItem } from "../model/call";
 import { startVoiceDesk } from "../model/desk";
 import { Mic, MicOff } from "lucide-react";
 
-/** 状态 → ElevenLabs Orb 的状态。它只认这四种（null 就是闲置）。 */
+/** 状态 → Orb 的四种。null 就是闲置。 */
 const AGENT_STATE: Record<CallState, AgentState> = {
   off: null,
   connecting: "listening",

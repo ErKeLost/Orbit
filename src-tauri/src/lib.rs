@@ -62,6 +62,8 @@ mod speech;
 // 目标会在 `cargo check --target aarch64-linux-android` 上找不到 crate。
 #[cfg(desktop)]
 mod elevenlabs;
+#[cfg(desktop)]
+mod rime;
 mod media;
 mod pty_term;
 mod search;
@@ -520,6 +522,22 @@ pub fn run() {
             elevenlabs::voice_classify,
             #[cfg(desktop)]
             elevenlabs::speech_engine_speak,
+            #[cfg(desktop)]
+            rime::rime_config,
+            #[cfg(desktop)]
+            rime::save_rime_api_key,
+            #[cfg(desktop)]
+            rime::rime_speak,
+            #[cfg(desktop)]
+            rime::rime_prism_open,
+            #[cfg(desktop)]
+            rime::rime_prism_audio,
+            #[cfg(desktop)]
+            rime::rime_prism_truncate,
+            #[cfg(desktop)]
+            rime::rime_prism_nudge,
+            #[cfg(desktop)]
+            rime::rime_prism_close,
             media::media_meta,
             media::read_media_file,
             pty_term::pty_spawn,
