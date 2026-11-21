@@ -30,7 +30,10 @@ export class PrismMic {
   private generation = 0
   private muted = false
   private pending = new Int16Array(0)
-  constructor(private readonly handlers: { onAudio: (base64: string) => void; onLevel: (level: number) => void; onError: (message: string) => void }) {}
+  private readonly handlers: { onAudio: (base64: string) => void; onLevel: (level: number) => void; onError: (message: string) => void }
+  constructor(handlers: { onAudio: (base64: string) => void; onLevel: (level: number) => void; onError: (message: string) => void }) {
+    this.handlers = handlers
+  }
 
   async start() {
     const generation = ++this.generation

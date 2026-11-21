@@ -7,7 +7,10 @@ export class PcmPlayer {
   private carry = ""
   private heardOrigin = 0
   private itemId = ""
-  constructor(private readonly onLevel: (level: number) => void) {}
+  private readonly onLevel: (level: number) => void
+  constructor(onLevel: (level: number) => void) {
+    this.onLevel = onLevel
+  }
 
   async prepare() {
     this.context ??= new AudioContext({ latencyHint: "interactive", sampleRate: 24000 })

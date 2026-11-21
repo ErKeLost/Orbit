@@ -6,7 +6,9 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
-## v1.0.55
+## v1.0.56
+
+v1.0.55 did not publish. The call classes used parameter properties, which this project's typecheck rejects. The fields are ordinary now.
 
 A queued steer sits at the top of the composer box, above the branch row, not under the toolbar. The hairline is the bottom edge of that row.
 
