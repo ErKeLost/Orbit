@@ -158,7 +158,8 @@ async function runShow(id: string, cwd: string) {
 
   const bound = workspace.connectionId;
   const live = Boolean(bound) && hasWorkspaceConnection(bound);
-  if (live && connectionCwd(bound) && normalizeProjectPath(connectionCwd(bound)) === normalizeProjectPath(workspace.cwd)) {
+  const liveCwd = live ? connectionCwd(bound) : null;
+  if (liveCwd && normalizeProjectPath(liveCwd) === normalizeProjectPath(workspace.cwd)) {
     focusWorkspaceConnection(bound, workspace.cwd);
     return;
   }

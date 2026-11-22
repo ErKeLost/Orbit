@@ -6,6 +6,10 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.62
+
+v1.0.61 did not publish. The build stopped on a type error in the session switch: a missing connection path was passed where a path string was required. That check now keeps the path only when it exists.
+
 ## v1.0.61
 
 The window picture covers the whole window. It is no longer only the chat column. The rail, the title bar and the empty home show the same picture. The home galaxy stays off while a picture is set. The opacity slider still decides how solid that picture is.
