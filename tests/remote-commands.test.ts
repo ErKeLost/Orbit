@@ -132,6 +132,8 @@ const EXCLUDED: Record<string, string> = {
   save_speech_config: "writes the desktop's speech.json",
   save_speech_api_key: "writes the desktop's auth.json",
   transcribe_audio: "desktop voice input; the phone has no mic permission plumbing yet",
+  rime_speak: "one-shot Coda speech on the desktop; a phone call uses Prism instead",
+  save_rime_api_key: "writes the desktop's auth.json; the key never reaches the phone",
   // 产物存在桌面端的 app_data 目录里，手机既没有那块盘也没有它的一份副本。
   // 手机要读产物是**应该做**的事，但那要在 Host 上开一条读通道，是另一件事。
   artifacts_list: "reads the desktop's app_data; the phone has no copy of that store",
