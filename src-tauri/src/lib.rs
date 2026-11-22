@@ -541,6 +541,8 @@ pub fn run() {
             #[cfg(desktop)]
             rime::rime_prism_tool_result,
             #[cfg(desktop)]
+            rime::rime_prism_quiet,
+            #[cfg(desktop)]
             rime::rime_prism_close,
             media::media_meta,
             media::read_media_file,

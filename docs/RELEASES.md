@@ -6,6 +6,16 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.58
+
+Starting a voice call opens a new session in the current project and shows it in the left session list. Later requests in the same call send only the new ask, not the whole transcript again.
+
+Pause, hangup, and leaving the voice page stop playback and stop anything that call still wanted to send.
+
+Spoken lines are not canned. Prompts describe the shape and use what was actually said. They do not name example tasks, and they do not use a sentence that would fit any request. The session title comes from the request, not a fixed label.
+
+A quote in the composer is the first lines of the field, not a card above it.
+
 ## v1.0.57
 
 A voice call that Rime cannot finish is handed to Pi with the call so far. If no desktop session is open, this opens one in the current project. Rime says it is checking the specific thing — the wording comes from a prompt, not a fixed sentence — then speaks Pi's result when the work is done.

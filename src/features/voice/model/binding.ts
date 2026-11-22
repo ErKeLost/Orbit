@@ -1,9 +1,51 @@
 /**
- * The session this call is watching. Opening a call does not create one, and
- * hanging up does not clear work that was already sent.
+ * The session this call owns. Opening a call creates a new one in the current
+ * directory. Hanging up stops work this call started; it does not delete the session.
  */
 import type { UiRequest } from "@/lib/protocol"
 import { useWorkspace } from "@/lib/store"
+
+let token = 1
+let panelHolds = 0
+
+export function voiceToken() {
+  return token
+}
+
+export function nextVoiceToken() {
+  token += 1
+  return token
+}
+
+export function voiceCurrent(expected: number) {
+  return expected === token
+}
+
+/** Session creation briefly leaves the voice page. That must not count as hanging up. */
+export function holdVoicePanel() {
+  panelHolds += 1
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    panelHolds -= 1
+  }
+}
+
+export function voicePanelHeld() {
+  return panelHolds > 0
+}
+
+export function dropAnnouncements() {
+  if (!binding) return
+  binding.owed = 0
+  binding.skipSettle = true
+  binding.pending = null
+}
+
+export function clearVoiceBinding() {
+  binding = null
+}
 
 export type VoiceBinding = {
   connectionId: string

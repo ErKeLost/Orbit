@@ -2,8 +2,9 @@ import { Quote, X } from "../../shared/ui/icons";
 import { quoteExcerpt } from "./quote";
 
 /**
- * A quote attached to the draft. It lives in the composer box, on the same
- * surface as the field — not a card parked on the ledge above it.
+ * A quote attached to the draft. Same column as the field — same inset, same
+ * type size — not a card, a rule, or a hairline inside the box. `ink-3` / `ink-2`
+ * is what marks it as context; the draft stays `ink-1`.
  */
 export function ComposerQuote({
   text,
@@ -16,11 +17,10 @@ export function ComposerQuote({
 }) {
   const excerpt = quoteExcerpt(text, 220);
   return (
-    <div role="group" aria-label="引用" className="mx-3 mt-2 flex items-start gap-2 rounded-md border border-line bg-fill px-2 py-1.5">
-      <span className="mt-0.5 w-0.5 self-stretch rounded-full bg-accent" />
+    <div role="group" aria-label="引用" data-composer-quote className="flex items-start gap-1 px-3 pt-2">
       <span className="min-w-0 flex-1">
-        <span className="block text-2xs text-ink-3">{role === "assistant" ? "引用回复" : "引用消息"}</span>
-        <span className="block line-clamp-2 break-words text-xs leading-5 text-ink-1" title={excerpt.endsWith("\u2026") ? text : undefined}>
+        <span className="block text-2xs leading-4 text-ink-3">{role === "assistant" ? "引用回复" : "引用消息"}</span>
+        <span className="block line-clamp-2 break-words font-sans text-sm leading-5.5 text-ink-2" title={excerpt.endsWith("\u2026") ? text : undefined}>
           {excerpt}
         </span>
       </span>
@@ -29,9 +29,9 @@ export function ComposerQuote({
         title="取消引用"
         aria-label="取消引用"
         onClick={onClear}
-        className="grid size-5 shrink-0 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1"
+        className="-mr-1 grid size-6 shrink-0 place-items-center rounded-md text-ink-3 transition-colors duration-150 hover:bg-fill-strong hover:text-ink-1 focus-visible:bg-fill-strong focus-visible:text-ink-1"
       >
-        <X className="size-3" />
+        <X className="size-3.5" strokeWidth={1.75} />
       </button>
     </div>
   );

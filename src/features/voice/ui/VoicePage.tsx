@@ -17,6 +17,7 @@ import { OrbBoundary } from "./OrbBoundary";
 import { VoiceExchange } from "./VoiceExchange";
 import { useVoiceCall } from "../hooks/useVoiceCall";
 import { voiceCall, type CallState, type VoiceLogItem } from "../model/call";
+import { voicePanelHeld } from "../model/binding";
 import { startVoiceDesk } from "../model/desk";
 import { Mic, MicOff } from "lucide-react";
 
@@ -74,6 +75,11 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
     const frame = requestAnimationFrame(() => setRevealed(true));
     return () => cancelAnimationFrame(frame);
   }, []);
+  // Leaving the page is hanging up. A hidden call must not keep sending or playing.
+  useEffect(() => {
+    if (visible || voicePanelHeld()) return;
+    if (voiceCall.getSnapshot().state !== "off") void voiceCall.stop();
+  }, [visible]);
   const agentState = AGENT_STATE[state];
 
   /** 一颗球一个动作：没开始 → 开始；在说 → 打断；其余 → 结束。 */
@@ -86,7 +92,7 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
       void voiceCall.start();
       return;
     }
-    if (state === "speaking") voiceCall.interrupt();
+    if (state === "speaking") voiceCall.pause();
     else void voiceCall.stop();
   };
 
@@ -94,7 +100,7 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
     <button
       type="button"
       onClick={activate}
-      aria-label={starting ? "取消接通" : state === "off" ? "开始语音对话" : state === "speaking" ? "打断" : "结束语音对话"}
+      aria-label={starting ? "取消接通" : state === "off" ? "开始语音对话" : state === "speaking" ? "暂停" : "结束语音对话"}
       title={starting ? "取消接通" : STATE_LABEL[state]}
       className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
     >
@@ -164,15 +170,12 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
         <div className="relative flex min-w-0 shrink-0 flex-col">
           <VoiceExchange log={logOf(call.turns)} error={call.error} />
           <div className="flex shrink-0 items-center justify-center gap-3 pb-5 pt-1">
-            {state === "speaking" ? (
-              <CallControl label="打断" onClick={() => voiceCall.interrupt()}>
-                <Pause className="size-4" />
-              </CallControl>
-            ) : (
-              <CallControl label="结束对话" danger onClick={() => void voiceCall.stop()}>
-                <CallEnd className="size-4" />
-              </CallControl>
-            )}
+            <CallControl label="暂停" onClick={() => voiceCall.pause()}>
+              <Pause className="size-4" />
+            </CallControl>
+            <CallControl label="结束对话" danger onClick={() => void voiceCall.stop()}>
+              <CallEnd className="size-4" />
+            </CallControl>
             <CallControl label={call.muted ? "取消静音" : "静音"} onClick={() => voiceCall.setMuted(!call.muted)}>
               {call.muted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
             </CallControl>

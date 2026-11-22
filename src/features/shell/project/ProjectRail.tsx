@@ -1,4 +1,4 @@
-import { useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useWorkspace, type Panel } from "../../../lib/store";
 import type { Session } from "../../../lib/protocol";
@@ -343,6 +343,14 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
   const [sessionsOpen, setSessionsOpen] = useState(() => {
     try { return localStorage.getItem("orbit.shell.railSessions") !== "false"; } catch { return true; }
   });
+  useEffect(() => {
+    const openList = () => {
+      try { localStorage.setItem("orbit.shell.railSessions", "true"); } catch { /* storage unavailable */ }
+      setSessionsOpen(true);
+    };
+    window.addEventListener("orbit-voice-session", openList);
+    return () => window.removeEventListener("orbit-voice-session", openList);
+  }, []);
   const runtimeTarget = useWorkspace((state) => state.runtimeTarget);
   const [menu, setMenu] = useState<{ project: Project; x: number; y: number } | null>(null);
   const [editing, setEditing] = useState<Project | null>(null);
