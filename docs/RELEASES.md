@@ -6,6 +6,10 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.63
+
+v1.0.62 did not publish. The phone command mirror called `rime` as if it lived in that file. Rime is a sibling module, so the call now goes through the crate root, and only on desktop. Empty replies use the same JSON helper as the other commands.
+
 ## v1.0.62
 
 v1.0.61 did not publish. The build stopped on a type error in the session switch: a missing connection path was passed where a path string was required. That check now keeps the path only when it exists.

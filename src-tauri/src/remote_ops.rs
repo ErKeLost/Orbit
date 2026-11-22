@@ -45,10 +45,13 @@ use crate::{
     media, notes, pi_session, preview, providers, pty_term, search, sessions_cmd, text_gen,
     web_search,
 };
-// Speech Engine talks to ElevenLabs over desktop-only crates. The phone asks
-// the computer to run these commands; it does not compile them.
+// Speech Engine and Rime talk to desktop-only crates. The phone asks the
+// computer to run these commands; it does not compile them. `rime` is a sibling
+// module, so this file has to name the crate root — `rime::` looks here.
 #[cfg(desktop)]
 use crate::elevenlabs;
+#[cfg(desktop)]
+use crate::rime;
 #[cfg(target_os = "macos")]
 use crate::ax;
 
@@ -776,22 +779,22 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
         #[cfg(desktop)]
         "rime_prism_audio" => {
             rime::rime_prism_audio(text(&args, "audioBase64")?).await?;
-            json!(null)
+            json(Value::Null)
         }
         #[cfg(desktop)]
         "rime_prism_truncate" => {
             rime::rime_prism_truncate(text(&args, "itemId")?, number::<u32>(&args, "audioEndMs")?).await?;
-            json!(null)
+            json(Value::Null)
         }
         #[cfg(desktop)]
         "rime_prism_nudge" => {
             rime::rime_prism_nudge(text(&args, "text")?).await?;
-            json!(null)
+            json(Value::Null)
         }
         #[cfg(desktop)]
         "rime_prism_hold" => {
             rime::rime_prism_hold(text(&args, "text")?).await?;
-            json!(null)
+            json(Value::Null)
         }
         #[cfg(desktop)]
         "rime_prism_tool_result" => json(rime::rime_prism_tool_result(
@@ -803,12 +806,12 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
         #[cfg(desktop)]
         "rime_prism_quiet" => {
             rime::rime_prism_quiet(opt::<bool>(&args, "hush")?).await?;
-            json!(null)
+            json(Value::Null)
         }
         #[cfg(desktop)]
         "rime_prism_close" => {
             rime::rime_prism_close().await?;
-            json!(null)
+            json(Value::Null)
         }
         other => Err(format!("命令 {other} 没有远端实现")),
     }
