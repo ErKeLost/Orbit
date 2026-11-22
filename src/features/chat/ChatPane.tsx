@@ -1,6 +1,5 @@
 import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { useWorkspace, useWorkspaceStore } from "../../lib/store";
 import { getSessionTurnDurations, persistedSessionFile, report } from "../../lib/rpc";
 import { useWorkspaceTabs } from "../shell/use-workspace-tabs";
@@ -126,6 +125,7 @@ function EmptySession({ cwd, onSubmitted }: { cwd: string; onSubmitted: () => vo
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
   const projects = useProjects((state) => state.projects);
   const homeDir = useWorkspace((state) => state.homeDir);
+  const wallpaper = useAppearance((state) => state.chatBackground);
   const project = cwd && cwd !== homeDir ? (projects.find((item) => item.path === cwd)?.name ?? cwd.split(/[\\/]/).filter(Boolean).at(-1)) : null;
   const title = project ? `What should we work on in ${project}?` : "What should we work on?";
   return (
@@ -133,7 +133,7 @@ function EmptySession({ cwd, onSubmitted }: { cwd: string; onSubmitted: () => vo
     // plate is printed on dark paper with light ink, so it reads the same in
     // light and dark mode instead of turning into white-edged squares.
     <div ref={lockOverscroll} className="orbit-galaxy-surface relative flex h-full min-h-0 overflow-y-auto overscroll-none">
-      <GalaxyDotBackground />
+      {wallpaper ? null : <GalaxyDotBackground />}
       <div className="pointer-events-none relative z-10 mx-auto flex w-full max-w-4xl flex-1 flex-col justify-center px-1.5 py-12">
         <div className="pointer-events-auto mb-4 px-2.5">
           <h1 className="truncate text-lg text-ink-1" title={project ? cwd : undefined}>{title}</h1>
@@ -142,18 +142,6 @@ function EmptySession({ cwd, onSubmitted }: { cwd: string; onSubmitted: () => vo
           <Composer onSubmitted={onSubmitted} centered />
         </div>
       </div>
-    </div>
-  );
-}
-
-/** Orbit's chat background: a fixed image behind the transcript and composer. */
-function ChatBackground() {
-  const path = useAppearance((state) => state.chatBackground);
-  const opacity = useAppearance((state) => state.chatBackgroundOpacity);
-  if (!path) return null;
-  return (
-    <div aria-hidden className="chat-pane-background pointer-events-none absolute inset-0 z-0 overflow-hidden">
-      <img src={convertFileSrc(path)} alt="" className="h-full w-full object-cover" style={{ opacity }} />
     </div>
   );
 }
@@ -386,7 +374,6 @@ export function ChatPane({
   if (transcript.loading || (!heavyReady && groups.length > 12)) {
     return sheet(
       <>
-        <ChatBackground />
         <div className="relative z-10 min-h-0 flex-1 overflow-hidden">
           <TranscriptSkeleton />
         </div>
@@ -421,7 +408,6 @@ export function ChatPane({
 
   return sheet(
     <>
-      <ChatBackground />
       {/* Kept content during a reconnect: the screen is still the session the
           user left, and saying so is the difference between "it is thinking"
           and "it is lying to me". */}

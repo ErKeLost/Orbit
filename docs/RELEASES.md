@@ -6,6 +6,10 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.61
+
+The window picture covers the whole window. It is no longer only the chat column. The rail, the title bar and the empty home show the same picture. The home galaxy stays off while a picture is set. The opacity slider still decides how solid that picture is.
+
 ## v1.0.60
 
 A phone can start a voice call. The microphone and the speaker stay on the phone. Prism still connects on the paired computer, so the computer has to be on and the phone has to be paired. The Rime key stays on the computer.

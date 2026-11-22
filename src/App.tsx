@@ -25,6 +25,7 @@ import { FileView } from "./features/shell/files/FileView";
 import { MobileShell } from "./features/shell/rail/MobileShell";
 import { useActiveWorkspace, useShell, isHomeWorkspace, CHAT_PANE_ID } from "./features/shell/shellStore";
 import { ChatPane } from "./features/chat/ChatPane";
+import { WindowWallpaper } from "./features/shell/WindowWallpaper";
 import { TerminalDock } from "./features/terminal/TerminalDock";
 import { BrowserDock } from "./features/browser/BrowserDock";
 import { BrowserPip } from "./features/browser/BrowserPip";
@@ -441,7 +442,10 @@ export default function App() {
   if (mobile) {
     return (
       <>
-        <MobileShell onSearch={openSearch} />
+        <WindowWallpaper />
+        <div className="relative z-10 flex h-full min-h-0 flex-col">
+          <MobileShell onSearch={openSearch} />
+        </div>
         <ScreenOverlay />
         <PerfHud />
       </>
@@ -449,7 +453,9 @@ export default function App() {
   }
 
   return (
-    <div className="workspace-background body-glass flex h-full flex-col text-ink-1">
+    <>
+    <WindowWallpaper />
+    <div className="workspace-background body-glass relative z-10 flex h-full flex-col text-ink-1">
       {/* Browser tabs are pane tabs, so they need no wrapper of their own. */}
       <div className="flex min-h-0 min-w-0 flex-1">
         {projectRailOpen ? (
@@ -471,5 +477,6 @@ export default function App() {
       <ScreenOverlay />
       <PerfHud />
     </div>
+    </>
   );
 }

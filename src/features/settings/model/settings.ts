@@ -22,7 +22,7 @@ export const SETTINGS_INDEX: SettingIndexEntry[] = [
   { id: "hue", section: "appearance", label: "色相", keywords: "色调 hue 颜色" },
   { id: "saturation", section: "appearance", label: "饱和度", keywords: "着色强度 saturation" },
   { id: "dark-lightness", section: "appearance", label: "深色亮度", keywords: "暗色 亮度 lightness" },
-  { id: "chat-background", section: "appearance", label: "聊天背景", keywords: "背景图 图片 wallpaper" },
+  { id: "chat-background", section: "appearance", label: "窗口背景", keywords: "背景图 图片 wallpaper 全屏 首页" },
   { id: "chat-background-opacity", section: "appearance", label: "背景不透明度", keywords: "背景图 图片 透明度 opacity wallpaper" },
   { id: "collapsed-rail", section: "appearance", label: "收起时的项目栏", keywords: "图标栏 隐藏 紧凑 collapsed rail" },
   { id: "ui-scale", section: "appearance", label: "界面缩放", keywords: "缩放 大小 zoom scale" },

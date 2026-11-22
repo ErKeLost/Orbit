@@ -289,7 +289,7 @@ export function AppearancePage() {
         </Surface>
       </Section>
 
-      <Section title="聊天背景" description="只保存在本机。">
+      <Section title="窗口背景" description="铺满整个窗口，包括侧栏、标题栏和首页。只保存在本机。">
         <Surface>
           <div data-setting-id="chat-background" className="p-3">
             <div className="relative flex min-h-[148px] items-center justify-center overflow-hidden rounded-xl bg-fill">

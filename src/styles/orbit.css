@@ -1725,6 +1725,17 @@ html.theme-light [data-composer-box] {
   color: var(--ink-1);
 }
 
+/* A window picture sits under the chrome. These sheets have to stop painting
+   or the rail, title and home stay a solid block over it. */
+html.has-window-wallpaper .workspace-background,
+html.has-window-wallpaper .sidebar-glass,
+html.has-window-wallpaper .body-glass,
+html.has-window-wallpaper .tab-strip,
+html.has-window-wallpaper .orbit-galaxy-surface,
+html.has-window-wallpaper .mobile-shell {
+  background: transparent;
+}
+
 /* 分栏 diff 里没有对应行的那一半：斜线纹理占位（Codex 同款）。 */
 .split-diff-void {
   background-image: repeating-linear-gradient(
