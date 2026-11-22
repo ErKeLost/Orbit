@@ -1,11 +1,11 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// CEF owns the process entry point on the platforms that use it. Linux and the
-// `glass-wry` build keep the platform WebKit runtime (see `lib::run`), so they
-// must not get CEF's entry point.
+// CEF owns the process entry point on the platforms that use it. Linux and
+// mobile keep the platform WebKit runtime (see `lib::run`), so they must not
+// get CEF's entry point.
 #[cfg_attr(
-    all(desktop, not(target_os = "linux"), not(feature = "glass-wry")),
+    all(desktop, not(target_os = "linux")),
     tauri_runtime_cef::cef_entry_point
 )]
 fn main() {

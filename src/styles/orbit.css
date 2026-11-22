@@ -417,6 +417,30 @@ html.theme-light {
   color: color-mix(in srgb, var(--color-content) 45%, transparent);
 }
 
+/*
+ * 新会话是侧栏里唯一一块实心主题色。配色强调色大多在 L≈0.73，整条铺上去
+ * 会在深色底上发亮。只封顶亮度，色相和彩度留着，所以换主题仍然是那一个颜色；
+ * 本来就暗的强调色不动。浅色主题的强调色本身已经压过，不再封。
+ */
+.rail-new-session {
+  background: color-mix(in oklch, var(--color-accent) 70%, black);
+  background: oklch(from var(--color-accent) clamp(0, l, 0.52) c h);
+  color: #fff;
+}
+
+.rail-new-session:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--color-accent) 78%, black);
+  background: oklch(from var(--color-accent) clamp(0, l, 0.58) c h);
+}
+
+html.theme-light .rail-new-session {
+  background: var(--color-accent);
+}
+
+html.theme-light .rail-new-session:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--color-accent) 88%, black);
+}
+
 /* ---- Mobile / Android ---------------------------------------------------- */
 
 @media (max-width: 760px) {
@@ -569,9 +593,7 @@ html[data-page-visible="false"] * {
 /*
  * 运行时自动降级（`lib/perf-monitor.ts`）。和低配档同一组规则，但由真实帧率
  * 触发：可见状态下连续 5 秒帧率低于刷新率的 55%，就把「为了好看一直在重绘」
- * 的东西停掉，并把窗口退回不透明（vibrancy 要求整窗非不透明，每一帧都要和
- * 桌面混合——这是「只有我这一个 app 卡、整台电脑也跟着卡」的结构性原因）。
- * 只降一次，不会来回抖；重启应用即恢复。
+ * 的东西停掉。只降一次，不会来回抖；重启应用即恢复。
  */
 html[data-perf-degraded="1"] .shimmer-text {
   animation: none;
@@ -587,7 +609,7 @@ html[data-perf-degraded="1"] .animate-spin {
   animation: none;
 }
 
-/* 不透明窗口能走合成的快路；降级时把透明/半透明的底全部压实。 */
+/* 降级时把半透明底压成主题色，少一层混合。 */
 html[data-perf-degraded="1"],
 html[data-perf-degraded="1"] body,
 html[data-perf-degraded="1"] .workspace-background,
@@ -1701,13 +1723,6 @@ html.theme-light [data-composer-box] {
   color-scheme: dark;
   background: var(--surface-canvas);
   color: var(--ink-1);
-}
-
-/* The plate is the thing that hides the desktop. Glass keeps the ink tokens
-   above and drops the paper, so the home page shows the same wash as the rest
-   of the window. */
-html.glass-body:not(.theme-light) .orbit-galaxy-surface {
-  background: transparent;
 }
 
 /* 分栏 diff 里没有对应行的那一半：斜线纹理占位（Codex 同款）。 */

@@ -18,15 +18,6 @@ pub mod disclaim;
 /// input injection have per-platform implementations, and non-macOS targets
 /// report that they are unavailable instead of failing to build.
 mod screen;
-/// Two builds, one command surface. `window_glass.rs` samples the desktop because
-/// Chromium (CEF, windowed) always fills its view; `window_glass_vibrancy.rs` is
-/// MonoCode's path — the system blurs the desktop behind a non-opaque window —
-/// which needs a page that can actually be see-through, i.e. wry/WKWebView.
-#[cfg(not(feature = "glass-wry"))]
-mod window_glass;
-#[cfg(feature = "glass-wry")]
-#[path = "window_glass_vibrancy.rs"]
-mod window_glass;
 pub mod browser;
 pub mod browser_view;
 #[cfg(desktop)]
@@ -255,7 +246,7 @@ pub fn run() {
     // while the CEF runtime initialises GTK4 through winit. Both in one process
     // means `gtk_init_check` is resolved to libgtk-3 and the GTK4 call crashes in
     // `g_option_context_parse`, so every Linux launch died before the window.
-    #[cfg(all(desktop, not(target_os = "linux"), not(feature = "glass-wry")))]
+    #[cfg(all(desktop, not(target_os = "linux")))]
     let builder = tauri::Builder::default().runtime(
         tauri_runtime_cef::Cef::default()
             .root_cache_path(browser::browser_dir().expect("browser data directory").join("cef"))
@@ -269,9 +260,9 @@ pub fn run() {
             .persist_session_cookies(true)
             .log_severity(cef::LogSeverity::ERROR),
     );
-    // `glass-wry`: the same desktop app on wry/WKWebView, whose page can be
-    // transparent. Mobile and Linux already run wry this way.
-    #[cfg(any(mobile, target_os = "linux", all(desktop, not(target_os = "linux"), feature = "glass-wry")))]
+    // Mobile and Linux stay on wry. Linux cannot host CEF in this process:
+    // `tauri` still links GTK3, and the CEF runtime initialises GTK4.
+    #[cfg(any(mobile, target_os = "linux"))]
     let builder = tauri::Builder::default().runtime(tauri_runtime_wry::Wry::default());
     // Managed on both desktop runtimes so the browser commands answer with an
     // error instead of "state not managed" when CEF is not the runtime.
@@ -554,9 +545,6 @@ pub fn run() {
             pty_term::pty_kill_all,
             search::search_files,
             search::search_sessions,
-            window_glass::set_window_glass_enabled,
-            window_glass::set_window_background_blur,
-            window_glass::glass_desktop_sample,
             quick_composer::quick_toggle,
             quick_composer::quick_hide,
             quick_composer::quick_send,

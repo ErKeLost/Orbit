@@ -61,24 +61,20 @@ render」都是性能事故的常见根因。
 
 ## 4. 还没做，按收益排序
 
-1. **窗口真透明（OSR）**。要「真的」透出桌面（背后有视频在动也同步），只能把主
-   webview 换成 CEF 的 windowless 渲染，自己把带 alpha 的帧画到 NSView 上。代价
-   是输入、IME、缩放、GPU 合成全部重做——不是性能优化，是另一个运行时。现在用
-   桌面取样代替（见 6.3），代价是背后是静态图。
-2. **滚动容器上的 `mask-image`**（`orbit-theme.css` 的
+1. **滚动容器上的 `mask-image`**（`orbit-theme.css` 的
    `.transcript-composer-fade .agent-transcript`）。给滚动容器加 mask 在 WebKit
    上是很常见的滚动卡顿来源（掩码层要随滚动重算），而它只负责底部 2.5rem 的
    渐隐。**验证方法**：临时把这条规则改成 `mask-image: none`，滚动同一段长会话，
    对比 `perf-log` 的 150ms+ 停顿计数；确认有效再换成「wrapper 加 mask」或
    「底部渐隐覆盖层」，两种都能保住现在的观感。
-3. **React Compiler**。t3code 全量启用并用 lint 禁止手写 `useMemo/useCallback`；
+2. **React Compiler**。t3code 全量启用并用 lint 禁止手写 `useMemo/useCallback`；
    我们的 `@vitejs/plugin-react` 目前没开 `babel-plugin-react-compiler`。开了之后
    所有组件的记忆化边界自动就位，人肉 `memo` 漏掉的地方（这一轮手工补了三处）
    会一起消失。风险中等：需要跑一遍 `bun run check` + 手动过一遍主流程。
-4. **`ChangesPanel` 的每帧 diff 解析**（`src/components/panels/ChangesPanel.tsx`）。
+3. **`ChangesPanel` 的每帧 diff 解析**（`src/components/panels/ChangesPanel.tsx`）。
    它订阅整个 `transcript`，流式时每帧对全部工具调用重跑 `getChange`。只在「变更」
    面板打开时才会发生，但打开时是纯浪费。
-5. **流式提交频率**。现在是每帧一次（60/120fps）。超长回答（几十 KB）时每帧的
+4. **流式提交频率**。现在是每帧一次（60/120fps）。超长回答（几十 KB）时每帧的
    markdown 渲染会逐渐逼近 16ms。t3code 用 `@tanstack/react-pacer` 的地方就是
    这类节流；我们可以在「活动消息超过 N 字符」时降到 ~30fps，视觉上几乎无感。
 
@@ -117,7 +113,7 @@ WKWebView 没有 longtask API，所以这里量的是 rAF 漂移——它等价�
 
 **自动降级**：可见状态下连续 5 秒低于刷新率 55%，**或**一次 ≥3s 的冻结、30 秒内
 3 次 ≥400ms 的停顿，就把 `data-perf-degraded` 写到 `<html>`：停掉 shimmer / 呼吸 /
-转圈 / 打字点，撤掉 macOS vibrancy，并把窗口底色压实成不透明。只降一次，重启恢复，
+转圈 / 打字点，并把窗口底色压实。只降一次，重启恢复，
 同时弹一条提示说明原因（否则「特效没了」看起来就像界面坏了）。
 
 ### 6.2 拆掉的常驻渲染
@@ -138,38 +134,7 @@ WKWebView 没有 longtask API，所以这里量的是 rAF 漂移——它等价�
 | 会话列表 hover 直接读整份 JSONL + hydrate | 220ms 悬停意图 + 单飞队列（最多排 2 条），已有干净缓存直接跳过 |
 | 同一条连接可能并发两次历史装载 | `loadMessages` / `primeProjection` 单飞；transcript 缓存 6 → 16 条 |
 
-### 6.3 窗口玻璃：两个构建，两条机制
-
-**`--features glass-wry`（和 MonoCode 同一条路）。** 桌面壳跑 wry/WKWebView，
-`transparent: true` 在 wry 上的意思是「窗口非不透明 **且** webview 不画背景」，
-所以页面真的能透。`window_glass_vibrancy.rs` 就是把 MonoCode 那套搬过来的：
-`NSVisualEffectView`（underWindowBackground / behindWindow / active）+ 一个 tint
-视图垫在网页下面，`NSWindow.setOpaque(false)`，窗口背景色 = 主题色 ×
-`--sidebar-opacity`；磨砂半径改写 vibrancy 内部 `Blur` filter 的 `inputRadius`，
-拿不到就退回 `CGSSetWindowBackgroundBlurRadius`。前端只做一件事：页面透明，
-收到原生 tint 确认后把 CSS 洗色降到 0（`has-native-glass-tint`），玻璃完全由系统画。
-成本：WindowServer 每帧和桌面混合——**这也是「整台电脑跟着卡」的来源**，MonoCode
-一样有。
-代价：浏览器栏依赖 CEF 的原生子视图，这个构建里它只会返回「没有浏览器栏」。
-
-**默认构建（CEF，windowed）。** 页面不可能透明：`cef_browser_settings_t
-.background_color` 写明 windowed 浏览器 alpha=0 会退回 `cef_settings_t
-.background_color`（不透明白），只有 windowless(OSR) 才开 transparent painting，
-而 `cef_browser_host_t` 没有任何运行期改底色的 API。所以窗口保持不透明，页面自己
-画桌面：`CGWindowListCreateImage` 抓窗口矩形背后（`kCGWindowListOptionOnScreenBelowWindow`）
-→ 1x JPEG → `.desktop-glass-layer`（整窗、`z-index:-1`、自带主题底色）→ CSS
-`filter: blur(--sidebar-blur)` 做磨砂、`--sidebar-opacity` 做罩色。
-成本：静止=一张静态纹理的合成；窗口移动/缩放/回前台才重抓（140ms 收手、
-220ms 最小间隔），换图时整窗模糊重算一次。取样需要「屏幕录制」权限。
-
-两条路共用同一个前端与同一套命令名，选哪条只由 `glass-wry` 决定。
-要「实时透 + 系统材质」就是前者；要浏览器栏就是后者。
-
-### 6.4 还没做 / 需要你决定
+### 6.3 还没做 / 需要你决定
 
 1. **React Compiler**（`babel-plugin-react-compiler`）仍未启用。
 2. `ChangesPanel` 在流式时仍会对所有工具调用重跑 `getChange`（仅当该面板打开时）。
-3. `tauri.conf.json` 里 `transparent: true` 现在只对 Windows 有用（Acrylic 需要
-   非不透明窗口）。macOS 这边 `set_window_glass_enabled` 会主动把窗口改回不透明
-   （`NSWindow.setOpaque(true)`），所以那个标志在 mac 上只是启动瞬间的状态。哪天
-   确认 Windows 也不要 Acrylic 了，把它改成 `false` 即可。

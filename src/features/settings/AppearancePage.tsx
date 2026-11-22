@@ -1,12 +1,10 @@
-import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { ImagePlus } from "../../shared/ui/icons";
 import { SecondaryButton, Segmented, Select, Slider, Toggle } from "../../shared/ui/controls";
 import { UI_SCALE_PERCENTS, useAppearance, type DiffPalette, type ThemePreference } from "../../lib/appearance";
 import { WORKSPACE_THEMES, type WorkspacePalette } from "./model/workspaceThemes";
-import { desktopSampleState, requestDesktopSample, subscribeDesktopSample } from "../../lib/desktop-glass";
-import { invoke } from "../../lib/native";
 import { useShell } from "../shell/shellStore";
 
 function hueName(hue: number) {
@@ -97,45 +95,10 @@ const THEME_CARDS: { id: ThemeCard; label: string }[] = [
   { id: "high-contrast", label: "高对比" },
 ];
 
-/** The one row that says whether the desktop behind the window actually arrived. */
-function DesktopSampleRow() {
-  const sample = useSyncExternalStore(subscribeDesktopSample, desktopSampleState, desktopSampleState);
-  const [asking, setAsking] = useState(false);
-  const detail = sample.unsupported
-    ? "这一版由系统做玻璃：桌面在不透明层下面被 macOS 直接模糊，移动窗口时它是连续的。"
-    : sample.ready && !sample.error
-      ? `最近一次 ${new Date(sample.at).toLocaleTimeString()} · 移动或缩放窗口会重新抓一次。`
-      : sample.error ?? "正在抓窗口背后的桌面…";
-  const ask = async () => {
-    setAsking(true);
-    try {
-      await invoke("screen_request_permission");
-      requestDesktopSample(600);
-    } catch {
-      // No permission bridge: the next window move retries the capture anyway.
-    }
-    setAsking(false);
-  };
-  return (
-    <div data-setting-id="desktop-sample" className="flex items-start justify-between gap-4 py-3.5">
-      <div className="min-w-0">
-        <h3 className="text-sm font-medium text-ink-1">桌面取样</h3>
-        <p className="mt-1 text-sm text-ink-3">{detail}</p>
-      </div>
-      {sample.error && !sample.unsupported ? (
-        <SecondaryButton disabled={asking} onClick={() => void ask()}>
-          {asking ? "等待系统…" : "开启屏幕录制"}
-        </SecondaryButton>
-      ) : null}
-    </div>
-  );
-}
-
 /** Appearance, in the task-card language: preview tiles, then a color card. */
 export function AppearancePage() {
   const appearance = useAppearance();
-  const glassUnavailable = appearance.scheme === "light";
-  const glassOff = glassUnavailable || !appearance.bodyGlass;
+  const lightScheme = appearance.scheme === "light";
   const namedTheme = appearance.workspaceTheme !== "default";
   const collapsedRailMode = useShell((state) => state.collapsedRailMode);
   const setCollapsedRailMode = useShell((state) => state.setCollapsedRailMode);
@@ -290,7 +253,7 @@ export function AppearancePage() {
           <div data-setting-id="dark-lightness" className="flex items-center gap-6">
             <div className="min-w-0 flex-1">
               <h3 className="text-sm font-medium text-ink-1">深色亮度</h3>
-              <p className="mt-1 text-sm text-ink-3">{namedTheme ? "由配色决定。" : glassUnavailable ? "只影响深色模式，你的设置会被保留。" : "越低越暗，0 为纯黑。"}</p>
+              <p className="mt-1 text-sm text-ink-3">{namedTheme ? "由配色决定。" : lightScheme ? "只影响深色模式，你的设置会被保留。" : "越低越暗，0 为纯黑。"}</p>
             </div>
             <Slider
               label="深色亮度"
@@ -299,7 +262,7 @@ export function AppearancePage() {
               min={0}
               max={30}
               onChange={(value) => appearance.setTint({ darkLightness: value })}
-              disabled={glassUnavailable || namedTheme}
+              disabled={lightScheme || namedTheme}
             />
           </div>
         </Surface>
@@ -323,48 +286,6 @@ export function AppearancePage() {
               onChange={appearance.setDiffPalette}
             />
           </div>
-        </Surface>
-      </Section>
-
-      <Section
-        title="透明度"
-        description={
-          glassUnavailable
-            ? "浅色模式始终不透明，深色设置会被保留。"
-            : "深色模式下桌面从整个窗口透出来：磨砂是背后糊的程度，不透明度是主题色罩得多实。"
-        }
-      >
-        <Surface className="divide-y divide-line px-4">
-          <div data-setting-id="body-glass" className="flex items-center justify-between gap-4 py-3.5">
-            <div className="min-w-0">
-              <h3 className="text-sm font-medium text-ink-1">窗口玻璃</h3>
-              <p className="mt-1 text-sm text-ink-3">开启后启用下面的不透明度与模糊，首页不再铺星系背景。</p>
-            </div>
-            <Toggle label="Window glass" on={appearance.bodyGlass} onChange={appearance.setBodyGlass} disabled={glassUnavailable} />
-          </div>
-          <div data-setting-id="sidebar-opacity" className="flex items-center justify-between gap-6 py-3.5">
-            <div className="min-w-0">
-              <h3 className="text-sm font-medium text-ink-1">窗口不透明度</h3>
-              <p className="mt-1 text-sm text-ink-3">整窗有多实。越低，桌面透得越多。</p>
-            </div>
-            <Slider
-              label="窗口不透明度"
-              value={Math.round(appearance.sidebarOpacity * 100)}
-              display={`${Math.round(appearance.sidebarOpacity * 100)}%`}
-              min={15}
-              max={100}
-              onChange={(value) => appearance.setTint({ sidebarOpacity: value / 100 })}
-              disabled={glassOff}
-            />
-          </div>
-          <div data-setting-id="blur" className="flex items-center justify-between gap-6 py-3.5">
-            <div className="min-w-0">
-              <h3 className="text-sm font-medium text-ink-1">磨砂浓淡</h3>
-              <p className="mt-1 text-sm text-ink-3">窗口背后的桌面模糊。0 没有磨砂，最透。</p>
-            </div>
-            <Slider label="模糊半径" value={appearance.blur} display={String(appearance.blur)} min={0} max={60} onChange={appearance.setBlur} disabled={glassOff} />
-          </div>
-          {glassOff ? null : <DesktopSampleRow />}
         </Surface>
       </Section>
 

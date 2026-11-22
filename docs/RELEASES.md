@@ -6,6 +6,14 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.59
+
+Window glass is gone. The window stays opaque. Appearance no longer has window glass, window opacity, or frost. A saved glass setting is cleared on launch. The home page keeps its galaxy plate.
+
+Opening a session while the home connection is still starting no longer snaps the view back to the empty home when that start finishes. A trailing slash on the project path no longer starts that home connection twice and kicks you out of the session you just opened.
+
+The new-session button in the rail no longer paints a bright full accent. On a dark rail the accent lightness is capped, so a light theme colour does not glow. Light mode keeps the accent.
+
 ## v1.0.58
 
 Starting a voice call opens a new session in the current project and shows it in the left session list. Later requests in the same call send only the new ask, not the whole transcript again.

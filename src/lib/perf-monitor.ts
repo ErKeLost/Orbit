@@ -17,9 +17,8 @@
  *   记录耗时、期间掉了几帧、最长一帧，随后出现在 HUD 的「最近操作」里。
  *
  * 自动降级：可见状态下连续 5 秒帧率低于刷新率的 55% 就把 `data-perf-degraded`
- * 写到 `<html>`，样式表和 `appearance.ts` 会停掉装饰动画并撤掉 macOS 的
- * vibrancy（整窗混合是「整个电脑跟着卡」的结构性原因）。降级只发生一次，
- * 不会来回抖动；重启应用即恢复原样。
+ * 写到 `<html>`，样式表会停掉装饰动画。降级只发生一次，不会来回抖动；重启应用
+ * 即恢复原样。
  *
  * HUD：`⌘⇧P`（`App: Perf HUD`），或 `localStorage['orbit.perfHud'] = '1'`。
  * 控制台也可以用 `__orbitPerf.report()` / `__orbitPerf.reset()`。
@@ -307,7 +306,7 @@ function markDegraded(reason: string): void {
   degradeReason = reason;
   if (typeof document !== "undefined") document.documentElement.dataset.perfDegraded = "1";
   if (typeof console !== "undefined") {
-    console.warn(`[perf] 自动降级：${reason}。已停掉装饰动画。窗口玻璃仍跟着外观设置走。`);
+    console.warn(`[perf] 自动降级：${reason}。已停掉装饰动画。`);
   }
   for (const listener of degradeListeners) {
     try {

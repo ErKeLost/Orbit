@@ -1,6 +1,6 @@
 [package]
 name = "orbit"
-version = "1.0.58"
+version = "1.0.59"
 default-run = "orbit"
 description = "A local desktop workspace for Orbit"
 authors = ["you"]
@@ -19,12 +19,6 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [features]
 default = []
 ax-control = []
-# Run the desktop shell on wry/WKWebView instead of CEF. WKWebView's page can be
-# transparent, which is what real window glass needs (the system blurs the
-# desktop behind a see-through page — MonoCode's mechanism). The price is the
-# in-window Chromium browser column: it needs CEF's native child views, so in
-# this build it reports "no browser column" instead of rendering.
-glass-wry = []
 
 [[bin]]
 name = "ax_control"
@@ -150,12 +144,7 @@ dispatch2 = "=0.3.1"
 tauri-runtime-wry = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1" }
 tauri-plugin-barcode-scanner = { git = "https://github.com/tauri-apps/plugins-workspace", rev = "835adce473e8f059f6ba84660dd07bcb19fb9030" }
 
-# The `glass-wry` build's runtime. Linux and mobile get it from the section
-# above; this is the same crate, only for the desktop platforms that otherwise
-# run CEF.
 [target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
-# `macos-private-api` is what makes `WindowBuilder::transparent` exist on macOS —
-# without it the crate fails to implement the trait our patched runtime declares.
 tauri-runtime-wry = { git = "https://github.com/tauri-apps/tauri", rev = "9d1a5b176e337c8395362a4e7c99bac99b36a1d1", features = ["macos-private-api"] }
 
 [target.'cfg(windows)'.dependencies]

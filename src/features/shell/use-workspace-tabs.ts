@@ -35,6 +35,29 @@ import { perfSpan } from "../../lib/perf-monitor";
 const transitions = createTabTransitions();
 
 /**
+ * 这个面还是不是用户正在看的那个。
+ *
+ * 初始化会先把首页连接拉起来（起 pi 进程，常常要一两秒）。用户这期间点开侧栏里的会话后，
+ * 那次还没跑完的 `show(首页)` 不能再 `activate` / `focus`：它会把全局投影写回空的新会话，
+ * 效果层再把当前标签改绑到那条连接上，看起来就是「点进去又回到首页」。
+ */
+function surfaceStillCurrent(id: string, cwd: string): boolean {
+  const shell = useShell.getState();
+  if (shell.activeWorkspaceId !== id) return false;
+  const current = shell.workspaces.find((item) => item.id === id);
+  return Boolean(current && normalizeProjectPath(current.cwd) === normalizeProjectPath(cwd));
+}
+
+/** 这条连接已经挂在别的面上。全局投影被它抢走时，不能再改绑当前标签。 */
+function connectionHeldElsewhere(id: string, workspaceId: string): boolean {
+  if (!id) return false;
+  return useShell.getState().workspaces.some((workspace) =>
+    workspace.id !== workspaceId
+    && (workspace.connectionId === id
+      || Object.values(workspace.sessions).some((session) => session.connectionId === id)));
+}
+
+/**
  * 这条连接上是否已经有一个真实会话：有正文，或者正在跑/压缩。
  *
  * 切面（换标签、换范围）时用它来区分「空首页」和「用户真的在用的一条会话」——
@@ -91,7 +114,7 @@ async function show(id: string) {
   const workspace = shell.workspaces.find((item) => item.id === id);
   // 范围还没确定（bootstrap 之前）时不启动进程，否则会拿空 cwd 去连。
   if (!workspace || !workspace.cwd) return;
-  const key = `${id}:${workspace.cwd}`;
+  const key = `${id}:${normalizeProjectPath(workspace.cwd)}`;
   // 切标签 / 切会话 / 切项目都从这里进：量整条路径（含挂载会话面、读历史、
   // 起 pi 进程），HUD 的「最近操作」里能直接看到哪一步慢。
   const span = perfSpan("switch-surface", workspace.cwd.split(/[\\/]/).filter(Boolean).at(-1));
@@ -107,7 +130,7 @@ async function runShow(id: string, cwd: string) {
   const shell = useShell.getState();
   const workspace = shell.workspaces.find((item) => item.id === id);
   // 等连接起来时这个面可能已经被切到别的范围了；旧的那次直接作废，别回写。
-  if (!workspace || workspace.cwd !== cwd || !workspace.cwd) return;
+  if (!workspace || !workspace.cwd || normalizeProjectPath(workspace.cwd) !== normalizeProjectPath(cwd)) return;
   const home = isHomeWorkspace(workspace);
   const previousId = shell.activeWorkspaceId;
   const previous = useWorkspace.getState().connectionId;
@@ -135,7 +158,7 @@ async function runShow(id: string, cwd: string) {
 
   const bound = workspace.connectionId;
   const live = Boolean(bound) && hasWorkspaceConnection(bound);
-  if (live && connectionCwd(bound) === workspace.cwd) {
+  if (live && connectionCwd(bound) && normalizeProjectPath(connectionCwd(bound)) === normalizeProjectPath(workspace.cwd)) {
     focusWorkspaceConnection(bound, workspace.cwd);
     return;
   }
@@ -150,8 +173,9 @@ async function runShow(id: string, cwd: string) {
   // 同一个 target 已经在被别人拉起：只聚焦，等它连上，不再起第二条进程。
   const pending = transitions.pendingStart(target);
   if (pending) {
-    focusWorkspaceConnection(target, workspace.cwd);
+    if (surfaceStillCurrent(id, workspace.cwd)) focusWorkspaceConnection(target, workspace.cwd);
     await pending;
+    if (surfaceStillCurrent(id, workspace.cwd)) focusWorkspaceConnection(target, workspace.cwd);
     return;
   }
   shell.bindWorkspaceConnection(id, target);
@@ -178,12 +202,13 @@ async function runShow(id: string, cwd: string) {
     }
   });
   const tracked = transitions.start(target, task);
-  focusWorkspaceConnection(target, workspace.cwd);
+  if (surfaceStillCurrent(id, workspace.cwd)) focusWorkspaceConnection(target, workspace.cwd);
   // settle（不论成败）后 `transitions` 自动注销这条 target。
   await tracked;
-  // 连接起来时范围可能已经变了（用户又点了别的项目）：这次结果作废。
-  if (useShell.getState().workspaces.find((item) => item.id === id)?.cwd !== workspace.cwd) return;// bootstrap 不再预先建项目连接，附加 roots 跟着面上层后台同步，不挡首次渲染。
-  // 项目模式下把项目的附加 root 同步进这条会话（失败不影响显示，下次打开会再试）。
+  // 连接起来时用户可能已经点开了别的会话，或者首页范围已经变了。这次结果只能留在
+  // 这个面自己的连接上，不能再把全局投影写回去——写回去就是被弹回首页。
+  if (!surfaceStillCurrent(id, workspace.cwd)) return;
+  // bootstrap 不再预先建项目连接，附加 roots 跟着面上层后台同步，不挡首次渲染。
   if (useWorkspace.getState().workspaceMode === "project") {
     void syncConfiguredProjectRoots(workspace.cwd, connectionId).catch(() => undefined);
   }
@@ -366,7 +391,9 @@ async function openSession(session: Pick<Session, "path"> & { cwd?: string }) {
     && connectionCwd(projection.connectionId) === cwd
   ) {
     await changeSession({ type: "switch_session", sessionPath: session.path });
-    promoteHome();
+    // 等切换的这一下里，初始化那次首页 show 可能刚好收尾并把焦点拉走。
+    // 只有还停在首页上才升格，否则会把用户已经点开的标签顶掉。
+    if (useShell.getState().activeWorkspaceId === HOME_WORKSPACE_ID) promoteHome();
     return;
   }
 
@@ -397,11 +424,11 @@ async function openSession(session: Pick<Session, "path"> & { cwd?: string }) {
       }
     });
   const tracked = transitions.start(target, task);
-  focusWorkspaceConnection(target, cwd);
+  if (useShell.getState().activeWorkspaceId === workspace.id) focusWorkspaceConnection(target, cwd);
   // settle（不论成败）后 `transitions` 自动注销这条 target。
   await tracked;
   if (mode === "project") void syncConfiguredProjectRoots(cwd, connectionId).catch(() => undefined);
-  focusWorkspaceConnection(connectionId, cwd);
+  if (useShell.getState().activeWorkspaceId === workspace.id) focusWorkspaceConnection(connectionId, cwd);
   const openedSession = connectionSnapshot(connectionId)?.state?.sessionFile;
   if (openedSession) useShell.getState().updateWorkspace(workspace.id, { sessionPath: openedSession });
   enforceConnectionBudget();
@@ -570,19 +597,24 @@ export function useWorkspaceTabsEffects() {
   }, [liveConnections, connectionId]);
 
   // 活动标签页的 scope 跟随全局投影（切范围、切会话时会变）；首页自己管连接。
+  // 别的面已经持有的连接不能被收养过来：首页初始化收尾会把全局投影写回那条空连接，
+  // 这里再改绑，当前标签就会被画成首页。
   useEffect(() => {
     const shell = useShell.getState();
     const workspace = shell.workspaces.find((item) => item.id === shell.activeWorkspaceId);
     if (!workspace || isHomeWorkspace(workspace) || Object.keys(workspace.sessions).length === 0) return;
-    if (connectionId && workspace.connectionId !== connectionId) shell.bindWorkspaceConnection(workspace.id, connectionId);
-    if (cwd && workspace.cwd !== cwd) shell.setWorkspaceCwd(workspace.id, cwd);
+    if (connectionId && workspace.connectionId !== connectionId && !connectionHeldElsewhere(connectionId, workspace.id)) {
+      shell.bindWorkspaceConnection(workspace.id, connectionId);
+    }
+    if (cwd && normalizeProjectPath(workspace.cwd) !== normalizeProjectPath(cwd)) shell.setWorkspaceCwd(workspace.id, cwd);
   }, [connectionId, cwd, activeWorkspaceId]);
 
   // 首页是默认面，也是当前范围的新会话面：范围变了就换一条干净的连接。
   // 首页的会话面板被关掉后（可能只剩一个悬挂的文件叶子），先把它恢复成新会话面，
   // 否则 `WorkArea` 没有可画的内容——就是那块黑。
   useEffect(() => {
-    if (activeWorkspaceId !== HOME_WORKSPACE_ID) return;
+    // 读 store，不读这次渲染的闭包：点击可能发生在 effect 之前，闭包里还是首页。
+    if (useShell.getState().activeWorkspaceId !== HOME_WORKSPACE_ID) return;
     const shell = useShell.getState();
     const home = shell.workspaces.find((item) => item.id === HOME_WORKSPACE_ID);
     if (!home) return;
@@ -593,13 +625,21 @@ export function useWorkspaceTabsEffects() {
     }
     const next = useShell.getState().workspaces.find((item) => item.id === HOME_WORKSPACE_ID);
     if (!next) return;
-    if (cwd && next.cwd !== cwd) {
+    // 尾部斜杠之类的写法差别不是换了一个项目。拆掉重开会让首页连接初始化跑两遍，
+    // 第二遍收尾时就会把刚点开的会话顶回去。
+    if (cwd && normalizeProjectPath(next.cwd) !== normalizeProjectPath(cwd)) {
       if (next.connectionId) void retireConnection(next.connectionId, "已切换范围");
       useShell.getState().setWorkspaceCwd(HOME_WORKSPACE_ID, cwd);
       useShell.getState().bindWorkspaceConnection(HOME_WORKSPACE_ID, "");
+    } else if (cwd && next.cwd !== cwd) {
+      useShell.getState().setWorkspaceCwd(HOME_WORKSPACE_ID, cwd);
     }
     if (!cwd) return;
-    if (next.connectionId && hasWorkspaceConnection(next.connectionId) && connectionCwd(next.connectionId) === next.cwd) return;
+    if (useShell.getState().activeWorkspaceId !== HOME_WORKSPACE_ID) return;
+    const current = useShell.getState().workspaces.find((item) => item.id === HOME_WORKSPACE_ID);
+    if (current?.connectionId && hasWorkspaceConnection(current.connectionId) && connectionCwd(current.connectionId) === current.cwd) return;
+    const key = `${HOME_WORKSPACE_ID}:${normalizeProjectPath(current?.cwd || cwd)}`;
+    if (transitions.isShowing(key)) return;
     void show(HOME_WORKSPACE_ID);
   }, [activeWorkspaceId, cwd, homeHasSession]);
 }

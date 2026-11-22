@@ -22,9 +22,12 @@ type Model = {
   /** 模拟真实实现在会话还跑着时的 abort 窗口（`closeConnection` 先 abort 才摘连接）。 */
   deferClose: boolean
   releaseClose: (() => void) | null
+  /** 把 `openWorkspaceConnection` 停在进程拉起之前，用来复现「首页还在初始化时点开会话」。 */
+  deferOpen: boolean
+  openGates: Array<() => void>
 }
 
-const model: Model = { connections: new Map(), snapshots: new Map(), projectActive: new Map(), sessionOwners: new Map(), closed: [], opened: [], deferClose: false, releaseClose: null }
+const model: Model = { connections: new Map(), snapshots: new Map(), projectActive: new Map(), sessionOwners: new Map(), closed: [], opened: [], deferClose: false, releaseClose: null, deferOpen: false, openGates: [] }
 const fresh = (): Snap => ({ connection: "offline", transcript: { messages: [], running: false, compacting: false }, dialogs: [], state: null })
 const snap = (id: string) => model.snapshots.get(id) ?? fresh()
 const patch = (id: string, value: Partial<Snap>) => model.snapshots.set(id, { ...snap(id), ...value })
@@ -81,6 +84,7 @@ mock.module("../src/lib/rpc", () => ({
   async openWorkspaceConnection(cwd: string, id: string, options?: { sessionPath?: string }) {
     model.connections.set(id, { cwd })
     model.opened.push(id)
+    if (model.deferOpen) await new Promise<void>((resolve) => { model.openGates.push(resolve) })
     const s = snap(id)
     s.connection = "online"
     if (options?.sessionPath) { s.state = { sessionFile: options.sessionPath }; model.sessionOwners.set(options.sessionPath, id) }
@@ -105,6 +109,9 @@ mock.module("../src/lib/rpc", () => ({
     transcript?.messages.find(item => item.message.role === "user")?.message.content as string | undefined,
   workspaceConnectionIds: () => [...model.connections.keys()],
   report() {},
+  async connect() {},
+  async syncConfiguredProjectRoots() {},
+  mobileRuntime: () => false,
 }))
 
 const { useWorkspaceTabs } = await import("../src/features/shell/use-workspace-tabs")
@@ -112,7 +119,7 @@ const { useShell, HOME_WORKSPACE_ID } = await import("../src/features/shell/shel
 
 function reset(cwd = "/p") {
   model.connections.clear(); model.snapshots.clear(); model.projectActive.clear(); model.sessionOwners.clear(); model.closed.length = 0; model.opened.length = 0
-  model.deferClose = false; model.releaseClose = null
+  model.deferClose = false; model.releaseClose = null; model.deferOpen = false; model.openGates = []
   currentCwd = cwd
   useShell.setState({
     workspaces: [{ id: HOME_WORKSPACE_ID, cwd, connectionId: "", layout: { kind: "leaf", id: "chat" }, panes: {}, sessions: { chat: { connectionId: "" } }, activePane: "chat" } as never],
@@ -128,6 +135,29 @@ const tabsFor = (connectionId: string) => useShell.getState().workspaces.filter(
 beforeEach(() => reset())
 
 describe("多 session 后台运行", () => {
+  test("初始化还在拉首页连接时点开会话，收尾不会把画面拽回首页", async () => {
+    const tabs = useWorkspaceTabs()
+    model.deferOpen = true
+    const homeShow = tabs.show(HOME_WORKSPACE_ID)
+    expect(model.openGates).toHaveLength(1)
+    const homeGate = model.openGates[0]
+    // 会话这边不再堵住，让它先连上。首页那次初始化最后才收尾。
+    model.deferOpen = false
+    await tabs.openSession({ path: "/p/a.jsonl", cwd: "/p" })
+    const active = useShell.getState().activeWorkspaceId
+    const sessionConn = useWorkspace.getState().connectionId
+    expect(active).not.toBe(HOME_WORKSPACE_ID)
+    expect(sessionConn).toBeTruthy()
+
+    homeGate()
+    await homeShow
+
+    expect(useShell.getState().activeWorkspaceId).toBe(active)
+    expect(useWorkspace.getState().connectionId).toBe(sessionConn)
+    const tab = useShell.getState().workspaces.find((item) => item.id === active)
+    expect(tab?.connectionId).toBe(sessionConn)
+  })
+
   test("打开第二个会话不会关掉正在跑的第一个会话", async () => {
     const tabs = useWorkspaceTabs()
     await tabs.show(HOME_WORKSPACE_ID)

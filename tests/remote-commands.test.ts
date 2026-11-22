@@ -141,11 +141,6 @@ const EXCLUDED: Record<string, string> = {
   // 历史图片落盘后返回本机路径：手机的相册不在这个文件系统里，它仍然走
   // `session_image`（base64），所以这条命令不需要镜像。
   session_image_file: "returns a path on this machine's disk; the phone reads session_image instead",
-  // 窗口玻璃是这个桌面窗口自己的事：一条抓它背后的桌面，一条改它的 AppKit 窗口。
-  // 手机上「窗口」就是浏览器标签页，没有可抓的桌面，也没有可改的 NSWindow。
-  glass_desktop_sample: "captures the desktop behind this window; the phone has no such window",
-  set_window_glass_enabled: "applies this window's own AppKit state",
-  set_window_background_blur: "sets the desktop blur radius of this window's own material",
   // 拖拽是桌面 Finder 里的手势，拖的是这台机器的文件系统；手机没有拖拽来源。
   // （这条本来就漏了，测试一直是红的：补上理由，而不是让它继续挂着。）
   stage_drag_file: "stages a file dragged from this desktop's file system",

@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import { setTheme as setNativeTheme } from "@tauri-apps/api/app";
-import { installDesktopGlass, setDesktopGlassEnabled } from "./desktop-glass";
 import { nativeThemePreference, themeColor, type ResolvedTheme } from "./theme";
 import {
   applyWorkspaceTheme,
@@ -19,8 +18,6 @@ export type ThemePreference = "system" | "light" | "dark";
 const SCHEME_KEY = "orbit.colorScheme";
 const LEGACY_SCHEME_KEY = "pi-gui.theme";
 const ACCENT_KEY = "orbit.accentColor";
-const BLUR_KEY = "orbit.blurRadius";
-const BODY_GLASS_KEY = "orbit.bodyGlass";
 const UI_SCALE_KEY = "orbit.uiScale";
 const EXCLUDED_KEY = "orbit.showExcludedFiles";
 const CHAT_BG_KEY = "orbit.chatBackground";
@@ -30,10 +27,9 @@ const HUE_KEY = "orbit.themeHue";
 const SATURATION_KEY = "orbit.themeSaturation";
 const LIGHTNESS_KEY = "orbit.themeDarkLightness";
 const WORKSPACE_THEME_KEY = "orbit.workspaceTheme";
-const SIDEBAR_OPACITY_KEY = "orbit.sidebarOpacity";
 
 /** MonoCode's neutral default: hue 240, saturation 0%, dark lightness 9%. */
-export const DEFAULT_APPEARANCE = { hue: 240, saturation: 0, darkLightness: 9, sidebarOpacity: 0.85 };
+export const DEFAULT_APPEARANCE = { hue: 240, saturation: 0, darkLightness: 9 };
 
 function read(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -102,189 +98,35 @@ function accentForeground(color: string) {
 
 export const UI_SCALE_PERCENTS = Array.from({ length: 16 }, (_, i) => Math.round((0.5 + i * 0.1) * 100));
 
-function readBlur() {
-  return clamp(loadNumber(BLUR_KEY, 24), 0, 64);
-}
-
-/** Unset means off. The window stays opaque until the user asks for glass. */
-export const BODY_GLASS_DEFAULT = false;
-
-export function bodyGlassFromStorage(stored: string | null) {
-  return stored == null ? BODY_GLASS_DEFAULT : stored === "true";
-}
-
-function readBodyGlass() {
-  return bodyGlassFromStorage(read(BODY_GLASS_KEY));
-}
-
 type AppearanceState = {
   preference: ThemePreference;
   scheme: ResolvedTheme;
   hue: number;
   saturation: number;
   darkLightness: number;
-  sidebarOpacity: number;
   workspaceTheme: WorkspaceThemeId;
   /** Null = the theme's own accent (`hsl(211 92% 62%)`, or the workspace theme's). */
   accent: string | null;
   diffPalette: DiffPalette;
-  blur: number;
-  bodyGlass: boolean;
   uiScale: number;
   showExcludedFiles: boolean;
   chatBackground: string | null;
   /** 0–1，作用于聊天背景图片的透明度。 */
   chatBackgroundOpacity: number;
-  setBlur: (blur: number) => void;
-  setBodyGlass: (on: boolean) => void;
   setUiScale: (scale: number) => void;
   setShowExcludedFiles: (on: boolean) => void;
   setChatBackground: (path: string | null) => void;
   setChatBackgroundOpacity: (opacity: number) => void;
   setPreference: (preference: ThemePreference) => void;
-  setTint: (patch: Partial<Pick<AppearanceState, "hue" | "saturation" | "darkLightness" | "sidebarOpacity">>) => void;
+  setTint: (patch: Partial<Pick<AppearanceState, "hue" | "saturation" | "darkLightness">>) => void;
   setWorkspaceTheme: (theme: WorkspaceThemeId) => void;
   setAccent: (accent: string | null) => void;
   setDiffPalette: (palette: DiffPalette) => void;
   restoreDefaults: () => void;
 };
 
-const IS_MAC_RUNTIME = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
-const IS_WIN_RUNTIME = typeof navigator !== "undefined" && /Win/i.test(navigator.platform);
-const GLASS_RUNTIME = IS_MAC_RUNTIME || IS_WIN_RUNTIME;
-
-/** Dark mode on a runtime that can actually show the desktop through the window. */
-export function windowGlassOn(state: Pick<AppearanceState, "scheme" | "bodyGlass">) {
-  return state.scheme === "dark" && GLASS_RUNTIME && state.bodyGlass;
-}
-
-type Rgb = { r: number; g: number; b: number };
-
-/** The theme colour, resolved the way the page paints it (OKLCH, not the HSL bootstrap). */
-function windowBackgroundRgb(): Rgb {
-  const probe = document.createElement("span");
-  probe.style.color = "var(--color-background-base)";
-  document.documentElement.appendChild(probe);
-  const parsed = getComputedStyle(probe).color;
-  probe.remove();
-  const match = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/.exec(parsed);
-  if (!match) return { r: 18, g: 19, b: 23 };
-  return { r: Math.round(Number(match[1])), g: Math.round(Number(match[2])), b: Math.round(Number(match[3])) };
-}
-
-/** Latest requested glass state. Slider drags coalesce instead of stacking IPC. */
-let glassPending: Pick<AppearanceState, "scheme" | "blur" | "bodyGlass" | "sidebarOpacity"> | null = null;
-let glassRunning = false;
-/** Native glass is on, so turning it off has to tell the window. */
-let glassApplied = false;
-
-/**
- * Window glass, as it can actually work on this runtime.
- *
- * The window is not see-through: Chromium (CEF, windowed) always fills it, so
- * no CSS here can reveal what is behind. `desktop-glass.ts` paints a capture of
- * the desktop into `.desktop-glass-layer` instead, and both sliders are CSS over
- * that layer — the frost is `--sidebar-blur`, the wash is `--sidebar-opacity`.
- * Neither goes through IPC, so dragging them is immediate and cannot be lost.
- *
- * The toggle is the off switch: it drops the layer and tells the window to go
- * back to its own colour.
- */
-function applyNativeGlass(state: Pick<AppearanceState, "scheme" | "blur" | "bodyGlass" | "sidebarOpacity">) {
-  glassPending = state;
-  if (glassRunning) return;
-  glassRunning = true;
-  void drainNativeGlass();
-}
-
-async function drainNativeGlass() {
-  while (glassPending) {
-    const state = glassPending;
-    glassPending = null;
-    await applyNativeGlassNow(state);
-  }
-  glassRunning = false;
-  if (glassPending) void drainNativeGlass();
-}
-
-async function applyNativeGlassNow(state: Pick<AppearanceState, "scheme" | "blur" | "bodyGlass" | "sidebarOpacity">) {
+function applyToDocument(state: Pick<AppearanceState, "scheme" | "hue" | "saturation" | "darkLightness" | "workspaceTheme" | "accent" | "diffPalette">) {
   const root = document.documentElement;
-  const eligible = windowGlassOn(state);
-  root.classList.toggle("glass-body", eligible);
-  // Both sliders are plain CSS on the sampled desktop. Published before the
-  // IPC below so a slider drag never waits for the shell.
-  root.style.setProperty("--sidebar-blur", `${state.blur}px`);
-  root.style.setProperty("--sidebar-opacity", String(state.sidebarOpacity));
-  // Windows keeps its acrylic: the window itself is see-through there (the
-  // wash below has something to show), so it must not get the sample layer.
-  setDesktopGlassEnabled(eligible && IS_MAC_RUNTIME);
-  if (!eligible) {
-    root.classList.remove("has-native-glass", "has-native-glass-tint");
-    if (!glassApplied) return;
-    glassApplied = false;
-    await disableNativeGlass(state.scheme);
-    return;
-  }
-  // Mark applied before the await so a queued "off" still tells the window
-  // to go back to its own colour. The enable call may already have landed.
-  glassApplied = true;
-  root.classList.add("has-native-glass");
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    // Two backends answer this: the CEF build keeps the window opaque behind the
-    // sampled desktop (a see-through window would show the real desktop sliding
-    // under a capture that lags a frame); the wry build installs MonoCode's
-    // vibrancy under a transparent page and reports `true` because it painted
-    // the shared tint itself. Windows takes its acrylic from here either way.
-    const nativeTint = await invoke<boolean>("set_window_glass_enabled", {
-      enabled: true,
-      background: windowBackgroundRgb(),
-      opacity: state.sidebarOpacity,
-    });
-    await invoke("set_window_background_blur", { radius: Math.round(state.blur) });
-    // A newer state already replaced this one; don't publish a stale tint.
-    if (glassPending) return;
-    // Only when the native side painted the tint may the page stop washing: two
-    // washes stack, and MonoCode's glass is the native one alone.
-    root.classList.toggle("has-native-glass-tint", nativeTint === true);
-    glassApplied = true;
-    if (IS_WIN_RUNTIME) {
-      const { getCurrentWindow, Effect, EffectState } = await import("@tauri-apps/api/window");
-      const win = getCurrentWindow();
-      await win.setBackgroundColor([0, 0, 0, 0]);
-      await win.setEffects({ effects: [Effect.Acrylic], state: EffectState.Active });
-    }
-  } catch {
-    // A shell without the command still gets the CSS side: the sample layer is
-    // drawn by the page and does not need the shell at all.
-  }
-}
-
-async function disableNativeGlass(scheme: AppearanceState["scheme"]) {
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("set_window_glass_enabled", {
-      enabled: false,
-      background: windowBackgroundRgb(),
-    });
-    await invoke("set_window_background_blur", { radius: 0 });
-  } catch { /* browser preview, or the command is not on this runtime */ }
-  try {
-    const { getCurrentWindow } = await import("@tauri-apps/api/window");
-    const win = getCurrentWindow();
-    await win.setEffects({ effects: [] });
-    await win.setBackgroundColor(scheme === "light" ? [247, 247, 247, 255] : windowBackgroundRgbArray());
-  } catch { /* 没有 effect API（Linux / 旧版） */ }
-}
-
-function windowBackgroundRgbArray(): [number, number, number, number] {
-  const color = windowBackgroundRgb();
-  return [color.r, color.g, color.b, 255];
-}
-
-function applyToDocument(state: Pick<AppearanceState, "scheme" | "hue" | "saturation" | "darkLightness" | "sidebarOpacity" | "workspaceTheme" | "accent" | "diffPalette" | "blur" | "bodyGlass">) {
-  const root = document.documentElement;
-  // Theme variables first, so the glass probe reads the colour the page paints.
   applyWorkspaceTheme(state.workspaceTheme, root);
   if (state.accent) {
     root.classList.add("has-user-accent");
@@ -313,9 +155,7 @@ function applyToDocument(state: Pick<AppearanceState, "scheme" | "hue" | "satura
   root.style.setProperty("--theme-hue", String(state.hue));
   root.style.setProperty("--theme-saturation", `${state.saturation}%`);
   root.style.setProperty("--theme-dark-lightness", `${state.darkLightness}%`);
-  root.style.setProperty("--sidebar-opacity", String(state.sidebarOpacity));
   document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute("content", themeColor[state.scheme]);
-  void applyNativeGlass(state);
 }
 
 const initialPreference = loadThemePreference();
@@ -361,11 +201,8 @@ export const useAppearance = create<AppearanceState>((set, get) => ({
   scheme: resolveColorScheme(initialPreference),
   ...initialTint(),
   workspaceTheme: initialWorkspaceTheme(),
-  sidebarOpacity: clamp(loadNumber(SIDEBAR_OPACITY_KEY, DEFAULT_APPEARANCE.sidebarOpacity), 0.15, 1),
   accent: readAccent(),
   diffPalette: readDiffPalette(),
-  blur: readBlur(),
-  bodyGlass: readBodyGlass(),
   uiScale: clamp(loadNumber(UI_SCALE_KEY, 1), 0.5, 2),
   showExcludedFiles: read(EXCLUDED_KEY) === "true",
   chatBackground: read(CHAT_BG_KEY),
@@ -380,7 +217,6 @@ export const useAppearance = create<AppearanceState>((set, get) => ({
     write(HUE_KEY, String(next.hue));
     write(SATURATION_KEY, String(next.saturation));
     write(LIGHTNESS_KEY, String(next.darkLightness));
-    write(SIDEBAR_OPACITY_KEY, String(next.sidebarOpacity));
     set(patch);
   },
   setWorkspaceTheme: workspaceTheme => {
@@ -394,14 +230,6 @@ export const useAppearance = create<AppearanceState>((set, get) => ({
   setDiffPalette: diffPalette => {
     write(DIFF_KEY, diffPalette);
     set({ diffPalette });
-  },
-  setBlur: blur => {
-    write(BLUR_KEY, String(blur));
-    set({ blur });
-  },
-  setBodyGlass: bodyGlass => {
-    write(BODY_GLASS_KEY, String(bodyGlass));
-    set({ bodyGlass });
   },
   setUiScale: uiScale => {
     write(UI_SCALE_KEY, String(uiScale));
@@ -423,8 +251,8 @@ export const useAppearance = create<AppearanceState>((set, get) => ({
     set({ chatBackgroundOpacity });
   },
   restoreDefaults: () => {
-    for (const key of [HUE_KEY, SATURATION_KEY, LIGHTNESS_KEY, WORKSPACE_THEME_KEY, SIDEBAR_OPACITY_KEY, ACCENT_KEY, DIFF_KEY, BLUR_KEY, BODY_GLASS_KEY, UI_SCALE_KEY, EXCLUDED_KEY, CHAT_BG_KEY, CHAT_BG_OPACITY_KEY]) write(key, null);
-    set({ ...DEFAULT_APPEARANCE, workspaceTheme: WORKSPACE_THEME_DEFAULT, accent: null, diffPalette: "default" as DiffPalette, blur: 24, bodyGlass: BODY_GLASS_DEFAULT, uiScale: 1, showExcludedFiles: false, chatBackground: null, chatBackgroundOpacity: 0.22 });
+    for (const key of [HUE_KEY, SATURATION_KEY, LIGHTNESS_KEY, WORKSPACE_THEME_KEY, ACCENT_KEY, DIFF_KEY, UI_SCALE_KEY, EXCLUDED_KEY, CHAT_BG_KEY, CHAT_BG_OPACITY_KEY]) write(key, null);
+    set({ ...DEFAULT_APPEARANCE, workspaceTheme: WORKSPACE_THEME_DEFAULT, accent: null, diffPalette: "default" as DiffPalette, uiScale: 1, showExcludedFiles: false, chatBackground: null, chatBackgroundOpacity: 0.22 });
   },
 }));
 
@@ -434,9 +262,8 @@ let installed = false;
 export function installAppearance(nativeSync: () => boolean) {
   if (installed) return;
   installed = true;
-  // The desktop sample follows the window, not the theme, so it starts once
-  // for the process rather than on every appearance change.
-  void installDesktopGlass();
+  // Window glass is gone. Drop the keys so an old install does not keep a dead toggle.
+  for (const key of ["orbit.blurRadius", "orbit.bodyGlass", "orbit.sidebarOpacity"]) write(key, null);
   const sync = () => {
     const state = useAppearance.getState();
     applyToDocument(state);

@@ -103,7 +103,7 @@ function RailNewSession({
       disabled={disabled}
       title={label}
       aria-label={label}
-      className="rail-row relative mb-1 flex h-8 w-full items-center gap-2 rounded-md bg-accent px-1.5 text-left text-white hover:bg-accent/85 disabled:cursor-default disabled:opacity-40"
+      className="rail-new-session rail-row relative mb-1 flex h-8 w-full items-center gap-2 rounded-md px-1.5 text-left disabled:cursor-default disabled:opacity-40"
     >
       <Plus className="size-4 shrink-0" strokeWidth={1.75} />
       <span className="min-w-0 flex-1 truncate text-sm font-medium leading-tight">新会话</span>

@@ -108,8 +108,6 @@
   --theme-saturation: 0%;
   --theme-dark-lightness: 9%;
 
-  --sidebar-opacity: 0.85;
-  --window-background-opacity: 0.4;
   --chat-background-empty-opacity: 0.24;
   --chat-background-session-opacity: 0.24;
   /* The Haze fades its artwork out toward the composer. */
@@ -279,59 +277,8 @@ html:not(.is-mac) #root {
   height: 0;
 }
 
-/* Tint-less transparent rather than `transparent`, which browsers interpolate
-   through black and would dim the page on the way in and out of glass.
-
-   Nothing is expected to show through the *window* here — the app runs on CEF
-   in windowed mode, where Chromium's own fill is opaque. What these three have
-   to stop painting is the page's canvas, so the sampled-desktop layer below
-   (`.desktop-glass-layer`, z-index -1) is the bottom of the stack instead of
-   Chromium's white. That layer carries the theme colour itself, so a capture
-   that has not arrived yet still reads as the window it replaces. */
-html.has-native-glass:not(.theme-light),
-html.has-native-glass:not(.theme-light) body,
-html.has-native-glass:not(.theme-light) #root {
-  background: color-mix(in srgb, var(--color-background-base) 0%, transparent);
-}
-
-/* The desktop behind the window, painted by the page.
-
-   `lib/desktop-glass.ts` keeps a JPEG of what is behind the window in here and
-   refreshes it on move, resize and focus. Everything the frost slider and the
-   opacity slider do happens on this layer, which is why they are instant: the
-   blur is a CSS filter and the wash is the `.workspace-background` rule below.
-
-   The overscan is for the blur: a filter samples past the edge, so a 60px
-   radius on an exactly-sized layer bleeds the base colour in on all four sides. */
-.desktop-glass-layer {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  background-color: var(--color-background-base);
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: 100% 100%;
-  transform: scale(1.06);
-  transform-origin: center;
-  filter: blur(var(--sidebar-blur, 24px)) saturate(1.12) brightness(0.94);
-}
-
-/* Opaque until glass is on. The Tailwind utility used to win this and hide
-   the slider: the wash has to be the whole window, not a 0.6% veil. */
 .workspace-background {
   background: var(--color-background-base);
-}
-
-/* Opacity is the wash over the sampled desktop: the rest of the stack is
-   transparent, so `--sidebar-opacity` is literally how much of the window's
-   colour covers the desktop. */
-html.has-native-glass:not(.theme-light) .workspace-background {
-  background: color-mix(
-    in srgb,
-    var(--color-background-base) calc(var(--sidebar-opacity) * 100%),
-    transparent
-  );
 }
 
 .reorder-item {
@@ -433,67 +380,6 @@ html.has-native-glass:not(.theme-light) .workspace-background {
 
 html.theme-light .sidebar-glass {
   background: var(--color-background-base);
-}
-
-html.has-native-glass:not(.theme-light) .sidebar-glass {
-  background: hsl(
-    var(--theme-hue) var(--theme-saturation) var(--background-lightness) /
-      var(--sidebar-opacity)
-  );
-}
-
-/* A named theme replaces the hue tint. Glass then washes that surface at the
-   same opacity, instead of rebuilding it from hue/saturation. */
-html.has-workspace-theme.has-native-glass:not(.theme-light) .sidebar-glass {
-  background: color-mix(
-    in srgb,
-    var(--wt-dark-surface) calc(var(--sidebar-opacity) * 100%),
-    transparent
-  );
-}
-
-/* The title strip is window chrome. It takes the same wash as the sidebar,
-   or it leaves an opaque band across the top of the glass. */
-html.has-native-glass:not(.theme-light) .tab-strip {
-  background: hsl(
-    var(--theme-hue) var(--theme-saturation) var(--background-lightness) /
-      var(--sidebar-opacity)
-  );
-}
-
-html.has-workspace-theme.has-native-glass:not(.theme-light) .tab-strip {
-  background: color-mix(
-    in srgb,
-    var(--wt-dark-surface) calc(var(--sidebar-opacity) * 100%),
-    transparent
-  );
-}
-
-/* The active tab is the page's own sheet, and under glass the page is clear —
-   so the tab has to be clear too, or it reads as an opaque chip floating in a
-   transparent strip. Its hairlines and ink still mark it as active. */
-html.has-native-glass:not(.theme-light) .tab-strip [role="tab"][aria-selected="true"] {
-  background: color-mix(
-    in srgb,
-    var(--color-background-base) calc(var(--sidebar-opacity) * 100%),
-    transparent
-  );
-}
-
-html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
-  .tab-strip [role="tab"][aria-selected="true"] {
-  background: transparent;
-}
-
-/* AppKit fills the shared tint as the window grows. Painting it here too
-   would compound the opacity; wait for the native host's acknowledgement. */
-html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
-  .workspace-background,
-html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
-  .sidebar-glass,
-html.is-mac.has-native-glass.has-native-glass-tint:not(.theme-light)
-  .tab-strip {
-  background: color-mix(in srgb, var(--color-background-base) 0%, transparent);
 }
 
 /* A workspace theme (workspaceThemes.ts) replaces the hue/saturation tint with
@@ -1587,19 +1473,6 @@ html.has-user-accent .user-message-bubble[data-draft="true"] {
   }
 }
 
-html.has-native-glass.glass-body:not(.theme-light) .body-glass {
-  background: color-mix(
-    in srgb,
-    var(--color-background-base) calc(var(--sidebar-opacity) * 100%),
-    transparent
-  );
-}
-
-html.is-mac.has-native-glass.has-native-glass-tint.glass-body:not(.theme-light)
-  .body-glass {
-  background: color-mix(in srgb, var(--color-background-base) 0%, transparent);
-}
-
 textarea,
 input,
 .agent-transcript,
@@ -1766,47 +1639,6 @@ html.theme-light .agent-chat-composer {
 html.theme-light .orbit-galaxy-surface [data-composer-box] {
   background: color-mix(in srgb, var(--color-content) 3%, transparent);
   box-shadow: 0 1px 3px color-mix(in srgb, var(--color-content) 4%, transparent);
-}
-
-/*
- * Glass drops the page paper, and the composer is only an 8% wash. Over a
- * busy desktop the placeholder, model name and toolbar icons disappear.
- * The card stays frosted; the rest of the window does not.
- */
-html.glass-body:not(.theme-light) [data-composer-box] {
-  background: color-mix(in srgb, var(--color-background-base) 92%, transparent);
-  border-color: color-mix(in srgb, var(--color-content) 18%, transparent);
-  -webkit-backdrop-filter: blur(20px) saturate(1.15);
-  backdrop-filter: blur(20px) saturate(1.15);
-  box-shadow:
-    0 10px 28px rgb(0 0 0 / 0.38),
-    inset 0 1px 0 color-mix(in srgb, var(--color-content) 10%, transparent);
-}
-
-html.glass-body:not(.theme-light) [data-composer-box] button.text-ink-3 {
-  color: var(--ink-1);
-}
-
-html.glass-body:not(.theme-light) [data-composer-box] button.bg-selection {
-  background-color: color-mix(
-    in srgb,
-    var(--color-content) 16%,
-    var(--color-background-base)
-  );
-}
-
-html.glass-body:not(.theme-light) [data-composer-box] .composer-field::placeholder {
-  color: color-mix(in srgb, var(--color-content) 72%, transparent);
-  -webkit-text-fill-color: color-mix(
-    in srgb,
-    var(--color-content) 72%,
-    transparent
-  );
-}
-
-html.glass-body:not(.theme-light) [data-composer-box] .primary-action:disabled {
-  background: color-mix(in srgb, #fff 84%, var(--color-background-base));
-  color: #141414;
 }
 
 /* Solid primary actions share the composer submit treatment. */

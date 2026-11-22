@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { normalizeProjectPath } from "../../lib/projects";
 import {
   firstLeafId,
   leaf,
@@ -274,7 +275,10 @@ type ShellState = {
  * bootstrap 确认后再刷新。
  */
 function initialCwd(): string {
-  try { return localStorage.getItem("pi-gui.cwd") ?? ""; } catch { return ""; }
+  try {
+    const raw = localStorage.getItem("pi-gui.cwd") ?? "";
+    return raw ? normalizeProjectPath(raw) : "";
+  } catch { return ""; }
 }
 
 const initial = {

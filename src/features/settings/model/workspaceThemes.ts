@@ -21,11 +21,11 @@ export type WorkspaceThemeId =
   | "ink";
 
 export type WorkspacePalette = {
-  /** The shell behind the sidebar, tabs and footer. Also the native glass tint. */
+  /** The shell behind the sidebar, tabs and footer. */
   surface: string;
-  /** The card, as painted over the window glass (dark mode only uses glass). */
+  /** Unused glass wash, kept so the MonoCode palette shape still lines up. */
   panel: string;
-  /** The card when the window is opaque. */
+  /** The card. */
   panelSolid: string;
   content: string;
   accent: string;
