@@ -6,6 +6,12 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.60
+
+A phone can start a voice call. The microphone and the speaker stay on the phone. Prism still connects on the paired computer, so the computer has to be on and the phone has to be paired. The Rime key stays on the computer.
+
+On Android, two volume-down presses within half a second open the voice page and start the call, while Orbit is in front. The volume still changes. Volume-up does nothing to the call. This does not work from the lock screen or from another app. iPhone cannot use the volume keys this way.
+
 ## v1.0.59
 
 Window glass is gone. The window stays opaque. Appearance no longer has window glass, window opacity, or frost. A saved glass setting is cleared on launch. The home page keeps its galaxy plate.

@@ -200,6 +200,17 @@ pub const REMOTE_COMMANDS: &[&str] = &[
     "speech_engine_desk",
     "voice_classify",
     "speech_engine_speak",
+    // Prism stays on this computer: the key never leaves, and the phone only
+    // sends microphone frames and receives spoken events.
+    "rime_config",
+    "rime_prism_open",
+    "rime_prism_audio",
+    "rime_prism_truncate",
+    "rime_prism_nudge",
+    "rime_prism_hold",
+    "rime_prism_tool_result",
+    "rime_prism_quiet",
+    "rime_prism_close",
     // The image-generation endpoint, as data. Pi's own provider config cannot
     // hold an image model — its model schema has no `type` discriminant — so this
     // file is where the provider, its models and its size presets live, and the
@@ -758,6 +769,47 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
         "voice_classify" => json(elevenlabs::voice_classify(required(&args, "request")?).await?),
         #[cfg(desktop)]
         "speech_engine_speak" => json(elevenlabs::speech_engine_speak(text(&args, "text")?).await?),
+        #[cfg(desktop)]
+        "rime_config" => json(rime::rime_config().await?),
+        #[cfg(desktop)]
+        "rime_prism_open" => json(rime::rime_prism_open_remote().await?),
+        #[cfg(desktop)]
+        "rime_prism_audio" => {
+            rime::rime_prism_audio(text(&args, "audioBase64")?).await?;
+            json!(null)
+        }
+        #[cfg(desktop)]
+        "rime_prism_truncate" => {
+            rime::rime_prism_truncate(text(&args, "itemId")?, number::<u32>(&args, "audioEndMs")?).await?;
+            json!(null)
+        }
+        #[cfg(desktop)]
+        "rime_prism_nudge" => {
+            rime::rime_prism_nudge(text(&args, "text")?).await?;
+            json!(null)
+        }
+        #[cfg(desktop)]
+        "rime_prism_hold" => {
+            rime::rime_prism_hold(text(&args, "text")?).await?;
+            json!(null)
+        }
+        #[cfg(desktop)]
+        "rime_prism_tool_result" => json(rime::rime_prism_tool_result(
+            text(&args, "callId")?,
+            text(&args, "responseId")?,
+            text(&args, "output")?,
+            opt::<bool>(&args, "speak")?,
+        ).await?),
+        #[cfg(desktop)]
+        "rime_prism_quiet" => {
+            rime::rime_prism_quiet(opt::<bool>(&args, "hush")?).await?;
+            json!(null)
+        }
+        #[cfg(desktop)]
+        "rime_prism_close" => {
+            rime::rime_prism_close().await?;
+            json!(null)
+        }
         other => Err(format!("命令 {other} 没有远端实现")),
     }
 }

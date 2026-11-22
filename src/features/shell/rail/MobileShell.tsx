@@ -18,6 +18,7 @@ import { compactTitle } from "../../../lib/session-visual";
 import { observeKeyboardInset } from "../../../lib/keyboard-inset";
 import { observeSystemBarInsets } from "../../../lib/system-insets";
 import { installBackGesture, registerBackHandler } from "../../../lib/back-gesture";
+import { installVoiceWake, onVoiceWake, openVoiceFromWake } from "../../../lib/voice-wake";
 import { mergeProjectSessions, useProjectSessions } from "../../../hooks/use-project-sessions";
 
 const VoicePage = lazy(() => import("../../voice/ui/VoicePage").then((module) => ({ default: module.VoicePage })));
@@ -89,8 +90,17 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
       return true;
     });
   }, [showFile]);
-  // Leaving the page hangs up. The microphone is on this phone; a call with
-  // no control on screen would keep listening in the background.
+  // Two volume-down presses open this page and start the call. Leaving still
+  // hangs up: the microphone is on this phone.
+  useEffect(() => {
+    installVoiceWake();
+    return onVoiceWake(() => {
+      openVoiceFromWake();
+      void import("../../voice/model/call").then((module) => {
+        if (module.voiceCall.getSnapshot().state === "off") void module.voiceCall.start();
+      });
+    });
+  }, []);
   useEffect(() => {
     if (panel === "voice") return;
     void import("../../voice/model/call").then((module) => {

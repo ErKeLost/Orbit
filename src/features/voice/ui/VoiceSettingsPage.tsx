@@ -2,7 +2,8 @@
  * 设置 → 语音。
  *
  * 断句、打断、闲聊、出声都在 Rime Prism。这里只留那把 Key。
- * Jev 只判这句要不要交给桌面上正在用的会话。
+ * 手机上的通话也用这一把 Key：麦和喇叭在手机上，接通在已配对的电脑上。
+ * Jev 只判这句要不要交给正在用的会话。
  */
 import { useEffect, useState } from "react";
 import { toast } from "../../../shared/ui/toast";
@@ -60,9 +61,10 @@ export function VoiceSettingsPage() {
         </Row>
       </Group>
 
-      <Group title="这一通怎么走" description="麦、断句、打断、闲聊、出声都是 Rime Prism。Jev 只回答一件事：这句要不要交给桌面上正在用的那条会话。不够把握就不交。">
+      <Group title="这一通怎么走" description="麦、断句、打断、闲聊、出声都是 Rime Prism。手机连上电脑之后，麦和喇叭在手机上，Key 和接通仍在电脑上。">
         <Row label="语言" description="Prism 现在只说英语，听也只按英语。中文说进去它不会按中文回。这是他们现在的边界，不是这边还能补的。" />
         <Row label="音色" description="通话用 aurora。挂断之后的一句播报用 Coda 的 celeste，同一把 Key。" />
+        <Row label="唤起" description="Android 上连按两次音量减，从任何页面打开语音并开始这一通。音量本身仍会变。" />
       </Group>
     </div>
   );

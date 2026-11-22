@@ -7,8 +7,20 @@
 use base64::Engine;
 use serde_json::{json, Value};
 use std::pin::Pin;
+use std::sync::Mutex;
+
+use tauri::AppHandle;
 
 use crate::bridge;
+
+static APP: Mutex<Option<AppHandle>> = Mutex::new(None);
+
+/// The desktop process, remembered so a Prism event can reach a paired phone.
+pub fn attach(app: AppHandle) {
+    if let Ok(mut slot) = APP.lock() {
+        *slot = Some(app);
+    }
+}
 
 const PROVIDER: &str = "rime";
 const PRISM: &str = "prism.api.rime.ai";
@@ -177,17 +189,37 @@ struct Live {
 static LIVE: std::sync::LazyLock<tokio::sync::Mutex<Option<Live>>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(None));
 
-fn emit(channel: &tauri::ipc::Channel<Value>, body: Value) {
-    let _ = channel.send(body);
+fn emit(channel: &Option<tauri::ipc::Channel<Value>>, body: Value) {
+    if let Some(channel) = channel {
+        let _ = channel.send(body.clone());
+    }
+    // A paired phone has its own window. The Channel above only reaches the
+    // desktop webview, so the same event is published on the pairing socket.
+    let app = APP.lock().ok().and_then(|slot| slot.clone());
+    if let Some(app) = app {
+        crate::remote::publish_terminal(&app, json!({
+            "type": "voice.event",
+            "event": body,
+        }));
+    }
 }
 
 fn text_of(value: Option<&Value>) -> String {
     value.and_then(Value::as_str).unwrap_or("").trim().to_owned()
 }
 
+/// Open Prism for a paired phone. Events travel on the pairing socket, not a Channel.
+pub async fn rime_prism_open_remote() -> Result<Value, String> {
+    open_prism(None).await
+}
+
 /// Open one Prism conversation. Audio starts only after this returns.
 #[tauri::command]
 pub async fn rime_prism_open(on_event: tauri::ipc::Channel<Value>) -> Result<Value, String> {
+    open_prism(Some(on_event)).await
+}
+
+async fn open_prism(on_event: Option<tauri::ipc::Channel<Value>>) -> Result<Value, String> {
     let key = api_key()?;
     let (tx, rx) = tokio::sync::mpsc::channel(32);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
@@ -297,7 +329,7 @@ pub async fn rime_prism_close() -> Result<(), String> {
 async fn run_prism(
     key: String,
     mut commands: tokio::sync::mpsc::Receiver<Cmd>,
-    channel: tauri::ipc::Channel<Value>,
+    channel: Option<tauri::ipc::Channel<Value>>,
     ready: tokio::sync::oneshot::Sender<Result<(), String>>,
 ) {
     use futures_util::{SinkExt, StreamExt};

@@ -261,6 +261,8 @@ export type RemoteEvent =
   | { type: "pty.event"; id: string; data: string }
   /** The child behind a PTY finished. `code` is absent when it was signalled. */
   | { type: "pty.exit"; id: string; code: number | null }
+  /** One Prism event, republished because the phone cannot hold the socket. */
+  | { type: "voice.event"; event: RemoteJson }
   | { type: "remote.result"; requestId?: string; ok: boolean; result?: RemoteJson; error?: string }
   | { type: "remote.error"; requestId?: string; error: string }
 
@@ -381,6 +383,12 @@ export function isRemoteEvent(value: unknown): value is RemoteEvent {
       return stringValue(value.project)
     case "connection.invalidated":
       return stringValue(value.project) && stringValue(value.command)
+    case "pty.event":
+      return stringValue(value.id) && typeof value.data === "string"
+    case "pty.exit":
+      return stringValue(value.id) && (value.code === null || typeof value.code === "number")
+    case "voice.event":
+      return record(value.event)
     case "remote.result":
       return requestId && typeof value.ok === "boolean" && (value.error === undefined || typeof value.error === "string")
     case "remote.error":

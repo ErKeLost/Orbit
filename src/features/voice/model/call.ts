@@ -6,6 +6,8 @@
 import { Channel } from "@tauri-apps/api/core"
 import { invoke } from "@/lib/native"
 import { mobileRuntime } from "@/lib/runtime"
+import { remoteCanInvoke } from "@/lib/remote-workspace"
+import { subscribeVoiceRemote } from "@/lib/voice-remote"
 import { useWorkspace } from "@/lib/store"
 import { nextVoiceToken } from "./binding"
 import { taskOf } from "./brief"
@@ -59,6 +61,7 @@ export class VoiceCall {
   private mouth = false
   /** The reply that pause cut. Later chunks of it must not start playing again. */
   private droppedItem = ""
+  private unlistenRemote: (() => void) | null = null
 
   getSnapshot = () => this.value
   subscribe = (listener: () => void) => {
@@ -71,6 +74,8 @@ export class VoiceCall {
   }
   private fail(message: string) {
     void invoke("rime_prism_close").catch(() => undefined)
+    this.unlistenRemote?.()
+    this.unlistenRemote = null
     this.mic?.stop()
     this.mic = null
     void this.player.close()
@@ -87,7 +92,9 @@ export class VoiceCall {
 
   async start() {
     if (this.value.state !== "off") return
-    if (mobileRuntime()) return this.fail("这通语音在电脑上开。手机端还没接 Prism。")
+    if (mobileRuntime() && !remoteCanInvoke("rime_prism_open")) {
+      return this.fail("手机要先连上电脑。语音在电脑上接通，麦和声音在这台手机上。")
+    }
     if (!useWorkspace.getState().cwd) return this.fail("没有打开的项目。")
     const epoch = ++this.epoch
     this.sent.clear()
@@ -100,9 +107,17 @@ export class VoiceCall {
       const config = await invoke<{ hasCredential?: boolean }>("rime_config")
       if (epoch !== this.epoch) return
       if (!config.hasCredential) return this.fail("还没有配置 Rime API Key（在语音设置里填一次即可）。")
-      const channel = new Channel<PrismEvent>()
-      channel.onmessage = event => { if (epoch === this.epoch) this.onPrism(event) }
-      await invoke("rime_prism_open", { onEvent: channel })
+      if (mobileRuntime()) {
+        this.unlistenRemote?.()
+        this.unlistenRemote = subscribeVoiceRemote(event => {
+          if (epoch === this.epoch) this.onPrism(event)
+        })
+        await invoke("rime_prism_open")
+      } else {
+        const channel = new Channel<PrismEvent>()
+        channel.onmessage = event => { if (epoch === this.epoch) this.onPrism(event) }
+        await invoke("rime_prism_open", { onEvent: channel })
+      }
       if (epoch !== this.epoch) {
         await invoke("rime_prism_close").catch(() => undefined)
         return
@@ -250,6 +265,8 @@ export class VoiceCall {
     nextVoiceToken()
     this.mic?.stop()
     this.mic = null
+    this.unlistenRemote?.()
+    this.unlistenRemote = null
     this.player.stop()
     this.hush()
     this.update({ state: "off", muted: false, level: 0, outputLevel: 0 })

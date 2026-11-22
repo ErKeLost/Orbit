@@ -2,6 +2,8 @@ package ai.pi.gui
 
 import android.graphics.Color
 import android.os.Bundle
+import android.os.SystemClock
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
@@ -58,6 +60,7 @@ class MainActivity : TauriActivity() {
   }
 
   private var webView: WebView? = null
+  private var lastVolumeDownAt = 0L
 
   /** The last insets pushed to the page, so a layout pass is not a re-push. */
   private var pushedInsetTop = -1
@@ -155,6 +158,25 @@ class MainActivity : TauriActivity() {
         }
       }
     })
+  }
+
+  /**
+   * Two volume-down presses within 450 ms open the voice page and start a call.
+   *
+   * The system still changes the volume; this only adds a wake. Volume-up is
+   * left alone so a person can still raise the call without hanging up.
+   */
+  override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    if (event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN && event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+      val now = SystemClock.elapsedRealtime()
+      val previous = lastVolumeDownAt
+      lastVolumeDownAt = now
+      if (previous != 0L && now - previous <= 450L) {
+        lastVolumeDownAt = 0L
+        webView?.evaluateJavascript("window.__orbitVoiceWake && window.__orbitVoiceWake()", null)
+      }
+    }
+    return super.dispatchKeyEvent(event)
   }
 
   private fun findWebView(view: View?): WebView? {

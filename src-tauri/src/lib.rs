@@ -316,6 +316,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app.state::<screen::ScreenHost>().attach(app.handle().clone());
             #[cfg(desktop)]
+            rime::attach(app.handle().clone());
+            #[cfg(desktop)]
             {
                 app.handle().plugin(tauri_plugin_process::init())?;
                 app.handle()
