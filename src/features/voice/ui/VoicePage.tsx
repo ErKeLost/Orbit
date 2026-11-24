@@ -18,7 +18,6 @@ import { VoiceExchange } from "./VoiceExchange";
 import { useVoiceCall } from "../hooks/useVoiceCall";
 import { voiceCall, type CallState, type VoiceLogItem } from "../model/call";
 import { voicePanelHeld } from "../model/binding";
-import { startVoiceDesk } from "../model/desk";
 import { Mic, MicOff } from "lucide-react";
 
 /** 状态 → Orb 的四种。null 就是闲置。 */
@@ -71,7 +70,6 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
   // 首帧之后才点亮球：Three 的 canvas 是同步挂载的，直接显示会有一帧突兀的跳变。
   const [revealed, setRevealed] = useState(false);
   useEffect(() => {
-    startVoiceDesk();
     const frame = requestAnimationFrame(() => setRevealed(true));
     return () => cancelAnimationFrame(frame);
   }, []);
@@ -124,7 +122,10 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
   );
 
   return (
-    <div className="voice-log relative flex min-h-0 flex-1 flex-col justify-center bg-background-base">
+    /* 这一层不画底色：底色是窗口那一层画的（`workspace-background`），窗口底下
+       铺了图片时它会让开，图片就该从这里一直透到球后面。这里再涂一层不透明的
+       canvas 色，只会把照片挡成一块黑。 */
+    <div className="voice-log relative flex min-h-0 flex-1 flex-col justify-center">
       {/*
         通话中球要缩到顶部：它还在，只是不再占满一屏——下面那块地要让给对话。
         缩尺寸而不是换组件，是因为重建 WebGL 上下文就是"进去闪一下"的来源。

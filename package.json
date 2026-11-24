@@ -39,7 +39,6 @@
     "@codemirror/state": "^6.5.2",
     "@codemirror/view": "^6.43.13",
     "@earendil-works/pi-coding-agent": "1.5.2",
-    "@elevenlabs/react": "^1.22.0",
     "@hugeicons/core-free-icons": "4.3.0",
     "@hugeicons/react": "1.1.10",
     "@iconify-json/catppuccin": "^1.2.17",

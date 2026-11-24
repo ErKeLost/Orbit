@@ -184,17 +184,3 @@ export async function saveSpeechConfig(patch:Partial<SpeechConfig>):Promise<Spee
 export async function saveSpeechApiKey(provider:string|undefined,apiKey:string|null):Promise<{provider:string;hasCredential:boolean}> { if(!workspaceBackend()) throw new Error('语音识别密钥请在电脑端设置'); return invoke('save_speech_api_key',{provider:provider??null,apiKey}) }
 /** 录音 base64 → 文字。传输方式由 speech.json 决定（火山语音 / OpenAI 兼容端点）。 */
 export async function transcribeAudio(audioBase64:string,mimeType:string):Promise<{text:string;transport:string;noSpeech?:boolean}> { if(!workspaceBackend()) throw new Error('语音输入请在电脑端使用'); return invoke<{text:string;transport:string;noSpeech?:boolean}>('transcribe_audio',{audioBase64,mimeType}) }
-
-/**
- * 语音通话走 Rime Prism。断句、打断、闲聊、出声都在他们那边。
- * Jev 只判这句要不要交给桌面上那条 Pi。Key 留在 Rust 里。
- */
-export type SpeechEngineConfig = { engineId:string; configured:boolean; hasCredential:boolean }
-export type SpeechEngineCheck = { ok:boolean; tier?:string; characterCount?:number; characterLimit?:number }
-export async function speechEngineConfig():Promise<SpeechEngineConfig> { if(!workspaceBackend()) throw new Error('语音通话请在电脑端使用'); return invoke<SpeechEngineConfig>('speech_engine_config') }
-export async function saveSpeechEngineConfig(patch:{engineId?:string|null}):Promise<SpeechEngineConfig> { if(!workspaceBackend()) throw new Error('语音通话请在电脑端设置'); return invoke<SpeechEngineConfig>('save_speech_engine_config',{config:patch}) }
-export async function saveSpeechEngineApiKey(apiKey:string|null):Promise<{hasCredential:boolean}> { if(!workspaceBackend()) throw new Error('语音密钥请在电脑端设置'); return invoke<{hasCredential:boolean}>('save_speech_engine_api_key',{apiKey}) }
-/** 每次开麦换一个 token；有效期很短，不要缓存。 */
-export async function speechEngineToken():Promise<{token:string;engineId:string;signedUrl?:string}> { if(!workspaceBackend()) throw new Error('语音通话请在电脑端使用'); return invoke<{token:string;engineId:string;signedUrl?:string}>('speech_engine_token') }
-/** 免费额度就是通话会在半句时断掉的原因，设置页先把它显示出来。 */
-export async function speechEngineCheck():Promise<SpeechEngineCheck> { return invoke<SpeechEngineCheck>('speech_engine_check') }

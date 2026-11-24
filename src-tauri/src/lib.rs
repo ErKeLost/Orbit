@@ -56,9 +56,9 @@ mod speech;
 // （见 Cargo.toml 的 `cfg(not(any(android, ios)))` 段）。这里跟着一起门控，否则 Android
 // 目标会在 `cargo check --target aarch64-linux-android` 上找不到 crate。
 #[cfg(desktop)]
-mod elevenlabs;
-#[cfg(desktop)]
 mod rime;
+#[cfg(desktop)]
+mod voice_gate;
 mod media;
 mod pty_term;
 mod search;
@@ -516,23 +516,7 @@ pub fn run() {
             speech::save_speech_api_key,
             speech::transcribe_audio,
             #[cfg(desktop)]
-            elevenlabs::speech_engine_config,
-            #[cfg(desktop)]
-            elevenlabs::save_speech_engine_config,
-            #[cfg(desktop)]
-            elevenlabs::save_speech_engine_api_key,
-            #[cfg(desktop)]
-            elevenlabs::speech_engine_token,
-            #[cfg(desktop)]
-            elevenlabs::speech_engine_check,
-            #[cfg(desktop)]
-            elevenlabs::speech_engine_health,
-            #[cfg(desktop)]
-            elevenlabs::speech_engine_desk,
-            #[cfg(desktop)]
-            elevenlabs::voice_classify,
-            #[cfg(desktop)]
-            elevenlabs::speech_engine_speak,
+            voice_gate::voice_classify,
             #[cfg(desktop)]
             rime::rime_config,
             #[cfg(desktop)]

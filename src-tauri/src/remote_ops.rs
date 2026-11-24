@@ -49,7 +49,7 @@ use crate::{
 // computer to run these commands; it does not compile them. `rime` is a sibling
 // module, so this file has to name the crate root — `rime::` looks here.
 #[cfg(desktop)]
-use crate::elevenlabs;
+use crate::voice_gate;
 #[cfg(desktop)]
 use crate::rime;
 #[cfg(target_os = "macos")]
@@ -192,17 +192,9 @@ pub const REMOTE_COMMANDS: &[&str] = &[
     "save_computer_use_config",
     "save_computer_use_cloudflare_token",
     "test_computer_use_decision",
-    // Voice: the phone holds the microphone. The key, the speech engine and the
-    // desk stay on this computer; these commands are how the phone reaches them.
-    "speech_engine_config",
-    "save_speech_engine_config",
-    "save_speech_engine_api_key",
-    "speech_engine_token",
-    "speech_engine_check",
-    "speech_engine_health",
-    "speech_engine_desk",
+    // Voice: the phone holds the microphone. The Jev key and the gate stay on
+    // this computer; this command is how the phone reaches them.
     "voice_classify",
-    "speech_engine_speak",
     // Prism stays on this computer: the key never leaves, and the phone only
     // sends microphone frames and receives spoken events.
     "rime_config",
@@ -742,36 +734,7 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
             ax::ax_observe(text(&args, "appName")?, number::<usize>(&args, "maxNodes")?).await?,
         ),
         #[cfg(desktop)]
-        "speech_engine_config" => json(elevenlabs::speech_engine_config().await?),
-        #[cfg(desktop)]
-        "save_speech_engine_config" => {
-            json(elevenlabs::save_speech_engine_config(required(&args, "config")?).await?)
-        }
-        #[cfg(desktop)]
-        "save_speech_engine_api_key" => {
-            json(elevenlabs::save_speech_engine_api_key(opt::<String>(&args, "apiKey")?).await?)
-        }
-        #[cfg(desktop)]
-        "speech_engine_token" => json(elevenlabs::speech_engine_token().await?),
-        #[cfg(desktop)]
-        "speech_engine_check" => json(elevenlabs::speech_engine_check().await?),
-        #[cfg(desktop)]
-        "speech_engine_health" => json(elevenlabs::speech_engine_health().await?),
-        #[cfg(desktop)]
-        "speech_engine_desk" => json(
-            elevenlabs::speech_engine_desk(
-                text(&args, "action")?,
-                opt::<String>(&args, "owner")?,
-                opt::<String>(&args, "id")?,
-                opt::<String>(&args, "text")?,
-                opt::<u64>(&args, "timeout")?,
-            )
-            .await?,
-        ),
-        #[cfg(desktop)]
-        "voice_classify" => json(elevenlabs::voice_classify(required(&args, "request")?).await?),
-        #[cfg(desktop)]
-        "speech_engine_speak" => json(elevenlabs::speech_engine_speak(text(&args, "text")?).await?),
+        "voice_classify" => json(voice_gate::voice_classify(required(&args, "request")?).await?),
         #[cfg(desktop)]
         "rime_config" => json(rime::rime_config().await?),
         #[cfg(desktop)]
