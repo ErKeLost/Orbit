@@ -595,25 +595,42 @@ async fn speak_when_idle(
     }
 }
 
-async fn send_instruction(socket: &mut Socket, id: &str, instruction: &str) -> Result<(), String> {
-    use futures_util::SinkExt;
-    use tokio_tungstenite::tungstenite::Message;
-    let event = json!({
+/// A nudge: the instruction for this one reply sits on `response`, not inside
+/// `response.metadata`. Prism refuses the whole event otherwise —
+/// `response.metadata.prism_instruction is not a field of a nudge` — and the
+/// error reaches the page as if the call had failed. `metadata` only carries
+/// the cause.
+fn nudge_event(id: &str, instruction: &str) -> Value {
+    json!({
         "type": "response.create",
         "event_id": id,
         "response": {
-            "metadata": {
-                "prism_cause": "proactive",
-                "prism_instruction": instruction,
-            }
+            "prism_instruction": instruction,
+            "metadata": { "prism_cause": "proactive" },
         }
-    });
-    socket.send(Message::text(event.to_string())).await.map_err(|error| error.to_string())
+    })
+}
+
+async fn send_instruction(socket: &mut Socket, id: &str, instruction: &str) -> Result<(), String> {
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+    socket
+        .send(Message::text(nudge_event(id, instruction).to_string()))
+        .await
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{hold_instruction, nudge_instruction};
+    use super::{hold_instruction, nudge_event, nudge_instruction};
+
+    #[test]
+    fn a_nudge_keeps_its_instruction_on_the_response_not_in_metadata() {
+        let event = nudge_event("evt_7", "say it now");
+        assert_eq!(event.pointer("/response/prism_instruction").and_then(|v| v.as_str()), Some("say it now"));
+        assert_eq!(event.pointer("/response/metadata/prism_cause").and_then(|v| v.as_str()), Some("proactive"));
+        assert!(event.pointer("/response/metadata/prism_instruction").is_none());
+    }
 
     #[test]
     fn a_hold_is_a_prompt_plus_their_words_not_a_scripted_line() {
