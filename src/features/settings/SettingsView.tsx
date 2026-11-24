@@ -22,6 +22,8 @@ const ProviderSettings = lazy(() => import("../../components/ProviderSettings").
 const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage").then((m) => ({ default: m.IntegrationsPage })));
 const ComputerUsePage = lazy(() => import("./pages/ComputerUsePage").then((m) => ({ default: m.ComputerUsePage })));
 const VoiceSettingsPage = lazy(() => import("../voice/ui/VoiceSettingsPage").then((m) => ({ default: m.VoiceSettingsPage })));
+const DiagnosticsPage = lazy(() => import("./pages/DiagnosticsPage").then((m) => ({ default: m.DiagnosticsPage })));
+const UsagePage = lazy(() => import("./pages/UsagePage").then((m) => ({ default: m.UsagePage })));
 
 function DesktopOnly({ what }: { what: string }) {
   return (
@@ -110,6 +112,8 @@ export function SettingsView() {
   else if (page === "voice") content = onComputer ? <VoiceSettingsPage /> : <DesktopOnly what="语音 Agent" />;
   else if (page === "screen") content = <ScreenSettingsPage />;
   else if (page === "pi-tools") content = <PiToolsPage />;
+  else if (page === "diagnostics") content = desktop ? <DiagnosticsPage /> : <DesktopOnly what="运行诊断" />;
+  else if (page === "usage") content = desktop ? <UsagePage /> : <DesktopOnly what="用量统计" />;
   else content = <GeneralSettingsPage />;
 
   return (

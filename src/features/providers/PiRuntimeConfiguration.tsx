@@ -59,7 +59,7 @@ function RuntimeForm({ initial, onSaved }: { initial: PiRuntimeSettings; onSaved
         <label className="provider-env-sensitive"><Toggle label={`环境变量 ${index + 1} 为敏感值`} on={variable.sensitive} disabled={variable.valueRedacted} onChange={sensitive => updateVariable(variable.id, { sensitive })} />敏感</label>
         <Button variant="ghost" disabled={busy} aria-label={`删除环境变量 ${index + 1}`} onClick={() => setEnvironment(rows => rows.filter(row => row.id !== variable.id))}>删除</Button>
       </div>)}
-      <p className="provider-runtime-note">敏感值单独保存，保存后不会返回界面。重新输入后可以改名或改为明文；删除变量后恢复系统环境。</p>
+      <p className="provider-runtime-note">敏感值单独保存，保存后不会返回界面。重新输入后可以改名或改为明文；删除变量后恢复系统环境。以 <code>!</code> 开头的值按命令解析（例如 <code>!security find-generic-password -s openai -w</code>），命令本身留在本机。</p>
       {invalid && <p role="alert" className="provider-field-error">变量名需要有效且不能重复。</p>}
     </div>
     <div className="provider-runtime-footer"><p role="status">{status}</p><div className="provider-detail-actions"><Button variant="outline" disabled={busy || invalid} onClick={() => void test()}>检查运行时</Button><Button variant="outline" disabled={busy || running || invalid} onClick={() => void save(false)}>保存</Button>{online && <Button variant="default" disabled={busy || running || invalid} onClick={() => void save(true)}>保存并重连</Button>}</div></div>

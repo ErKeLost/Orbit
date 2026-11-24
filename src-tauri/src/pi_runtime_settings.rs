@@ -365,8 +365,31 @@ pub async fn probe_pi_runtime(app: AppHandle, config: PiRuntimeSettings) -> Resu
     tauri::async_runtime::spawn_blocking(move || {
         let config = resolve_draft(config, &load()?)?;
         let runtime = RuntimePaths::resolve_with_settings(&app, &home_dir()?, config)?;
-        Ok(json!({"ok":true,"pi":runtime.pi,"version":runtime.pi_version,"source":runtime.pi_source}))
+        // The probe no longer blocks app startup (see `RuntimePaths::resolve`),
+        // so this button is where a failing runtime must still be reported —
+        // with stderr, the exit code and the elapsed time, not one sentence.
+        if !runtime.probe.ok {
+            return Err(runtime.probe.message());
+        }
+        Ok(json!({"ok":true,"pi":runtime.pi,"version":runtime.pi_version,"source":runtime.pi_source,"probe":runtime.probe.json()}))
     }).await.map_err(|e| e.to_string())?
+}
+
+/// Never fails: the diagnostics page must render a broken runtime, which is
+/// exactly when `probe_pi_runtime` returns an error.
+#[cfg(desktop)]
+#[tauri::command]
+pub async fn runtime_health(app: AppHandle, config: Option<PiRuntimeSettings>) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = config
+            .and_then(|draft| resolve_draft(draft, &load().unwrap_or_default()).ok())
+            .or_else(|| load().ok())
+            .unwrap_or_default();
+        let cwd = home_dir().unwrap_or_default();
+        Ok(crate::bridge::runtime_health(&app, &cwd, settings))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[cfg(test)]

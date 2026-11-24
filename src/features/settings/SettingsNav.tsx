@@ -28,6 +28,7 @@ export const SETTINGS_GROUPS: { id: string; label: string; sections: SettingsSec
       { id: "appearance", label: "外观", description: "主题、色调、透明度、聊天背景与 Diff 颜色。", icon: Palette },
       { id: "keybindings", label: "快捷键", description: "查看并自定义键盘快捷键，包括语音输入。", icon: Keyboard },
       { id: "screen", label: "屏幕", description: "手机端看到的电脑屏幕与小窗。", icon: DashboardSquare },
+      { id: "usage", label: "用量", description: "跨会话的 token、缓存与费用统计。", icon: DashboardSquare, desktopOnly: true },
     ],
   },
   {
@@ -42,6 +43,7 @@ export const SETTINGS_GROUPS: { id: string; label: string; sections: SettingsSec
       { id: "browser", label: "浏览器", description: "把其他浏览器的登录导入 Orbit 自己的浏览器资料。", icon: Globe, desktopOnly: true },
       { id: "skills", label: "技能", description: "查看与管理 Pi 加载的技能和命令。", icon: Sparkles },
       { id: "pi-tools", label: "常用工具", description: "直接在终端里运行的 Pi 命令。", icon: Wrench },
+      { id: "diagnostics", label: "运行诊断", description: "本机 Node 与 Pi 的路径、版本和探测结果。", icon: Wrench, desktopOnly: true },
     ],
   },
   {

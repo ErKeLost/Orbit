@@ -737,8 +737,8 @@ fn store_provider_api_key_in(dir: &std::path::Path, provider: &str, api_key: Opt
     if !auth.is_object() { return Err("Pi auth.json 不是对象".into()); }
     ensure_api_key_editable(&auth, provider)?;
     match api_key.map(str::trim).filter(|key| !key.is_empty()) {
-        Some(key) if crate::secrets::is_op_reference(key) => {
-            let resolved = crate::secrets::read_op(key)?;
+        Some(key) if crate::secrets::is_reference(key) => {
+            let resolved = crate::secrets::resolve(key)?;
             crate::secrets::remember_ref(dir, provider, key)?;
             auth[provider] = json!({"type":"api_key","key":resolved});
         }

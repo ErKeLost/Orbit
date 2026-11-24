@@ -38,6 +38,10 @@ mod pi_runtime_settings;
 mod magpie;
 mod sessions;
 mod sessions_cmd;
+#[cfg(desktop)]
+mod usage;
+#[cfg(desktop)]
+mod pi_packages;
 mod history;
 mod git;
 mod github_inbox;
@@ -356,6 +360,8 @@ pub fn run() {
             pi_runtime_settings::get_pi_runtime_settings,
             pi_runtime_settings::save_pi_runtime_settings,
             pi_runtime_settings::probe_pi_runtime,
+            #[cfg(desktop)]
+            pi_runtime_settings::runtime_health,
             providers::list_provider_models,
             providers::list_provider_profiles,
             provider_auth::list_provider_auth,
@@ -428,6 +434,18 @@ pub fn run() {
             sessions_cmd::clear_sessions,
             sessions_cmd::session_turn_durations,
             sessions_cmd::session_stamp,
+            #[cfg(desktop)]
+            usage::usage_report,
+            #[cfg(desktop)]
+            usage::usage_sessions,
+            #[cfg(desktop)]
+            pi_packages::list_pi_packages,
+            #[cfg(desktop)]
+            pi_packages::install_pi_package,
+            #[cfg(desktop)]
+            pi_packages::remove_pi_package,
+            #[cfg(desktop)]
+            pi_packages::update_pi_packages,
             sessions_cmd::session_project,
             sessions_cmd::session_image,
             sessions_cmd::session_image_file,

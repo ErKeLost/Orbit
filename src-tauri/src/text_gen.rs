@@ -63,7 +63,7 @@ pub fn save_text_gen(enabled: bool, base_url: String, model: String, api_key: Op
     }
     let previous = read_config();
     let (key, key_ref) = match api_key.map(|value| value.trim().to_string()).filter(|value| !value.is_empty()) {
-        Some(value) if crate::secrets::is_op_reference(&value) => (crate::secrets::read_op(&value)?, value),
+        Some(value) if crate::secrets::is_reference(&value) => (crate::secrets::resolve(&value)?, value),
         Some(value) => (value, String::new()),
         None => (previous.api_key, previous.api_key_ref),
     };

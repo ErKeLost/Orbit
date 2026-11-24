@@ -1736,6 +1736,14 @@ html.has-window-wallpaper .mobile-shell {
   background: transparent;
 }
 
+/* 选中的标签页画的是面板底下那层画布（`surface-canvas`），本来就是为了和面板
+   连成一片。窗口底下铺了图片以后，这层不透明的画布就变成压在照片上的一块黑：
+   把这块也让开，图片从 tab 一路透到面板里，选中态只剩描边和文字颜色。
+   只挑 `.tab-strip` 里的标签，别碰设置页、检视栏那些小胶囊块。 */
+html.has-window-wallpaper .tab-strip [role="tab"][aria-selected="true"] {
+  background: transparent;
+}
+
 /* 分栏 diff 里没有对应行的那一半：斜线纹理占位（Codex 同款）。 */
 .split-diff-void {
   background-image: repeating-linear-gradient(

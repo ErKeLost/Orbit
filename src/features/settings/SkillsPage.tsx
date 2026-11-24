@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "../../lib/store";
 import { request } from "../../lib/rpc";
-import { SecondaryButton, Toggle } from "../../shared/ui/controls";
+import { Button, Input, SecondaryButton, Toggle } from "../../shared/ui/controls";
+import { invoke } from "../../lib/native";
 import { toast } from "../../shared/ui/toast";
 import { Copy, Eye, Loader, RefreshCw, Search, Terminal } from "../../shared/ui/icons";
 import { skillBadge as badge } from "../../shared/lib/skillBadge";
@@ -25,6 +26,8 @@ export function SkillsPage() {
   const [hidden, setHidden] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? "[]") as string[]; } catch { return []; }
   });
+  const desktop = useWorkspace((state) => state.runtimeTarget === "desktop");
+  const [showPackages, setShowPackages] = useState(false);
   const query = search.trim().toLowerCase();
   const skills = (data.data?.commands ?? []).filter((command) => !command.name.startsWith("gui-"));
   const visible = skills
@@ -55,8 +58,12 @@ export function SkillsPage() {
         >
           {data.isFetching ? <Loader className="size-4 animate-spin" /> : <RefreshCw className="size-4" strokeWidth={1.75} />}
         </button>
-        <SecondaryButton disabled title="在终端运行 pi install 后刷新">添加技能</SecondaryButton>
+        <SecondaryButton disabled={!desktop} title="安装 Pi 扩展包（npm / git）" onClick={() => setShowPackages((open) => !open)}>
+          {showPackages ? "收起扩展" : "添加技能"}
+        </SecondaryButton>
       </div>
+
+      {showPackages ? <PackagesPanel onInstalled={() => void data.refetch()} /> : null}
 
       <div className="overflow-hidden rounded-xl border border-line bg-fill-weak">
         {visible.map((command) => {
@@ -132,5 +139,157 @@ export function SkillsPage() {
         ) : null}
       </div>
     </>
+  );
+}
+
+type PackageEntry = { source: string; autoload?: boolean };
+type PackageListing = {
+  packages: PackageEntry[];
+  skills: string[];
+  settingsPath?: string;
+  listing?: { ok: boolean; stdout: string; stderr: string } | null;
+};
+type PackageRun = { ok: boolean; timedOut: boolean; exitCode: number | null; stdout: string; stderr: string; elapsedMs: number };
+type InstallResult = { source: string; run: PackageRun; packages: PackageEntry[] };
+type UpdateResult = { run: PackageRun; changes: { name: string; from: string; to: string }[]; status: string; packages: PackageEntry[] };
+
+/**
+ * 扩展包管理：装、卸、更新都走会话用的同一个 Pi runtime。
+ *
+ * 之前这里只有一句「在终端运行 pi install 后刷新」。安装本身可能要跑几十秒
+ * npm/git，所以按钮有 busy 状态，失败时把命令输出原样贴出来——包管理器说了什么，
+ * 比一句「安装失败」有用得多。
+ */
+function PackagesPanel({ onInstalled }: { onInstalled: () => void }) {
+  const listing = useQuery({ queryKey: ["pi", "packages"], queryFn: () => invoke<PackageListing>("list_pi_packages"), refetchOnWindowFocus: false });
+  const [source, setSource] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [lastRun, setLastRun] = useState<{ ok: boolean; text: string } | null>(null);
+  const [updateReport, setUpdateReport] = useState<UpdateResult | null>(null);
+  const packages = listing.data?.packages ?? [];
+
+  async function install() {
+    const trimmed = source.trim();
+    if (!trimmed) return;
+    setBusy("install");
+    setLastRun(null);
+    try {
+      const result = await invoke<InstallResult>("install_pi_package", { source: trimmed, local: false });
+      const text = (result.run.stderr || result.run.stdout).trim();
+      setLastRun({ ok: result.run.ok, text: text || (result.run.ok ? "已安装" : "命令失败，没有输出") });
+      if (result.run.ok) {
+        setSource("");
+        toast.success(`已安装 ${result.source}`, { description: "重连项目后生效", showTimestamp: false });
+        onInstalled();
+        await listing.refetch();
+      }
+    } catch (error) {
+      setLastRun({ ok: false, text: String(error) });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function remove(target: string) {
+    setBusy(`remove:${target}`);
+    setLastRun(null);
+    try {
+      const result = await invoke<InstallResult>("remove_pi_package", { source: target, local: false });
+      const text = (result.run.stderr || result.run.stdout).trim();
+      setLastRun({ ok: result.run.ok, text: text || (result.run.ok ? "已卸载" : "命令失败，没有输出") });
+      if (result.run.ok) {
+        toast.success(`已卸载 ${target}`, { showTimestamp: false });
+        onInstalled();
+        await listing.refetch();
+      }
+    } catch (error) {
+      setLastRun({ ok: false, text: String(error) });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function updateAll() {
+    setBusy("update");
+    setLastRun(null);
+    try {
+      const result = await invoke<UpdateResult>("update_pi_packages");
+      setUpdateReport(result);
+      const text = (result.run.stderr || result.run.stdout).trim();
+      setLastRun({ ok: result.run.ok, text: text || result.status || "已更新" });
+      if (result.run.ok) {
+        toast.success(result.changes.length ? `更新了 ${result.changes.length} 个扩展` : "扩展已是最新", { showTimestamp: false });
+        await listing.refetch();
+      }
+    } catch (error) {
+      setLastRun({ ok: false, text: String(error) });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="mb-4 overflow-hidden rounded-xl border border-line bg-fill-weak">
+      <div className="flex items-center gap-2 border-b border-line px-4 py-3">
+        <Input
+          aria-label="扩展源"
+          value={source}
+          onChange={(event) => setSource(event.target.value)}
+          onKeyDown={(event) => { if (event.key === "Enter") void install(); }}
+          placeholder="npm:@foo/bar 或 git:github.com/user/repo"
+          spellCheck={false}
+          className="min-w-0 flex-1"
+          disabled={busy !== null}
+        />
+        <Button variant="default" disabled={busy !== null || !source.trim()} onClick={() => void install()}>
+          {busy === "install" ? "安装中…" : "安装"}
+        </Button>
+        <Button variant="outline" disabled={busy !== null || !packages.length} onClick={() => void updateAll()}>
+          {busy === "update" ? "更新中…" : "更新全部"}
+        </Button>
+      </div>
+
+      <div className="divide-y divide-line">
+        {packages.map((item) => (
+          <div key={item.source} className="flex items-center gap-3 px-4 py-2.5">
+            <code className="min-w-0 flex-1 truncate text-xs text-ink-1" title={item.source}>{item.source}</code>
+            {item.autoload === false ? <span className="shrink-0 text-2xs text-ink-3">未自动加载</span> : null}
+            <Button variant="ghost" disabled={busy !== null} onClick={() => void remove(item.source)}>
+              {busy === `remove:${item.source}` ? "卸载中…" : "卸载"}
+            </Button>
+          </div>
+        ))}
+        {!packages.length ? (
+          <div className="px-4 py-4 text-xs text-ink-3">
+            {listing.isLoading ? "正在读取已安装的扩展…" : "还没有安装扩展。粘贴一个 npm 或 git 源后按「安装」。"}
+            {listing.data?.listing && !listing.data.listing.ok ? (
+              <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-all text-[11px] text-negative">
+                {(listing.data.listing.stderr || listing.data.listing.stdout).trim()}
+              </pre>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
+      {updateReport?.changes.length ? (
+        <div className="border-t border-line px-4 py-2.5">
+          {updateReport.changes.map((change) => (
+            <p key={change.name} className="font-mono text-2xs text-ink-2">{change.name} {change.from} → {change.to}</p>
+          ))}
+        </div>
+      ) : null}
+
+      {lastRun ? (
+        <pre className={`max-h-44 overflow-auto whitespace-pre-wrap break-all border-t border-line px-4 py-2.5 text-[11px] leading-relaxed ${lastRun.ok ? "text-ink-2" : "text-negative"}`}>
+          {lastRun.text}
+        </pre>
+      ) : null}
+
+      {listing.data?.settingsPath ? (
+        <p className="border-t border-line px-4 py-2 text-[11px] text-ink-3">
+          写入 <code>{listing.data.settingsPath}</code>，安装后重连项目生效。
+        </p>
+      ) : null}
+    </div>
   );
 }

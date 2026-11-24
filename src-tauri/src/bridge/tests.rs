@@ -107,8 +107,30 @@ fn configured_pi_executable_receives_the_environment_during_version_probe() {
     fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
     let settings = crate::pi_runtime_settings::PiRuntimeSettings { binary_path:path.to_string_lossy().into_owned(), environment:vec![crate::pi_runtime_settings::EnvironmentVariable{name:"PI_TEST_PROFILE".into(),value:"profile-a".into(),sensitive:false,value_redacted:false}],..Default::default() };
     assert!(pi_is_executable(&path));
-    assert_eq!(pi_version(Path::new("unused-node"), &path, true, &settings).as_deref(), Some("1.5.0"));
-    assert!(pi_version(Path::new("unused-node"), &path, true, &crate::pi_runtime_settings::PiRuntimeSettings::default()).is_none());
+    let outcome = pi_version(Path::new("unused-node"), &path, true, &settings);
+    assert_eq!(outcome.version.as_deref(), Some("1.5.0"));
+    assert!(outcome.ok);
+    assert!(!outcome.invocation.is_empty());
+
+    // A failing probe keeps the exit code and the captured stderr instead of
+    // collapsing every reason into the same opaque sentence.
+    let broken = root.join("pi-broken");
+    fs::write(
+        &broken,
+        "#!/bin/sh\necho 'Error: Cannot find module quickjs' >&2\nexit 7\n",
+    )
+    .unwrap();
+    fs::set_permissions(&broken, fs::Permissions::from_mode(0o700)).unwrap();
+    let failure = pi_version(
+        Path::new("unused-node"),
+        &broken,
+        true,
+        &crate::pi_runtime_settings::PiRuntimeSettings::default(),
+    );
+    assert!(!failure.ok);
+    assert_eq!(failure.exit_code, Some(7));
+    assert!(failure.stderr_tail.contains("Cannot find module quickjs"));
+    assert!(failure.message().contains("退出码 7"), "{}", failure.message());
     fs::remove_dir_all(root).unwrap();
 }
 

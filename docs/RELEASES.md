@@ -6,6 +6,16 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.64
+
+Pi 起不来时，Orbit 不再只说一句「无法启动」。探测现在留着 stderr、退出码和耗时，并且**不再让整个应用不可用**：设置里新增「运行诊断」，一台机器上 Node 与 Pi 的路径、版本、探测结果和缺失的运行资源都列在同一页，可以一键复制成文本发给别人。Windows 首次启动时被杀软扫描拖慢的那一次探测会重试一次，超时和真的起不来从此分得开。
+
+设置里新增「用量」：所有会话累积的 token、缓存读写和费用，按天、按模型、按项目、按类型分组，还能看到分叉会话和缓存读取占 prompt 的比例。缓存预热到底值不值，第一次有了数字。
+
+凭据可以用命令给了。`op://vault/item/field` 之外，填 `!security find-generic-password -s openai -w` 这样的命令也行：命令不经过 shell，解析出的密钥只在保存时落盘一次，命令本身留在本机的 `secret-refs.json` 里。
+
+「技能」页的「添加技能」不再是个死按钮：粘一个 `npm:@foo/bar` 或 `git:github.com/user/repo` 就能装、能卸、能更新，`pi update --extensions` 的逐包版本差异直接显示在面板里，失败时 npm/git 说了什么也原样贴出来。
+
 ## v1.0.63
 
 v1.0.62 did not publish. The phone command mirror called `rime` as if it lived in that file. Rime is a sibling module, so the call now goes through the crate root, and only on desktop. Empty replies use the same JSON helper as the other commands.

@@ -88,7 +88,7 @@ export function ExtensionDialog({ dialog, embedded = false }: { dialog: UiReques
                 value={value}
                 autoComplete="off"
                 spellCheck={false}
-                placeholder={(dialog as { placeholder?: string }).placeholder || "值，或 op://vault/item/field"}
+                placeholder={(dialog as { placeholder?: string }).placeholder || "值，或 op://vault/item/field、!命令"}
                 onChange={(event) => setValue(event.target.value)}
                 className="mt-1.5 w-full rounded-md border border-line bg-transparent px-2 py-1 text-ui text-ink-1 outline-none placeholder:text-ink-3 focus:border-line-strong"
               />

@@ -293,24 +293,228 @@ fn pi_path_for_project(
     Ok((pi_path()?, "global"))
 }
 
-fn pi_version(node: &Path, pi: &Path, executable: bool, settings: &crate::pi_runtime_settings::PiRuntimeSettings) -> Option<String> {
+/// Everything the app knows about one `pi --version` attempt.
+///
+/// The probe used to return `Option<String>` and send stderr to `Stdio::null()`,
+/// so a broken runtime on an installed Windows build produced exactly one
+/// sentence no matter whether the process could not spawn, hung, exited 1, or
+/// printed something unexpected. The diagnostics page and every error message
+/// now read this instead.
+#[derive(Clone, Debug)]
+pub(crate) struct ProbeOutcome {
+    pub(crate) ok: bool,
+    pub(crate) version: Option<String>,
+    pub(crate) invocation: String,
+    pub(crate) elapsed_ms: u64,
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) timed_out: bool,
+    pub(crate) stdout_tail: String,
+    pub(crate) stderr_tail: String,
+    pub(crate) reason: Option<String>,
+}
+
+impl ProbeOutcome {
+    fn failed(invocation: String, elapsed_ms: u64, reason: String) -> Self {
+        Self {
+            ok: false,
+            version: None,
+            invocation,
+            elapsed_ms,
+            exit_code: None,
+            timed_out: false,
+            stdout_tail: String::new(),
+            stderr_tail: String::new(),
+            reason: Some(reason),
+        }
+    }
+
+    pub(crate) fn json(&self) -> Value {
+        json!({
+            "ok": self.ok,
+            "version": self.version,
+            "invocation": self.invocation,
+            "elapsedMs": self.elapsed_ms,
+            "exitCode": self.exit_code,
+            "timedOut": self.timed_out,
+            "stdoutTail": self.stdout_tail,
+            "stderrTail": self.stderr_tail,
+            "reason": self.reason,
+        })
+    }
+
+    /// One line for a toast or a console status: the reason plus whatever the
+    /// runtime printed, because the first stack frame is what identifies a
+    /// missing chunk.
+    pub(crate) fn message(&self) -> String {
+        let reason = self.reason.clone().unwrap_or_else(|| "Pi 没有返回版本号".into());
+        let detail = if !self.stderr_tail.is_empty() {
+            format!("：{}", self.stderr_tail)
+        } else if !self.stdout_tail.is_empty() {
+            format!("：{}", self.stdout_tail)
+        } else {
+            String::new()
+        };
+        format!(
+            "{reason}（耗时 {:.1}s，退出码 {}）{detail}",
+            self.elapsed_ms as f64 / 1000.0,
+            self.exit_code
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "无".into())
+        )
+    }
+}
+
+/// Last few hundred characters of captured output. A Node stack trace ends with
+/// the interesting line; a huge one must not travel through an IPC payload.
+fn tail(text: &str, limit: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let start = trimmed
+        .char_indices()
+        .rev()
+        .nth(limit.saturating_sub(1))
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+    trimmed[start..].to_string()
+}
+
+fn parse_pi_version(text: &str) -> Option<String> {
+    text.split_whitespace()
+        .map(|word| word.trim_start_matches('v'))
+        .find(|word| {
+            word.split('.').count() == 3 && word.split('.').all(|part| part.parse::<u32>().is_ok())
+        })
+        .map(str::to_string)
+}
+
+const PI_VERSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Probe `<node> <cli.js> --version` (or `<pi> --version` for a real binary).
+fn probe_pi_once(
+    node: &Path,
+    pi: &Path,
+    executable: bool,
+    settings: &crate::pi_runtime_settings::PiRuntimeSettings,
+    timeout: std::time::Duration,
+) -> ProbeOutcome {
+    let started = std::time::Instant::now();
+    let invocation = if executable {
+        format!("{} --version", pi.display())
+    } else {
+        format!("{} {} --version", node.display(), pi.display())
+    };
     let mut command = Command::new(if executable { pi } else { node });
-    if !executable { command.arg(pi); }
+    if !executable {
+        command.arg(pi);
+    }
     settings.apply_environment(&mut command);
     crate::hide_window_console(&mut command);
-    let mut child = command.arg("--version").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut child = match command
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            return ProbeOutcome::failed(
+                invocation,
+                started.elapsed().as_millis() as u64,
+                format!("无法启动进程：{error}"),
+            )
+        }
+    };
+    let deadline = std::time::Instant::now() + timeout;
     loop {
-        if child.try_wait().ok()?.is_some() { break; }
-        if std::time::Instant::now() >= deadline { let _ = child.kill(); let _ = child.wait(); return None; }
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {}
+            Err(error) => {
+                let _ = child.kill();
+                return ProbeOutcome::failed(
+                    invocation,
+                    started.elapsed().as_millis() as u64,
+                    format!("等待 Pi 退出失败：{error}"),
+                );
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let mut outcome = ProbeOutcome::failed(
+                invocation,
+                started.elapsed().as_millis() as u64,
+                format!("--version 在 {:.0} 秒内没有退出", timeout.as_secs_f64()),
+            );
+            outcome.timed_out = true;
+            return outcome;
+        }
         thread::sleep(std::time::Duration::from_millis(25));
     }
-    let output = child.wait_with_output().ok()?;
-    if !output.status.success() { return None; }
-    String::from_utf8_lossy(&output.stdout).split_whitespace()
-        .map(|word| word.trim_start_matches('v'))
-        .find(|word| word.split('.').count() == 3 && word.split('.').all(|part| part.parse::<u32>().is_ok()))
-        .map(str::to_string)
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    let output = match child.wait_with_output() {
+        Ok(output) => output,
+        Err(error) => {
+            return ProbeOutcome::failed(invocation, elapsed_ms, format!("读取 Pi 输出失败：{error}"))
+        }
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let version = output.status.success().then(|| parse_pi_version(&stdout)).flatten();
+    let reason = if !output.status.success() {
+        Some(match output.status.code() {
+            Some(code) => format!("Pi --version 退出码 {code}"),
+            None => "Pi --version 被信号终止".to_string(),
+        })
+    } else if version.is_none() {
+        Some("Pi --version 没有输出可识别的版本号".to_string())
+    } else {
+        None
+    };
+    ProbeOutcome {
+        ok: version.is_some(),
+        version,
+        invocation,
+        elapsed_ms,
+        exit_code: output.status.code(),
+        timed_out: false,
+        stdout_tail: tail(&stdout, 400),
+        stderr_tail: tail(&stderr, 600),
+        reason,
+    }
+}
+
+/// Probe with the platform's retry policy.
+///
+/// A cold start on Windows pays for the antivirus scan of `node.exe` plus every
+/// runtime chunk, so a *timeout* there is worth one retry with a longer budget:
+/// the second attempt runs against warm file cache. A non-zero exit or an
+/// unparsable version is not retried, because neither is a timing problem and
+/// retrying would only double the time the user waits for a real error.
+fn pi_version(
+    node: &Path,
+    pi: &Path,
+    executable: bool,
+    settings: &crate::pi_runtime_settings::PiRuntimeSettings,
+) -> ProbeOutcome {
+    let first = probe_pi_once(node, pi, executable, settings, PI_VERSION_TIMEOUT);
+    if first.ok || !cfg!(windows) || !first.timed_out {
+        return first;
+    }
+    let mut second = probe_pi_once(node, pi, executable, settings, PI_VERSION_TIMEOUT * 3);
+    if !second.ok {
+        if let Some(reason) = second.reason.take() {
+            second.reason = Some(format!(
+                "{}（首次 {:.1}s 失败后重试仍失败）",
+                reason,
+                first.elapsed_ms as f64 / 1000.0
+            ));
+        }
+    }
+    second
 }
 
 fn pi_is_executable(path: &Path) -> bool {
@@ -324,8 +528,12 @@ fn pi_is_executable(path: &Path) -> bool {
 
 fn node_version(node: &Path) -> Result<String, String> {
     const REQUIRED: (u32, u32) = (22, 19);
-    let output = Command::new(node)
-        .arg("--version")
+    let mut command = Command::new(node);
+    command.arg("--version");
+    // Without this the packaged Windows build flashes a console window on every
+    // launch: this probe runs before any session exists.
+    crate::hide_window_console(&mut command);
+    let output = command
         .output()
         .map_err(|error| format!("Orbit 内置 Node 无法启动：{error}"))?;
     let version = String::from_utf8_lossy(&output.stdout)
@@ -375,6 +583,60 @@ fn require_dir(path: &Path, label: &str) -> Result<(), String> {
         .ok_or_else(|| format!("Orbit 运行资源缺失：{label}（{}）", path.display()))
 }
 
+/// Every file the app insists on before Pi may start. The diagnostics page
+/// renders the same list, so a runtime file cleaned up by an installer or an
+/// antivirus is visible inside the app instead of only as a failed launch.
+fn required_resources(
+    resources_dir: &Path,
+    node_modules: &Path,
+    extension: &Path,
+) -> Vec<(PathBuf, &'static str)> {
+    vec![
+        (
+            resources_dir.join("pi-runtime/index.js"),
+            "Pi SDK",
+        ),
+        (
+            resources_dir.join("pi-runtime/provider-auth.js"),
+            "Provider authentication helper",
+        ),
+        (
+            resources_dir.join("pi-runtime/terminal.js"),
+            "Private terminal launcher",
+        ),
+        (extension.to_path_buf(), "GUI extension"),
+        (
+            resources_dir.join("context-payload.ts"),
+            "Context payload helper",
+        ),
+        (
+            resources_dir.join("request-budget.ts"),
+            "Request budget helper",
+        ),
+        (resources_dir.join("question.ts"), "Question tool helper"),
+        (
+            resources_dir.join("workspace.ts"),
+            "Workspace roots helper",
+        ),
+        (
+            resources_dir.join("subagents/index.ts"),
+            "Subagent extension",
+        ),
+        (
+            resources_dir.join("computer-use/mode.ts"),
+            "Computer use extension",
+        ),
+        (
+            node_modules.join("@typesafe-ai/sdk/package.json"),
+            "TypeSafe SDK",
+        ),
+        (
+            node_modules.join("@mariozechner/clipboard/package.json"),
+            "Clipboard runtime",
+        ),
+    ]
+}
+
 #[derive(Clone)]
 pub(crate) struct RuntimePaths {
     pub(crate) home: PathBuf,
@@ -390,6 +652,9 @@ pub(crate) struct RuntimePaths {
     pub(crate) launch_args: Vec<String>,
     pub(crate) settings: crate::pi_runtime_settings::PiRuntimeSettings,
     pub(crate) pi_version: String,
+    /// The probe that produced `pi_version`. `pi_version` is `"unknown"` when it
+    /// failed; the diagnostics page and `probe_pi_runtime` read the detail here.
+    pub(crate) probe: ProbeOutcome,
     pub(crate) node_modules: PathBuf,
     pub(crate) extension: PathBuf,
 }
@@ -425,54 +690,24 @@ impl RuntimePaths {
         let pi_executable = pi_is_executable(&pi);
         let node_modules = resources_dir.join("node_modules");
         let extension = resources_dir.join("gui-extension.ts");
-        for (path, label) in [
-            (&pi, "Pi CLI"),
-            (&resources_dir.join("pi-runtime/index.js"), "Pi SDK"),
-            (&resources_dir.join("pi-runtime/provider-auth.js"), "Provider authentication helper"),
-            (&resources_dir.join("pi-runtime/terminal.js"), "Private terminal launcher"),
-            (&extension, "GUI extension"),
-            (
-                &resources_dir.join("context-payload.ts"),
-                "Context payload helper",
-            ),
-            (
-                &resources_dir.join("request-budget.ts"),
-                "Request budget helper",
-            ),
-            (
-                &resources_dir.join("question.ts"),
-                "Question tool helper",
-            ),
-            (
-                &resources_dir.join("workspace.ts"),
-                "Workspace roots helper",
-            ),
-            (
-                &resources_dir.join("subagents/index.ts"),
-                "Subagent extension",
-            ),
-            (
-                &resources_dir.join("computer-use/mode.ts"),
-                "Computer use extension",
-            ),
-            (
-                &node_modules.join("@typesafe-ai/sdk/package.json"),
-                "TypeSafe SDK",
-            ),
-            (
-                &node_modules.join("@mariozechner/clipboard/package.json"),
-                "Clipboard runtime",
-            ),
-        ] {
-            require_file(path, label)?;
+        require_file(&pi, "Pi CLI")?;
+        for (path, label) in required_resources(&resources_dir, &node_modules, &extension) {
+            require_file(&path, label)?;
         }
         // Computer Use is optional. A dev checkout may not have run the native
         // worker build yet, but that must never prevent ordinary Pi sessions
         // from connecting; the feature reports its own unavailable state when
         // the user actually enables it.
         require_dir(&node_modules, "Node modules")?;
-        let pi_version = pi_version(&node, &pi, pi_executable, &settings)
-            .ok_or_else(|| "Pi 无法启动或未在 10 秒内返回有效版本，请检查可执行文件配置".to_string())?;
+        // A failed probe is reported, not fatal. Turning it into one error here
+        // used to make the whole application unusable with a single opaque
+        // toast; the diagnostics page now shows the real reason, and a session
+        // that really cannot start fails with Pi's own stderr attached.
+        let probe = pi_version(&node, &pi, pi_executable, &settings);
+        let pi_version = probe
+            .version
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string());
         Ok(Self {
             home,
             agent_dir,
@@ -484,6 +719,7 @@ impl RuntimePaths {
             pi,
             pi_source,
             pi_executable,
+            probe,
             launch_args,
             settings,
             pi_version,
@@ -518,11 +754,135 @@ impl RuntimePaths {
             "pi": &self.pi,
             "piVersion": &self.pi_version,
             "piSource": self.pi_source,
+            "piExecutable": self.pi_executable,
             "nodeModules": &self.node_modules,
             "extension": &self.extension,
+            "launchArgs": &self.launch_args,
+            "probe": self.probe.json(),
             "cwd": cwd,
         })
     }
+}
+
+/// A never-failing runtime report for the diagnostics page.
+///
+/// `RuntimePaths::resolve` deliberately refuses to start without a complete
+/// runtime, which is exactly when a report is needed. This function therefore
+/// repeats the same steps without short-circuiting and collects one entry per
+/// step, so the page can show a broken install instead of an empty error.
+#[cfg(desktop)]
+pub(crate) fn runtime_health(
+    app: &AppHandle,
+    cwd: &Path,
+    settings: crate::pi_runtime_settings::PiRuntimeSettings,
+) -> Value {
+    let public = settings.public_view();
+    let home = home_dir();
+    let resources_dir = app
+        .path()
+        .resolve("resources", BaseDirectory::Resource)
+        .or_else(|_| app.path().resource_dir().map(|path| path.join("resources")));
+    let node_modules = resources_dir
+        .as_ref()
+        .ok()
+        .map(|dir| dir.join("node_modules"));
+    let extension = resources_dir
+        .as_ref()
+        .ok()
+        .map(|dir| dir.join("gui-extension.ts"));
+
+    // Node: the version check is the first thing a broken install fails.
+    let host_node = bundled_node_path(app);
+    let node_report = match &host_node {
+        Ok(path) => {
+            let started = std::time::Instant::now();
+            let result = node_version(path);
+            json!({
+                "path": path.display().to_string(),
+                "exists": path.is_file(),
+                "version": result.as_ref().ok(),
+                "error": result.as_ref().err(),
+                "elapsedMs": started.elapsed().as_millis() as u64,
+            })
+        }
+        Err(error) => json!({ "path": Value::Null, "exists": false, "error": error }),
+    };
+
+    // Pi: which file Orbit would launch, and what happened when it did.
+    let (pi, pi_source) = match settings.resolved_binary() {
+        Ok(Some(configured)) => (Some(configured), "configured"),
+        Ok(None) => match pi_path_for_project(Some(app), cwd) {
+            Ok((path, source)) => (Some(path), source),
+            Err(_) => (None, "missing"),
+        },
+        Err(_) => (None, "invalid"),
+    };
+    let probe = match (&host_node, &pi) {
+        (Ok(node), Some(pi)) => {
+            let executable = pi_is_executable(pi);
+            let outcome = pi_version(node, pi, executable, &settings);
+            json!({
+                "executable": executable,
+                "probe": outcome.json(),
+            })
+        }
+        _ => json!({ "executable": Value::Null, "probe": Value::Null }),
+    };
+
+    let resources = match (&resources_dir, &node_modules, &extension) {
+        (Ok(dir), Some(node_modules), Some(extension)) => required_resources(dir, node_modules, extension)
+            .into_iter()
+            .map(|(path, label)| {
+                json!({
+                    "label": label,
+                    "path": path.display().to_string(),
+                    "exists": path.is_file(),
+                })
+            })
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    let resources_error = resources_dir
+        .as_ref()
+        .err()
+        .map(|error| error.to_string());
+    let node_modules_report = node_modules.as_ref().map(|path| {
+        json!({
+            "path": path.display().to_string(),
+            "exists": path.is_dir(),
+        })
+    });
+
+    json!({
+        "platform": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "home": home.as_ref().ok().map(|path| path.display().to_string()),
+        "homeError": home.as_ref().err().cloned(),
+        "cwd": cwd.display().to_string(),
+        "resourcesDir": resources_dir.as_ref().ok().map(|path| path.display().to_string()),
+        "resourcesError": resources_error,
+        "nodeModules": node_modules_report,
+        "node": node_report,
+        "pi": json!({
+            "path": pi.as_ref().map(|path| path.display().to_string()),
+            "source": pi_source,
+            "exists": pi.as_ref().is_some_and(|path| path.is_file()),
+        }),
+        "probe": probe,
+        "resources": resources,
+        "agentDir": public.agent_dir().ok().map(|path| path.display().to_string()),
+        "agentDirError": public.agent_dir().err(),
+        "launchArgs": public.launch_args,
+        "environment": public
+            .environment
+            .iter()
+            .map(|variable| json!({
+                "name": variable.name,
+                "sensitive": variable.sensitive,
+                "hasValue": !variable.value.is_empty(),
+            }))
+            .collect::<Vec<_>>(),
+    })
 }
 
 fn orbit_process_node(node: PathBuf, app: &AppHandle, version: &str) -> Result<PathBuf, String> {
@@ -693,6 +1053,19 @@ pub(crate) fn apply_orbit_runtime_env(
     // User NODE_PATH entries can contain incompatible copies of these packages.
     command.env("NODE_PATH", node_modules);
 }
+/// 命令输出带进界面之前先截断：安装日志可能很长，但用户要看的是结尾。
+pub(crate) fn clip_output(text: &str, limit: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= limit {
+        return trimmed.to_string();
+    }
+    let kept: String = trimmed
+        .chars()
+        .skip(trimmed.chars().count() - limit)
+        .collect();
+    format!("[前段省略]\n{kept}")
+}
+
 pub(crate) fn home_dir() -> Result<PathBuf, String> {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))

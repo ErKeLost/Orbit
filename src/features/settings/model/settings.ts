@@ -41,6 +41,9 @@ export const SETTINGS_INDEX: SettingIndexEntry[] = [
   // 其他
   { id: "providers", section: "providers", label: "模型端点", keywords: "api key 模型 catalog providers" },
   { id: "skills", section: "skills", label: "技能管理", keywords: "skills 命令 斜杠" },
+  { id: "pi-packages", section: "skills", label: "安装扩展包", keywords: "install npm git 扩展 包 packages 安装 卸载 更新" },
+  { id: "usage", section: "usage", label: "用量与费用", keywords: "cost usage token 缓存 命中 费用 花费 统计 cache" },
+  { id: "diagnostics", section: "diagnostics", label: "运行诊断", keywords: "diagnostics doctor 诊断 node pi 版本 stderr 退出码 探测" },
   { id: "inbox-sources", section: "inbox", label: "收件箱来源", keywords: "通知 inbox github" },
   { id: "screen", section: "screen", label: "屏幕共享", keywords: "手机看电脑 screen 权限" },
 ];

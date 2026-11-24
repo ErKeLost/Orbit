@@ -206,7 +206,7 @@ export function IntegrationsPage() {
             </div>
             <div className="provider-row provider-row-form">
               <label className="provider-row-label">Search URL<Input aria-label="Web Search URL" value={webSearchDraft.searchUrl} disabled={!desktop} onChange={(event) => setWebSearchDraft(current => ({ ...current, searchUrl: event.target.value }))} placeholder="https://www.bing.com/search?q=" spellCheck={false} /></label>
-              <label className="provider-row-label">API Key<Input aria-label="Expand API Key" type="password" autoComplete="off" value={webSearchDraft.apiKey} disabled={!desktop} onChange={(event) => setWebSearchDraft(current => ({ ...current, apiKey: event.target.value }))} placeholder={webSearch.data?.hasApiKey ? "已保存，留空保持不变。也可粘贴 op://" : "粘贴 API Key，或 op://vault/item/field"} spellCheck={false} /></label>
+              <label className="provider-row-label">API Key<Input aria-label="Expand API Key" type="password" autoComplete="off" value={webSearchDraft.apiKey} disabled={!desktop} onChange={(event) => setWebSearchDraft(current => ({ ...current, apiKey: event.target.value }))} placeholder={webSearch.data?.hasApiKey ? "已保存，留空保持不变。也可粘贴 op:// 或 !命令" : "粘贴 API Key，或 op://vault/item/field、!命令"} spellCheck={false} /></label>
             </div>
             <div className="provider-row">
               <span className="provider-row-label">凭据状态</span>
@@ -229,7 +229,7 @@ export function IntegrationsPage() {
               <label className="provider-row-label">模型<Input aria-label="文本模型" value={textDraft.model} disabled={!desktop} onChange={(event) => setTextDraft((current) => ({ ...current, model: event.target.value }))} placeholder="qwen2.5:7b" spellCheck={false} /></label>
             </div>
             <div className="provider-row provider-row-form">
-              <label className="provider-row-label">API Key<Input aria-label="文本模型 API Key" type="password" autoComplete="off" value={textDraft.apiKey} disabled={!desktop} onChange={(event) => setTextDraft((current) => ({ ...current, apiKey: event.target.value }))} placeholder={textGen.data?.hasApiKey ? "已保存，留空保持不变。也可粘贴 op://" : "本地模型通常不需要。也可粘贴 op://"} spellCheck={false} /></label>
+              <label className="provider-row-label">API Key<Input aria-label="文本模型 API Key" type="password" autoComplete="off" value={textDraft.apiKey} disabled={!desktop} onChange={(event) => setTextDraft((current) => ({ ...current, apiKey: event.target.value }))} placeholder={textGen.data?.hasApiKey ? "已保存，留空保持不变。也可粘贴 op:// 或 !命令" : "本地模型通常不需要。也可粘贴 op:// 或 !命令"} spellCheck={false} /></label>
               <div className="provider-detail-actions">
                 <Button variant="outline" disabled={!desktop} onClick={() => void saveTextGen(textDraft).then(() => { setTextDraft((current) => ({ ...current, apiKey: "" })); void textGen.refetch(); gooeyToast.success("文本模型已保存", { showTimestamp: false }); }).catch((error) => gooeyToast.error(String(error instanceof Error ? error.message : error)))}>保存</Button>
               </div>
