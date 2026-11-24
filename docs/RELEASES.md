@@ -6,6 +6,16 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.65
+
+上一代 ElevenLabs Speech Engine 全部删掉了。语音通话从上一版起就走 Rime Prism，但旧的管子、九条 `speech_engine_*` 命令、`@elevenlabs/react`、本地 3001 健康检查和 `/desk` 队列客户端一直留在树里，没有任何东西在调。`tools/speech-engine` 连同它的 `up.sh`、隧道和 repoint 一起删除 —— 它的 README 还在教人开麦前先跑一遍。
+
+分类那一次 Jev 调用（`voice_classify`）原来长在 ElevenLabs 的文件里，但 Prism 这条链路一直在用，现在单独成 `voice_gate.rs`，命令名、参数、请求都没变。
+
+顺手停掉了一个每秒空转：`desk.ts` 的通话轮询在删除管子后已经没有对端，仍然每秒钟打一次 127.0.0.1:3001。现在只在挂断后用 `rime_speak` 念一句。
+
+同一个版本里修了 Prism 的 nudge：`prism_instruction` 放错在 `response.metadata` 里，Prism 会拒掉整个事件并显示成通话失败，现在放到 `response` 上，`metadata` 只留 cause。
+
 ## v1.0.64
 
 Pi 起不来时，Orbit 不再只说一句「无法启动」。探测现在留着 stderr、退出码和耗时，并且**不再让整个应用不可用**：设置里新增「运行诊断」，一台机器上 Node 与 Pi 的路径、版本、探测结果和缺失的运行资源都列在同一页，可以一键复制成文本发给别人。Windows 首次启动时被杀软扫描拖慢的那一次探测会重试一次，超时和真的起不来从此分得开。
