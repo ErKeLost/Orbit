@@ -6,6 +6,12 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.69
+
+拖动右侧产物预览的左边缘可以调整宽度。预览会记住上次的宽度，双击分隔线恢复默认。
+
+「正在压缩上下文」保留 shimmer 动画，隐藏经过的秒数。
+
 ## v1.0.68
 
 打开模型菜单时会自动读取当前模型的 Effort 档位。桌面端的自定义 OpenAI Responses 模型在没有缓存时会自动查询，失败后再次打开菜单会重试。档位由原有的 Effort 滑块呈现，最高档保留银河动效。

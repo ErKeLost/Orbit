@@ -63,6 +63,7 @@ describe("durable state", () => {
       "orbit.terminal.open": "cosmetic visibility, defaults to closed",
       "orbit.browser.open": "cosmetic visibility, defaults to closed",
       "orbit.browser.size": "cosmetic browser column width, defaults to 520",
+      "orbit.shell.artifactPreviewWidth": "cosmetic artifact preview width, defaults to 460",
       "orbit.shell.collapsedRail": "cosmetic rail style, defaults to compact",
       "orbit.shell.railSessions": "cosmetic: whether the rail's session list is expanded, defaults to open",
       "orbit.quickScope": "跨窗口的一行提示：quick composer 显示主窗口在哪个目录，丢了就显示「没有项目」",

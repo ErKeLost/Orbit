@@ -73,7 +73,8 @@ export function useDragResize({
     const handle = event.currentTarget;
     const pointerId = event.pointerId;
     const startX = event.clientX;
-    const startW = widthRef.current;
+    // CSS can cap the pane after the window shrinks. Start at the visible edge.
+    const startW = paneRef.current?.getBoundingClientRect().width || widthRef.current;
     handle.setPointerCapture(pointerId);
     setDragging(true);
     const restoreSelection = suppressTextSelection();

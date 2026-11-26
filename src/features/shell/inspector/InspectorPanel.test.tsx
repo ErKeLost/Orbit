@@ -22,19 +22,31 @@ vi.mock("../../../lib/store", async () => {
   return { useWorkspace: store };
 });
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: async () => undefined, convertFileSrc: (p: string) => p }));
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@tauri-apps/api/core")>(),
+  invoke: async () => undefined,
+  convertFileSrc: (p: string) => p,
+}));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: async () => null }));
 vi.mock("@tauri-apps/plugin-opener", () => ({ openPath: async () => {}, revealItemInDir: async () => {} }));
 
+import { openArtifactPanel } from "../../artifacts/ui/openArtifact";
 import { InspectorPanel } from "./InspectorPanel";
-import { useShell } from "../shellStore";
+import { ARTIFACT_PREVIEW_DEFAULT_WIDTH, useShell } from "../shellStore";
 
 let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  useShell.setState({ inspectorOpen: true, inspectorTab: "explorer" });
+  vi.stubGlobal("innerWidth", 1400);
+  useShell.setState({
+    inspectorOpen: true,
+    inspectorTab: "explorer",
+    inspectorArtifact: null,
+    inspectorWidth: 260,
+    artifactPreviewWidth: ARTIFACT_PREVIEW_DEFAULT_WIDTH,
+  });
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -80,6 +92,31 @@ describe("InspectorPanel", () => {
 
     await act(async () => tabs()[1].dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(useShell.getState().inspectorOpen).toBe(false);
+  });
+
+  it("产物能拖过文件栏的宽度上限，关闭后再打开仍保留宽度，双击恢复默认", async () => {
+    await render();
+    await act(async () => openArtifactPanel("report"));
+    const preview = () => container.querySelector<HTMLElement>('aside[aria-label="产物"]')!;
+    const divider = () => preview().querySelector<HTMLElement>('[aria-label="调整产物预览宽度"]')!;
+    divider().setPointerCapture = vi.fn();
+    divider().releasePointerCapture = vi.fn();
+
+    await act(async () => {
+      divider().dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1, clientX: 900 }));
+      window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, clientX: 640 }));
+    });
+    expect(preview().style.width).toBe("720px");
+    expect(localStorage.getItem("orbit.shell.artifactPreviewWidth")).toBe("720");
+
+    await act(async () => preview().querySelector<HTMLButtonElement>('button[aria-label="关闭"]')!.click());
+    expect(container.querySelector<HTMLElement>('aside[aria-label="项目检视栏"]')?.style.width).toBe("260px");
+    await act(async () => openArtifactPanel("another-report"));
+    expect(preview().style.width).toBe("720px");
+
+    await act(async () => divider().dispatchEvent(new MouseEvent("dblclick", { bubbles: true })));
+    expect(preview().style.width).toBe(`${ARTIFACT_PREVIEW_DEFAULT_WIDTH}px`);
+    expect(useShell.getState().inspectorWidth).toBe(260);
   });
 
   it("没有项目工作区时整栏不渲染", async () => {

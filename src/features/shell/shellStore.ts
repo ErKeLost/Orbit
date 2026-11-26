@@ -61,6 +61,8 @@ const SESSION_SIDEBAR_WIDTH_KEY = "orbit.shell.sessionSidebarWidth";
 const INSPECTOR_OPEN_KEY = "orbit.shell.inspector";
 const INSPECTOR_TAB_KEY = "orbit.shell.inspectorTab";
 const INSPECTOR_WIDTH_KEY = "orbit.shell.inspectorWidth";
+const ARTIFACT_PREVIEW_WIDTH_KEY = "orbit.shell.artifactPreviewWidth";
+export const ARTIFACT_PREVIEW_DEFAULT_WIDTH = 460;
 
 function readBool(key: string, fallback: boolean) {
   try {
@@ -150,6 +152,8 @@ type ShellState = {
   inspectorOpen: boolean;
   inspectorTab: InspectorTab;
   inspectorWidth: number;
+  artifactPreviewWidth: number;
+  setArtifactPreviewWidth: (width: number) => void;
   /** 右栏正在读的那份产物；非空时右栏让位给它（对话里的卡片点过来）。 */
   inspectorArtifact: string | null;
   setInspectorOpen: (open: boolean) => void;
@@ -328,6 +332,10 @@ export const useShell = create<ShellState>((set, get) => {
     setInspectorOpen: (open) => { write(INSPECTOR_OPEN_KEY, String(open)); set({ inspectorOpen: open }); },
     setInspectorTab: (tab) => { write(INSPECTOR_TAB_KEY, tab); set({ inspectorTab: tab }); },
     setInspectorWidth: (width) => { write(INSPECTOR_WIDTH_KEY, String(width)); set({ inspectorWidth: width }); },
+    setArtifactPreviewWidth: (width) => {
+      write(ARTIFACT_PREVIEW_WIDTH_KEY, String(width));
+      set({ artifactPreviewWidth: width });
+    },
     inspectorArtifact: null,
     setInspectorArtifact: (id) => set({ inspectorArtifact: id }),
     terminalPosition: (() => {
@@ -397,6 +405,7 @@ export const useShell = create<ShellState>((set, get) => {
     projectRailWidth: readNumber(PROJECT_RAIL_WIDTH_KEY, 240),
     sessionSidebarWidth: readNumber(SESSION_SIDEBAR_WIDTH_KEY, 272),
     inspectorWidth: readNumber(INSPECTOR_WIDTH_KEY, 260),
+    artifactPreviewWidth: readNumber(ARTIFACT_PREVIEW_WIDTH_KEY, ARTIFACT_PREVIEW_DEFAULT_WIDTH),
     setProjectRailOpen: (open) => { write(PROJECT_RAIL_KEY, String(open)); set({ projectRailOpen: open }); },
     setSessionSidebarOpen: (open) => { write(SESSION_SIDEBAR_KEY, String(open)); set({ sessionSidebarOpen: open }); },
     setSidebarTab: (tab) => { write(SIDEBAR_TAB_KEY, tab); set({ sidebarTab: tab }); },

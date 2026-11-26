@@ -1075,12 +1075,22 @@ export const TranscriptGroupView = memo(function TranscriptGroupView({
 });
 
 /** "Working…" before the first token arrives (Orbit `InitialThinking`). */
-export function InitialWorking({ label, startedAt }: { label: string; startedAt?: number | null }) {
-  const elapsed = useElapsed(startedAt ?? undefined, true);
+export function InitialWorking({ label, startedAt, compacting }: {
+  label: string;
+  startedAt?: number | null;
+  compacting: boolean;
+}) {
+  const elapsed = useElapsed(startedAt ?? undefined, !compacting && startedAt != null);
+  const status = compacting ? "正在压缩上下文" : elapsed != null && elapsed > 1000 ? `${label} ${Math.round(elapsed / 1000)}s` : label;
   return (
-    <div className="flex w-full min-w-0 items-center gap-1.5 px-4 py-1" role="status" aria-live="polite">
+    <div
+      className="flex w-full min-w-0 items-center gap-1.5 px-4 py-1"
+      role="status"
+      aria-live="polite"
+      data-context-compacting={compacting ? "" : undefined}
+    >
       <Shimmer className="min-w-0 truncate font-sans text-sm" duration={1.6}>
-        {elapsed != null && elapsed > 1000 ? `${label} ${Math.round(elapsed / 1000)}s` : label}
+        {status}
       </Shimmer>
     </div>
   );

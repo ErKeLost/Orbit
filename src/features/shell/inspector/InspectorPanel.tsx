@@ -1,4 +1,4 @@
-import { useActiveWorkspace, useShell, type InspectorTab } from "../shellStore";
+import { ARTIFACT_PREVIEW_DEFAULT_WIDTH, useActiveWorkspace, useShell, type InspectorTab } from "../shellStore";
 import { useWorkspace } from "../../../lib/store";
 import { useDragResize } from "../../../shared/hooks/useDragResize";
 import { ResizeHandle } from "../chrome";
@@ -11,6 +11,48 @@ import { GitHistoryGraph } from "../../source-control/ui/GitHistoryGraph";
 const WIDTH_MIN = 200;
 const WIDTH_MAX = 420;
 const WIDTH_DEFAULT = 260;
+const ARTIFACT_WIDTH_MIN = 280;
+const ARTIFACT_MAX_VIEWPORT_SHARE = 70;
+const WORKSPACE_WIDTH_RESERVED = 520;
+const artifactMaxWidth = () => Math.max(ARTIFACT_WIDTH_MIN, Math.min(
+  Math.floor(window.innerWidth * ARTIFACT_MAX_VIEWPORT_SHARE / 100),
+  window.innerWidth - WORKSPACE_WIDTH_RESERVED,
+));
+
+function ArtifactPreview({ id, onClose }: { id: string; onClose: () => void }) {
+  const width = useShell((state) => state.artifactPreviewWidth);
+  const setWidth = useShell((state) => state.setArtifactPreviewWidth);
+  const resize = useDragResize({
+    direction: "left",
+    min: ARTIFACT_WIDTH_MIN,
+    max: artifactMaxWidth,
+    defaultWidth: ARTIFACT_PREVIEW_DEFAULT_WIDTH,
+    initial: width,
+    onCommit: setWidth,
+  });
+
+  return (
+    <aside
+      ref={resize.setPaneRef}
+      aria-label="产物"
+      className={`body-glass relative flex h-full min-h-0 min-w-0 shrink-0 flex-col border-l border-stroke ${
+        resize.dragging ? "[&_iframe]:pointer-events-none" : ""
+      }`}
+      style={{
+        maxWidth: `clamp(${ARTIFACT_WIDTH_MIN}px, calc(100vw - ${WORKSPACE_WIDTH_RESERVED}px), ${ARTIFACT_MAX_VIEWPORT_SHARE}vw)`,
+      }}
+    >
+      <ResizeHandle
+        side="left"
+        label="调整产物预览宽度"
+        dragging={resize.dragging}
+        onPointerDown={resize.onPointerDown}
+        onDoubleClick={resize.onDoubleClick}
+      />
+      <ArtifactReader id={id} onClose={onClose} />
+    </aside>
+  );
+}
 
 /**
  * 右侧检视栏（monocode 新布局的右栏）：文件和历史共用一栏，分段切换。
@@ -57,23 +99,7 @@ export function InspectorPanel({ visible, online }: { visible: boolean; online: 
   if (!visible || !open) return null;
 
   // 对话里的产物卡片点了过来：这一栏先当读者页用，关掉回到分段。
-  if (readingArtifact)
-    return (
-      <aside
-        ref={resize.setPaneRef}
-        aria-label="产物"
-        className="body-glass relative flex h-full min-h-0 shrink-0 flex-col border-l border-stroke"
-      >
-        <ResizeHandle
-          side="left"
-          label="调整检视栏宽度"
-          dragging={resize.dragging}
-          onPointerDown={resize.onPointerDown}
-          onDoubleClick={resize.onDoubleClick}
-        />
-        <ArtifactReader id={readingArtifact} onClose={() => setReadingArtifact(null)} />
-      </aside>
-    );
+  if (readingArtifact) return <ArtifactPreview id={readingArtifact} onClose={() => setReadingArtifact(null)} />;
 
   const items: { id: InspectorTab; label: string }[] = [
     { id: "explorer", label: "文件" },

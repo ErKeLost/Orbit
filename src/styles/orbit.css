@@ -566,8 +566,9 @@ html.theme-light .rail-new-session:hover:not(:disabled) {
   }
 }
 
-/* Low-end devices: stop infinite repaint sources while streaming. */
-html[data-perf-tier="low"] .shimmer-text {
+/* Keep the compaction status animated even when decorative shimmers are disabled. */
+html[data-perf-tier="low"] .shimmer-text:not([data-context-compacting] *),
+html[data-perf-degraded="1"] .shimmer-text:not([data-context-compacting] *) {
   animation: none;
   color: color-mix(in srgb, var(--color-content) 60%, transparent);
   background: none;
@@ -594,12 +595,6 @@ html[data-page-visible="false"] * {
  * 运行时自动降级（`lib/perf-monitor.ts`）触发后，在本次运行期间停掉装饰动画。
  * 加载转圈（`.animate-spin`）提供进度反馈，前台降级时仍然需要转动。
  */
-html[data-perf-degraded="1"] .shimmer-text {
-  animation: none;
-  color: color-mix(in srgb, var(--color-content) 60%, transparent);
-  background: none;
-}
-
 html[data-perf-degraded="1"] .zen-thinking-pulse,
 html[data-perf-degraded="1"] .zen-tool-spin,
 html[data-perf-degraded="1"] .agent-chat-typing-dot,

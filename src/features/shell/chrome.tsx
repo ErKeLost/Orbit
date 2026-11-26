@@ -167,6 +167,7 @@ export function ResizeHandle({
       role="separator"
       aria-orientation="vertical"
       aria-label={label}
+      data-tauri-drag-region="false"
       className={`absolute inset-y-0 ${side === "left" ? "-left-px" : "-right-px"} z-10 w-1.5 cursor-col-resize touch-none ${
         dragging ? "bg-fill-strong" : "hover:bg-fill-strong"
       }`}

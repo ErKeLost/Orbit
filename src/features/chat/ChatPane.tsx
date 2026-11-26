@@ -354,7 +354,10 @@ export function ChatPane({
     // Only a new prompt starts the motion; later renders must not replay it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastUserId]);
-  const runningLabel = transcript.compacting ? "正在压缩上下文" : transcript.phase && transcript.phase !== "就绪" ? transcript.phase : "Working…";
+  const runningLabel = transcript.phase && transcript.phase !== "就绪" ? transcript.phase : "Working…";
+  const waitingStatus = waiting ? (
+    <InitialWorking label={runningLabel} startedAt={transcript.turnStartedAt} compacting={transcript.compacting} />
+  ) : null;
   // 手机端（`MobileShell`）没有 pane 网格，一屏就是聊天 + 终端，所以 `withTerminal`
   // 由它打开；桌面端的 dock 挂在工作区（`App.tsx` 的 `WorkArea`）上，这里拿不到。
   const dockVertical = dockPosition === "top" || dockPosition === "bottom";
@@ -429,7 +432,7 @@ export function ChatPane({
             {anchorFrom < start ? (
               <>
                 {groups.slice(start).map((group, offset) => renderGroup(group, start + offset))}
-                {waiting ? <InitialWorking label={runningLabel} startedAt={transcript.turnStartedAt} /> : null}
+                {waitingStatus}
               </>
             ) : (
               <>
@@ -440,7 +443,7 @@ export function ChatPane({
                     with the rest of the pane free — Orbit's stretched turn. */}
                 <div data-transcript-anchor className="transcript-turn transcript-turn-anchor flex min-w-0 flex-col">
                   {groups.slice(anchorFrom).map((group, offset) => renderGroup(group, anchorFrom + offset))}
-                  {waiting ? <InitialWorking label={runningLabel} startedAt={transcript.turnStartedAt} /> : null}
+                  {waitingStatus}
                 </div>
               </>
             )}
