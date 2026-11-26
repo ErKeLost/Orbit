@@ -6,6 +6,12 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.66
+
+模型菜单会列出当前模型支持的 Effort 档位，点击档位名即可切换。桌面端可以查询自定义 OpenAI Responses 模型的档位，查询结果会保存并自动同步到会话。Provider 拒绝 Effort 参数时，会话会标明是哪项设置出错。
+
+应用因帧率下降而暂停装饰动效时，加载指示器仍然会转动。
+
 ## v1.0.65
 
 上一代 ElevenLabs Speech Engine 全部删掉了。语音通话从上一版起就走 Rime Prism，但旧的管子、九条 `speech_engine_*` 命令、`@elevenlabs/react`、本地 3001 健康检查和 `/desk` 队列客户端一直留在树里，没有任何东西在调。`tools/speech-engine` 连同它的 `up.sh`、隧道和 repoint 一起删除 —— 它的 README 还在教人开麦前先跑一遍。
