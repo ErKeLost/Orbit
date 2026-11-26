@@ -12,7 +12,6 @@ const rpc = vi.hoisted(() => ({
 }));
 vi.mock("../../lib/rpc", () => rpc);
 vi.mock("../../components/ModelMeta", () => ({ ModelLogo: () => null }));
-vi.mock("../../components/chat/EffortSlider", () => ({ EffortSlider: () => null }));
 
 const model = {
   id: "test-model", name: "Test Model", provider: "fixture", api: "openai-responses", baseUrl: "https://fixture.test/v1",
@@ -70,67 +69,103 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-function option(label: string) {
-  return Array.from(document.querySelectorAll<HTMLButtonElement>('.composer-effort-options button'))
-    .find(button => button.textContent === label);
+function slider() {
+  return document.querySelector<HTMLInputElement>('input[type="range"][aria-label="Effort"]');
+}
+
+function expectNoEffortButtons() {
+  expect(document.querySelector(".composer-effort-footer")).not.toBeNull();
+  expect(document.querySelector(".composer-effort-footer button")).toBeNull();
+}
+
+async function togglePicker() {
+  await act(async () => host.querySelector<HTMLButtonElement>("[data-model-control]")!.click());
 }
 
 async function openPicker() {
   await act(async () => root.render(<QueryClientProvider client={client}><ModelPicker /></QueryClientProvider>));
-  await act(async () => host.querySelector<HTMLButtonElement>("[data-model-control]")!.click());
+  expect(rpc.getModelEffort).not.toHaveBeenCalled();
+  await togglePicker();
 }
 
-async function waitForOption(label: string) {
+async function waitForPicker(assert: () => void) {
   await vi.waitFor(async () => {
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
-    expect(option(label)?.disabled).toBe(false);
+    assert();
   });
 }
 
-test("shows and applies cached levels automatically, then lets the user pick a supported level", async () => {
+async function waitForSlider(value: string) {
+  await waitForPicker(() => {
+    expect(slider()?.disabled).toBe(false);
+    expect(slider()?.getAttribute("aria-valuetext")).toBe(value);
+  });
+}
+
+test("reads cached levels on open and applies the slider's selected level to the session", async () => {
   rpc.getModelEffort.mockResolvedValue({ eligible: true, levels: ["low", "high", "max"] });
   await openPicker();
-  await waitForOption("Max");
-  expect(option("Off")).toBeUndefined();
-  expect(option("Medium")).toBeUndefined();
-  expect(option("Low")?.getAttribute("aria-pressed")).toBe("true");
+  await waitForSlider("Low");
+  expect(slider()?.max).toBe("2");
+  expectNoEffortButtons();
+  expect(rpc.getModelEffort).toHaveBeenCalledExactlyOnceWith(model);
   expect(rpc.probeModelEffort).not.toHaveBeenCalled();
   expect(rpc.request).toHaveBeenCalledWith(expect.objectContaining({ type: "prompt" }), 30000, "connection-1");
-  await act(async () => option("Max")!.click());
-  await waitForOption("Max");
-  expect(option("Max")?.getAttribute("aria-pressed")).toBe("true");
+
+  const track = document.querySelector<HTMLElement>(".effort-slider-track")!;
+  vi.spyOn(track, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 0, 240, 24));
+  const range = slider()!;
+  await act(async () => {
+    range.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, clientX: 16, bubbles: true }));
+    range.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, clientX: 224, bubbles: true }));
+    range.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, clientX: 224, bubbles: true }));
+  });
+  await waitForSlider("Max");
+  expect(rpc.request).toHaveBeenCalledWith({ type: "set_thinking_level", level: "max" }, 30000, "connection-1");
+  expect(document.querySelector(".effort-slider[data-galaxy]")).not.toBeNull();
 });
 
-test("automatically queries and applies levels when the picker opens without a cache", async () => {
-  rpc.getModelEffort.mockResolvedValue({ eligible: true });
-  rpc.probeModelEffort.mockResolvedValue({ eligible: true, levels: ["low", "high", "max"] });
+test("automatically probes on a cache miss and reuses the result on later opens", async () => {
+  const discovery = { eligible: true, levels: ["low", "high", "max"] };
+  rpc.getModelEffort.mockResolvedValueOnce({ eligible: true }).mockResolvedValue(discovery);
+  rpc.probeModelEffort.mockResolvedValue(discovery);
   await openPicker();
-  await waitForOption("Max");
+  await waitForSlider("Low");
+  expectNoEffortButtons();
+
+  await togglePicker();
+  expect(slider()).toBeNull();
+  await togglePicker();
+  await waitForSlider("Low");
+  expect(rpc.getModelEffort).toHaveBeenCalledTimes(2);
   expect(rpc.probeModelEffort).toHaveBeenCalledExactlyOnceWith(model);
 });
 
-test("shows an automatic discovery failure and lets the user retry", async () => {
+test("shows a discovery failure and automatically retries on reopening", async () => {
   rpc.getModelEffort.mockResolvedValue({ eligible: true });
   rpc.probeModelEffort.mockRejectedValueOnce(new Error("Effort 查询失败（HTTP 429）"))
     .mockResolvedValueOnce({ eligible: true, levels: ["low", "high", "max"] });
   await openPicker();
-  await vi.waitFor(async () => {
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+  await waitForPicker(() => {
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("Effort 查询失败（HTTP 429）");
   });
-  const retry = Array.from(document.querySelectorAll("button")).find(button => button.textContent === "重试");
-  await act(async () => retry!.click());
-  await waitForOption("Max");
+  expectNoEffortButtons();
+
+  await togglePicker();
+  await togglePicker();
+  await waitForSlider("Low");
   expect(rpc.probeModelEffort).toHaveBeenCalledTimes(2);
 });
 
-test("lists Pi's available levels without a discovery cache", async () => {
+test("uses Pi's supported levels as slider stops when discovery is unavailable", async () => {
   levels = ["off", "minimal", "xhigh"];
   rpc.getModelEffort.mockResolvedValue({ eligible: false });
   await openPicker();
-  await waitForOption("XHigh");
-  expect(option("Off")?.getAttribute("aria-pressed")).toBe("true");
-  expect(option("Minimal")).toBeDefined();
-  expect(option("High")).toBeUndefined();
+  await waitForSlider("Off");
+  expect(slider()?.max).toBe("2");
+  await act(async () => slider()!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
+  await waitForSlider("Minimal");
+  await act(async () => slider()!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
+  await waitForSlider("XHigh");
   expect(rpc.request).not.toHaveBeenCalledWith(expect.objectContaining({ type: "prompt" }), expect.any(Number), expect.any(String));
 });

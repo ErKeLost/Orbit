@@ -1,5 +1,5 @@
 import { memo, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useWorkspace } from "../../lib/store";
 import { modelLabel } from "../../lib/model-meta";
 import { expectModel, getModelEffort, persistDefaultModel, probeModelEffort, refresh, report, request, settleModel } from "../../lib/rpc";
@@ -55,7 +55,6 @@ function ModelPickerImpl() {
   const state = useWorkspace((workspace) => workspace.state);
   const desktop = useWorkspace((workspace) => workspace.runtimeTarget === "desktop");
   const current = state?.model;
-  const queryClient = useQueryClient();
   const button = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -73,7 +72,9 @@ function ModelPickerImpl() {
       return cached.eligible && cached.levels === undefined ? probeModelEffort(current) : cached;
     },
     enabled: open && online && desktop && current?.api === "openai-responses",
-    staleTime: Infinity,
+    // Read the persisted cache on each open; only a missing entry needs a provider probe.
+    staleTime: 0,
+    refetchOnWindowFocus: false,
     retry: false,
   });
   const cachedLevels = effort.data?.levels;
@@ -103,10 +104,6 @@ function ModelPickerImpl() {
       }
       return confirmed;
     },
-  });
-  const detection = useMutation({
-    mutationFn: (model: Model) => probeModelEffort(model),
-    onSuccess: (result, model) => queryClient.setQueryData(["model-effort", ...modelIdentity(model)], result),
   });
   const changingLevel = useMutation({
     mutationFn: async (level: ThinkingLevel) => {
@@ -166,19 +163,18 @@ function ModelPickerImpl() {
   }
 
   const label = current ? composerModelLabel(current.id, current.name) : models.isLoading ? "Loading…" : "选择模型";
-  const availableLevels = levels.data?.levels;
-  const namedLevels = cachedLevels ?? availableLevels ?? [];
-  const showEffort = namedLevels.some((level) => level !== "off") || cachedLevels?.length === 1;
-  const probing = effort.isFetching || (sameModel(detection.variables, current) && detection.isPending);
-  const effortError = levels.error ?? effort.error ?? (sameModel(detection.variables, current) ? detection.error : null);
-  const effortDisabled = !online || streaming || !availableLevels || probing || changingLevel.isPending;
-  const showSlider = showEffort && !cachedLevels && namedLevels.length > 1;
-  const showEffortStatus = !showSlider || effort.data?.eligible || effortError;
+  const namedLevels = cachedLevels ?? levels.data?.levels ?? offOnly;
+  const showSlider = namedLevels.length > 1;
+  const fixedLevel = namedLevels.length === 1 && (cachedLevels !== undefined || namedLevels[0] !== "off") ? namedLevels[0] : undefined;
+  const showEffort = showSlider || fixedLevel !== undefined;
+  const probing = effort.isLoading;
+  const effortError = levels.error ?? effort.error;
+  const effortDisabled = !online || streaming || !levels.data || levels.isError || changingLevel.isPending;
   const effortStatus = probing ? "正在查询 Effort 档位…"
-    : cachedLevels && levels.isFetching && !availableLevels ? "正在同步档位…"
+    : cachedLevels && levels.isLoading ? "正在同步档位…"
     : cachedLevels?.length === 0 ? "此接口不支持 Effort 参数"
-    : showEffort ? "Effort"
-    : "未发现 Effort 档位";
+    : fixedLevel ? `Effort · ${effortLabel(fixedLevel)}`
+    : null;
 
   return (
     <>
@@ -201,6 +197,7 @@ function ModelPickerImpl() {
           // reconnect) stays failed until something asks again; the menu is the
           // one place the user can ask.
           if (models.isError || allModels.length === 0) void models.refetch();
+          if (levels.isError) void levels.refetch();
           setOpen(true);
         }}
         className={`flex h-6.5 shrink-0 items-center gap-1 rounded-md px-1.5 disabled:opacity-40 ${
@@ -266,9 +263,10 @@ function ModelPickerImpl() {
               </p>
             ) : null}
           </div>
-          {current && (showEffort || probing || effort.data?.eligible || effortError) ? (
+          {current && (showEffort || effortStatus || effortError) ? (
             <div className="composer-effort-footer">
-              {showSlider ? (
+              {effortStatus ? <p role="status" className="text-2xs text-ink-3">{effortStatus}</p> : null}
+              {showSlider && !probing ? (
                 <EffortSlider
                   key={`${current.provider}/${current.id}/${namedLevels.join(",")}/${changingLevel.isError}`}
                   levels={namedLevels}
@@ -276,31 +274,6 @@ function ModelPickerImpl() {
                   disabled={effortDisabled}
                   onChange={changingLevel.mutate}
                 />
-              ) : null}
-              {showEffortStatus ? (
-                <div className="flex items-center justify-between gap-2 text-2xs text-ink-3">
-                  <span aria-live="polite">{effortStatus}</span>
-                  {levels.isError || effort.isError ? (
-                    <button type="button" className="composer-model-retry" disabled={streaming} onClick={() => void (levels.isError ? levels.refetch() : effort.refetch())}>重试</button>
-                  ) : effort.data?.eligible ? (
-                    <button type="button" className="composer-model-retry" disabled={streaming || probing} onClick={() => detection.mutate(current)}>
-                      重新查询
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
-              {showEffort ? (
-                <div className="composer-effort-options" role="group" aria-label="Effort 档位">
-                  {namedLevels.map((level) => (
-                    <button
-                      key={level}
-                      type="button"
-                      aria-pressed={state?.thinkingLevel === level}
-                      disabled={effortDisabled}
-                      onClick={() => { if (state?.thinkingLevel !== level) changingLevel.mutate(level); }}
-                    >{effortLabel(level)}</button>
-                  ))}
-                </div>
               ) : null}
               {effortError ? <p role="alert" className="composer-model-error mt-1 text-2xs">{effortError instanceof Error ? effortError.message : String(effortError)}</p> : null}
             </div>
