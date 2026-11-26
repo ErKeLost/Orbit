@@ -6,6 +6,10 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.67
+
+桌面端打开模型菜单时，会自动查询尚未保存档位的自定义 OpenAI Responses 模型。查到后即可选择档位，查询失败时可以在菜单里重试。
+
 ## v1.0.66
 
 模型菜单会列出当前模型支持的 Effort 档位，点击档位名即可切换。桌面端可以查询自定义 OpenAI Responses 模型的档位，查询结果会保存并自动同步到会话。Provider 拒绝 Effort 参数时，会话会标明是哪项设置出错。
