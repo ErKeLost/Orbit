@@ -101,19 +101,27 @@ test("shows and applies cached levels automatically, then lets the user pick a s
   expect(option("Max")?.getAttribute("aria-pressed")).toBe("true");
 });
 
-test("shows newly queried levels without an extra apply step", async () => {
+test("automatically queries and applies levels when the picker opens without a cache", async () => {
   rpc.getModelEffort.mockResolvedValue({ eligible: true });
   rpc.probeModelEffort.mockResolvedValue({ eligible: true, levels: ["low", "high", "max"] });
   await openPicker();
-  const probeButton = () => Array.from(document.querySelectorAll("button")).find(button => button.textContent === "查询档位");
+  await waitForOption("Max");
+  expect(rpc.probeModelEffort).toHaveBeenCalledExactlyOnceWith(model);
+});
+
+test("shows an automatic discovery failure and lets the user retry", async () => {
+  rpc.getModelEffort.mockResolvedValue({ eligible: true });
+  rpc.probeModelEffort.mockRejectedValueOnce(new Error("Effort 查询失败（HTTP 429）"))
+    .mockResolvedValueOnce({ eligible: true, levels: ["low", "high", "max"] });
+  await openPicker();
   await vi.waitFor(async () => {
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
-    expect(probeButton()?.disabled).toBe(false);
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Effort 查询失败（HTTP 429）");
   });
-  await act(async () => probeButton()!.click());
+  const retry = Array.from(document.querySelectorAll("button")).find(button => button.textContent === "重试");
+  await act(async () => retry!.click());
   await waitForOption("Max");
-  expect(rpc.probeModelEffort).toHaveBeenCalledWith(model);
-  expect(document.body.textContent).not.toContain("应用缓存");
+  expect(rpc.probeModelEffort).toHaveBeenCalledTimes(2);
 });
 
 test("lists Pi's available levels without a discovery cache", async () => {

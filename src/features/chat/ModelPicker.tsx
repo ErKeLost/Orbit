@@ -67,8 +67,14 @@ function ModelPickerImpl() {
   const effortKey = ["model-effort", ...modelIdentity(current)];
   const effort = useQuery({
     queryKey: effortKey,
-    queryFn: () => getModelEffort(current!),
+    queryFn: async () => {
+      if (!current) return { eligible: false };
+      const cached = await getModelEffort(current);
+      return cached.eligible && cached.levels === undefined ? probeModelEffort(current) : cached;
+    },
     enabled: open && online && desktop && current?.api === "openai-responses",
+    staleTime: Infinity,
+    retry: false,
   });
   const cachedLevels = effort.data?.levels;
   const expectedLevels = cachedLevels?.length === 0 ? offOnly : cachedLevels;
@@ -163,12 +169,12 @@ function ModelPickerImpl() {
   const availableLevels = levels.data?.levels;
   const namedLevels = cachedLevels ?? availableLevels ?? [];
   const showEffort = namedLevels.some((level) => level !== "off") || cachedLevels?.length === 1;
-  const probing = sameModel(detection.variables, current) && detection.isPending;
+  const probing = effort.isFetching || (sameModel(detection.variables, current) && detection.isPending);
   const effortError = levels.error ?? effort.error ?? (sameModel(detection.variables, current) ? detection.error : null);
   const effortDisabled = !online || streaming || !availableLevels || probing || changingLevel.isPending;
   const showSlider = showEffort && !cachedLevels && namedLevels.length > 1;
   const showEffortStatus = !showSlider || effort.data?.eligible || effortError;
-  const effortStatus = probing ? "正在查询档位…"
+  const effortStatus = probing ? "正在查询 Effort 档位…"
     : cachedLevels && levels.isFetching && !availableLevels ? "正在同步档位…"
     : cachedLevels?.length === 0 ? "此接口不支持 Effort 参数"
     : showEffort ? "Effort"
@@ -260,7 +266,7 @@ function ModelPickerImpl() {
               </p>
             ) : null}
           </div>
-          {current && (showEffort || effort.data?.eligible || effortError) ? (
+          {current && (showEffort || probing || effort.data?.eligible || effortError) ? (
             <div className="composer-effort-footer">
               {showSlider ? (
                 <EffortSlider
@@ -278,7 +284,7 @@ function ModelPickerImpl() {
                     <button type="button" className="composer-model-retry" disabled={streaming} onClick={() => void (levels.isError ? levels.refetch() : effort.refetch())}>重试</button>
                   ) : effort.data?.eligible ? (
                     <button type="button" className="composer-model-retry" disabled={streaming || probing} onClick={() => detection.mutate(current)}>
-                      {cachedLevels ? "重新查询" : "查询档位"}
+                      重新查询
                     </button>
                   ) : null}
                 </div>
