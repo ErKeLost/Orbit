@@ -1,27 +1,29 @@
 import { memo, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useWorkspace } from "../../lib/store";
 import { modelLabel } from "../../lib/model-meta";
-import { expectModel, persistDefaultModel, report, request, settleModel } from "../../lib/rpc";
+import { expectModel, getModelEffort, persistDefaultModel, probeModelEffort, refresh, report, request, settleModel } from "../../lib/rpc";
 import type { Model, RpcSessionState } from "../../lib/protocol";
 import { Popover } from "../../shared/ui/Popover";
 import { Check, ChevronDown, Search } from "../../shared/ui/icons";
 import { ModelLogo } from "../../components/ModelMeta";
 import { EffortSlider } from "../../components/chat/EffortSlider";
+import { effortLabel } from "../../components/chat/effort-slider-model";
 import { useSessionTarget } from "../shell/use-session-target";
 
 type ThinkingLevel = NonNullable<RpcSessionState["thinkingLevel"]>;
+type EffortLevels = { levels: ThinkingLevel[] };
+const offOnly: ThinkingLevel[] = ["off"];
+const effortCommand = "gui-effort-apply";
+const modelIdentity = (model?: Model) => [model?.provider, model?.id, model?.api, model?.baseUrl];
+const sameModel = (left?: Model, right?: Model) => !!left && !!right &&
+  left.provider === right.provider && left.id === right.id && left.api === right.api && left.baseUrl === right.baseUrl;
 
 const compactNumber = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1, notation: "compact" });
 const emptyModels: Model[] = [];
 
 export function composerModelLabel(id: string, fallback?: string) {
   return modelLabel(id, fallback).replace(/^gpt-/i, "GPT-").replace(/[_]+/g, " ");
-}
-
-export function effortLabel(level?: string) {
-  if (!level || level === "off") return "Off";
-  return level === "xhigh" ? "XHigh" : level.charAt(0).toUpperCase() + level.slice(1);
 }
 
 function ModelRow({ model, active, onSelect }: { model: Model; active: boolean; onSelect: () => void }) {
@@ -49,8 +51,11 @@ function ModelPickerImpl() {
   // 结果前台面板的模型没变——就是那个「点了没反应」。
   const target = useSessionTarget();
   const online = useWorkspace((state) => state.connection === "online");
-  const streaming = useWorkspace((state) => state.transcript.running);
+  const streaming = useWorkspace(({ transcript }) => transcript.running || transcript.submitted || transcript.compacting);
   const state = useWorkspace((workspace) => workspace.state);
+  const desktop = useWorkspace((workspace) => workspace.runtimeTarget === "desktop");
+  const current = state?.model;
+  const queryClient = useQueryClient();
   const button = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -59,10 +64,53 @@ function ModelPickerImpl() {
     queryFn: () => request<{ models: Model[] }>({ type: "get_available_models" }, 30000, target),
     enabled: online,
   });
+  const effortKey = ["model-effort", ...modelIdentity(current)];
+  const effort = useQuery({
+    queryKey: effortKey,
+    queryFn: () => getModelEffort(current!),
+    enabled: open && online && desktop && current?.api === "openai-responses",
+  });
+  const cachedLevels = effort.data?.levels;
+  const expectedLevels = cachedLevels?.length === 0 ? offOnly : cachedLevels;
+  const sessionId = state?.sessionId;
   const levels = useQuery({
-    queryKey: ["pi", "levels", project, target, state?.model?.provider, state?.model?.id],
-    queryFn: () => request<{ levels: ThinkingLevel[] }>({ type: "get_available_thinking_levels" }, 30000, target),
-    enabled: online,
+    queryKey: ["pi", "levels", project, target, sessionId, ...modelIdentity(current), expectedLevels],
+    enabled: online && !!current && !streaming,
+    queryFn: async () => {
+      const available = await request<EffortLevels>({ type: "get_available_thinking_levels" }, 30000, target);
+      if (!expectedLevels || available.levels.join() === expectedLevels.join()) return available;
+
+      const { commands } = await request<{ commands: { name: string; source: string }[] }>({ type: "get_commands" }, 30000, target);
+      if (!commands.some(({ name, source }) => name === effortCommand && source === "extension")) {
+        throw new Error("当前 Pi 会话无法同步 Effort 档位");
+      }
+      const live = await request<RpcSessionState>({ type: "get_state" }, 30000, target);
+      if (!sameModel(live.model, current) || live.sessionId !== sessionId || live.isStreaming || live.isCompacting || live.pendingMessageCount) {
+        throw new Error("当前会话忙碌或模型已切换，暂时无法同步 Effort 档位");
+      }
+      const { provider, id, api, baseUrl } = current!;
+      await request({ type: "prompt", message: `/${effortCommand} ${JSON.stringify({ provider, id, api, baseUrl, sessionId })}` }, 30000, target);
+      const confirmed = await request<EffortLevels>({ type: "get_available_thinking_levels" }, 30000, target);
+      const next = await refresh(target);
+      if (!sameModel(next.model, current) || next.sessionId !== sessionId || confirmed.levels.join() !== expectedLevels.join()) {
+        throw new Error("Pi 未确认 Effort 档位，请重试");
+      }
+      return confirmed;
+    },
+  });
+  const detection = useMutation({
+    mutationFn: (model: Model) => probeModelEffort(model),
+    onSuccess: (result, model) => queryClient.setQueryData(["model-effort", ...modelIdentity(model)], result),
+  });
+  const changingLevel = useMutation({
+    mutationFn: async (level: ThinkingLevel) => {
+      await request({ type: "set_thinking_level", level }, 30000, target);
+      const next = await refresh(target);
+      if (next.thinkingLevel !== level) {
+        throw new Error(`Pi 未接受 ${effortLabel(level)}，当前档位为 ${effortLabel(next.thinkingLevel)}`);
+      }
+    },
+    onError: (error) => report(new Error(`设置 Effort 失败：${error.message}`)),
   });
   const allModels = models.data?.models ?? emptyModels;
   const activeProvider = state?.model?.provider;
@@ -82,46 +130,49 @@ function ModelPickerImpl() {
     const byProvider = new Map<string, Model[]>();
     for (const model of visible) byProvider.set(model.provider, [...(byProvider.get(model.provider) ?? []), model]);
     return [...byProvider.entries()].map(([family, items]) => ({ family, items }));
-  }, [activeProvider, allModels, providerModels, search]);
-  const availableLevels = levels.data?.levels ?? [];
-
+  }, [allModels, providerModels, search]);
   const dismiss = () => {
     setOpen(false);
     setSearch("");
   };
 
-  async function choose(command: Parameters<typeof request>[0]) {
-    // 思考档位先在本地落一次：松开滑块那一刻 composer 上的 pill 就变，
-    // RPC 只是去确认；确认失败再回滚。get_state 会把真实状态盖回来。
+  async function chooseModel(model: Model) {
     const previous = useWorkspace.getState().state;
-    if (command.type === "set_thinking_level" && previous) {
-      useWorkspace.getState().set({ state: { ...previous, thinkingLevel: command.level } });
-    }
-    // 模型同理，而且它会重起 Pi 进程：先把意图贴上，别停在旧模型上等确认。
-    if (command.type === "set_model") expectModel(target, { provider: command.provider, id: command.modelId });
+    expectModel(target, { provider: model.provider, id: model.id });
     try {
-      await request(command, 30000, target);
-      const next = await request<typeof state>({ type: "get_state" }, 30000, target);
-      if (command.type === "set_model") {
-        if (next?.model?.provider !== command.provider || next.model.id !== command.modelId) {
-          settleModel(target, next ?? undefined);
-          throw new Error("Pi 没有确认模型切换");
-        }
-        settleModel(target, next ?? undefined);
-        await persistDefaultModel(command.provider, command.modelId);
+      await request({ type: "set_model", provider: model.provider, modelId: model.id }, 30000, target);
+      const next = await request<RpcSessionState>({ type: "get_state" }, 30000, target);
+      settleModel(target, next);
+      if (next.model?.provider !== model.provider || next.model.id !== model.id) {
+        report(new Error("Pi 没有确认模型切换"));
         return;
       }
-      useWorkspace.getState().set({ state: next });
     } catch (error) {
-      if (command.type === "set_model") settleModel(target, previous ?? undefined);
-      else if (command.type === "set_thinking_level" && previous) useWorkspace.getState().set({ state: previous });
+      settleModel(target, previous ?? undefined);
+      report(error);
+      return;
+    }
+    try {
+      await persistDefaultModel(model.provider, model.id);
+    } catch (error) {
       report(error);
     }
   }
 
-  const current = state?.model;
   const label = current ? composerModelLabel(current.id, current.name) : models.isLoading ? "Loading…" : "选择模型";
-  const showEffort = availableLevels.some((level) => level !== "off");
+  const availableLevels = levels.data?.levels;
+  const namedLevels = cachedLevels ?? availableLevels ?? [];
+  const showEffort = namedLevels.some((level) => level !== "off") || cachedLevels?.length === 1;
+  const probing = sameModel(detection.variables, current) && detection.isPending;
+  const effortError = levels.error ?? effort.error ?? (sameModel(detection.variables, current) ? detection.error : null);
+  const effortDisabled = !online || streaming || !availableLevels || probing || changingLevel.isPending;
+  const showSlider = showEffort && !cachedLevels && namedLevels.length > 1;
+  const showEffortStatus = !showSlider || effort.data?.eligible || effortError;
+  const effortStatus = probing ? "正在查询档位…"
+    : cachedLevels && levels.isFetching && !availableLevels ? "正在同步档位…"
+    : cachedLevels?.length === 0 ? "此接口不支持 Effort 参数"
+    : showEffort ? "Effort"
+    : "未发现 Effort 档位";
 
   return (
     <>
@@ -186,9 +237,9 @@ function ModelPickerImpl() {
                     model={model}
                     active={state?.model?.provider === model.provider && state.model.id === model.id}
                     onSelect={() => {
-                      // 选完就把菜单收起来：切模型要重起 Pi 进程，菜单干挂着会像“没反应”。
+                      // Close the picker while the session confirms the model switch.
                       dismiss();
-                      void choose({ type: "set_model", provider: model.provider, modelId: model.id });
+                      void chooseModel(model);
                     }}
                   />
                 ))}
@@ -209,15 +260,43 @@ function ModelPickerImpl() {
               </p>
             ) : null}
           </div>
-          {availableLevels.length > 1 ? (
+          {current && (showEffort || effort.data?.eligible || effortError) ? (
             <div className="composer-effort-footer">
-              <EffortSlider
-                key={`${state?.model?.provider}/${state?.model?.id}/${availableLevels.join(",")}`}
-                levels={availableLevels}
-                value={state?.thinkingLevel}
-                disabled={streaming}
-                onChange={(level) => void choose({ type: "set_thinking_level", level })}
-              />
+              {showSlider ? (
+                <EffortSlider
+                  key={`${current.provider}/${current.id}/${namedLevels.join(",")}/${changingLevel.isError}`}
+                  levels={namedLevels}
+                  value={state?.thinkingLevel}
+                  disabled={effortDisabled}
+                  onChange={changingLevel.mutate}
+                />
+              ) : null}
+              {showEffortStatus ? (
+                <div className="flex items-center justify-between gap-2 text-2xs text-ink-3">
+                  <span aria-live="polite">{effortStatus}</span>
+                  {levels.isError || effort.isError ? (
+                    <button type="button" className="composer-model-retry" disabled={streaming} onClick={() => void (levels.isError ? levels.refetch() : effort.refetch())}>重试</button>
+                  ) : effort.data?.eligible ? (
+                    <button type="button" className="composer-model-retry" disabled={streaming || probing} onClick={() => detection.mutate(current)}>
+                      {cachedLevels ? "重新查询" : "查询档位"}
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              {showEffort ? (
+                <div className="composer-effort-options" role="group" aria-label="Effort 档位">
+                  {namedLevels.map((level) => (
+                    <button
+                      key={level}
+                      type="button"
+                      aria-pressed={state?.thinkingLevel === level}
+                      disabled={effortDisabled}
+                      onClick={() => { if (state?.thinkingLevel !== level) changingLevel.mutate(level); }}
+                    >{effortLabel(level)}</button>
+                  ))}
+                </div>
+              ) : null}
+              {effortError ? <p role="alert" className="composer-model-error mt-1 text-2xs">{effortError instanceof Error ? effortError.message : String(effortError)}</p> : null}
             </div>
           ) : null}
         </Popover>

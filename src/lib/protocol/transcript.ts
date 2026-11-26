@@ -60,15 +60,18 @@ function toolCodeDetails(toolName:string,value:unknown):Tool['details']|undefine
 export function formatTranscriptError(raw: string): string {
   const text = raw.trim()
   if (!text) return '会话异常'
+  const effortError = (message: string, param?: unknown) =>
+    param === 'reasoning.effort' || param === 'reasoning_effort' || /\breasoning[._]effort\b/i.test(message)
+      ? `Effort 请求失败：${message}` : message
   const start = text.indexOf('{')
   if (start >= 0) {
     try {
-      const parsed = JSON.parse(text.slice(start)) as { message?: unknown; error?: { message?: unknown; type?: unknown } | string }
-      if (typeof parsed.error === 'string' && parsed.error.trim()) return parsed.error.trim()
+      const parsed = JSON.parse(text.slice(start)) as { message?: unknown; error?: { message?: unknown; type?: unknown; param?: unknown } | string }
+      if (typeof parsed.error === 'string' && parsed.error.trim()) return effortError(parsed.error.trim())
       if (parsed.error && typeof parsed.error === 'object') {
-        if (typeof parsed.error.message === 'string' && parsed.error.message.trim()) return parsed.error.message.trim()
+        if (typeof parsed.error.message === 'string' && parsed.error.message.trim()) return effortError(parsed.error.message.trim(), parsed.error.param)
       }
-      if (typeof parsed.message === 'string' && parsed.message.trim()) return parsed.message.trim()
+      if (typeof parsed.message === 'string' && parsed.message.trim()) return effortError(parsed.message.trim())
       const kind = parsed.error && typeof parsed.error === 'object' && typeof parsed.error.type === 'string' ? parsed.error.type : ''
       const prefix = text.slice(0, start).trim()
       const fallback = [prefix, kind].filter(Boolean).join(' · ')
@@ -77,7 +80,7 @@ export function formatTranscriptError(raw: string): string {
       /* keep the original provider string */
     }
   }
-  return text
+  return effortError(text)
 }
 // 手动停止一轮时，Pi 给 assistant 消息标上 stopReason "aborted" 并附
 // "This operation was aborted"。用户主动暂停不是故障：剥掉这段错误文本，

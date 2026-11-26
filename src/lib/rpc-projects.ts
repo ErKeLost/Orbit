@@ -2,6 +2,7 @@ import { invoke } from "./native";
 import { useWorkspace } from "./store";
 import { runRemoteHostOperation } from "./remote-runtime";
 import { activeTarget, request } from "./rpc-core";
+import type { Model, RpcSessionState } from "./protocol";
 import { desktopRuntime, mobileRuntime, native, workspaceBackend } from "./runtime";
 
 /** Rust commands that are not connection state: providers, models, MCP,
@@ -20,6 +21,14 @@ export type ProviderModel={
   raw?:Record<string,unknown>
 }
 export type ModelEffort={levels:string[];default?:string}
+export type ModelEffortDiscovery = { eligible: boolean; levels?: NonNullable<RpcSessionState['thinkingLevel']>[] };
+type EffortModel = Pick<Model, 'provider' | 'id' | 'baseUrl'>;
+export function getModelEffort({ provider, id, baseUrl }: EffortModel): Promise<ModelEffortDiscovery> {
+  return invoke('get_model_effort', { provider, modelId: id, baseUrl });
+}
+export function probeModelEffort({ provider, id, baseUrl }: EffortModel): Promise<ModelEffortDiscovery> {
+  return invoke('probe_model_effort', { provider, modelId: id, baseUrl });
+}
 export type PiEnvironmentVariable={name:string;value:string;sensitive:boolean;valueRedacted?:boolean}
 export type PiRuntimeSettings={binaryPath:string;launchArgs:string;environment:PiEnvironmentVariable[]}
 export type PiRuntimeSettingsView={driver:'pi';environment:'local';config:PiRuntimeSettings}

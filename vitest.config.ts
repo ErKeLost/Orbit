@@ -16,6 +16,7 @@ export default defineConfig({
       "src/lib/**/*.test.ts",
       "src/features/shell/**/*.test.tsx",
       "src/features/artifacts/**/*.test.tsx",
+      "src/features/chat/**/*.test.tsx",
       "src/features/voice/**/*.test.ts",
       "src/features/providers/**/*.test.tsx",
       "src/components/**/*.test.tsx",

@@ -107,7 +107,7 @@ export function EffortSlider({ levels, value, disabled, onChange }: EffortSlider
       root.style.setProperty("--ds-effort-progress", String(progress));
       root.style.setProperty("--ds-effort-level-color", colors.base);
       root.dataset.level = String(nextIndex);
-      root.toggleAttribute("data-off", nextIndex === 0);
+      root.toggleAttribute("data-off", nextLevel === "off");
     }
     // 最高档就是 Galaxy：像素轨道 + 光柱 + 蓝紫大脑。
     const galaxy = effortIsGalaxy(nextLevel, levels);
@@ -170,7 +170,7 @@ export function EffortSlider({ levels, value, disabled, onChange }: EffortSlider
       ref={rootRef}
       className="effort-slider"
       data-disabled={disabled || undefined}
-      data-off={selectedIndex === 0 ? "" : undefined}
+      data-off={levels[selectedIndex] === "off" ? "" : undefined}
       data-level={selectedIndex}
       aria-label={`Effort ${effortLabel(activeLevel)}`}
       onPointerMove={moveLight}

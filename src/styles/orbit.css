@@ -591,9 +591,8 @@ html[data-page-visible="false"] * {
 }
 
 /*
- * 运行时自动降级（`lib/perf-monitor.ts`）。和低配档同一组规则，但由真实帧率
- * 触发：可见状态下连续 5 秒帧率低于刷新率的 55%，就把「为了好看一直在重绘」
- * 的东西停掉。只降一次，不会来回抖；重启应用即恢复。
+ * 运行时自动降级（`lib/perf-monitor.ts`）触发后，在本次运行期间停掉装饰动画。
+ * 加载转圈（`.animate-spin`）提供进度反馈，前台降级时仍然需要转动。
  */
 html[data-perf-degraded="1"] .shimmer-text {
   animation: none;
@@ -604,8 +603,7 @@ html[data-perf-degraded="1"] .shimmer-text {
 html[data-perf-degraded="1"] .zen-thinking-pulse,
 html[data-perf-degraded="1"] .zen-tool-spin,
 html[data-perf-degraded="1"] .agent-chat-typing-dot,
-html[data-perf-degraded="1"] .agent-feed-shimmer,
-html[data-perf-degraded="1"] .animate-spin {
+html[data-perf-degraded="1"] .agent-feed-shimmer {
   animation: none;
 }
 

@@ -14,6 +14,11 @@ describe('Pi error projection', () => {
     expect(formatTranscriptError('403 {"type":"error","error":{"type":"permission_error","message":"Request not allowed"}}')).toBe('Request not allowed')
   })
 
+  test('labels provider-side Effort rejections even when only the param identifies Effort', () => {
+    const raw = '400 {"error":{"message":"This model only accepts high and max.","param":"reasoning.effort"}}'
+    expect(formatTranscriptError(raw)).toBe('Effort 请求失败：This model only accepts high and max.')
+  })
+
   test('falls back to a short label when JSON has no message', () => {
     expect(formatTranscriptError('403 {"type":"error","error":{"type":"permission_error"}}')).toBe('403 · permission_error')
   })

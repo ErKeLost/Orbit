@@ -32,6 +32,7 @@ mod computer_use;
 mod gui_settings;
 mod mcp;
 mod pi_session;
+mod model_effort;
 mod providers;
 mod provider_auth;
 mod pi_runtime_settings;
@@ -363,6 +364,8 @@ pub fn run() {
             #[cfg(desktop)]
             pi_runtime_settings::runtime_health,
             providers::list_provider_models,
+            model_effort::get_model_effort,
+            model_effort::probe_model_effort,
             providers::list_provider_profiles,
             provider_auth::list_provider_auth,
             provider_auth::logout_provider,

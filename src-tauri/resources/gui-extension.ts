@@ -833,9 +833,25 @@ const MODELS_CONFIG_PATH=join(AGENT_DIR,'models.json')
 const AUTH_CONFIG_PATH=join(AGENT_DIR,'auth.json')
 const WEB_SEARCH_CONFIG_PATH=join(AGENT_DIR,'web-search.json')
 const REQUEST_BUDGET_CONFIG_PATH=join(AGENT_DIR,'request-budget.json')
+const EFFORT_CACHE_PATH = join(AGENT_DIR, 'pi-gui-efforts.json');
+const EFFORT_WIRE_LEVELS = { off: 'none', minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' } as const;
 
 function readJsonFile(path:string):unknown{
   try{return JSON.parse(readFileSync(path,'utf8'))}catch{return null}
+}
+
+async function applyCachedEffort(pi: ExtensionAPI, model: ExtensionContext['model']) {
+  if (!model || model.api !== 'openai-responses') return;
+  const cache = readJsonFile(EFFORT_CACHE_PATH) as Record<string, Record<string, { api?: string; baseUrl?: string; levels?: string[] }>> | null;
+  const entry = cache?.[model.provider]?.[model.id];
+  if (entry?.api !== model.api || entry.baseUrl !== model.baseUrl.replace(/\/+$/, '') || !Array.isArray(entry.levels)) return;
+  const map = Object.fromEntries(Object.entries(EFFORT_WIRE_LEVELS).map(([level, wire]) => [level, entry.levels!.includes(level) ? wire : null]));
+  // Avoid writing another model change when the active model already has this map.
+  const reasoning = entry.levels.some(level => Object.hasOwn(EFFORT_WIRE_LEVELS, level));
+  if (model.reasoning === reasoning && Object.entries(map).every(([level, wire]) => model.thinkingLevelMap?.[level as keyof typeof EFFORT_WIRE_LEVELS] === wire)) return;
+  const previous = pi.getThinkingLevel();
+  if (!await pi.setModel({ ...model, reasoning, thinkingLevelMap: map })) throw new Error('Effort 档位已缓存，Pi 无法应用到当前模型');
+  if (entry.levels.includes(previous)) pi.setThinkingLevel(previous);
 }
 
 function readWebSearchSettings(){return resolveWebSearchSettings(readJsonFile(WEB_SEARCH_CONFIG_PATH))}
@@ -1415,7 +1431,24 @@ export default async function (pi: ExtensionAPI) {
     }
     throw new Error(`未知的媒体操作 ${action}`)
   }})
-  pi.on('session_start',(_event,ctx)=>{enableFastSearchTools(pi);enableWebSearchTool(pi);publishTools(ctx);publishCapabilities(ctx)})
+  pi.registerCommand('gui-effort-apply', { description: 'GUI: load cached Effort levels', handler: async (args, ctx) => {
+    const selection = JSON.parse(args) as { provider: string; id: string; api: string; baseUrl: string; sessionId: string };
+    const model = ctx.model;
+    if (!model || selection.provider !== model.provider || selection.id !== model.id || selection.api !== model.api
+      || selection.baseUrl !== model.baseUrl || selection.sessionId !== ctx.sessionManager.getSessionId()) {
+      throw new Error('当前会话或模型已切换，请重试同步 Effort 档位');
+    }
+    if (!ctx.isIdle() || ctx.hasPendingMessages()) throw new Error('请在会话空闲时同步 Effort 档位');
+    await applyCachedEffort(pi, model);
+  }});
+  pi.on('model_select', async (event) => { await applyCachedEffort(pi, event.model); });
+  pi.on('session_start', async (_event, ctx) => {
+    enableFastSearchTools(pi);
+    enableWebSearchTool(pi);
+    publishTools(ctx);
+    publishCapabilities(ctx);
+    await applyCachedEffort(pi, ctx.model);
+  });
   pi.on('mcp_servers_change',async(_event,ctx)=>{publishMcp(ctx);publishCapabilities(ctx)})
   pi.on('session_info_changed',async(event,ctx)=>ctx.ui.setStatus(SESSION_NAME_STATUS,JSON.stringify({name:event.name??null})))
   pi.on('cache_warming_decision',async(event,ctx)=>ctx.ui.setStatus(CACHE_STATUS,JSON.stringify({action:event.action,warmCost:event.warmCost,missCost:event.missCost,continuationProbability:event.continuationProbability})))
