@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { gitCheckout, gitCreateBranch, useGitBranches, type GitBranchEntry } from "../../lib/git";
 import { queryClient } from "../../lib/rpc";
+import { isSessionBusy, useWorkspace, useWorkspaceStore } from "../../lib/store";
 import { Popover } from "../../shared/ui/Popover";
 import { useLockOverscroll } from "../../shared/hooks/useLockOverscroll";
 import { Check, GitBranch, Loader, Plus, Search } from "../../shared/ui/icons";
@@ -12,9 +13,11 @@ import { Check, GitBranch, Loader, Plus, Search } from "../../shared/ui/icons";
  * 输入一个不存在的名字就新建分支。切完刷新 branches / diff-stats /
  * changed-files 三条查询，文件栏与变更数随之更新。
  *
- * `disabled` 在回复运行中生效：中途 checkout 会把 agent 的工作区底下的地板换掉。
+ * 运行中仍可查看和搜索分支，只有空闲时才能 checkout 或新建分支。
  */
-export function BranchPicker({ cwd, current, disabled = false }: { cwd: string; current: string | null; disabled?: boolean }) {
+export function BranchPicker({ cwd, current }: { cwd: string; current: string | null }) {
+  const workspace = useWorkspaceStore();
+  const locked = useWorkspace(isSessionBusy);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
@@ -29,7 +32,7 @@ export function BranchPicker({ cwd, current, disabled = false }: { cwd: string; 
     return (branches?.branches ?? []).filter((branch) => !needle || branch.name.toLowerCase().includes(needle));
   }, [branches, query]);
   const createName = query.trim();
-  const canCreate = Boolean(createName) && !rows.some((row) => row.name === createName);
+  const canCreate = !locked && Boolean(createName) && !rows.some((row) => row.name === createName);
 
   useEffect(() => {
     if (open) activeRef.current?.scrollIntoView({ block: "nearest" });
@@ -42,6 +45,7 @@ export function BranchPicker({ cwd, current, disabled = false }: { cwd: string; 
   ]);
 
   const run = async (action: () => Promise<unknown>) => {
+    if (busy || isSessionBusy(workspace.getState())) return;
     setBusy(true);
     setError(null);
     try {
@@ -73,10 +77,9 @@ export function BranchPicker({ cwd, current, disabled = false }: { cwd: string; 
         aria-label={`分支 ${current}`}
         aria-expanded={open}
         aria-haspopup="dialog"
-        disabled={disabled}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => setOpen((value) => !value)}
-        className="flex h-6 min-w-0 max-w-56 items-center gap-1.5 rounded-md px-1.5 text-xs text-ink-2 hover:bg-fill-strong hover:text-ink-1 active:scale-[0.97] disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-ink-2 aria-expanded:bg-fill-strong aria-expanded:text-ink-1"
+        className="flex h-6 min-w-0 max-w-56 items-center gap-1.5 rounded-md px-1.5 text-xs text-ink-2 hover:bg-fill-strong hover:text-ink-1 active:scale-[0.97] aria-expanded:bg-fill-strong aria-expanded:text-ink-1"
       >
         <GitBranch className="size-3.5 shrink-0" />
         <span className="relative min-w-0 flex-1 truncate">{current}</span>
@@ -89,7 +92,7 @@ export function BranchPicker({ cwd, current, disabled = false }: { cwd: string; 
               autoFocus
               value={query}
               disabled={busy}
-              placeholder="Search or create a branch"
+              placeholder={locked ? "Search branches" : "Search or create a branch"}
               onChange={(event) => {
                 setQuery(event.target.value);
                 setActive(0);
@@ -97,7 +100,7 @@ export function BranchPicker({ cwd, current, disabled = false }: { cwd: string; 
               onKeyDown={(event) => {
                 if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                   event.preventDefault();
-                  setActive((index) => Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1))));
+                  if (!locked) setActive((index) => Math.max(0, Math.min(rows.length - 1, index + (event.key === "ArrowDown" ? 1 : -1))));
                 } else if (event.key === "Enter") {
                   event.preventDefault();
                   const row = rows[active];
@@ -109,6 +112,7 @@ export function BranchPicker({ cwd, current, disabled = false }: { cwd: string; 
             />
             {busy ? <Loader className="size-3.5 shrink-0 animate-spin" /> : null}
           </label>
+          {locked ? <p role="status" className="shrink-0 border-b border-stroke px-3 py-2 text-2xs text-ink-3">会话运行中，暂不可切换或新建分支</p> : null}
           <div ref={lockOverscroll} className="min-h-0 flex-1 overflow-y-auto overscroll-none px-1.5 py-1.5">
             {!branches ? <div className="px-2 py-3 text-xs text-ink-3">正在读取分支…</div> : null}
             {rows.map((row, index) => {
@@ -120,12 +124,12 @@ export function BranchPicker({ cwd, current, disabled = false }: { cwd: string; 
                   type="button"
                   role="option"
                   aria-selected={row.current}
-                  disabled={busy}
+                  disabled={busy || (locked && !row.current)}
                   onMouseDown={(event) => event.preventDefault()}
-                  onMouseEnter={() => setActive(index)}
+                  onMouseEnter={() => { if (!locked) setActive(index); }}
                   onClick={() => pick(row)}
-                  className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-ui disabled:opacity-60 ${
-                    highlighted || row.current ? "bg-selection text-ink-1" : "text-ink-1 hover:bg-fill"
+                  className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-ui disabled:cursor-not-allowed disabled:opacity-60 ${
+                    (!locked && highlighted) || row.current ? "bg-selection text-ink-1" : "text-ink-1 enabled:hover:bg-fill"
                   }`}
                 >
                   {row.current ? <Check className="size-3.5 shrink-0" strokeWidth={1.75} /> : <GitBranch className="size-3.5 shrink-0 text-ink-3" strokeWidth={1.75} />}

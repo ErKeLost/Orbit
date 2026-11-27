@@ -6,6 +6,12 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.70
+
+会话运行时仍可打开并搜索分支和模型菜单。切换或新建分支、切换模型和调整思考强度会在运行结束后恢复。
+
+打开文件或切换编辑器标签页时，右侧文件树会自动展开上级目录、滚动到当前文件并高亮选中行。
+
 ## v1.0.69
 
 拖动右侧产物预览的左边缘可以调整宽度。预览会记住上次的宽度，双击分隔线恢复默认。

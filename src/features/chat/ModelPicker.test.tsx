@@ -18,12 +18,13 @@ const model = {
   contextWindow: 128000, maxTokens: 8192, reasoning: false, input: ["text"],
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 } satisfies NonNullable<RpcSessionState["model"]>;
+const otherModel = { ...model, id: "other-model", name: "Other Model" };
 let host: HTMLDivElement;
 let root: Root;
 let client: QueryClient;
 let session: RpcSessionState;
 let levels: NonNullable<RpcSessionState["thinkingLevel"]>[];
-type Command = { type: string; level?: RpcSessionState["thinkingLevel"]; message?: string };
+type Command = { type: string; level?: RpcSessionState["thinkingLevel"]; message?: string; modelId?: string };
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -44,7 +45,11 @@ beforeEach(() => {
   });
   rpc.request.mockImplementation(async (command: Command) => {
     switch (command.type) {
-      case "get_available_models": return { models: [model] };
+      case "get_available_models": return { models: [model, otherModel] };
+      case "set_model":
+        expect(command.modelId).toBe(otherModel.id);
+        session = { ...session, model: otherModel };
+        return;
       case "get_available_thinking_levels": return { levels };
       case "get_commands": return { commands: [{ name: "gui-effort-apply", source: "extension" }] };
       case "get_state": return session;
@@ -65,7 +70,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   client.clear();
   host.remove();
-  useWorkspace.setState({ state: null, connection: "offline", connectionId: "", runtimeTarget: "unknown" });
+  useWorkspace.setState({ state: null, connection: "offline", connectionId: "", runtimeTarget: "unknown", transcript: useWorkspace.getInitialState().transcript });
   vi.unstubAllGlobals();
 });
 
@@ -101,6 +106,44 @@ async function waitForSlider(value: string) {
     expect(slider()?.getAttribute("aria-valuetext")).toBe(value);
   });
 }
+
+test.each(["submitted", "running", "compacting"] as const)("keeps the model menu searchable but read-only while %s", async (phase) => {
+  const idle = useWorkspace.getState().transcript;
+  useWorkspace.setState({ transcript: { ...idle, [phase]: true } });
+  rpc.getModelEffort.mockResolvedValue({ eligible: false });
+  await openPicker();
+  await waitForPicker(() => expect(document.querySelectorAll(".composer-model-row")).toHaveLength(2));
+  expect(rpc.getModelEffort).not.toHaveBeenCalled();
+  expect(document.querySelector('[role="status"]')?.textContent).toContain("暂不可切换模型");
+
+  const search = document.querySelector<HTMLInputElement>('input[placeholder="搜索模型"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search, "other");
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const rows = document.querySelectorAll<HTMLButtonElement>(".composer-model-row");
+  expect(rows).toHaveLength(1);
+  const row = rows[0];
+  expect(row.disabled).toBe(true);
+  await act(async () => row.click());
+  expect(rpc.request).not.toHaveBeenCalledWith(expect.objectContaining({ type: "set_model" }), 30000, "connection-1");
+
+  await act(async () => useWorkspace.setState({ transcript: idle }));
+  expect(row.disabled).toBe(false);
+  await act(async () => row.click());
+  expect(rpc.request).toHaveBeenCalledWith({ type: "set_model", provider: otherModel.provider, modelId: otherModel.id }, 30000, "connection-1");
+});
+
+test("locks the effort slider when a turn starts with the menu open", async () => {
+  levels = ["off", "low", "high"];
+  rpc.getModelEffort.mockResolvedValue({ eligible: false });
+  await openPicker();
+  await waitForSlider("Off");
+  await act(async () => useWorkspace.setState(({ transcript }) => ({ transcript: { ...transcript, running: true } })));
+  expect(slider()?.disabled).toBe(true);
+  await act(async () => slider()!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
+  expect(rpc.request).not.toHaveBeenCalledWith(expect.objectContaining({ type: "set_thinking_level" }), 30000, "connection-1");
+});
 
 test("reads cached levels on open and applies the slider's selected level to the session", async () => {
   rpc.getModelEffort.mockResolvedValue({ eligible: true, levels: ["low", "high", "max"] });

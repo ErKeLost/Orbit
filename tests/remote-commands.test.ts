@@ -68,6 +68,8 @@ const EXCLUDED: Record<string, string> = {
   cancel_provider_login: "local Provider settings and account management; remote setup is not exposed",
   magpie_status: "local Provider settings and account management; remote setup is not exposed",
   connect_magpie: "local Provider settings and account management; remote setup is not exposed",
+  get_model_effort: "reads the desktop's Provider configuration and Effort cache",
+  probe_model_effort: "queries the desktop's configured Provider with local credentials and updates its Effort cache",
   get_pi_runtime_settings: "local Pi process configuration; remote environment management is not exposed",
   save_pi_runtime_settings: "local executable, arguments and private process environment",
   probe_pi_runtime: "tests an executable on this desktop without creating a session",

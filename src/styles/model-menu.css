@@ -60,7 +60,10 @@
 /* 行与行之间留一点上下间距，不再挤成一片。 */
 .composer-model-row + .composer-model-row { margin-top: 4px; }
 
-.composer-model-row:hover,.composer-model-row.active { background: var(--color-selection); }
+.composer-model-row:enabled:hover,.composer-model-row.active { background: var(--color-selection); }
+
+.composer-model-row:disabled { cursor: not-allowed; }
+.composer-model-row:disabled:not(.active) { opacity: 0.6; }
 
 .composer-model-row-copy { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 1px; }
 
@@ -92,9 +95,9 @@ html[data-theme="light"] .composer-effort-footer {
   border-color: color-mix(in oklch, var(--color-content) 11%, var(--color-stroke));
 }
 
-.light .composer-model-row:hover,
+.light .composer-model-row:enabled:hover,
 .light .composer-model-row.active,
-html[data-theme="light"] .composer-model-row:hover,
+html[data-theme="light"] .composer-model-row:enabled:hover,
 html[data-theme="light"] .composer-model-row.active {
   background: color-mix(in oklch, var(--color-content) 6%, var(--color-background-base));
 }

@@ -1,6 +1,6 @@
 import { memo, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useWorkspace } from "../../lib/store";
+import { isSessionBusy, useWorkspace, useWorkspaceStore } from "../../lib/store";
 import { modelLabel } from "../../lib/model-meta";
 import { expectModel, getModelEffort, persistDefaultModel, probeModelEffort, refresh, report, request, settleModel } from "../../lib/rpc";
 import type { Model, RpcSessionState } from "../../lib/protocol";
@@ -26,9 +26,9 @@ export function composerModelLabel(id: string, fallback?: string) {
   return modelLabel(id, fallback).replace(/^gpt-/i, "GPT-").replace(/[_]+/g, " ");
 }
 
-function ModelRow({ model, active, onSelect }: { model: Model; active: boolean; onSelect: () => void }) {
+function ModelRow({ model, active, disabled, onSelect }: { model: Model; active: boolean; disabled: boolean; onSelect: () => void }) {
   return (
-    <button type="button" className={`composer-model-row ${active ? "active" : ""}`} aria-pressed={active} onClick={onSelect}>
+    <button type="button" className={`composer-model-row ${active ? "active" : ""}`} aria-pressed={active} disabled={disabled} onClick={onSelect}>
       <ModelLogo modelId={model.id} size={15} />
       <span className="composer-model-row-copy">
         <strong>{composerModelLabel(model.id, model.name)}</strong>
@@ -50,8 +50,10 @@ function ModelPickerImpl() {
   // 只用 cwd 会被 `route(cwd)` 解析成 projectActive[cwd]（可能是后台那条），
   // 结果前台面板的模型没变——就是那个「点了没反应」。
   const target = useSessionTarget();
+  const workspace = useWorkspaceStore();
   const online = useWorkspace((state) => state.connection === "online");
-  const streaming = useWorkspace(({ transcript }) => transcript.running || transcript.submitted || transcript.compacting);
+  const sessionBusy = useWorkspace(isSessionBusy);
+  const locked = !online || sessionBusy;
   const state = useWorkspace((workspace) => workspace.state);
   const desktop = useWorkspace((workspace) => workspace.runtimeTarget === "desktop");
   const current = state?.model;
@@ -71,7 +73,7 @@ function ModelPickerImpl() {
       const cached = await getModelEffort(current);
       return cached.eligible && cached.levels === undefined ? probeModelEffort(current) : cached;
     },
-    enabled: open && online && desktop && current?.api === "openai-responses",
+    enabled: open && !locked && desktop && current?.api === "openai-responses",
     // Read the persisted cache on each open; only a missing entry needs a provider probe.
     staleTime: 0,
     refetchOnWindowFocus: false,
@@ -82,7 +84,7 @@ function ModelPickerImpl() {
   const sessionId = state?.sessionId;
   const levels = useQuery({
     queryKey: ["pi", "levels", project, target, sessionId, ...modelIdentity(current), expectedLevels],
-    enabled: online && !!current && !streaming,
+    enabled: !locked && !!current,
     queryFn: async () => {
       const available = await request<EffortLevels>({ type: "get_available_thinking_levels" }, 30000, target);
       if (!expectedLevels || available.levels.join() === expectedLevels.join()) return available;
@@ -92,7 +94,7 @@ function ModelPickerImpl() {
         throw new Error("当前 Pi 会话无法同步 Effort 档位");
       }
       const live = await request<RpcSessionState>({ type: "get_state" }, 30000, target);
-      if (!sameModel(live.model, current) || live.sessionId !== sessionId || live.isStreaming || live.isCompacting || live.pendingMessageCount) {
+      if (!sameModel(live.model, current) || live.sessionId !== sessionId || live.isStreaming || live.isCompacting || live.pendingMessageCount || isSessionBusy(workspace.getState())) {
         throw new Error("当前会话忙碌或模型已切换，暂时无法同步 Effort 档位");
       }
       const { provider, id, api, baseUrl } = current!;
@@ -140,7 +142,10 @@ function ModelPickerImpl() {
   };
 
   async function chooseModel(model: Model) {
-    const previous = useWorkspace.getState().state;
+    const live = workspace.getState();
+    if (live.connection !== "online" || isSessionBusy(live)) return;
+    dismiss();
+    const previous = live.state;
     expectModel(target, { provider: model.provider, id: model.id });
     try {
       await request({ type: "set_model", provider: model.provider, modelId: model.id }, 30000, target);
@@ -167,9 +172,9 @@ function ModelPickerImpl() {
   const showSlider = namedLevels.length > 1;
   const fixedLevel = namedLevels.length === 1 && (cachedLevels !== undefined || namedLevels[0] !== "off") ? namedLevels[0] : undefined;
   const showEffort = showSlider || fixedLevel !== undefined;
-  const probing = effort.isLoading;
+  const probing = !locked && effort.isLoading;
   const effortError = levels.error ?? effort.error;
-  const effortDisabled = !online || streaming || !levels.data || levels.isError || changingLevel.isPending;
+  const effortDisabled = locked || !levels.data || levels.isError || changingLevel.isPending;
   const effortStatus = probing ? "正在查询 Effort 档位…"
     : cachedLevels && levels.isLoading ? "正在同步档位…"
     : cachedLevels?.length === 0 ? "此接口不支持 Effort 参数"
@@ -186,7 +191,7 @@ function ModelPickerImpl() {
         aria-label="选择模型和思考强度"
         aria-expanded={open}
         aria-haspopup="dialog"
-        disabled={!online || streaming}
+        disabled={!online}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => {
           if (open) {
@@ -197,7 +202,7 @@ function ModelPickerImpl() {
           // reconnect) stays failed until something asks again; the menu is the
           // one place the user can ask.
           if (models.isError || allModels.length === 0) void models.refetch();
-          if (levels.isError) void levels.refetch();
+          if (!locked && levels.isError) void levels.refetch();
           setOpen(true);
         }}
         className={`flex h-6.5 shrink-0 items-center gap-1 rounded-md px-1.5 disabled:opacity-40 ${
@@ -223,10 +228,13 @@ function ModelPickerImpl() {
           tabIndex={-1}
           className="composer-model-menu"
         >
-          <label className="composer-model-search">
-            <Search strokeWidth={1.75} />
-            <input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索模型" />
-          </label>
+          <div>
+            <label className="composer-model-search">
+              <Search strokeWidth={1.75} />
+              <input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索模型" />
+            </label>
+            {sessionBusy ? <p role="status" className="px-3 pb-2 text-2xs text-ink-3">会话运行中，暂不可切换模型或调整思考强度</p> : null}
+          </div>
           <div className="composer-model-groups">
             {groups.map((group) => (
               <section className="composer-model-group" key={group.family}>
@@ -239,11 +247,8 @@ function ModelPickerImpl() {
                     key={`${model.provider}/${model.id}`}
                     model={model}
                     active={state?.model?.provider === model.provider && state.model.id === model.id}
-                    onSelect={() => {
-                      // Close the picker while the session confirms the model switch.
-                      dismiss();
-                      void chooseModel(model);
-                    }}
+                    disabled={locked}
+                    onSelect={() => void chooseModel(model)}
                   />
                 ))}
               </section>
@@ -272,7 +277,10 @@ function ModelPickerImpl() {
                   levels={namedLevels}
                   value={state?.thinkingLevel}
                   disabled={effortDisabled}
-                  onChange={changingLevel.mutate}
+                  onChange={(level) => {
+                    const live = workspace.getState();
+                    if (!effortDisabled && !isSessionBusy(live) && live.connection === "online") changingLevel.mutate(level);
+                  }}
                 />
               ) : null}
               {effortError ? <p role="alert" className="composer-model-error mt-1 text-2xs">{effortError instanceof Error ? effortError.message : String(effortError)}</p> : null}

@@ -115,6 +115,9 @@ type TreeContext = {
   toggle: (path: string) => void;
   selected: string | null;
   select: (path: string) => void;
+  activeFile: string | null;
+  activeTrail: ReadonlySet<string>;
+  revealRow: (row: HTMLButtonElement) => void;
   statuses: Map<string, string>;
   dirtyDirs: Map<string, string>;
   showIgnored: boolean;
@@ -203,7 +206,7 @@ function EditRow({ depth, isDir, initial, onCommit, onCancel }: { depth: number;
 
 function TreeChildren({ parent, depth, ctx }: { parent: string; depth: number; ctx: TreeContext }) {
   const { entries, error } = useDir(parent, true, ctx.revision);
-  const visible = ctx.showIgnored ? entries : entries?.filter((entry) => !entry.ignored);
+  const visible = ctx.showIgnored ? entries : entries?.filter((entry) => !entry.ignored || ctx.activeTrail.has(entry.path));
   const creating = ctx.editing?.mode === "create" && ctx.editing.parent === parent ? ctx.editing : null;
   const pad = { paddingLeft: 28 + depth * 12 };
   if (error) return <p className="truncate pr-2 text-xs text-negative" style={pad}>{error}</p>;
@@ -223,9 +226,17 @@ function TreeChildren({ parent, depth, ctx }: { parent: string; depth: number; c
 const TreeNode = memo(function TreeNode({ entry, depth, ctx }: { entry: DirEntry; depth: number; ctx: TreeContext }) {
   const open = entry.isDir && ctx.expanded.has(entry.path);
   const selected = ctx.selected === entry.path;
+  const active = ctx.activeFile === entry.path;
+  const { revealRow } = ctx;
+  const row = useRef<HTMLButtonElement>(null);
   const status = entry.isDir ? ctx.dirtyDirs.get(entry.path) : ctx.statuses.get(entry.path);
   const gitColor = status ? GIT_STATUS_COLOR[status] : undefined;
   const renaming = ctx.editing?.mode === "rename" && ctx.editing.path === entry.path;
+
+  // A nested row may mount several async directory reads after activation.
+  useEffect(() => {
+    if (active && !renaming && row.current) revealRow(row.current);
+  }, [active, renaming, revealRow]);
 
   if (renaming) {
     return (
@@ -238,10 +249,13 @@ const TreeNode = memo(function TreeNode({ entry, depth, ctx }: { entry: DirEntry
   return (
     <div>
       <button
+        ref={row}
         type="button"
         role="treeitem"
         title={entry.path}
         aria-expanded={entry.isDir ? open : undefined}
+        aria-selected={selected}
+        aria-current={active || undefined}
         onClick={() => {
           ctx.select(entry.path);
           if (entry.isDir) ctx.toggle(entry.path);
@@ -258,7 +272,8 @@ const TreeNode = memo(function TreeNode({ entry, depth, ctx }: { entry: DirEntry
         }}
         style={{ paddingLeft: 8 + depth * 12 }}
         className={`flex h-7.5 w-full cursor-default items-center gap-1 pr-2 text-left text-base leading-none ${
-          selected ? "bg-selection text-ink-1" : "text-ink-1 hover:bg-fill"
+          active ? "bg-accent/15 font-medium text-ink-1 shadow-[inset_2px_0_0_var(--color-accent)]"
+            : selected ? "bg-selection text-ink-1" : "text-ink-1 hover:bg-fill"
         }`}
       >
         <span className="grid size-4 shrink-0 place-items-center text-ink-3">
@@ -291,7 +306,12 @@ function statusMaps(root: string, files: GitChangedFile[] | undefined) {
   return { statuses, dirtyDirs };
 }
 
-export function FileTree({ cwd, rootLabel }: { cwd: string; rootLabel?: string }) {
+export function FileTree({ cwd, rootLabel, activeFile, visible = true }: {
+  cwd: string;
+  rootLabel?: string;
+  activeFile?: string | null;
+  visible?: boolean;
+}) {
   const [expanded, setExpanded] = useState(() => loadExpanded(cwd));
   const [selected, setSelected] = useState<string | null>(null);
   const showExcluded = useAppearance((state) => state.showExcludedFiles);
@@ -303,6 +323,30 @@ export function FileTree({ cwd, rootLabel }: { cwd: string; rootLabel?: string }
   const [pendingDelete, setPendingDelete] = useState<DirEntry | null>(null);
   const [deleting, setDeleting] = useState(false);
   const lockOverscroll = useLockOverscroll<HTMLDivElement>();
+  const scroller = useRef<HTMLDivElement>(null);
+  const attachScroller = useCallback((element: HTMLDivElement | null) => {
+    scroller.current = element;
+    lockOverscroll(element);
+  }, [lockOverscroll]);
+  const revealRow = useCallback((row: HTMLButtonElement) => {
+    const viewport = scroller.current;
+    if (!visible || !viewport) return;
+    const { top, bottom } = row.getBoundingClientRect();
+    const bounds = viewport.getBoundingClientRect();
+    if (top < bounds.top) viewport.scrollTop += top - bounds.top;
+    else if (bottom > bounds.bottom) viewport.scrollTop += bottom - bounds.bottom;
+  }, [visible]);
+  const root = trimSlash(cwd);
+  const path = activeFile ? trimSlash(activeFile.replaceAll("\\", "/")) : "";
+  const activePath = path.startsWith(`${root}/`) ? path : null;
+  const activeTrail = useMemo(() => {
+    const trail = new Set<string>();
+    if (!activePath) return trail;
+    for (let path = activePath; path.length > root.length; path = path.slice(0, path.lastIndexOf("/"))) {
+      trail.add(path);
+    }
+    return trail;
+  }, [activePath, root]);
   const changed = useGitChangedFiles(cwd).data;
   const { statuses, dirtyDirs } = useMemo(() => statusMaps(cwd, changed), [cwd, changed]);
   const name = rootLabel ?? cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? cwd;
@@ -313,6 +357,19 @@ export function FileTree({ cwd, rootLabel }: { cwd: string; rootLabel?: string }
     setSelected(null);
     setEditing(null);
   }, [cwd]);
+
+  useEffect(() => {
+    if (!visible) return;
+    setSelected(activePath);
+    if (!activePath) return;
+    setExpanded((current) => {
+      const next = new Set(current).add(cwd);
+      for (const ancestor of activeTrail) {
+        if (ancestor !== activePath) next.add(ancestor);
+      }
+      return next.size === current.size ? current : next;
+    });
+  }, [activePath, activeTrail, cwd, visible]);
 
   const refreshTree = useCallback(() => {
     dirCache.clear();
@@ -422,6 +479,9 @@ export function FileTree({ cwd, rootLabel }: { cwd: string; rootLabel?: string }
       toggle,
       selected,
       select: setSelected,
+      activeFile: activePath,
+      activeTrail,
+      revealRow,
       statuses,
       dirtyDirs,
       showIgnored,
@@ -431,7 +491,7 @@ export function FileTree({ cwd, rootLabel }: { cwd: string; rootLabel?: string }
       cancelEdit,
       onMenu: (entry, x, y) => setMenu({ target: entry, x, y }),
     }),
-    [expanded, toggle, selected, statuses, dirtyDirs, showIgnored, revision, editing, commitEdit, cancelEdit],
+    [expanded, toggle, selected, activePath, activeTrail, revealRow, statuses, dirtyDirs, showIgnored, revision, editing, commitEdit, cancelEdit],
   );
 
   const createParent = menu ? createTargetFor(menu.target?.path ?? null, cwd) : cwd;
@@ -484,7 +544,7 @@ export function FileTree({ cwd, rootLabel }: { cwd: string; rootLabel?: string }
         </button>
       </div>
       <div
-        ref={lockOverscroll}
+        ref={attachScroller}
         className="min-h-0 flex-1 overflow-y-auto overscroll-none"
         onContextMenu={(event) => {
           // Rows stop propagation, so anything that reaches here is empty space.

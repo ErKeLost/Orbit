@@ -19,6 +19,10 @@ export type Workspace = {
   screenPip:boolean; screenExpanded:boolean;
   set: (patch: Partial<Omit<Workspace,'set'|'event'|'updateAgentSnapshot'>>) => void; event:(event:Event)=>void; updateAgentSnapshot:(input:unknown)=>void;
 }
+export function isSessionBusy({ transcript }: Workspace): boolean {
+  return transcript.running || transcript.submitted || transcript.compacting;
+}
+
 const initialMultiAgentMode=()=>typeof localStorage!=='undefined'&&localStorage.getItem('pi-gui.multiAgentEnabled')==='true'
 const initialComputerUseMode=()=>typeof localStorage!=='undefined'&&localStorage.getItem('pi-gui.computerUseEnabled')==='true'
 // Browser Use 默认开启：它只驱动自己那个 Chrome，不碰用户的桌面；关掉后扩展里的

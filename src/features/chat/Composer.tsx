@@ -356,7 +356,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
   // 回合结束要不要把光标抢回来，取决于这个输入框是不是当前活动 pane 的。
   const activePane = useActiveWorkspace((workspace) => workspace.activePane);
   // 分支名放在输入框上方左侧（和项目选择器同一行）：随时能看到当前 checkout，
-  // 点开就能切分支 / 新建分支。
+  // 点开就能查看分支，空闲时可切换或新建。
   const branches = useGitBranches(project).data;
   const composerKey = connectionId || project;
   const tokens = useComposerTokens(project);
@@ -746,7 +746,7 @@ export const Composer = memo(function Composer({ onSubmitted, centered = false, 
                 会话开始后（centered=false）撤下选择器——中途切范围等于打断会话。 */}
             {centered ? <ProjectPicker disabled={running} /> : null}
             {project && project !== homeDir ? <WorkspaceRoots projectFolder={project} disabled={running} /> : null}
-            <BranchPicker cwd={project} current={branches?.current ?? null} disabled={running} />
+            <BranchPicker cwd={project} current={branches?.current ?? null} />
             <div className="ml-auto flex shrink-0 items-center">
               <ContextMeter usage={context} compacting={compacting} />
             </div>

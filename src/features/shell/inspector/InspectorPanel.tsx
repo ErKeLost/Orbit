@@ -79,7 +79,13 @@ export function InspectorPanel({ visible, online }: { visible: boolean; online: 
   const setReadingArtifact = useShell((state) => state.setInspectorArtifact);
   // 历史里正在看的那个 commit：它可能是在别处（左栏「变更」、搜索、命令面板）
   // 打开的，所以从打开的文件反推，而不是各自记一份选中状态。
-  const activeFile = useActiveWorkspace((workspace) => workspace.panes[workspace.activePane]?.activeFile);
+  const activeFile = useActiveWorkspace((workspace) => {
+    const pane = workspace.panes[workspace.activePane];
+    if (pane) return pane.activeFile;
+    // With a single editor, its current file is still visible while chatting.
+    const editors = Object.values(workspace.panes);
+    return editors.length === 1 ? editors[0].activeFile : null;
+  });
   const openCommit = activeFile?.startsWith("commit:") ? activeFile.slice("commit:".length) : undefined;
 
   const project = cwd && cwd !== homeDir ? cwd : "";
@@ -155,7 +161,7 @@ export function InspectorPanel({ visible, online }: { visible: boolean; online: 
 
       <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${tab === "explorer" ? "" : "hidden"}`}>
         {project ? (
-          <FileTree cwd={project} />
+          <FileTree key={project} cwd={project} activeFile={activeFile} visible={tab === "explorer"} />
         ) : (
           <p className="px-3 py-2 text-xs text-ink-3">没有项目文件夹</p>
         )}

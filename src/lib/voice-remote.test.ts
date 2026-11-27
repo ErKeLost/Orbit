@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, test } from "vitest"
 import type { RemoteEvent } from "./remote-protocol"
 import { deliverVoiceEvent, subscribeVoiceRemote } from "./voice-remote"
 
