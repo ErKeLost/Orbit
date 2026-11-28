@@ -385,6 +385,8 @@ function WorkArea() {
   );
 }
 
+const openSearch = () => useWorkspace.getState().set({ panel: "search" });
+
 export default function App() {
   // 壳层的连接/scope 同步只挂一次：所有组件共享同一个会话控制器。
   useWorkspaceTabsEffects();
@@ -425,7 +427,6 @@ export default function App() {
   // The browser column's own startup (orphaned views, `browser:open`) belongs to
   // the browser feature, not to this root.
   useBrowserViews();
-  const openSearch = () => useWorkspace.getState().set({ panel: "search" });
 
   if (bootstrap.runtimeTarget === "mobile" && bootstrap.pairing.required) {
     return (

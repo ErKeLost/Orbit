@@ -1,6 +1,7 @@
-import { useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { Session } from "../../../lib/protocol";
-import { report, retireSession } from "../../../lib/rpc";
+import { report } from "../../../lib/rpc";
+import { workspaceTabs } from "../use-workspace-tabs";
 import { sessionTitle } from "../../../lib/session-visual";
 import { MenuItem, MenuSeparator, PointMenu } from "../../../shared/ui/controls";
 import { toast } from "../../../shared/ui/toast";
@@ -17,24 +18,22 @@ export function useSessionContextMenu({
   onOpen,
   onRename,
   canDelete,
-  onDeleted,
 }: {
   onOpen: (session: Session) => void;
   /** 提供时菜单里多一项「重命名」；调用方负责进入行内编辑。 */
   onRename?: (session: Session) => void;
   /** 有些条目（还没落盘的活跃会话）删不了。 */
   canDelete?: (session: Session) => boolean;
-  onDeleted?: (session: Session) => void;
 }) {
   const [menu, setMenu] = useState<SessionMenuState | null>(null);
   const [deleting, setDeleting] = useState<Session | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const openMenu = (session: Session, event: ReactMouseEvent) => {
+  const openMenu = useCallback((session: Session, event: ReactMouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
     setMenu({ session, x: event.clientX, y: event.clientY });
-  };
+  }, []);
 
   const copy = (text: string) => void navigator.clipboard.writeText(text).catch(() => undefined);
 
@@ -43,9 +42,8 @@ export function useSessionContextMenu({
     const target = deleting;
     setBusy(true);
     try {
-      await retireSession(target.path);
+      await workspaceTabs.deleteSession(target.path);
       setDeleting(null);
-      onDeleted?.(target);
       toast.success("会话已删除");
     } catch (error) {
       report(error);

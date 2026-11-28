@@ -268,7 +268,7 @@ export const VIRTUAL_MODEL_API_ID='pi-virtual'
 const AGENT_DIR=process.env.PI_CODING_AGENT_DIR||join(homedir(),'.pi/agent')
 export const MEDIA_DIR=join(AGENT_DIR,'orbit-media')
 const MCP_NAMESPACE_PREFIX='mcp__'
-export type MediaModelInfo={provider:string;id:string;name?:string;available:boolean;input:string[]}
+export type MediaModelInfo={provider:string;id:string;name?:string;api:string;available:boolean;input:string[]}
 export type McpServerInfo={name:string;source:'extension'|'mcp.json';transport:'stdio'|'http'|'unknown';exposure?:string;description?:string;enabled?:boolean;tools:string[];extensionPath?:string}
 export type RouteRule={match?:{reason?:string[];model?:string[];thinkingLevel?:string[]};model:{provider:string;id:string;thinkingLevel?:string}}
 export type GuiVirtualModelInput={provider:string;id:string;name:string;thinkingLevels?:string[];contextWindow?:number;maxTokens?:number;sticky?:boolean;rules:RouteRule[]}
@@ -298,7 +298,7 @@ export function collectMcpServers(pi:ExtensionAPI):McpServerInfo[]{
   return [...servers.values()].sort((left,right)=>left.name.localeCompare(right.name))
 }
 function modelTypeInventory(ctx:ExtensionContext,type:'image'|'classifier'):MediaModelInfo[]{
-  return safe(()=>ctx.modelRegistry.getModelsOfType(type).map(model=>({provider:model.provider,id:model.id,name:'name' in model&&typeof model.name==='string'?model.name:undefined,available:ctx.modelRegistry.hasConfiguredAuth(model as never),input:[...model.input]})),[])
+  return safe(()=>ctx.modelRegistry.getModelsOfType(type).map(model=>({provider:model.provider,id:model.id,api:model.api,name:'name' in model&&typeof model.name==='string'?model.name:undefined,available:ctx.modelRegistry.hasConfiguredAuth(model as never),input:[...model.input]})),[])
 }
 function virtualModelInventory(ctx:ExtensionContext){
   return safe(()=>ctx.modelRegistry.getAll().filter(model=>model.api===VIRTUAL_MODEL_API_ID).map(model=>({provider:model.provider,id:model.id,name:model.name,thinkingLevels:model.thinkingLevels??[]})),[])
@@ -314,7 +314,7 @@ function capabilities(pi:ExtensionAPI,ctx:ExtensionContext){
     mcp,
     media:{image,classifier,imageOptions:imageOptionsFromSettings()},
     virtualModels:virtualModelInventory(ctx),
-    settings:settings?{cacheWarming:settings.cacheWarming??null,codemode:settings.codemode??null,defaultTools:settings.defaultTools??null,extensions:settings.extensions??null}:null,
+    settings:settings?{cacheWarming:settings.cacheWarming??null,notices:settings.notices??null,codemode:settings.codemode??null,defaultTools:settings.defaultTools??null,extensions:settings.extensions??null}:null,
   }
 }
 export function routeMatches(rule:RouteRule,reason:string,thinkingLevel:string,previousModelId?:string):boolean{
@@ -351,9 +351,21 @@ export function registerGuiVirtualModel(pi:ExtensionAPI,input:GuiVirtualModelInp
   })
   return {provider:input.provider,id:input.id}
 }
+export function reasoningDrop(message: { diagnostics?: readonly { type: string; details?: unknown }[] }) {
+  for (const diagnostic of message.diagnostics ?? []) {
+    const provider = diagnostic.type === 'openai_input_transformations' ? 'OpenAI' : diagnostic.type === 'anthropic_input_transformations' ? 'Anthropic' : undefined
+    if (!provider) continue
+    const transformations = (diagnostic.details as { transformations?: unknown } | undefined)?.transformations
+    if (!Array.isArray(transformations)) continue
+    const dropped = transformations.filter(item => item?.type === (provider === 'OpenAI' ? 'reasoning' : 'thinking_dropped'))
+    if (dropped.length) return { provider, count: dropped.length, reasons: [...new Set(dropped.flatMap(item => typeof item.reason === 'string' ? [item.reason] : []))] }
+  }
+}
+
 export function writeMediaFile(dataBase64:string,index:number,mimeType:string):string{
   mkdirSync(MEDIA_DIR,{recursive:true})
-  const path=join(MEDIA_DIR,`image-${Date.now()}-${index+1}.${mimeType==='image/png'?'png':'jpg'}`)
+  const extension = ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' } as Record<string, string>)[mimeType] ?? 'img'
+  const path=join(MEDIA_DIR,`image-${Date.now()}-${index+1}.${extension}`)
   writeFileSync(path,Buffer.from(dataBase64,'base64'))
   return path
 }
@@ -994,6 +1006,16 @@ export function imageModelsFromCatalog(items:unknown[],providerId:string){
  * 所以「加视频」= 往配置里加一条 `kinds.video`。这也是为什么注册要放在一个循环里，
  * 而不是每个能力一个 `registerXxx`。
  */
+export function imageGenerationOptions(aspectRatio?: string, size?: string) {
+  if (aspectRatio !== undefined && (typeof aspectRatio !== 'string' || !/^[1-9]\d{0,2}:[1-9]\d{0,2}$/.test(aspectRatio))) {
+    throw new Error('画幅比例需要类似 16:9 的值')
+  }
+  if (size !== undefined && (typeof size !== 'string' || !size.trim() || size.length > 32)) {
+    throw new Error('需要有效的图片分辨率')
+  }
+  return { aspectRatio, size }
+}
+
 export function registerImages(pi:ExtensionAPI):void{
   const settings=readImageSettings()
   const models=liveModels(settings)
@@ -1050,36 +1072,55 @@ export function registerImages(pi:ExtensionAPI):void{
     // 变成「全部关掉」—— 而那等于整个功能消失，且不报错。
     if(spec.enabled===false)continue
     if(!models.length)continue
+    const schema = toolSchemaFor(settings, kind)
+    const parameters = kind === 'image' ? {
+      ...schema,
+      properties: {
+        ...schema.properties,
+        provider: { type: 'string', enum: ['openrouter', 'radius'], description: '可选 Pi 内置图片提供商。省略时使用已配置的图片端点。指定后 model 需使用该提供商的模型 ID。' },
+        model: { type: 'string', description: `${schema.properties.model?.description ?? ''} 指定图片提供商时使用其目录中的 ID。` },
+        resolution: { type: 'string', description: '图片分辨率。按所选模型支持的值传入。' },
+        aspect: { type: 'string', description: '图片画幅比例，例如 16:9。按所选模型支持的值传入。' },
+      },
+    } : schema
     pi.registerTool({
       name:`generate_${kind}`,
       label:`生成${spec.label??kind}`,
       description:`用 ${settings.provider.name} 生成${spec.label??kind}，并把结果直接返回给用户。传 references 时按参考图生成。`,
       promptGuidelines:[`用户要求${spec.label??kind}、插画、海报、图标、配图时，直接用 generate_${kind} 并传入详细的 prompt；不要为此使用 codemode。`,`换 model 前先看该模型支持的参数；传了它不支持的组合会明确报错，不要重试同一个组合。`],
-      parameters:toolSchemaFor(settings,kind),
-      async execute(_toolCallId:string,params:unknown,signal:AbortSignal|undefined,_onUpdate:unknown,ctx:any){
-        const input=params as {prompt:string;model?:string;resolution?:string;aspect?:string;references?:string[];options?:Record<string,unknown>}
+      parameters,
+      async execute(_toolCallId:string,params:unknown,signal:AbortSignal|undefined,_onUpdate:unknown,ctx:ExtensionContext){
+        const input=params as {prompt:string;provider?:string;model?:string;resolution?:string;aspect?:string;references?:string[];options?:Record<string,unknown>}
         if(spec.recipe!=='sync')throw new Error(`能力 ${kind} 用的是 ${spec.recipe} 调用，其实现尚未接入`)
         const effective=readImageSettings()
-        const available=await ctx.modelRegistry.getAvailableOfType('image') as {provider:string;id:string}[]
-        const wanted=input.model??effective.defaults.model
-        const model=wanted?available.find(candidate=>candidate.id===wanted):available[0]
-        if(!model)throw new Error(wanted?`没有可用的模型 ${wanted}`:'没有可用的模型')
-        // 先按「实际要用的模型」校验，再发请求 —— 静默兜底换成明确报错的那一步。
-        const problem=validateCall(effective,kind,model.id,{resolution:input.resolution,aspect:input.aspect,options:input.options})
-        if(problem)throw new Error(problem)
-        const sizes=paramsFor(effective,kind,model.id)
-        const resolution=input.resolution??effective.defaults.resolution
-        const aspect=input.aspect&&input.aspect!==''?input.aspect:undefined
-        const size=aspect?sizes[resolution]?.[aspect]:resolution
-        const parts=[{type:'text' as const,text:input.prompt},...(input.references??[]).map(path=>referenceImage(path,ctx.cwd))]
-        const result=await ctx.modelRegistry.generateImages(model,{input:parts},{signal,metadata:{size}})
+        const available=await ctx.modelRegistry.getAvailableOfType('image')
+        const upstream=kind==='image'&&(input.provider==='openrouter'||input.provider==='radius')
+        const wanted=input.model??(upstream?undefined:effective.defaults.model)
+        const model=available.find(candidate => (upstream ? candidate.provider===input.provider && (candidate.api==='openrouter-images'||candidate.api==='pi-image') : candidate.api==='openai-images') && (!wanted || candidate.id===wanted))
+        if(!model)throw new Error(`没有可用的图片模型${wanted?` ${wanted}`:''}，请检查模型名称和凭据`)
+        const references=input.references??[]
+        if (references.length && !model.input.includes('image')) throw new Error(`${model.id} 不接受参考图`)
+        const parts=[{type:'text' as const,text:input.prompt},...references.map(path=>referenceImage(path,ctx.cwd))]
+        const aspect=input.aspect||undefined
+        const resolution=input.resolution??(upstream?undefined:effective.defaults.resolution)
+        let size: string | undefined
+        if (upstream) {
+          if (Object.keys(input.options??{}).length) throw new Error(`${model.provider} 仅接受该工具的分辨率和画幅参数`)
+          size=resolution
+        } else {
+          const problem=validateCall(effective,kind,model.id,{resolution:input.resolution,aspect,options:input.options})
+          if(problem)throw new Error(problem)
+          size=aspect?paramsFor(effective,kind,model.id)[resolution!]?.[aspect]:resolution
+        }
+        const options=upstream?imageGenerationOptions(aspect,size):{metadata:{size}}
+        const result=await ctx.modelRegistry.generateImages(model,{input:parts},{signal,...options})
         if(result.stopReason!=='stop')throw new Error(result.errorMessage??'生成失败')
-        const images=(result.output as {type:string;data:string;mimeType:string}[]).filter(part=>part.type==='image')
+        const images=result.output.filter(part=>part.type==='image' && 'data' in part)
         if(!images.length)throw new Error('模型没有返回图片')
         const paths=images.map((part,index)=>writeMediaFile(part.data,index,part.mimeType))
         return {
-          content:[...images.map(part=>({type:'image' as const,data:part.data,mimeType:part.mimeType})),{type:'text' as const,text:`已生成 ${paths.length} 张图片：${paths.join('、')}`}],
-          details:{kind,model:`${model.provider}/${model.id}`,prompt:input.prompt,resolution,aspect:aspect??null,size,paths,references:input.references??[],options:input.options??null},
+          content:[...images,{type:'text' as const,text:`已生成 ${paths.length} 张图片：${paths.join('、')}`}],
+          details:{kind,model:`${model.provider}/${model.id}`,prompt:input.prompt,resolution,aspect:aspect??null,size,paths,references,usage:result.usage??null,options:input.options??null},
         }
       },
     })
@@ -1156,7 +1197,33 @@ export default async function (pi: ExtensionAPI) {
   // 搜索类工具的提示词引导：`grep` 激活后 pi 自己的「用 bash 搜索」规则会消失，
   // 这里再明确一次，手动关掉内置 grep 时也不至于退回 `grep -r`。
   pi.on('before_agent_start',event=>{const lines=event.systemPromptOptions.promptGuidelines;if(!lines.includes(FAST_SEARCH_GUIDELINE))lines.push(FAST_SEARCH_GUIDELINE)})
-  const {SettingsManager}=await import(pathToFileURL(join(dirname(realpathSync(process.argv[1])),'index.js')).href)
+  const { SettingsManager, detectCacheMiss } = await import(pathToFileURL(join(dirname(realpathSync(process.argv[1])),'index.js')).href) as typeof import('../../scripts/pi-runtime/index.ts')
+  pi.on('message_end', (event, ctx) => {
+    const { message } = event
+    if (ctx.mode !== 'rpc' || message.role !== 'assistant' || ['error', 'aborted'].includes(message.stopReason)) return
+    const notices = pi.getSettings().notices
+    if (notices?.cacheMisses && detectCacheMiss) {
+      const miss = detectCacheMiss(ctx.sessionManager.getEntries(), message, { getModel: (provider, id) => ctx.modelRegistry.find(provider, id) })
+      if (miss && (miss.missedTokens >= 20_000 || miss.missedCost >= 0.1)) {
+        const reason = miss.modelChanged ? '（切换模型后）' : miss.idleMs >= 300_000 ? `（空闲 ${Math.round(miss.idleMs / 60_000)} 分钟后）` : ''
+        ctx.ui.notify(`缓存未命中${reason}：${miss.missedTokens.toLocaleString()} tokens 重新计费${miss.missedCost >= 0.01 ? `，约 $${miss.missedCost.toFixed(2)}` : ''}`, 'warning')
+      }
+    }
+    if (!notices?.reasoningDrops) return
+    const dropped = reasoningDrop(message)
+    if (!dropped) return
+    const previous = ctx.sessionManager.getBranch().findLast(entry => entry.type === 'message' && entry.message.role === 'assistant')
+    const previousDrop = previous?.type === 'message' && previous.message.role === 'assistant' ? reasoningDrop(previous.message) : undefined
+    if (previousDrop?.provider === dropped.provider && previousDrop.count >= dropped.count) return
+    ctx.ui.notify(`${dropped.provider} 丢弃了 ${dropped.count} 项历史推理内容${dropped.reasons.length ? `（${dropped.reasons.join('、')}）` : ''}`, 'warning')
+  })
+  const publishSummaryCost = (entry: { usage?: { totalTokens: number; cost: { total: number } } }, label: string, ctx: ExtensionContext) => {
+    if (ctx.mode !== 'rpc' || !pi.getSettings().notices?.compactionCosts || !entry.usage) return
+    const { totalTokens, cost } = entry.usage
+    ctx.ui.notify(`${label}：${totalTokens.toLocaleString()} tokens，$${cost.total.toFixed(4)}`, 'info')
+  }
+  pi.on('session_compact', (event, ctx) => publishSummaryCost(event.compactionEntry, '上下文压缩', ctx))
+  pi.on('session_tree', (event, ctx) => { if (event.summaryEntry) publishSummaryCost(event.summaryEntry, '分支摘要', ctx) })
   pi.registerCommand('gui-observe',{description:'GUI: observe session configuration',handler:async(_args,ctx)=>{
     const settings=SettingsManager.create(ctx.cwd,undefined,{projectTrusted:ctx.isProjectTrusted()})
     ctx.ui.setStatus('gui-runtime',JSON.stringify({compaction:settings.getCompactionSettings(),retry:settings.getRetrySettings(),providerRetry:settings.getProviderRetrySettings(),transport:settings.getTransport(),thinkingBudgets:settings.getThinkingBudgets(),projectTrusted:ctx.isProjectTrusted(),contextUsage:ctx.getContextUsage(),systemPrompt:ctx.getSystemPrompt(),breakdown:contextBreakdown(pi,latestProviderToolChars),scopedModels:ctx.scopedModels.map(item=>({model:item.model.id,provider:item.model.provider,thinkingLevel:item.thinkingLevel})),idle:ctx.isIdle(),pending:ctx.hasPendingMessages()}))
@@ -1287,7 +1354,7 @@ export default async function (pi: ExtensionAPI) {
       const questions=parseQuestions(params)
       // A client without a form cannot ask. That reason is model-facing, so the turn continues.
       if(!ctx.hasUI)throw new Error('没有界面可以提问')
-      const value=await ctx.ui.select(QUESTION_TITLE,[questionPayload(questions)])
+      const value=await ctx.ui.select(QUESTION_TITLE,[questionPayload(questions)],{blockedKind:'question'})
       // OpenCode dies on a bare dismissal so the model never sees it; abort ends the turn the same way.
       if(!value){
         ctx.abort()
@@ -1399,19 +1466,24 @@ export default async function (pi: ExtensionAPI) {
     ctx.ui.setStatus(VIRTUAL_MODEL_STATUS,JSON.stringify({virtualModels:virtualModelInventory(ctx)}));publishCapabilities(ctx)
   }})
   pi.registerCommand('gui-media',{description:'GUI: list image and classifier models, generate images, run classifiers',handler:async(args:string,ctx:ExtensionCommandContext)=>{
-    const value=JSON.parse(args||'{}') as {action?:string;provider?:string;id?:string;prompt?:string;text?:string;images?:string[];question?:string;criteria?:Record<string,string>}
+    const value=JSON.parse(args||'{}') as {action?:string;provider?:string;id?:string;prompt?:string;aspectRatio?:string;size?:string;text?:string;images?:string[];question?:string;criteria?:Record<string,string>}
     const action=value.action??'list'
     if(action==='list'){publishMedia(ctx);return}
     const pick=<T extends {provider:string;id:string}>(models:readonly T[]):T=>{
-      const wanted=value.provider&&value.id?models.find(model=>model.provider===value.provider&&model.id===value.id):undefined
-      const model=wanted??models[0]
-      if(!model)throw new Error(value.provider?`没有可用的 ${value.provider}/${value.id} 模型`:'没有可用的模型或凭据')
+      if (value.provider || value.id) {
+        const model = models.find(candidate => (!value.provider || candidate.provider === value.provider) && (!value.id || candidate.id === value.id))
+        if (!model) throw new Error(`没有可用的 ${[value.provider, value.id].filter(Boolean).join('/')} 模型`)
+        return model
+      }
+      const model = models[0]
+      if (!model) throw new Error('没有可用的模型或凭据')
       return model
     }
     if(action==='image'){
       if(!value.prompt?.trim())throw new Error('生成图片需要 prompt')
-      const model=pick(ctx.modelRegistry.getModelsOfType('image'))
-      const result=await ctx.modelRegistry.generateImages(model,{input:[{type:'text',text:value.prompt}]})
+      const options=imageGenerationOptions(value.aspectRatio,value.size)
+      const model=pick(await ctx.modelRegistry.getAvailableOfType('image'))
+      const result=await ctx.modelRegistry.generateImages(model,{input:[{type:'text',text:value.prompt}]},model.api==='openai-images'?{metadata:{size:value.size}}:options)
       if(result.stopReason!=='stop')throw new Error(result.errorMessage||`图片生成失败（${result.stopReason}）`)
       const paths=result.output.flatMap((part,index)=>part.type==='image'&&'data' in part&&part.data?[writeMediaFile(part.data,index,part.mimeType)]:[])
       if(!paths.length)throw new Error('模型没有返回图片')
@@ -1423,10 +1495,10 @@ export default async function (pi: ExtensionAPI) {
       const images=readClassifierImages(value.images??[])
       if(!value.text?.trim()&&!images.length)throw new Error('分类需要 text 或 images')
       const criteria=value.criteria??{'是':'符合判断条件','否':'不符合判断条件'}
-      const model=pick(ctx.modelRegistry.getModelsOfType('classifier'))
+      const model=pick(await ctx.modelRegistry.getAvailableOfType('classifier'))
       if(images.length&&!model.input.includes('image'))throw new Error(`${model.provider}/${model.id} 不接受图片输入，换一个支持 image 的分类器`)
       const result=await ctx.modelRegistry.classify(model,{state:{text:value.text??''},...(images.length?{images}:{}) ,questions:{answer:{type:'choice',instructions:value.question??'判断这段内容属于哪一类。',criteria}}})
-      ctx.ui.setStatus(MEDIA_STATUS,JSON.stringify({image:modelTypeInventory(ctx,'image'),classifier:modelTypeInventory(ctx,'classifier'),classified:{model:`${result.provider}/${result.model}`,images:images.length,answers:result.answers,usage:result.usage??null}}))
+      ctx.ui.setStatus(MEDIA_STATUS,JSON.stringify({image:modelTypeInventory(ctx,'image'),classifier:modelTypeInventory(ctx,'classifier'),classified:{model:`${model.provider}/${model.id}`,responseId:result.responseId??null,images:images.length,answers:result.answers,usage:result.usage??null}}))
       ctx.ui.notify(`分类结果：${JSON.stringify(result.answers)}`,'info');return
     }
     throw new Error(`未知的媒体操作 ${action}`)

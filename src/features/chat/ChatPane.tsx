@@ -272,7 +272,7 @@ export function ChatPane({
   }, [tabs]);
   const activity = agents && (agents.active.length > 0 || agents.recent.length > 0) ? <AgentActivityFeed snapshot={agents} onOpenAgent={openAgent} /> : undefined;
 
-  const activeGroup = groups.findIndex((group) => group.indexes.includes(transcript.active));
+  const activeGroup = transcript.active < 0 ? -1 : groups.findLastIndex((group) => group.indexes.includes(transcript.active));
   const lastAssistant = (() => {
     for (let index = groups.length - 1; index >= 0; index -= 1) {
       if (groups[index].items[0]?.message.role !== "user") return groups[index];
@@ -282,17 +282,18 @@ export function ChatPane({
   // 最后一条 assistant 消息自带的错误已由轮内（AssistantTurn）渲染；底部横幅
   // 只展示不属于任何轮的错误（如 extension_error），避免同一个错误出现两次。
   const lastMessageError = useMemo(() => {
+    if (!transcript.error || transcript.running) return undefined;
     for (let index = transcript.messages.length - 1; index >= 0; index--) {
       const message = transcript.messages[index].message;
       if (message.role === "assistant" && message.errorMessage) return message.errorMessage;
     }
     return undefined;
-  }, [transcript.messages]);
+  }, [transcript.error, transcript.messages, transcript.running]);
   const activeHasOutput = transcript.running && activeGroup >= 0 && groups[activeGroup]?.items[0]?.message.role !== "user";
   const waiting = transcript.submitted || (transcript.running && !activeHasOutput) || transcript.compacting;
   // After a send, the turn owning the newest prompt is stretched to a pane.
   const anchorFrom = anchorTurn
-    ? groups.reduce((found, group, index) => (group.items[0]?.message.role === "user" ? index : found), -1)
+    ? groups.findLastIndex(group => group.items[0]?.message.role === "user")
     : -1;
 
   /* ------------------------------------------------------------ windowing */
@@ -348,7 +349,7 @@ export function ChatPane({
     introducedPromptMount.current = true;
     if (!lastUserId || !introducePrompt.current.anchor) return;
     if (mounting && !(busy && userTurns === 1)) return;
-    const row = [...transcript.messages].reverse().find((item) => item.message.role === "user");
+    const row = transcript.messages.findLast((item) => item.message.role === "user");
     if (!row) return;
     return riseIntoAnchor(ref.current, row.id);
     // Only a new prompt starts the motion; later renders must not replay it.

@@ -9,8 +9,7 @@ import { connections, request } from "@/lib/rpc-core"
 import { connect, connectionSnapshot } from "@/lib/rpc-connection"
 import { changeSession, deliveryFor, sendPrompt } from "@/lib/rpc-session"
 import { useWorkspace } from "@/lib/store"
-import { useShell } from "@/features/shell/shellStore"
-import { bindCall, clearVoiceBinding, dropAnnouncements, holdVoicePanel, noteDispatch, voiceBinding, voiceCurrent, voiceToken, type VoiceBinding } from "./binding"
+import { bindCall, clearVoiceBinding, dropAnnouncements, noteDispatch, voiceBinding, voiceCurrent, voiceToken, type VoiceBinding } from "./binding"
 import { emptyBrief, nextBrief, noteSpoken, spokenSituation, type BriefState } from "./brief"
 import { speakOut, lastAssistantText, stopLocalAudio } from "./desk"
 import { voiceCall } from "./call"
@@ -81,7 +80,7 @@ export async function askAgent(task: string, turns: CallTurn[]): Promise<AgentRe
   }
 }
 
-async function runAgent(task: string, turns: CallTurn[], token = voiceToken()): Promise<AgentReply> {
+async function runAgent(task: string, turns: CallTurn[], token: number): Promise<AgentReply> {
   if (!voiceCurrent(token)) return { spoken: "", pending: false, reason: "cancelled" }
   const key = task.toLowerCase().slice(0, 180)
   if (claimed.has(key)) return { spoken: "", pending: true, reason: "duplicate" }
@@ -159,38 +158,19 @@ export function beginFreshVoiceSession(): Promise<VoiceBinding | "no-project" | 
 }
 
 async function openFresh(mine: number): Promise<VoiceBinding | "no-project" | "failed"> {
-  const release = holdVoicePanel()
-  const panel = useWorkspace.getState().panel
+  const cwd = useWorkspace.getState().cwd
+  if (!cwd) return "no-project"
+  const state = useWorkspace.getState()
   try {
-    const cwd = useWorkspace.getState().cwd
-    if (!cwd) return "no-project"
-    if (mine !== sessionEpoch) return "failed"
-    const state = useWorkspace.getState()
-    if (state.connection !== "online" || !state.connectionId || !connections.has(state.connectionId) || state.cwd !== cwd) {
-      try {
-        await connect(cwd)
-      } catch {
-        return "failed"
-      }
-    }
-    if (mine !== sessionEpoch) return "failed"
-    try {
-      await changeSession({ type: "new_session" })
-    } catch {
-      return "failed"
-    }
-    if (panel === "voice" && useWorkspace.getState().panel === "chat") useWorkspace.getState().set({ panel: "voice" })
-    if (mine !== sessionEpoch) return "failed"
-    const created = await waitForBinding(mine)
-    if (!created || mine !== sessionEpoch) return "failed"
-    try { localStorage.setItem("orbit.shell.railSessions", "true") } catch { /* storage unavailable */ }
-    useShell.getState().setProjectRailOpen(true)
-    window.dispatchEvent(new CustomEvent("orbit-voice-session"))
-    return created
-  } finally {
-    release()
-    if (useWorkspace.getState().panel !== "voice" && voiceCall.getSnapshot().state !== "off") void voiceCall.stop()
+    if (state.connection !== "online" || !connections.has(state.connectionId)) await connect(cwd)
+    if (mine !== sessionEpoch || useWorkspace.getState().cwd !== cwd) return "failed"
+    await changeSession({ type: "new_session" }, { keepPanel: true })
+  } catch {
+    return "failed"
   }
+  const created = await waitForBinding(mine)
+  if (!created || mine !== sessionEpoch) return "failed"
+  return created
 }
 
 async function ensureVoiceSession(): Promise<VoiceBinding | "no-project" | "failed"> {
@@ -202,6 +182,11 @@ async function ensureVoiceSession(): Promise<VoiceBinding | "no-project" | "fail
   const existing = liveBinding()
   if (existing) return existing
   return beginFreshVoiceSession()
+}
+
+export function cancelVoiceSessionOpening() {
+  sessionEpoch++
+  opening = null
 }
 
 /** Stop every send and every sound this call still owes. The session stays in the list. */

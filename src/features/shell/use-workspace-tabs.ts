@@ -16,15 +16,18 @@ import {
   openWorkspaceConnection,
   patchConnectionSnapshot,
   primeConnectionSnapshot,
+  report,
   restoreProjectRoute,
   setDesktopScope,
   sendPrompt,
+  retireSession,
   syncConfiguredProjectRoots,
   firstUserTitle,
   workspaceConnectionIds,
 } from "../../lib/rpc";
 import { CHAT_PANE_ID, HOME_WORKSPACE_ID, isHomeWorkspace, projectWorkspaceTabs, useShell, type WorkspaceTab } from "./shellStore";
 import { createTabTransitions } from "./tab-transitions";
+import { removeSessionViews } from "./sessions/session-views";
 import { perfSpan } from "../../lib/perf-monitor";
 
 /**
@@ -131,6 +134,7 @@ async function runShow(id: string, cwd: string) {
   const workspace = shell.workspaces.find((item) => item.id === id);
   // 等连接起来时这个面可能已经被切到别的范围了；旧的那次直接作废，别回写。
   if (!workspace || !workspace.cwd || normalizeProjectPath(workspace.cwd) !== normalizeProjectPath(cwd)) return;
+  if (transitions.isClosing(workspace.connectionId)) return;
   const home = isHomeWorkspace(workspace);
   const previousId = shell.activeWorkspaceId;
   const previous = useWorkspace.getState().connectionId;
@@ -350,6 +354,60 @@ async function close(id: string) {
   }
 }
 
+const deletingSessions = new Map<string, Promise<void>>();
+const openingSessions = new Map<string, Promise<void>>();
+
+function deleteSession(path: string): Promise<void> {
+  const pending = deletingSessions.get(path);
+  if (pending) return pending;
+  const mobile = mobileRuntime();
+  const ids = new Set<string>();
+  const task = (async () => {
+    // An opening worker must finish attaching before we can stop its file writer.
+    await openingSessions.get(path)?.catch(() => undefined);
+    for (const id of workspaceConnectionIds()) {
+      if (connectionSnapshot(id)?.state?.sessionFile === path) ids.add(id);
+    }
+    const owner = connectionOwningSession(path);
+    if (owner) ids.add(owner);
+    if (!mobile) for (const id of ids) transitions.markClosing(id);
+    try {
+      await retireSession(path);
+    } catch (error) {
+      const current = useWorkspace.getState();
+      // If removing the file failed after the process stopped, reattach the original tab.
+      if (!mobile && ids.has(current.connectionId) && !hasWorkspaceConnection(current.connectionId)) {
+        const shell = useShell.getState();
+        if (!isHomeWorkspace(shell.workspaces.find(item => item.id === shell.activeWorkspaceId))) {
+          shell.updateWorkspace(shell.activeWorkspaceId, { sessionPath: path });
+          transitions.unmarkClosing(current.connectionId);
+          void show(shell.activeWorkspaceId).catch(() => undefined);
+        }
+      }
+      throw error;
+    }
+    const shell = useShell.getState();
+    const current = useWorkspace.getState();
+    const removedActive = current.state?.sessionFile === path || (!mobile && ids.has(current.connectionId));
+    const next = removeSessionViews(shell, path, mobile ? new Set<string>() : ids);
+    if (next !== shell) useShell.setState(next);
+    if (removedActive || next.activeWorkspaceId !== shell.activeWorkspaceId) {
+      if (next.activeWorkspaceId === HOME_WORKSPACE_ID && next.activeWorkspaceId !== shell.activeWorkspaceId && current.cwd) {
+        useShell.getState().setWorkspaceCwd(HOME_WORKSPACE_ID, current.cwd);
+      }
+      // Switch as soon as the tab state commits. Loading the next connection need not hold the delete dialog open.
+      void show(next.activeWorkspaceId).catch(error => {
+        if (useShell.getState().activeWorkspaceId === next.activeWorkspaceId) report(error);
+      });
+    }
+  })().finally(() => {
+    deletingSessions.delete(path);
+    if (!mobile) for (const id of ids) transitions.unmarkClosing(id);
+  });
+  deletingSessions.set(path, task);
+  return task;
+}
+
 /** 首页发出第一条消息：把它升格成一个正常的会话标签页。 */
 function promoteHome() {
   useShell.getState().promoteHomeWorkspace();
@@ -359,7 +417,20 @@ function promoteHome() {
  * 打开一个已存在的会话：它是一条真实会话，所以出现在 header 的标签页里。
  * 已经开着的会话切到原标签页，不开第二个。
  */
-async function openSession(session: Pick<Session, "path"> & { cwd?: string }) {
+function openSession(session: Pick<Session, "path"> & { cwd?: string }): Promise<void> {
+  if (deletingSessions.has(session.path)) return Promise.resolve();
+  const pending = openingSessions.get(session.path);
+  if (pending) {
+    const shell = useShell.getState();
+    const tab = shell.workspaces.find(item => item.sessionPath === session.path);
+    return tab && tab.id !== shell.activeWorkspaceId ? show(tab.id) : pending;
+  }
+  const task = openSessionOnce(session).finally(() => openingSessions.delete(session.path));
+  openingSessions.set(session.path, task);
+  return task;
+}
+
+async function openSessionOnce(session: Pick<Session, "path"> & { cwd?: string }) {
   const span = perfSpan("open-session", session.path.split(/[\\/]/).at(-1));
   try {
   const shell = useShell.getState();
@@ -371,10 +442,23 @@ async function openSession(session: Pick<Session, "path"> & { cwd?: string }) {
       || connectionSnapshot(item.connectionId)?.state?.sessionFile === session.path
       // 休眠标签页（连接已回收，只剩 sessionPath）也算已打开：`show` 会按它复活，
       // 而不是再开一个重复标签页。
+      || Object.values(item.sessions).some(({ connectionId }) =>
+        (owner && connectionId === owner) || connectionSnapshot(connectionId)?.state?.sessionFile === session.path)
       || item.sessionPath === session.path
     ));
   if (existing) {
+    const pane = Object.keys(existing.sessions).find(paneId => {
+      const connection = existing.sessions[paneId].connectionId;
+      return (owner && connection === owner) || connectionSnapshot(connection)?.state?.sessionFile === session.path;
+    });
     await show(existing.id);
+    if (pane && useShell.getState().activeWorkspaceId === existing.id) {
+      useShell.getState().focusPane(pane);
+      const connection = existing.sessions[pane].connectionId;
+      if (connection && hasWorkspaceConnection(connection) && useWorkspace.getState().connectionId !== connection) {
+        focusWorkspaceConnection(connection, existing.cwd);
+      }
+    }
     return;
   }
   const cwd = session.cwd ?? useWorkspace.getState().cwd;
@@ -406,6 +490,7 @@ async function openSession(session: Pick<Session, "path"> & { cwd?: string }) {
   const target = owner || `${cwd}#${crypto.randomUUID()}`;
   // 连接 id 在创建时就绑好，标签页一出现就是这条连接，不会先渲染成首页。
   const workspace = shell.newWorkspace(cwd, target);
+  shell.updateWorkspace(workspace.id, { sessionPath: session.path });
   primeConnectionSnapshot(target);
   // 之前开过这个会话：先把缓存正文画上去，连 pi 进程的时间也不用看骨架屏。
   const cached = cachedTranscript(session.path);
@@ -570,7 +655,7 @@ async function openBackground(cwd: string, options?: { prompt?: string }): Promi
 }
 
 /** 一个共享的控制器：组件只拿它的动作，不各自起一份副作用。 */
-const controller = { show, create, close, closeSessionPane, promoteHome, openScope, selectProject, openSession, splitSession, openBackground, reconcile: reconcileOrphans };
+const controller = { show, create, close, closeSessionPane, deleteSession, promoteHome, openScope, selectProject, openSession, splitSession, openBackground, reconcile: reconcileOrphans };
 
 /** 供非组件作用域（调度器、事件处理）使用的同一份控制器：它不是 hook，只是纯对象。 */
 export const workspaceTabs = controller;

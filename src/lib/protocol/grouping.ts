@@ -26,7 +26,8 @@ export function groupDisplayMessages(messages: DisplayMessage[]): DisplayMessage
   const inRun = (role: string) => role === 'assistant' || role === 'custom'
   return messages.reduce<DisplayMessageGroup[]>((groups, item, index) => {
     const previous = groups.at(-1)
-    if (inRun(item.message.role) && previous?.items.every(entry => inRun(entry.message.role))) {
+    // Groups are homogeneous by construction: an assistant/custom run only grows with more run items.
+    if (inRun(item.message.role) && previous && inRun(previous.items[0].message.role)) {
       previous.items.push(item)
       previous.indexes.push(index)
       return groups

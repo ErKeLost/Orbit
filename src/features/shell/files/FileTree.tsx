@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   createDir,
@@ -38,7 +39,6 @@ const GIT_STATUS_COLOR: Record<string, string> = {
   D: "text-diff-del-fg",
 };
 
-const dirCache = new Map<string, DirEntry[]>();
 const EXPANDED_KEY = "orbit.explorer.expanded.v1";
 
 function loadExpanded(root: string): Set<string> {
@@ -70,16 +70,12 @@ function parentDir(path: string, root: string) {
   return parent.length >= root.length ? parent : root;
 }
 
-/** Whether a path points at a directory, using the loaded listings as truth. */
-function isDirectory(path: string, root: string) {
-  const parent = parentDir(path, root);
-  return dirCache.get(parent)?.find((entry) => entry.path === path)?.isDir ?? false;
-}
-
 /** Where "new file/folder" should land for a given selection. */
-function createTargetFor(path: string | null, root: string) {
-  if (!path) return root;
-  return isDirectory(path, root) ? path : parentDir(path, root);
+function createTargetFor(cache: QueryClient, path: string | null, root: string) {
+  if (!path || path === root) return root;
+  const parent = parentDir(path, root);
+  const entries = cache.getQueryData<DirEntry[]>(["dir", parent]);
+  return entries?.some(entry => entry.path === path && entry.isDir) ? path : parent;
 }
 
 function joinPath(parent: string, name: string) {
@@ -121,36 +117,22 @@ type TreeContext = {
   statuses: Map<string, string>;
   dirtyDirs: Map<string, string>;
   showIgnored: boolean;
-  revision: number;
+  visible: boolean;
   editing: EditState | null;
   commitEdit: (value: string) => void;
   cancelEdit: () => void;
   onMenu: (entry: DirEntry | null, x: number, y: number) => void;
 };
 
-function useDir(path: string, open: boolean, revision: number) {
-  const [entries, setEntries] = useState<DirEntry[] | null>(() => dirCache.get(path) ?? null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    void listDir(path).then(
-      (next) => {
-        dirCache.set(path, next);
-        if (!cancelled) {
-          setEntries(next);
-          setError(null);
-        }
-      },
-      (reason: unknown) => {
-        if (!cancelled) setError(String(reason));
-      },
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [path, open, revision]);
-  return { entries, error };
+/** Directory tabs and tree branches share the same cached listing and pending request. */
+function useDir(path: string, visible: boolean) {
+  const listing = useQuery({
+    queryKey: ["dir", path],
+    queryFn: () => listDir(path),
+    enabled: visible,
+    staleTime: 5_000,
+  });
+  return { entries: listing.data, error: listing.error };
 }
 
 /**
@@ -205,18 +187,18 @@ function EditRow({ depth, isDir, initial, onCommit, onCancel }: { depth: number;
 }
 
 function TreeChildren({ parent, depth, ctx }: { parent: string; depth: number; ctx: TreeContext }) {
-  const { entries, error } = useDir(parent, true, ctx.revision);
-  const visible = ctx.showIgnored ? entries : entries?.filter((entry) => !entry.ignored || ctx.activeTrail.has(entry.path));
+  const { entries, error } = useDir(parent, ctx.visible);
+  const shownEntries = ctx.showIgnored ? entries : entries?.filter((entry) => !entry.ignored || ctx.activeTrail.has(entry.path));
   const creating = ctx.editing?.mode === "create" && ctx.editing.parent === parent ? ctx.editing : null;
   const pad = { paddingLeft: 28 + depth * 12 };
-  if (error) return <p className="truncate pr-2 text-xs text-negative" style={pad}>{error}</p>;
+  if (error && !entries) return <p className="truncate pr-2 text-xs text-negative" style={pad}>{String(error)}</p>;
   return (
     <>
       {creating ? (
         <EditRow key="__create" depth={depth} isDir={creating.kind === "folder"} initial="" onCommit={ctx.commitEdit} onCancel={ctx.cancelEdit} />
       ) : null}
-      {visible?.map((entry) => <TreeNode key={entry.path} entry={entry} depth={depth} ctx={ctx} />)}
-      {!creating && visible && visible.length === 0 ? (
+      {shownEntries?.map((entry) => <TreeNode key={entry.path} entry={entry} depth={depth} ctx={ctx} />)}
+      {!creating && shownEntries?.length === 0 ? (
         <p className="pr-2 text-xs text-ink-3" style={pad}>空文件夹</p>
       ) : null}
     </>
@@ -317,7 +299,7 @@ export function FileTree({ cwd, rootLabel, activeFile, visible = true }: {
   const showExcluded = useAppearance((state) => state.showExcludedFiles);
   const [showIgnored, setShowIgnored] = useState(showExcluded);
   useEffect(() => setShowIgnored(showExcluded), [showExcluded]);
-  const [revision, setRevision] = useState(0);
+  const queryClient = useQueryClient();
   const [editing, setEditing] = useState<EditState | null>(null);
   const [menu, setMenu] = useState<{ target: DirEntry | null; x: number; y: number } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<DirEntry | null>(null);
@@ -347,7 +329,7 @@ export function FileTree({ cwd, rootLabel, activeFile, visible = true }: {
     }
     return trail;
   }, [activePath, root]);
-  const changed = useGitChangedFiles(cwd).data;
+  const changed = useGitChangedFiles(cwd, visible).data;
   const { statuses, dirtyDirs } = useMemo(() => statusMaps(cwd, changed), [cwd, changed]);
   const name = rootLabel ?? cwd.split(/[\\/]/).filter(Boolean).at(-1) ?? cwd;
   const rootOpen = expanded.has(cwd);
@@ -372,9 +354,12 @@ export function FileTree({ cwd, rootLabel, activeFile, visible = true }: {
   }, [activePath, activeTrail, cwd, visible]);
 
   const refreshTree = useCallback(() => {
-    dirCache.clear();
-    setRevision((value) => value + 1);
-  }, []);
+    const scope = trimSlash(cwd);
+    void queryClient.invalidateQueries({
+      queryKey: ["dir"],
+      predicate: ({ queryKey: [, path] }) => typeof path === "string" && (trimSlash(path) === scope || path.startsWith(`${scope}/`)),
+    });
+  }, [cwd, queryClient]);
 
   const toggle = useCallback(
     (path: string) =>
@@ -485,24 +470,24 @@ export function FileTree({ cwd, rootLabel, activeFile, visible = true }: {
       statuses,
       dirtyDirs,
       showIgnored,
-      revision,
+      visible,
       editing,
       commitEdit,
       cancelEdit,
       onMenu: (entry, x, y) => setMenu({ target: entry, x, y }),
     }),
-    [expanded, toggle, selected, activePath, activeTrail, revealRow, statuses, dirtyDirs, showIgnored, revision, editing, commitEdit, cancelEdit],
+    [expanded, toggle, selected, activePath, activeTrail, revealRow, statuses, dirtyDirs, showIgnored, visible, editing, commitEdit, cancelEdit],
   );
 
-  const createParent = menu ? createTargetFor(menu.target?.path ?? null, cwd) : cwd;
+  const createParent = menu ? createTargetFor(queryClient, menu.target?.path ?? null, cwd) : cwd;
 
   return (
     <div className="flex h-full min-h-0 flex-col outline-none">
       <div className="flex h-9 shrink-0 items-center gap-px overflow-visible border-b border-stroke px-2">
-        <HeaderIcon label="新建文件" onClick={() => beginCreate(createTargetFor(selected, cwd), "file")}>
+        <HeaderIcon label="新建文件" onClick={() => beginCreate(createTargetFor(queryClient, selected, cwd), "file")}>
           <FilePlus className="size-3.5" strokeWidth={1.75} />
         </HeaderIcon>
-        <HeaderIcon label="新建文件夹" onClick={() => beginCreate(createTargetFor(selected, cwd), "folder")}>
+        <HeaderIcon label="新建文件夹" onClick={() => beginCreate(createTargetFor(queryClient, selected, cwd), "folder")}>
           <FolderPlus className="size-3.5" strokeWidth={1.75} />
         </HeaderIcon>
         <HeaderIcon label="刷新" onClick={refreshTree}>

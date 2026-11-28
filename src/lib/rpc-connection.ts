@@ -73,7 +73,7 @@ async function closeConnection(id:string,message='连接已关闭'){
 }
 function activateConnection(id:string,cwd:string){
  const previous=useWorkspace.getState()
- if(previous.connectionId&&previous.connectionId!==id)snapshots.set(previous.connectionId,snapshot())
+ if(previous.connectionId&&previous.connectionId!==id&&connections.has(previous.connectionId))snapshots.set(previous.connectionId,snapshot())
  projectActive.set(cwd,id)
  const saved=snapshots.get(id)??fresh()
  // 空快照 + 正在拉历史：保持骨架屏。否则切回这条连接的第一帧会是一个空

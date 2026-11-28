@@ -59,6 +59,14 @@ describe("remote protocol", () => {
     expect(() => parsePairingUri("orbit://pair?host=127.0.0.1&port=0&token=short&protocol=old")).toThrow()
   })
 
+  test("accepts only the Orbit pairing authority before parsing its query", () => {
+    const query = `host=127.0.0.1&port=17890&token=1234567890abcdef&key=${KEY}&protocol=${REMOTE_PROTOCOL}`
+    expect(parsePairingUri(`orbit://pair/?${query}#ignored`).mode).toBe("direct")
+    for (const prefix of ["orbit://pair.example", "orbit://user@pair", "orbit://pair/other", "https://pair"]) {
+      expect(() => parsePairingUri(`${prefix}?${query}`)).toThrow("无效的 Orbit 配对地址")
+    }
+  })
+
   test("matches a project to its connection without trusting one spelling", () => {
     const connections = [{ id: "/tmp/demo", cwd: "/private/tmp/demo" }, { id: "/work/demo#2", cwd: "/work/demo" }]
     // The phone's spelling, the desktop's canonical directory, and an exact

@@ -11,12 +11,13 @@ const bun = process.env.ORBIT_BUN_PATH
   || (process.env.BUN_INSTALL ? resolve(process.env.BUN_INSTALL, "bin", process.platform === "win32" ? "bun.exe" : "bun") : "bun");
 const marker = resolve(output, "package.json");
 const current = existsSync(marker) ? JSON.parse(readFileSync(marker, "utf8")) : null;
-const buildFormat = 7;
+const buildFormat = 8;
 const runtimeSource = resolve(root, "scripts/pi-runtime");
 const requiredRuntimeFiles = ["cli.js", "index.js", "provider-auth.js", "terminal.js", "codemode-worker.js"];
+const upstreamResources = ["README.md", "CHANGELOG.md", "docs", "examples"];
 
 function assertRuntimeBundle() {
-  const missing = requiredRuntimeFiles.filter(name => {
+  const missing = [...requiredRuntimeFiles, ...upstreamResources].filter(name => {
     const file = resolve(output, name);
     return !existsSync(file);
   });
@@ -55,7 +56,7 @@ for (const name of ["playwright-core", "ws"]) {
   mkdirSync(dirname(destination), { recursive: true });
   cpSync(resolve(root, "node_modules", name), destination, { recursive: true, dereference: true });
 }
-if (current?.version === packageJson.version && current?.buildFormat === buildFormat && current?.sourceDigest === sourceDigest && requiredRuntimeFiles.every(name => existsSync(resolve(output, name)))) {
+if (current?.version === packageJson.version && current?.buildFormat === buildFormat && current?.sourceDigest === sourceDigest && [...requiredRuntimeFiles, ...upstreamResources].every(name => existsSync(resolve(output, name)))) {
   assertRuntimeBundle();
   verifyCodemode();
   process.exit(0);
@@ -96,6 +97,10 @@ const workerBuild = spawnSync(bun, [
 
 if (workerBuild.error) console.error(`无法启动 Bun 打包 codemode worker: ${workerBuild.error.message}`);
 if (workerBuild.status !== 0) process.exit(workerBuild.status ?? 1);
+
+for (const name of upstreamResources) {
+  cpSync(resolve(packageRoot, name), resolve(output, name), { recursive: true });
+}
 
 const themeSource = resolve(packageRoot, "dist/modes/interactive/theme");
 const themeTarget = resolve(output, "dist/modes/interactive/theme");

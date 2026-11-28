@@ -6,6 +6,12 @@ artifacts, then uploads `latest.json` for the desktop updater. The workflow
 creates one draft before parallel platform jobs start and checks every package
 and updater platform before publishing it.
 
+## v1.0.71
+
+- 内置 Pi 升级到 1.7.0。桌面终端可启动 Pi、恢复会话并显示运行状态。新增 OpenRouter 和 Radius 图片生成支持，通用设置可单独控制四种 Pi 通知。
+- 删除会话后，侧栏会保留当前选中项或选中同一项目的相邻会话。日期分组按本地时间刷新。长会话的流式输出减少了重复处理，文件树与目录标签页共享目录读取结果。
+- 修复 Rime Prism 双工通话新建会话时切走语音页的问题。手机端在识别或上传失败时会显示提示，播放回复结束后回到「在听」。Android 配对兼容把 `orbit://pair` 主机名解析为路径的 WebView。
+
 ## v1.0.70
 
 会话运行时仍可打开并搜索分支和模型菜单。切换或新建分支、切换模型和调整思考强度会在运行结束后恢复。

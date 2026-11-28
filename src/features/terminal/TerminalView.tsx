@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import { parsePiProgramStatus, type PiProgramStatus } from "./pi-program-status";
+import { loadPiResume, readPiResumeReport, savePiResume, toHex } from "./pi-program-resume";
 import { invoke } from "../../lib/native";
 import { listen } from "@tauri-apps/api/event";
 import { Terminal } from "@xterm/xterm";
@@ -82,7 +84,14 @@ function terminalTheme(light: boolean) {
  * Orbit's: transparent canvas, resolved Nerd Font stack, bar cursor, and
  * base64 chunks from `pty-data` decoded before they reach the parser.
  */
-export function TerminalView({ id, cwd, active }: { id: string; cwd: string; active: boolean }) {
+export function TerminalView({ id, cwd, active, launch, onStatus, onCheckpoint }: {
+  id: string;
+  cwd: string;
+  active: boolean;
+  launch?: { resumeArgs?: string[] };
+  onStatus: (id: string, status?: PiProgramStatus) => void;
+  onCheckpoint: (cwd: string) => void;
+}) {
   const host = useRef<HTMLDivElement>(null);
   const term = useRef<Terminal | null>(null);
   const fit = useRef<FitAddon | null>(null);
@@ -110,6 +119,37 @@ export function TerminalView({ id, cwd, active }: { id: string; cwd: string; act
     terminal.open(element);
     term.current = terminal;
     fit.current = fitAddon;
+    let disposed = false;
+    const token = launch ? toHex(crypto.getRandomValues(new Uint8Array(32))) : undefined;
+    const previousOwner = launch?.resumeArgs ? loadPiResume(cwd)?.owner : undefined;
+    let reports = Promise.resolve();
+    const handlers = [
+      terminal.parser.registerOscHandler(7501, data => {
+        if (data === "?") void invoke("pty_write", { id, data: "\x1b]7501;?\x1b\\" }).catch(() => undefined);
+        else {
+          const status = parsePiProgramStatus(data);
+          if (status) onStatus(id, status);
+        }
+        return true;
+      }),
+      terminal.parser.registerOscHandler(133, data => {
+        if (data === "A" || data.startsWith("A;")) onStatus(id);
+        return false;
+      }),
+      terminal.parser.registerOscHandler(7577, data => {
+        if (token) {
+          // Serialize reports so a later /quit clear cannot overtake a checkpoint.
+          reports = reports.then(async () => {
+            const args = await readPiResumeReport(data, token, cwd);
+            if (args === undefined) return;
+            if (!args && previousOwner) savePiResume(cwd, previousOwner, null);
+            savePiResume(cwd, token, args);
+            if (!disposed) onCheckpoint(cwd);
+          }).catch(() => undefined);
+        }
+        return true;
+      }),
+    ];
 
     const syncSize = () => {
       try {
@@ -156,25 +196,35 @@ export function TerminalView({ id, cwd, active }: { id: string; cwd: string; act
       listen<PtyExit>("pty-exit", (event) => {
         if (event.payload.id !== id) return;
         const code = event.payload.code;
+        onStatus(id);
         terminal.writeln(`\r\n[进程已退出${code == null ? "" : `，代码 ${code}`}]`);
       }),
     ];
 
     const observer = new ResizeObserver(() => syncSize());
     observer.observe(element);
-    requestAnimationFrame(() => {
+    const spawnFrame = requestAnimationFrame(() => {
       try {
         fitAddon.fit();
       } catch {
         /* zero-sized host during mount */
       }
-      void invoke("pty_spawn", { id, cwd, cols: terminal.cols, rows: terminal.rows })
-        .then(() => terminal.focus())
-        .catch((error: unknown) => terminal.writeln(`\x1b[31m无法启动终端：${String(error)}\x1b[0m`));
+      // The terminal may post capability queries and a checkpoint immediately.
+      void Promise.all(offs).then(async () => {
+        if (disposed) return;
+        await invoke("pty_spawn", { id, cwd, cols: terminal.cols, rows: terminal.rows, pi: token ? { token, resumeArgs: launch?.resumeArgs } : null });
+        if (disposed) await invoke("pty_kill", { id });
+        else terminal.focus();
+      }).catch((error: unknown) => {
+        if (!disposed) terminal.writeln(`\x1b[31m无法启动终端：${String(error)}\x1b[0m`);
+      });
     });
 
     return () => {
+      disposed = true;
+      cancelAnimationFrame(spawnFrame);
       observer.disconnect();
+      for (const handler of handlers) handler.dispose();
       dataListener.dispose();
       for (const off of offs) void off.then((dispose) => dispose());
       void invoke("pty_kill", { id }).catch(() => undefined);
@@ -182,7 +232,7 @@ export function TerminalView({ id, cwd, active }: { id: string; cwd: string; act
       term.current = null;
       fit.current = null;
     };
-  }, [cwd, id]);
+  }, [cwd, id, launch, onCheckpoint, onStatus]);
 
   // Theme changes re-tint the canvas without restarting the shell.
   useEffect(() => {

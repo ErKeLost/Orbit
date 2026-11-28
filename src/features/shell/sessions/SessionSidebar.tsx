@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import type { Session } from "../../../lib/protocol";
 import { useWorkspace } from "../../../lib/store";
 import { useProjects } from "../../../lib/projects";
-import { prefetchSession, queryClient, renameSession, report } from "../../../lib/rpc";
+import { prefetchSession, renameSession, report } from "../../../lib/rpc";
 import { mergeProjectSessions, useProjectSessions } from "../../../hooks/use-project-sessions";
 import { useGitBranches } from "../../../lib/git";
 import { useDragResize } from "../../../shared/hooks/useDragResize";
@@ -164,7 +164,6 @@ function SessionsList({ cwd, query }: { cwd: string; query: string }) {
     onOpen: (session) => void openSession(session),
     onRename: (session) => setRenamingPath(session.path),
     canDelete: (session) => merged.listedPaths.has(session.path),
-    onDeleted: () => void queryClient.invalidateQueries({ queryKey: ["pi", "sessions", cwd] }),
   });
 
   if (sessions.isPending && !merged.sessions.length) return null;
@@ -290,7 +289,7 @@ export function SessionSidebar({ visible, railVisible, onSearch }: { visible: bo
       <WorkspaceTabs tab={tab} onPick={setTab} />
 
       <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${tab === "files" ? "" : "hidden"}`}>
-        {project ? <FileTree cwd={project} /> : <p className="px-3 py-2 text-xs text-ink-3">没有项目文件夹</p>}
+        {project ? <FileTree key={project} cwd={project} visible={visible && tab === "files"} /> : <p className="px-3 py-2 text-xs text-ink-3">没有项目文件夹</p>}
       </div>
 
       <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${tab === "changes" ? "" : "hidden"}`}>

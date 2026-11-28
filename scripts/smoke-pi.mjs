@@ -23,10 +23,16 @@ cpSync(resolve(root,'src-tauri/resources/request-budget.ts'),resolve(resources,'
 cpSync(resolve(root,'src-tauri/resources/question.ts'),resolve(resources,'question.ts'))
 cpSync(resolve(root,'src-tauri/resources/workspace.ts'),resolve(resources,'workspace.ts'))
 const cli=resolve(resources,'pi-runtime/cli.js'),extension=resolve(resources,'gui-extension.ts'),runtimeNode=resolve(resources,'node-runtime',process.platform==='win32'?'node.exe':'node'),runtimeModules=resolve(resources,'node_modules')
+const live=process.argv.includes('--live')
 const runtimeEnv={...process.env,NODE_PATH:runtimeModules,ORBIT_PI_CLI_PATH:cli,ORBIT_PI_NODE_PATH:runtimeNode,JITI_FS_CACHE:'false'}
+if (!live) {
+  // The offline model catalog only returns models with configured credentials.
+  // An isolated profile and a non-secret placeholder keep this check reproducible.
+  Object.assign(runtimeEnv,{PI_CODING_AGENT_DIR:resolve(isolated,'agent'),ANTHROPIC_API_KEY:'orbit-smoke-placeholder'})
+}
 const clipboard=spawnSync(runtimeNode,['-e','require("@mariozechner/clipboard")'],{cwd,env:runtimeEnv,stdio:'pipe'})
 assert.equal(clipboard.status,0,'bundled native clipboard dependency loads')
-const child=spawn(runtimeNode,[cli,'--mode','rpc','--offline','--no-session','--extension',extension],{cwd,stdio:['pipe','pipe','pipe'],env:runtimeEnv})
+const child=spawn(runtimeNode,[cli,'--mode','rpc',...(live?[]:['--offline','--provider','anthropic','--model','claude-haiku-4-5']),'--no-session','--extension',extension],{cwd,stdio:['pipe','pipe','pipe'],env:runtimeEnv})
 let buffer='',sequence=0,errors='',toolState,runtimeInfo,capabilities,media,virtualModels,mcpServers
 const pending=new Map(),results=[]
 const collaborationTools=['spawn_agent','send_message','followup_task','wait_agent','interrupt_agent','list_agents']
@@ -101,7 +107,7 @@ try{
  await req({type:'prompt',message:'/gui-virtual-model {"action":"remove","provider":"router","id":"orbit-smoke"}'})
  assert(!virtualModels.virtualModels.some(model=>model.id==='orbit-smoke'),'virtual model removed')
  results.push('virtual model registration through pi.registerVirtualModel')
- if(process.argv.includes('--live')){
+ if(live){
    const settled=new Promise((resolve,reject)=>pending.set('settled',{resolve,reject}))
    await req({type:'prompt',message:'只回复：Orbit 连接测试成功。不要调用工具。'})
    await settled
@@ -110,5 +116,5 @@ try{
  const report={checkedAt:new Date().toISOString(),results}
  writeFileSync(resolve(root,'docs/pi-smoke-result.json'),JSON.stringify(report,null,2)+'\n')
  console.log(JSON.stringify(report,null,2))
-}catch(error){console.error(error.message);if(errors)console.error('Pi wrote diagnostics to stderr');process.exitCode=1}
+}catch(error){console.error(error.stack);if(errors)console.error('Pi wrote diagnostics to stderr');process.exitCode=1}
 finally{clearTimeout(deadline);child.stdin.end();if(child.exitCode===null){child.kill();await new Promise(resolveExit=>child.once('exit',resolveExit))}rmSync(isolated,{recursive:true,force:true})}

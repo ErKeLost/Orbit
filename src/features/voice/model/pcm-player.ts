@@ -8,12 +8,14 @@ export class PcmPlayer {
   private heardOrigin = 0
   private itemId = ""
   private readonly onLevel: (level: number) => void
-  constructor(onLevel: (level: number) => void) {
+  private readonly onDrained: () => void
+  constructor(onLevel: (level: number) => void, onDrained = () => {}) {
     this.onLevel = onLevel
+    this.onDrained = onDrained
   }
 
   async prepare() {
-    this.context ??= new AudioContext({ latencyHint: "interactive", sampleRate: 24000 })
+    this.context ??= new AudioContext({ latencyHint: "interactive" })
     await this.context.resume()
   }
 
@@ -39,11 +41,11 @@ export class PcmPlayer {
     this.playhead = start + buffer.duration
     this.sources.add(source)
     source.onended = () => {
-      this.sources.delete(source)
-      if (this.sources.size) return
-      const now = this.context
-      if (!now || now.currentTime >= this.playhead - 0.05) this.itemId = ""
-      this.onLevel(0)
+      if (!this.sources.delete(source) || this.sources.size) return;
+      const now = this.context;
+      if (!now || now.currentTime >= this.playhead - 0.05) this.itemId = "";
+      this.onLevel(0);
+      this.onDrained();
     }
     this.onLevel(0.4)
   }
@@ -75,7 +77,8 @@ export class PcmPlayer {
 
   async close() {
     this.stop()
-    await this.context?.close()
-    this.context = null
+    const context = this.context;
+    this.context = null;
+    if (context && context.state !== "closed") await context.close();
   }
 }

@@ -45,6 +45,9 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
   const fileOpenSeq = useShell((state) => state.fileOpenSeq);
   const openFile = pane ? pane.files.find((file) => file.path === pane.activeFile) ?? pane.files[0] ?? null : null;
   const showFile = openFile != null && !chatSurface;
+  const voiceVisible = panel === "voice" && !showFile;
+  const [voiceMounted, setVoiceMounted] = useState(voiceVisible);
+  useEffect(() => { if (voiceVisible) setVoiceMounted(true); }, [voiceVisible]);
   const sessions = useProjectSessions(cwd);
   const merged = mergeProjectSessions(cwd, sessions.data ?? [], liveSessions);
   const session = merged.sessions.find((item) => item.path === sessionFile);
@@ -95,18 +98,13 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
   useEffect(() => {
     installVoiceWake();
     return onVoiceWake(() => {
+      setChatSurface(true);
       openVoiceFromWake();
       void import("../../voice/model/call").then((module) => {
-        if (module.voiceCall.getSnapshot().state === "off") void module.voiceCall.start();
+        if (useWorkspace.getState().panel === "voice" && module.voiceCall.getSnapshot().state === "off") void module.voiceCall.start();
       });
     });
   }, []);
-  useEffect(() => {
-    if (panel === "voice") return;
-    void import("../../voice/model/call").then((module) => {
-      if (module.voiceCall.getSnapshot().state !== "off") void module.voiceCall.stop();
-    });
-  }, [panel]);
   useEffect(() => {
     if (!screenPip) return;
     return registerBackHandler(() => {
@@ -158,18 +156,21 @@ export function MobileShell({ onSearch }: { onSearch: () => void }) {
         </TitleIconButton>
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col">
+      <main className="relative flex min-h-0 flex-1 flex-col">
+        {(voiceMounted || voiceVisible) && (
+          <div className={voiceVisible ? "flex min-h-0 flex-1 flex-col" : "pointer-events-none absolute inset-0 flex flex-col opacity-0"} aria-hidden={!voiceVisible} inert={!voiceVisible}>
+            <Suspense fallback={<div className="min-h-0 flex-1" />}>
+              <VoicePage visible={voiceVisible} />
+            </Suspense>
+          </div>
+        )}
         {panel === "settings" ? (
           <SettingsView />
         ) : showFile ? (
           // The same editor pane the desktop shows: the phone only gives it the
           // whole surface instead of a cell in the pane grid.
           <FileView paneId={paneId} cwd={cwd} showGrip={false} />
-        ) : panel === "voice" ? (
-          <Suspense fallback={<div className="min-h-0 flex-1" />}>
-            <VoicePage visible />
-          </Suspense>
-        ) : panel === "chat" ? (
+        ) : panel === "voice" ? null : panel === "chat" ? (
           <div className="mobile-composer-dock flex min-h-0 flex-1 flex-col">
             <ChatPane withTerminal />
           </div>

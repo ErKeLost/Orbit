@@ -7,7 +7,7 @@
  * 声音在 Rime Prism：断句、打断、闲聊、出声。Jev 只判要不要把这句交给 Pi。
  * 页面还是一颗球。
  */
-import { useEffect, useState } from "react";
+import { memo, useEffect } from "react";
 import { Orb, type AgentState } from "@/components/ui/orb";
 import { PrimaryButton } from "@/shared/ui/controls";
 import { CallEnd, Pause } from "@/shared/ui/icons";
@@ -16,8 +16,7 @@ import { LiveWaveform } from "@/components/ui/live-waveform";
 import { OrbBoundary } from "./OrbBoundary";
 import { VoiceExchange } from "./VoiceExchange";
 import { useVoiceCall } from "../hooks/useVoiceCall";
-import { voiceCall, type CallState, type VoiceLogItem } from "../model/call";
-import { voicePanelHeld } from "../model/binding";
+import { voiceCall, type CallState } from "../model/call";
 import { Mic, MicOff } from "lucide-react";
 
 /** 状态 → Orb 的四种。null 就是闲置。 */
@@ -61,24 +60,16 @@ function CallControl({ label, danger, onClick, children }: { label: string; dang
   );
 }
 
-export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
-  const call = useVoiceCall();
+export const VoicePage = memo(function VoicePage({ visible = true }: { visible?: boolean } = {}) {
+  const state = useVoiceCall("state");
+  const muted = useVoiceCall("muted");
+  const error = useVoiceCall("error");
   const orbColors = useOrbColors();
-  const { state } = call;
   const active = state !== "off";
   const starting = state === "connecting";
-  // 首帧之后才点亮球：Three 的 canvas 是同步挂载的，直接显示会有一帧突兀的跳变。
-  const [revealed, setRevealed] = useState(false);
   useEffect(() => {
-    const frame = requestAnimationFrame(() => setRevealed(true));
-    return () => cancelAnimationFrame(frame);
-  }, []);
-  // Leaving the page is hanging up. A hidden call must not keep sending or playing.
-  useEffect(() => {
-    if (visible || voicePanelHeld()) return;
-    if (voiceCall.getSnapshot().state !== "off") void voiceCall.stop();
+    if (!visible) void voiceCall.stop();
   }, [visible]);
-  const agentState = AGENT_STATE[state];
 
   /** 一颗球一个动作：没开始 → 开始；在说 → 打断；其余 → 结束。 */
   const activate = () => {
@@ -94,7 +85,8 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
     else void voiceCall.stop();
   };
 
-  const orb = (size: number) => (
+  const orbSize = active ? 112 : 244;
+  const orb = (
     <button
       type="button"
       onClick={activate}
@@ -102,21 +94,10 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
       title={starting ? "取消接通" : STATE_LABEL[state]}
       className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
     >
-      <div className={`overflow-hidden rounded-full transition-opacity duration-300 ${revealed ? "opacity-100" : "opacity-0"}`} style={{ width: size, height: size }}>
-        <OrbBoundary colors={orbColors}>
-          <Orb
-            // 默认 100ms 的 resize 防抖会让首帧画在默认 300×150 的缓冲上，看起来是
-            // 一次"抖一下"。这个容器尺寸是固定的，不需要防抖。
-            resizeDebounce={0}
-            paused={!visible}
-            colors={orbColors}
-            agentState={agentState}
-            volumeMode="manual"
-            manualInput={call.level}
-            manualOutput={call.outputLevel}
-            seed={7}
-          />
-        </OrbBoundary>
+      <div className="relative overflow-hidden rounded-full" style={{ width: orbSize, height: orbSize }}>
+        <div className="pointer-events-none absolute left-1/2 top-1/2 size-[244px] overflow-hidden rounded-full" style={{ transform: `translate(-50%, -50%) scale(${orbSize / 244})` }}>
+          <VoiceOrb visible={visible} state={state} colors={orbColors} />
+        </div>
       </div>
     </button>
   );
@@ -144,24 +125,15 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
               style={{ background: `radial-gradient(circle closest-side, ${orbColors[0]}1f 0%, ${orbColors[1]}12 42%, ${orbColors[1]}00 100%)` }}
             />
           )}
-          {orb(active ? 112 : 244)}
+          {orb}
         </div>
         <div className={active ? "relative w-40" : "relative w-64"}>
-          <LiveWaveform
-            active={visible && active && state !== "thinking"}
-            level={state === "speaking" ? call.outputLevel : call.level}
-            processing={starting}
-            mode="static"
-            height={active ? 22 : 40}
-            barWidth={active ? 2 : 3}
-            barGap={2}
-            sensitivity={1.4}
-            barColor={orbColors[1]}
-          />
+          <VoiceMeter visible={visible} state={state} color={orbColors[1]} />
         </div>
-        {call.error ? (
+        {active && <p role="status" className="h-4 text-center text-xs text-ink-3">{muted ? "麦克风已静音" : STATE_LABEL[state]}</p>}
+        {error ? (
           <p role="alert" className="max-w-md px-4 text-center text-xs text-negative">
-            {call.error}
+            {error}
           </p>
         ) : null}
       </div>
@@ -169,7 +141,7 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
       {active ? (
         /* 开始之后：这块就是消息列表，不再切页面。 */
         <div className="relative flex min-w-0 shrink-0 flex-col">
-          <VoiceExchange log={logOf(call.turns)} error={call.error} />
+          <VoiceTranscript error={error} />
           <div className="flex shrink-0 items-center justify-center gap-3 pb-5 pt-1">
             <CallControl label="暂停" onClick={() => voiceCall.pause()}>
               <Pause className="size-4" />
@@ -177,8 +149,8 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
             <CallControl label="结束对话" danger onClick={() => void voiceCall.stop()}>
               <CallEnd className="size-4" />
             </CallControl>
-            <CallControl label={call.muted ? "取消静音" : "静音"} onClick={() => voiceCall.setMuted(!call.muted)}>
-              {call.muted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+            <CallControl label={muted ? "取消静音" : "静音"} onClick={() => voiceCall.setMuted(!muted)}>
+              {muted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
             </CallControl>
           </div>
         </div>
@@ -191,9 +163,25 @@ export function VoicePage({ visible = true }: { visible?: boolean } = {}) {
       )}
     </div>
   );
-}
+});
 
-/** 通话记录 → 页面要的形状。原样的 `turns` 是平的，这里只换名字。 */
-function logOf(turns: { id: string; role: "user" | "agent"; text: string }[]): VoiceLogItem[] {
-  return turns.map(turn => ({ id: turn.id, kind: turn.role, text: turn.text }));
-}
+const VoiceOrb = memo(function VoiceOrb({ visible, state, colors }: { visible: boolean; state: CallState; colors: [string, string] }) {
+  const input = useVoiceCall("level");
+  const output = useVoiceCall("outputLevel");
+  return <OrbBoundary colors={colors}>
+    <Orb resizeDebounce={0} paused={!visible} colors={colors} agentState={AGENT_STATE[state]}
+      volumeMode="manual" manualInput={input} manualOutput={output} seed={7} />
+  </OrbBoundary>;
+});
+
+const VoiceMeter = memo(function VoiceMeter({ visible, state, color }: { visible: boolean; state: CallState; color: string }) {
+  const level = useVoiceCall(state === "speaking" ? "outputLevel" : "level");
+  const active = state !== "off";
+  return <LiveWaveform active={visible && active && state !== "thinking"} level={level} processing={visible && state === "connecting"}
+    mode="static" height={active ? 22 : 40} barWidth={active ? 2 : 3} barGap={2} sensitivity={1.4} barColor={color} />;
+});
+
+const VoiceTranscript = memo(function VoiceTranscript({ error }: { error: string | null }) {
+  const turns = useVoiceCall("turns");
+  return <VoiceExchange log={turns.map(turn => ({ id: turn.id, kind: turn.role, text: turn.text }))} error={error} />;
+});

@@ -553,6 +553,7 @@ pub async fn dispatch(app: &AppHandle, command: &str, args: Value) -> Result<Val
                 text(&args, "cwd")?,
                 number::<u16>(&args, "cols")?,
                 number::<u16>(&args, "rows")?,
+                None,
             )?)
         }
         "pty_write" => {

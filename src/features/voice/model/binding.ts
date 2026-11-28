@@ -6,7 +6,6 @@ import type { UiRequest } from "@/lib/protocol"
 import { useWorkspace } from "@/lib/store"
 
 let token = 1
-let panelHolds = 0
 
 export function voiceToken() {
   return token
@@ -19,21 +18,6 @@ export function nextVoiceToken() {
 
 export function voiceCurrent(expected: number) {
   return expected === token
-}
-
-/** Session creation briefly leaves the voice page. That must not count as hanging up. */
-export function holdVoicePanel() {
-  panelHolds += 1
-  let released = false
-  return () => {
-    if (released) return
-    released = true
-    panelHolds -= 1
-  }
-}
-
-export function voicePanelHeld() {
-  return panelHolds > 0
 }
 
 export function dropAnnouncements() {

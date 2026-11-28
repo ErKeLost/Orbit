@@ -10,6 +10,7 @@ import {
   emptyTranscript,
   hydrate,
   reduceEvent,
+  reduceEventBatch,
   sameModel,
   transcriptLoading,
   withPendingModel,
@@ -106,7 +107,14 @@ function activeTarget(){const s=useWorkspace.getState();return s.connectionId||s
 function route(target=activeTarget()){return connections.has(target)?target:projectActive.get(target)??target}
 function connectionsFor(cwd:string){return [...connections.entries()].flatMap(([id,meta])=>meta.cwd===cwd?[id]:[])}
 function readSessionFiles():Record<string,string>{try{return JSON.parse(localStorage.getItem(SESSION_FILES_KEY)??localStorage.getItem(LEGACY_SESSION_FILES_KEY)??'{}')}catch{return {}}}
-function persistSession(cwd:string,sessionFile?:string){if(!sessionFile)return;const files=readSessionFiles();files[cwd]=sessionFile;localStorage.setItem(SESSION_FILES_KEY,JSON.stringify(files))}
+function persistSession(cwd:string,sessionFile?:string){if(!sessionFile)return;const files=readSessionFiles();if(files[cwd]===sessionFile)return;files[cwd]=sessionFile;localStorage.setItem(SESSION_FILES_KEY,JSON.stringify(files))}
+export function forgetPersistedSession(sessionPath: string) {
+ const files = readSessionFiles()
+ const remaining = Object.fromEntries(Object.entries(files).filter(([, path]) => path !== sessionPath))
+ if (Object.keys(remaining).length !== Object.keys(files).length) {
+  try { localStorage.setItem(SESSION_FILES_KEY, JSON.stringify(remaining)) } catch { /* Storage may be unavailable. */ }
+ }
+}
 function current(id:string):Snapshot{return useWorkspace.getState().connectionId===id?snapshot():snapshots.get(id)??fresh()}
 // 按 messages 数组引用缓存：流式里每个 patch 都会比较前后标题，原来每次都从头扫消息；
 // messages 引用没变（多数 patch 只改 phase/tools/telemetry）时直接复用上次结果。
@@ -133,16 +141,19 @@ function scanFirstUserTitle(transcript:Workspace['transcript']){
 function sameLiveSessions(a:LiveSession[],b:LiveSession[]){return a.length===b.length&&a.every((item,index)=>item.path===b[index]?.path&&item.cwd===b[index]?.cwd&&item.title===b[index]?.title&&item.running===b[index]?.running&&item.needsInput===b[index]?.needsInput&&item.connectionId===b[index]?.connectionId)}
 function syncLiveSessions(){
  const items:LiveSession[]=[],seen=new Set<string>()
- const ids=new Set([...snapshots.keys(),useWorkspace.getState().connectionId].filter(Boolean))
- for(const id of ids){
-  const snap=current(id),path=snap.state?.sessionFile,cwd=connections.get(id)?.cwd??useWorkspace.getState().cwd
+ const previousByPath = new Map(useWorkspace.getState().liveSessions.map(item => [item.path, item]))
+ for(const id of connections.keys()){
+  const snap=current(id),path=snap.state?.sessionFile,cwd=connections.get(id)!.cwd
   if(!path||seen.has(path))continue
   const running=snap.transcript.running||snap.transcript.compacting,needsInput=snap.dialogs.length>0
   if(!running&&!needsInput&&!snap.transcript.messages.some(item=>item.message.role==='user'))continue
   // 改过名的会话用 Pi 记下的名字：只用第一条用户消息的话，重命名在项目栏的「会话」
   // 区块和标签页里都不会生效（两边读的都不是同一处）。
   const renamed=typeof snap.state?.sessionName==='string'?snap.state.sessionName.trim():''
-  seen.add(path);items.push({path,cwd,connectionId:id,title:renamed||firstUserTitle(snap.transcript)||'新会话',running,needsInput})
+  const firstUser = snap.transcript.messages.find(item => item.message.role === 'user')?.message
+  const timestamp = firstUser?.timestamp
+  const modified = previousByPath.get(path)?.modified ?? new Date(typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : Date.now()).toISOString()
+  seen.add(path);items.push({path,cwd,connectionId:id,title:renamed||firstUserTitle(snap.transcript)||'新会话',running,needsInput,modified})
  }
  if(!sameLiveSessions(useWorkspace.getState().liveSessions,items))useWorkspace.getState().set({liveSessions:items})
 }
@@ -246,6 +257,17 @@ function applyEvent(event:Event,project:string){
   else if(request.method==='setTitle'&&useWorkspace.getState().connectionId===project)document.title=request.title
   return
  }
+ if(event.type==='entry_appended'&&event.entry&&typeof event.entry==='object'){
+  const entry=event.entry as {type?:string;kind?:string;usage?:{cost?:{total?:number}}}
+  const cost=entry.usage?.cost?.total
+  if(entry.type==='usage'&&entry.kind==='cache_warm'&&typeof cost==='number'&&Number.isFinite(cost)){
+   try {
+    if(JSON.parse(s.statuses['gui-capabilities']??'{}').settings?.notices?.cacheWarming===true){
+     patch(project,{notices:[...s.notices,`缓存预热费用 $${cost.toFixed(4)}`].slice(-5)})
+    }
+   } catch { /* Capability snapshots from older runtimes may be absent. */ }
+  }
+ }
  patch(project,{transcript:reduceEvent(s.transcript,event),telemetry:observe(s.telemetry,event)})
  if(['compaction_end','message_end','agent_settled'].includes(event.type))void queryClient.invalidateQueries({queryKey:['pi','live-stats',project]})
  if(event.type==='agent_settled'){
@@ -290,11 +312,11 @@ function flushEvents(project:string){
  cancelFlush(project)
  const timer=flushTimers.get(project);if(timer)clearTimeout(timer);flushTimers.delete(project)
  const queue=eventQueues.get(project);if(!queue?.length)return;eventQueues.delete(project)
- // burst 队列里只会是 message_update / tool_execution_update。此前逐条
- // applyEvent，每条各做一次 patch（store 提交 + 全量订阅者通知）：快速流式时
- // 一个窗口内多达 5~15 次提交。逐条 reduce 后只 patch 一次，结果与逐条应用一致。
+ // Keep one store commit per frame. Consecutive text deltas also share one copy of the transcript.
  const s=current(project)
- patch(project,{transcript:queue.reduce((transcript,event)=>reduceEvent(transcript,event),s.transcript),telemetry:queue.reduce((telemetry,event)=>observe(telemetry,event),s.telemetry)})
+ const transcript=reduceEventBatch(s.transcript,queue)
+ const telemetry=queue.reduce((current,event)=>observe(current,event),s.telemetry)
+ if(transcript!==s.transcript||telemetry!==s.telemetry)patch(project,{transcript,telemetry})
 }
 function clearEvents(project:string){cancelFlush(project);const timer=flushTimers.get(project);if(timer)clearTimeout(timer);flushTimers.delete(project);eventQueues.delete(project)}
 function dispatch(event:Event,project:string){

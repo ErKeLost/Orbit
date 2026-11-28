@@ -9,7 +9,7 @@ import QRCode from "antd/es/qr-code";
 import type { RpcCommand, RpcSessionState } from "@earendil-works/pi-coding-agent";
 import { useWorkspace, type Panel } from "../../../lib/store";
 import { useRuntimeDiscovery, type RuntimeDiscovery } from "../../../lib/runtime-diagnostics";
-import { clearSessionHistory, connect, deleteMcpServer, desktopRuntime, disconnect, getGuiSettings, getProjectTrustMode, imageConfig, listMcpServers, loadMessages, mcpConfigLocation, refresh, refreshCapabilities, report, request, saveImageConfig, saveMcpServer, setGuiSetting, setProjectTrustMode, type ImageConfigPatch, type McpServerView, type ProjectTrustMode } from "../../../lib/rpc";
+import { clearSessionHistory, connect, deleteMcpServer, desktopRuntime, disconnect, getGuiSettings, getProjectTrustMode, imageConfig, listMcpServers, loadMessages, mcpConfigLocation, PI_NOTICE_KEYS, refresh, refreshCapabilities, report, request, saveImageConfig, saveMcpServer, setGuiSetting, setProjectTrustMode, type ImageConfigPatch, type McpServerView, type PiNoticeKey, type ProjectTrustMode } from "../../../lib/rpc";
 import { CACHE_WARMING_LABELS, CODEMODE_TOOL, MCP_EXPOSURE_LABELS, TOOL_SEARCH_TOOL, inactiveCapabilityTools, parseCapabilities, availableMediaModels } from "../../../lib/capabilities";
 import { persistState } from "../../../lib/persistent";
 import { getRemoteHost, relaySettingsStatus, rememberRemoteHostEnabled, saveRelaySettings, startRemoteHost, stopRemoteHost, type RelaySettingsStatus, type RemoteHostInfo } from "../../../lib/remote-host";
@@ -57,6 +57,13 @@ const CACHE_WARMING_OPTIONS = [
   { value: "idle", label: "运行中与空闲" },
   { value: "off", label: "关闭" },
 ];
+
+const PI_NOTICE_LABELS: Record<PiNoticeKey, [string, string]> = {
+  cacheMisses: ["缓存未命中", "提示大量提示词因缓存未命中而重新计费。"],
+  cacheWarming: ["缓存预热费用", "显示缓存预热请求的费用。"],
+  compactionCosts: ["压缩与分支摘要费用", "显示生成摘要消耗的 token 和费用。"],
+  reasoningDrops: ["推理内容丢弃", "提示模型提供商丢弃了历史推理内容，以及报告的原因。"],
+};
 
 const CODEMODE_MODE_OPTIONS = [
   { value: "", label: "跟随 Pi 默认（on）" },
@@ -113,6 +120,12 @@ function PiCapabilitiesSettings({ desktop, online, running, tools }: { desktop: 
   const config = mcpQuery.data ?? null;
   const guiSettings = useQuery({ queryKey: ["pi", "gui-settings"], queryFn: getGuiSettings, enabled: desktop });
   const [busy, setBusy] = useState(false);
+  const [writingNotices, setWritingNotices] = useState(false);
+  async function writeNotice(key: PiNoticeKey, shown: boolean) {
+    setWritingNotices(true);
+    try { await writeSetting("notices", { [key]: shown }); }
+    finally { setWritingNotices(false); }
+  }
   const liveTools = useMemo(() => new Map((capabilities?.mcp ?? []).map(server => [server.name, server])), [capabilities]);
 
   const reload = () => mcpQuery.refetch();
@@ -165,11 +178,13 @@ function PiCapabilitiesSettings({ desktop, online, running, tools }: { desktop: 
     try { const paths = await mcpConfigLocation(); gooeyToast.info("MCP 配置路径", { description: `${paths.path}\n${paths.logPath}`, showTimestamp: false }); }
     catch (error) { report(error); }
   }
-  async function writeSetting(key: "cacheWarming" | "codemode", value: unknown) {
+  async function writeSetting(key: "cacheWarming" | "codemode" | "notices", value: unknown) {
     try { await setGuiSetting(key, value); await guiSettings.refetch(); gooeyToast.success("Pi 设置已写入 settings.json", { description: "重连项目或运行 /reload 后生效", showTimestamp: false }); }
     catch (error) { report(error); }
   }
   const images = availableMediaModels(capabilities?.media.image ?? []);
+  const endpointImages = images.filter(model => !model.api || model.api === "openai-images");
+  const piImages = images.filter(model => model.api === "openrouter-images" || (model.provider === "radius" && model.api === "pi-image"));
   const classifiers = availableMediaModels(capabilities?.media.classifier ?? []);
   // Pi 1.4 起部分分类器能同时看图和文字（Jev 1.14、Clef Omni），模型目录的 `input` 里会带 "image"。
   const imageCapable = classifiers.filter(model => model.input?.includes("image"));
@@ -212,19 +227,31 @@ function PiCapabilitiesSettings({ desktop, online, running, tools }: { desktop: 
       </SettingRow>;
     })}
     {!config?.servers.length && <SettingRow title="没有 MCP 服务器" description="添加后可以用 codemode 脚本、tool_search 或直接工具调用远程与本地 MCP。"><span className="remote-settings-note">{desktop ? "未配置" : "电脑端设置"}</span></SettingRow>}
-    <SettingRow title="图片模型" description={images.length ? "generate_image 默认使用的模型；工具参数可覆盖，分辨率与画幅只作为默认值。" : "需要一个 OpenAI 兼容的出图端点；未配置时用内置的火山方舟。"}>
+    <SettingRow title="图片模型" description={endpointImages.length ? "generate_image 默认使用的模型；工具参数可覆盖，分辨率与画幅只作为默认值。" : "需要一个 OpenAI 兼容的出图端点；未配置时用内置的火山方舟。"}>
       {desktop ? <div className="settings-directory-actions">
-        <Select label="图片模型" value={imageSettings.data?.defaults?.model ?? ""} options={[{ value: "", label: "默认（第一个可用）" }, ...images.map(model => ({ value: model.id, label: model.name ?? model.id }))]} onChange={value => void writeImageSetting({ model: value })} />
+        <Select label="图片模型" value={imageSettings.data?.defaults?.model ?? ""} options={[{ value: "", label: "默认（第一个可用）" }, ...endpointImages.map(model => ({ value: model.id, label: model.name ?? model.id }))]} onChange={value => void writeImageSetting({ model: value })} />
         <Select label="默认分辨率" value={imageSettings.data?.defaults?.resolution ?? ""} options={[{ value: "", label: "默认分辨率" }, ...imageOptions.resolutions.map(resolution => ({ value: resolution, label: resolution }))]} onChange={value => void writeImageSetting({ resolution: value })} />
         <Select label="默认画幅" value={imageSettings.data?.defaults?.aspect ?? ""} options={[{ value: "", label: "画幅自动" }, ...imageOptions.aspects.map(aspect => ({ value: aspect, label: aspect }))]} onChange={value => void writeImageSetting({ aspect: value })} />
         <Button variant="outline" onClick={() => setImageEndpointOpen(true)}><Icon name="sliders-horizontal" />端点</Button>
-      </div> : <span className="remote-settings-note">{images.length ? `${images.length} 个可用` : "电脑端设置"}</span>}
+      </div> : <span className="remote-settings-note">{endpointImages.length ? `${endpointImages.length} 个可用` : "电脑端设置"}</span>}
+    </SettingRow>
+    <SettingRow title="Pi 图片提供商" description={piImages.length
+      ? "用 generate_image 指定 OpenRouter 或 Radius，或在 Codemode 中调用 models.generateImages()。画幅与分辨率按各模型支持的值传入。"
+      : "登录 OpenRouter 或 Radius 后，Pi 模型目录会显示账号可用的出图模型。"}>
+      <span className="remote-settings-note">{piImages.length ? `${piImages.length} 个可用` : "未连接"}</span>
     </SettingRow>
     <ImageEndpointDialog open={imageEndpointOpen} onOpenChange={setImageEndpointOpen} config={imageSettings.data} onSaved={() => { void imageSettings.refetch(); void refreshCapabilities(); }} />
-    <SettingRow title="分类器模型" description={classifiers.length ? `${classifiers.map(model => `${model.provider}/${model.id}`).join("、")}${imageCapable.length ? `；其中 ${imageCapable.length} 个接受图片，可以连截图一起判断` : ""}` : "可用 Jev 或 llama.cpp 分类器模型运行 codemode 中的 models.classify()。"}><span className="remote-settings-note">{classifiers.length ? `${classifiers.length} 个可用` : "无可用凭据"}</span></SettingRow>
+    <SettingRow title="分类器模型" description={classifiers.length ? `${classifiers.map(model => `${model.provider}/${model.id}`).join("、")}${imageCapable.length ? `；其中 ${imageCapable.length} 个接受图片，可以连截图一起判断` : ""}` : "登录 GitHub Copilot 或 Radius，或配置 Jev、llama.cpp 分类器后，可在 Codemode 中使用 models.classify()。"}><span className="remote-settings-note">{classifiers.length ? `${classifiers.length} 个可用` : "无可用凭据"}</span></SettingRow>
     <SettingRow title="缓存预热" description="长工具调用期间保活可缓存的 prompt 前缀，按避免的缓存未命中成本决定是否刷新。写入 ~/.pi/agent/settings.json。">
       {desktop ? <Select label="缓存预热" value={typeof guiSettings.data?.settings.cacheWarming === "string" ? guiSettings.data.settings.cacheWarming : ""} options={CACHE_WARMING_OPTIONS} onChange={value => void writeSetting("cacheWarming", value || null)} /> : <span className="remote-settings-note">{CACHE_WARMING_LABELS[capabilities?.settings?.cacheWarming ?? ""] ?? "—"}</span>}
     </SettingRow>
+    {desktop && PI_NOTICE_KEYS.map(key => {
+      const [title, description] = PI_NOTICE_LABELS[key];
+      return <SettingRow key={key} title={title} description={description}>
+        <Toggle label={title} on={guiSettings.data?.settings.notices?.[key] === true}
+          disabled={!guiSettings.data || writingNotices} onChange={shown => void writeNotice(key, shown)} />
+      </SettingRow>;
+    })}
     <SettingRow title="Codemode 模式" description="on：声明给模型的工具仅在 codemode 里被调用；only：其他工具全部隐藏，模型只能通过脚本调用。">
       {desktop ? <Select label="Codemode 模式" value={guiSettings.data?.settings.codemode?.mode ?? ""} options={CODEMODE_MODE_OPTIONS} onChange={value => void writeSetting("codemode", value ? { mode: value, ...(guiSettings.data?.settings.codemode?.inlineBudget !== undefined ? { inlineBudget: guiSettings.data.settings.codemode.inlineBudget } : {}) } : null)} /> : <span className="remote-settings-note">电脑端设置</span>}
     </SettingRow>

@@ -1,5 +1,5 @@
 import { emptyTranscript } from './types'
-import type { DisplayMessage, Event, PendingModel, PiMessage, Tool, ToolUsage, Transcript } from './types'
+import type { DisplayMessage, Event, Part, PendingModel, PiMessage, Tool, ToolUsage, Transcript } from './types'
 import { toolImageInfo, toolResultImages, toolResultText } from './images'
 import { isQueuedPreview, visibleTurnStart } from './grouping'
 import { isStaleExtensionContextError } from '../extension-errors'
@@ -127,6 +127,50 @@ export function hydrate(messages: PiMessage[]): Transcript {
   }
   return state
 }
+type MessageDelta = NonNullable<Event['assistantMessageEvent']>
+
+function applyMessageDelta(content: Part[], delta: MessageDelta) {
+  const index = delta.contentIndex
+  let part = { ...content[index] }
+  switch(delta.type) {
+    case 'text_start': part = {type:'text', text:''}; break
+    case 'text_delta': part = { ...part, type:'text', text:(part.text ?? '')+(delta.delta ?? '') }; break
+    case 'text_end': if (delta.content !== undefined) part = {...part, type:'text', text:delta.content}; break
+    case 'thinking_start': part = {type:'thinking', thinking:''}; break
+    case 'thinking_delta': part = { ...part, type:'thinking', thinking:(part.thinking ?? '')+(delta.delta ?? '') }; break
+    case 'thinking_end': part = {...part,type:'thinking',thinking:delta.content ?? part.thinking,thinkingComplete:true}; break
+    case 'toolcall_start': part = {type:'toolCall', id:delta.id, name:delta.toolName,argsText:''}; break
+    case 'toolcall_delta': part = {...part,argsText:(part.argsText ?? '')+(delta.delta ?? '')}; break
+    case 'toolcall_end': if(delta.toolCall) part = delta.toolCall; break
+  }
+  content[index] = part
+}
+
+/** Fold consecutive deltas into one privately owned draft for this render frame. */
+export function reduceEventBatch(previous: Transcript, events: readonly Event[]): Transcript {
+  if (events.length === 1) return reduceEvent(previous, events[0])
+  let state = previous
+  let content: Part[] | undefined
+  for (const event of events) {
+    if (event.type !== 'message_update') {
+      content = undefined
+      state = reduceEvent(state, event)
+      continue
+    }
+    const delta = event.assistantMessageEvent
+    const active = state.messages[state.active]
+    if (!delta || active?.message.role !== 'assistant') continue
+    if (!content) {
+      content = Array.isArray(active.message.content) ? [...active.message.content] : []
+      const messages = [...state.messages]
+      messages[state.active] = { ...active, message: { ...active.message, content } }
+      state = { ...state, messages }
+    }
+    applyMessageDelta(content, delta)
+  }
+  return state
+}
+
 // Pi 0.85.1 RPC intentionally has delta-only updates. The end snapshot is authoritative.
 export function reduceEvent(previous: Transcript, event: Event): Transcript {
   const state = { ...previous }
@@ -217,20 +261,7 @@ export function reduceEvent(previous: Transcript, event: Event): Transcript {
       const original = state.messages[state.active]
       if (!delta || !original || original.message.role !== 'assistant') return state
       const content = Array.isArray(original.message.content) ? [...original.message.content] : []
-      const index = delta.contentIndex
-      let part = { ...content[index] }
-      switch(delta.type) {
-        case 'text_start': part = {type:'text', text:''}; break
-        case 'text_delta': part = { ...part, type:'text', text:(part.text ?? '')+(delta.delta ?? '') }; break
-        case 'text_end': if (delta.content !== undefined) part = {...part, type:'text', text:delta.content}; break
-        case 'thinking_start': part = {type:'thinking', thinking:''}; break
-        case 'thinking_delta': part = { ...part, type:'thinking', thinking:(part.thinking ?? '')+(delta.delta ?? '') }; break
-        case 'thinking_end': part = {...part,type:'thinking',thinking:delta.content ?? part.thinking,thinkingComplete:true}; break
-        case 'toolcall_start': part = {type:'toolCall', id:delta.id, name:delta.toolName,argsText:''}; break
-        case 'toolcall_delta': part = {...part,argsText:(part.argsText ?? '')+(delta.delta ?? '')}; break
-        case 'toolcall_end': if(delta.toolCall) part = delta.toolCall; break
-      }
-      content[index] = part
+      applyMessageDelta(content, delta)
       state.messages = [...state.messages]
       state.messages[state.active] = {...original,message:{...original.message,content}}
       return state

@@ -183,18 +183,20 @@ struct ToolReply {
 }
 
 struct Live {
+    id: u64,
     tx: tokio::sync::mpsc::Sender<Cmd>,
 }
 
+static NEXT_CALL_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 static LIVE: std::sync::LazyLock<tokio::sync::Mutex<Option<Live>>> =
     std::sync::LazyLock::new(|| tokio::sync::Mutex::new(None));
 
 fn emit(channel: &Option<tauri::ipc::Channel<Value>>, body: Value) {
     if let Some(channel) = channel {
-        let _ = channel.send(body.clone());
+        let _ = channel.send(body);
+        return;
     }
-    // A paired phone has its own window. The Channel above only reaches the
-    // desktop webview, so the same event is published on the pairing socket.
+    // Remote audio is only emitted for calls that started on a phone.
     let app = APP.lock().ok().and_then(|slot| slot.clone());
     if let Some(app) = app {
         crate::remote::publish_terminal(&app, json!({
@@ -223,32 +225,43 @@ async fn open_prism(on_event: Option<tauri::ipc::Channel<Value>>) -> Result<Valu
     let key = api_key()?;
     let (tx, rx) = tokio::sync::mpsc::channel(32);
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let id = NEXT_CALL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     {
         let mut live = LIVE.lock().await;
         if let Some(previous) = live.take() {
             let _ = previous.tx.try_send(Cmd::Close);
         }
-        *live = Some(Live { tx });
+        *live = Some(Live { id, tx });
     }
-    tauri::async_runtime::spawn(run_prism(key, rx, on_event, ready_tx));
+    tauri::async_runtime::spawn(run_prism(key, rx, on_event, ready_tx, id));
     match tokio::time::timeout(std::time::Duration::from_secs(15), ready_rx).await {
         Ok(Ok(Ok(()))) => Ok(json!({ "voice": VOICE, "language": "en" })),
         Ok(Ok(Err(error))) => {
-            *LIVE.lock().await = None;
+            clear_prism(id).await;
             Err(error)
         }
         _ => {
-            *LIVE.lock().await = None;
+            clear_prism(id).await;
             Err("Prism 没有接通".into())
         }
     }
 }
 
+async fn clear_prism(id: u64) {
+    let mut live = LIVE.lock().await;
+    if live.as_ref().is_some_and(|current| current.id == id) {
+        *live = None;
+    }
+}
+
 #[tauri::command]
 pub async fn rime_prism_audio(audio_base64: String) -> Result<(), String> {
-    let live = LIVE.lock().await;
-    let Some(live) = live.as_ref() else { return Err("语音还没接通".into()) };
-    live.tx.send(Cmd::Audio(audio_base64)).await.map_err(|_| "语音连接已断开".to_string())
+    let tx = LIVE.lock().await.as_ref().map(|live| live.tx.clone()).ok_or("语音还没接通")?;
+    // Don't park the phone's read/write loop behind a stalled upstream socket.
+    tx.try_send(Cmd::Audio(audio_base64)).map_err(|error| match error {
+        tokio::sync::mpsc::error::TrySendError::Full(_) => "Prism 暂时无法接收音频".to_string(),
+        tokio::sync::mpsc::error::TrySendError::Closed(_) => "语音连接已断开".to_string(),
+    })
 }
 
 #[tauri::command]
@@ -331,6 +344,7 @@ async fn run_prism(
     mut commands: tokio::sync::mpsc::Receiver<Cmd>,
     channel: Option<tauri::ipc::Channel<Value>>,
     ready: tokio::sync::oneshot::Sender<Result<(), String>>,
+    id: u64,
 ) {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
@@ -454,9 +468,14 @@ async fn run_prism(
                                 emit(&channel, json!({ "kind": "error", "message": message, "code": code }));
                             } else if kind == "input_audio_buffer.speech_started" {
                                 emit(&channel, json!({ "kind": "speech_started", "itemId": item_id }));
+                            } else if kind == "input_audio_buffer.speech_stopped" {
+                                emit(&channel, json!({ "kind": "speech_stopped" }));
+                            } else if kind == "conversation.item.input_audio_transcription.failed" {
+                                let message = event.pointer("/error/message").and_then(Value::as_str).unwrap_or("语音识别失败，请再说一次");
+                                emit(&channel, json!({ "kind": "transcription_error", "message": message }));
                             } else if kind == "conversation.item.input_audio_transcription.completed" {
                                 let said = text_of(event.get("transcript"));
-                                if !said.is_empty() { emit(&channel, json!({ "kind": "transcript", "text": said })); }
+                                if !said.is_empty() { emit(&channel, json!({ "kind": "transcript", "text": said, "itemId": text_of(event.get("item_id")) })); }
                             } else if kind == "response.output_item.added" {
                                 if let Some(id) = event.pointer("/item/id").and_then(Value::as_str) { item_id = id.to_owned(); }
                                 if event.pointer("/item/type").and_then(Value::as_str) == Some("function_call") {
@@ -473,6 +492,12 @@ async fn run_prism(
                             } else if kind == "response.done" {
                                 let id = event.pointer("/response/id").and_then(Value::as_str).unwrap_or("").to_string();
                                 let status = event.pointer("/response/status").and_then(Value::as_str).unwrap_or("").to_string();
+                                if status == "failed" {
+                                    emit(&channel, json!({
+                                        "kind": "response_failed",
+                                        "message": event.pointer("/response/status_details/error/message").and_then(Value::as_str),
+                                    }));
+                                }
                                 if !id.is_empty() {
                                     finished.insert(id.clone(), status.clone());
                                     if finished.len() > 8 {
@@ -493,10 +518,14 @@ async fn run_prism(
                                 }
                             } else if kind == "response.audio.delta" {
                                 let audio = text_of(event.get("delta"));
-                                if !audio.is_empty() { emit(&channel, json!({ "kind": "audio", "audio": audio, "itemId": item_id })); }
-                            } else if kind == "response.text.done" {
-                                let said = text_of(event.get("text"));
-                                if !said.is_empty() { emit(&channel, json!({ "kind": "reply", "text": said })); }
+                                let item = event.get("item_id").and_then(Value::as_str).unwrap_or(&item_id);
+                                if !audio.is_empty() { emit(&channel, json!({ "kind": "audio", "audio": audio, "itemId": item })); }
+                            } else if kind == "response.audio.done" {
+                                let item = event.get("item_id").and_then(Value::as_str).unwrap_or(&item_id);
+                                emit(&channel, json!({ "kind": "audio_done", "itemId": item }));
+                            } else if matches!(kind, "response.text.done" | "response.audio_transcript.done") {
+                                let said = text_of(event.get("transcript").or_else(|| event.get("text")));
+                                if !said.is_empty() { emit(&channel, json!({ "kind": "reply", "text": said, "itemId": text_of(event.get("item_id")) })); }
                             } else if kind == "prism.typed_input.ready" {
                                 idle = true;
                                 if hushed { continue; }
@@ -519,8 +548,7 @@ async fn run_prism(
         emit(&channel, json!({ "kind": "error", "message": error }));
     }
     emit(&channel, json!({ "kind": "closed" }));
-    let mut live = LIVE.lock().await;
-    *live = None;
+    clear_prism(id).await;
 }
 
 fn clip_output(text: &str) -> String {

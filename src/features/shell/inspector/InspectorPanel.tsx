@@ -161,7 +161,7 @@ export function InspectorPanel({ visible, online }: { visible: boolean; online: 
 
       <div className={`flex min-h-0 flex-1 flex-col overflow-hidden ${tab === "explorer" ? "" : "hidden"}`}>
         {project ? (
-          <FileTree key={project} cwd={project} activeFile={activeFile} visible={tab === "explorer"} />
+          <FileTree key={project} cwd={project} activeFile={activeFile} visible={visible && tab === "explorer"} />
         ) : (
           <p className="px-3 py-2 text-xs text-ink-3">没有项目文件夹</p>
         )}

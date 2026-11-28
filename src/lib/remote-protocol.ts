@@ -451,20 +451,19 @@ export function parsePairingUri(value: string): RemoteEndpoint {
 }
 
 export function parsePairingEndpoints(value: string): RemoteEndpoint[] {
-  let uri: URL
-  try {
-    uri = new URL(value)
-  } catch {
-    throw new Error("无效的 Orbit 配对地址")
-  }
-  const host = uri.searchParams.get("host")?.trim().replace(/^\[|\]$/g, "") ?? ""
-  const relay = uri.searchParams.get("relay")?.trim() ?? ""
-  const hostId = uri.searchParams.get("hostId")?.trim() ?? ""
-  const encryptionKey = uri.searchParams.get("key")?.trim() ?? ""
-  const port = Number(uri.searchParams.get("port"))
-  const token = uri.searchParams.get("token") ?? ""
-  const protocol = uri.searchParams.get("protocol")
-  if (uri.protocol !== "orbit:" || uri.hostname !== "pair" || (uri.pathname && uri.pathname !== "/")) throw new Error("无效的 Orbit 配对地址")
+  // Some Android WebViews put the authority of a custom scheme in pathname.
+  // Validate Orbit's fixed prefix directly, then use the platform query parser.
+  const address = value.trim()
+  const prefix = /^orbit:\/\/pair\/?\?/i.exec(address)
+  if (!prefix) throw new Error("无效的 Orbit 配对地址")
+  const search = new URLSearchParams(address.slice(prefix[0].length).split("#", 1)[0])
+  const host = search.get("host")?.trim().replace(/^\[|\]$/g, "") ?? ""
+  const relay = search.get("relay")?.trim() ?? ""
+  const hostId = search.get("hostId")?.trim() ?? ""
+  const encryptionKey = search.get("key")?.trim() ?? ""
+  const port = Number(search.get("port"))
+  const token = search.get("token") ?? ""
+  const protocol = search.get("protocol")
   if (protocol !== REMOTE_PROTOCOL) throw new Error("Orbit Host 协议版本不兼容")
   if (!/^[A-Za-z0-9_-]{16,256}$/.test(token)) throw new Error("Orbit 配对令牌无效")
   const endpoints: RemoteEndpoint[] = []

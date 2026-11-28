@@ -8,9 +8,9 @@ import { runRemoteHostOperation } from "./remote-runtime";
 import {
   cachedTranscript,
   connections,
-  connectionsFor,
   current,
   forgetCachedTranscript,
+  forgetPersistedSession,
   fresh,
   loadMessages,
   patch,
@@ -79,7 +79,21 @@ export async function sendPrompt(command:RpcCommand,target=activeTarget(),wasRun
   throw error
  }
 }
-export async function listSessions(project:string){if(mobileRuntime())return runRemoteHostOperation<import('./protocol').Session[]>({name:'session.list',cwd:project});if(!native)return [];return invoke<import('./protocol').Session[]>('list_sessions',{cwd:project})}
+const inFlightSessionLists = new Set<Set<string>>();
+
+export async function listSessions(project: string) {
+ const removed = new Set<string>()
+ inFlightSessionLists.add(removed)
+ try {
+  type Rows = import('./protocol').Session[]
+  const rows = mobileRuntime()
+   ? await runRemoteHostOperation<Rows>({name:'session.list',cwd:project})
+   : native ? await invoke<Rows>('list_sessions',{cwd:project}) : []
+  return removed.size ? rows.filter(row => !removed.has(row.path)) : rows
+ } finally {
+  inFlightSessionLists.delete(removed)
+ }
+}
 export async function deleteSession(sessionPath:string):Promise<void> { if(mobileRuntime()){await runRemoteHostOperation<null>({name:'session.delete',sessionPath});return}if(!native) throw new Error('删除会话需要桌面应用'); return invoke<void>('delete_session',{sessionPath}) }
 export async function clearSessionHistory():Promise<number> {
  if(!workspaceBackend()) throw new Error('清空会话历史请在电脑端执行')
@@ -115,19 +129,34 @@ export async function renameSession(sessionPath:string,name:string,connectionId?
  // 区块是跨项目列出的），只刷当前 cwd 的话，被改的那一行会一直显示旧标题。
  await queryClient.invalidateQueries({queryKey:['pi','sessions']})
 }
-export async function retireSession(sessionPath:string){
- const cwd=useWorkspace.getState().cwd,owner=sessionOwners.get(sessionPath),wasActive=owner?useWorkspace.getState().connectionId===owner:useWorkspace.getState().state?.sessionFile===sessionPath
- if(mobileRuntime()&&wasActive){await changeSession({type:'new_session'});await deleteSession(sessionPath);sessionOwners.delete(sessionPath);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]});return}
- if(owner&&connections.has(owner))await closeConnection(owner,'会话已关闭')
- await deleteSession(sessionPath);sessionOwners.delete(sessionPath);forgetCachedTranscript(sessionPath)
- if(!wasActive)return
- const remaining=connectionsFor(cwd)[0]
- if(remaining){activateConnection(remaining,cwd);return}
- // 手机端没有自己的进程：这条新会话要由电脑端开，回来的是它真实的连接 id。
- const id=`${cwd}#${crypto.randomUUID()}`
- useWorkspace.getState().set({...fresh(),cwd,connectionId:id,panel:'chat'})
- const actual=await openWorkspaceConnection(cwd,id)
- if(actual!==id)useWorkspace.getState().set({connectionId:actual})
+const sessionDeletes = new Map<string, Promise<void>>();
+
+/** Retire the writer before removing its file, then prune all lists from one place. */
+export function retireSession(sessionPath: string): Promise<void> {
+ const pending = sessionDeletes.get(sessionPath)
+ if (pending) return pending
+ const task = (async () => {
+  if (mobileRuntime()) {
+   if (useWorkspace.getState().state?.sessionFile === sessionPath) await changeSession({ type: 'new_session' })
+  } else {
+   const writers = [...connections.keys()].filter(id => current(id).state?.sessionFile === sessionPath)
+   await Promise.all(writers.map(id => closeConnection(id, '会话已关闭')))
+  }
+  await deleteSession(sessionPath)
+  sessionOwners.delete(sessionPath)
+  forgetCachedTranscript(sessionPath)
+  forgetPersistedSession(sessionPath)
+  // A response captured before deletion must not write the deleted row back.
+  for (const removed of inFlightSessionLists) removed.add(sessionPath)
+  type Rows = import('./protocol').Session[]
+  const containsSession = (rows: unknown) => Array.isArray(rows) && rows.some(row => row?.path === sessionPath)
+  queryClient.setQueriesData<Rows>({
+   queryKey: ['pi', 'sessions'],
+   predicate: query => containsSession(query.state.data),
+  }, rows => rows?.filter(row => row.path !== sessionPath))
+ })().finally(() => sessionDeletes.delete(sessionPath))
+ sessionDeletes.set(sessionPath, task)
+ return task
 }
 export async function getSessionTurnDurations(sessionPath:string):Promise<Record<string,number>> { if(mobileRuntime())return runRemoteHostOperation<Record<string,number>>({name:'session.turnDurations',sessionPath});if(!native) return {}; return invoke<Record<string,number>>('session_turn_durations',{sessionPath}) }
 
@@ -196,9 +225,9 @@ export async function stop(target=activeTarget()){
  if(draft.length){const s=current(id);patch(id,{draft:[s.draft,...draft].filter(Boolean).join('\n')})}
  await refresh(id)
 }
-export async function changeSession(command:RpcCommand){
+export async function changeSession(command:RpcCommand, options?: { keepPanel?: boolean }){
  try {
-  return await changeSessionOnce(command)
+  return await changeSessionOnce(command, options?.keepPanel)
  } catch (error) {
   // A stale worker after a restart or project switch: reconnect and retry once.
   const workspace=useWorkspace.getState()
@@ -210,7 +239,7 @@ export async function changeSession(command:RpcCommand){
    reconnectingProjects.set(cwd,task)
   }
   await task
-  return changeSessionOnce(command)
+  return changeSessionOnce(command, options?.keepPanel)
  }
 }
 const SESSION_SWITCH_COMMANDS=new Set(['switch_session','new_session','clone','fork'])
@@ -221,7 +250,7 @@ const markSessionLoading=(id:string)=>patch(id,{transcript:transcriptLoading(cur
  * 但内容整体换掉』的入口走这里，loadMessages 自己会（成功或失败）把骨架屏收起来。
  */
 export async function reloadMessages(target=activeTarget()){const id=route(target);markSessionLoading(id);return loadMessages(id)}
-async function changeSessionOnce(command:RpcCommand){
+async function changeSessionOnce(command:RpcCommand, keepPanel = false){
  const cwd=useWorkspace.getState().cwd,active=route(cwd),running=current(active).transcript.running
  if(command.type==='switch_session'){
   if(useWorkspace.getState().state?.sessionFile===command.sessionPath){useWorkspace.getState().set({panel:'chat'});return}
@@ -247,7 +276,7 @@ async function changeSessionOnce(command:RpcCommand){
    const result=await request<{cancelled?:boolean;text?:string}>(command,60000,active)
    if(result?.cancelled)throw new Error('扩展取消了会话切换')
    patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null})
-   if(useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'})
+   if(!keepPanel&&useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'})
    await loadMessages(active,command.type==='switch_session'?command.sessionPath:undefined)
    if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,active)
    await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
@@ -256,14 +285,14 @@ async function changeSessionOnce(command:RpcCommand){
   if((command.type==='new_session'||command.type==='switch_session')&&running){
    const id=`${cwd}#${crypto.randomUUID()}`
    snapshots.set(active,snapshot())
-   useWorkspace.getState().set({...fresh(),cwd,connectionId:id,panel:'chat'})
+   useWorkspace.getState().set({...fresh(),cwd,connectionId:id,...(!keepPanel?{panel:'chat'}:{})})
    // 手机端换进程仍然要电脑端那条真实连接（本地编的 id 在 Host 侧不存在）。
    const opened=await openWorkspaceConnection(cwd,id,command.type==='switch_session'?{sessionPath:command.sessionPath}:undefined)
    if(opened!==id)useWorkspace.getState().set({connectionId:opened})
    if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,opened)
    await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]});return
   }
-  const result=await request<{cancelled?:boolean;text?:string}>(command,60000,active);if(result?.cancelled)throw new Error('扩展取消了会话切换');patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null});if(useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'});await loadMessages(active,command.type==='switch_session'?command.sessionPath:undefined);if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,active);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
+  const result=await request<{cancelled?:boolean;text?:string}>(command,60000,active);if(result?.cancelled)throw new Error('扩展取消了会话切换');patch(active,{error:null,telemetry:emptyTelemetry(),draft:result?.text??'',dialogs:[],statuses:{},widgets:{},agents:null});if(!keepPanel&&useWorkspace.getState().connectionId===active)useWorkspace.getState().set({panel:'chat'});await loadMessages(active,command.type==='switch_session'?command.sessionPath:undefined);if(useWorkspace.getState().workspaceMode==='project')await syncConfiguredProjectRoots(cwd,active);await queryClient.invalidateQueries({queryKey:['pi','sessions',cwd]})
  }
  catch(error){
   // 取消/失败时手动收起骨架屏：这条路径不会走到 loadMessages 的 hydrate。

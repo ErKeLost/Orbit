@@ -1032,13 +1032,13 @@ mod desktop {
     fn is_slow_request(raw: &str) -> bool {
         serde_json::from_str::<Value>(raw)
             .ok()
-            .and_then(|value| {
-                value
-                    .get("type")
-                    .and_then(Value::as_str)
-                    .map(|kind| kind == "host.operation")
+            .is_some_and(|value| {
+                let kind = value.get("type").and_then(Value::as_str);
+                kind == Some("host.operation")
+                    || (kind == Some("host.invoke")
+                        && matches!(value.get("command").and_then(Value::as_str),
+                            Some("rime_prism_open" | "rime_prism_tool_result" | "voice_classify")))
             })
-            .unwrap_or(false)
     }
 
     /// Handle one client message.

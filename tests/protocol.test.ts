@@ -1,5 +1,5 @@
 import {describe,test,expect} from 'bun:test'
-import {assignTurnClocks,emptyTranscript,groupDisplayMessages,reuseGroups,reduceEvent,hydrate,sameModel,toolResultImages,toolResultText,withPendingModel} from '../src/lib/protocol'
+import {assignTurnClocks,emptyTranscript,groupDisplayMessages,reuseGroups,reduceEvent,reduceEventBatch,hydrate,sameModel,toolResultImages,toolResultText,withPendingModel} from '../src/lib/protocol'
 import { summarizeToolCalls } from '../src/lib/tool-activity'
 import { projectTurn, userImages } from '../src/features/chat/turnModel'
 import { turnDurationId } from '../src/lib/turn-duration'
@@ -305,7 +305,7 @@ describe('streaming delta delivery',()=>{
  test('folding a batch matches folding events one by one',()=>{
   const start=()=>reduceEvent(emptyTranscript(),{type:'message_start',message:{role:'assistant',content:[],timestamp:1}})
   const oneByOne=deltas.reduce(reduceEvent,start())
-  const batched=[deltas.slice(0,3),deltas.slice(3,5),deltas.slice(5)].reduce((transcript,batch)=>batch.reduce(reduceEvent,transcript),start())
+  const batched=[deltas.slice(0,3),deltas.slice(3,5),deltas.slice(5)].reduce(reduceEventBatch,start())
   // 只比消息内容：message_start 给 assistant 打的 startedAt 是运行时时钟，
   // 两次折叠可能差一毫秒，不属于"分批是否等价"这件事。
   const content=(transcript:ReturnType<typeof reduceEvent>)=>transcript.messages.map(({message})=>({message}))
@@ -322,9 +322,16 @@ describe('streaming delta delivery',()=>{
    {type:'message_end',message:{role:'assistant',content:[{type:'text',text:'答案'}],stopReason:'stop'}},
   ]
   const sequential=events.reduce(reduceEvent,emptyTranscript())
-  const batched=[[events[0]],[events[1],events[2],events[3],events[4]],[events[5]]].reduce((transcript,batch)=>batch.reduce(reduceEvent,transcript),emptyTranscript())
+  const batched=[[events[0]],[events[1],events[2],events[3],events[4]],[events[5]]].reduce(reduceEventBatch,emptyTranscript())
   const content=(transcript:ReturnType<typeof reduceEvent>)=>transcript.messages.map(({message})=>({message}))
   expect(content(batched)).toEqual(content(sequential))
+ })
+ test('preserves batch boundaries and does not mutate the displayed snapshot',()=>{
+  const previous=reduceEvent(emptyTranscript(),{type:'message_start',message:{role:'assistant',content:[{type:'text',text:'original'}],timestamp:2}})
+  const events=[deltas[0],{type:'tool_execution_update',toolCallId:'read',toolName:'read',partialResult:'working'},deltas[1],deltas[2]]
+  expect(reduceEventBatch(previous,events)).toEqual(events.reduce(reduceEvent,previous))
+  expect(previous.messages[0].message.content).toEqual([{type:'text',text:'original'}])
+  expect(previous.tools).toEqual({})
  })
  test('image tool results keep their media for the chat renderer',()=>{
   const result={content:[{type:'text',text:'已生成 1 张图片'},{type:'image',data:'AAAA',mimeType:'image/jpeg'}]}

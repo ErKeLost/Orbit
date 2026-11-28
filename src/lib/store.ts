@@ -10,7 +10,7 @@ export type SettingsPage = 'general' | 'appearance' | 'chat' | 'skills' | 'inbox
 export type WorkspaceMode = 'project' | 'home'
 export type RuntimeTarget = 'unknown' | 'browser' | 'desktop' | 'mobile'
 /** One session that has a live pi connection, foreground or background. */
-export type LiveSession = { path: string; cwd: string; connectionId?: string; title: string; running: boolean; needsInput?: boolean }
+export type LiveSession = { path: string; cwd: string; connectionId?: string; title: string; running: boolean; needsInput?: boolean; modified?: string }
 export type Workspace = {
   telemetry:Telemetry; inspector:boolean; transcript: Transcript; state: RpcSessionState | null; connection: 'offline' | 'connecting' | 'online';
   runtimeTarget:RuntimeTarget; runtimePlatform:string; remoteTheme:RemoteTheme|null; remoteMachineName:string; cwd:string; connectionId:string; homeDir:string; workspaceMode:WorkspaceMode; piVersion:string; panel:Panel; settingsPage:SettingsPage; error:string | null; draft:string;

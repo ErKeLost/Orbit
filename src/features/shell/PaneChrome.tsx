@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
-import { queryClient, renameSession, report, retireSession } from "../../lib/rpc";
+import { renameSession, report } from "../../lib/rpc";
+import { workspaceTabs } from "./use-workspace-tabs";
 import { compactTitle } from "../../lib/session-visual";
 import { useWorkspace } from "../../lib/store";
 import { mergeProjectSessions, useProjectSessions } from "../../hooks/use-project-sessions";
@@ -209,8 +210,7 @@ export function SessionPaneHeader({
   const closeSession = async () => {
     if (!session) return;
     try {
-      await retireSession(session.path);
-      await queryClient.invalidateQueries({ queryKey: ["pi", "sessions", cwd] });
+      await workspaceTabs.deleteSession(session.path);
       toast.success("会话已关闭");
     } catch (error) {
       report(error);

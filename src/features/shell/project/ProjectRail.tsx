@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useWorkspace, type Panel } from "../../../lib/store";
 import type { Session } from "../../../lib/protocol";
@@ -14,12 +14,13 @@ import {
   useProjects,
   type Project,
 } from "../../../lib/projects";
-import { connect, desktopRuntime, forgetProject, prefetchSession, queryClient, renameSession, report, setSessionRoots } from "../../../lib/rpc";
+import { connect, desktopRuntime, forgetProject, prefetchSession, renameSession, report, setSessionRoots } from "../../../lib/rpc";
 import { useWorkspaceTabs } from "../use-workspace-tabs";
 import { useSessionContextMenu } from "../sessions/SessionMenu";
 import { SessionTitleField } from "../sessions/SessionTitleField";
 import { runRemoteHostOperation } from "../../../lib/remote-runtime";
-import { useProjectSessionGroups } from "../../../hooks/use-project-sessions";
+import { compareSessionActivity, mergeProjectSessions, useProjectSessionGroups } from "../../../hooks/use-project-sessions";
+import { groupSessionsByDay, useSessionDay } from "../sessions/session-day";
 import { sessionGlyph, sessionRelativeTime, sessionTitle } from "../../../lib/session-visual";
 import { projectName as pathProjectName } from "../../../shared/lib/paths";
 import { Icon } from "../../../components/Icon";
@@ -194,9 +195,6 @@ function ArchivedFooter({ projects }: { projects: Project[] }) {
   );
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-const AGE_GROUPS = ["今天", "昨天", "最近 7 天", "更早"] as const;
-type AgeGroup = (typeof AGE_GROUPS)[number];
 type RailSession = { session: Session; project: string };
 /** 加号菜单里那一项：会话落在主目录，不属于任何注册项目。 */
 const LOOSE_LABEL = "不在文件夹里工作";
@@ -205,31 +203,10 @@ function sameScope(a: string, b: string) {
   return Boolean(a) && Boolean(b) && normalizeProjectPath(a) === normalizeProjectPath(b);
 }
 
-/**
- * 一条会话的最近活动落在哪一段。
- *
- * 按**日历日**分界而不是「多少小时前」：凌晨两点看到的「今天」应该还是今天，
- * 而不是一个跟着时钟滑动的窗口。这也是 monocode 侧栏的分法。
- */
-function sessionAge(updatedAt: number, now: number): AgeGroup {
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  const startOfToday = start.getTime();
-  if (!Number.isFinite(updatedAt) || updatedAt < startOfToday - 6 * DAY_MS) return "更早";
-  if (updatedAt >= startOfToday) return "今天";
-  if (updatedAt >= startOfToday - DAY_MS) return "昨天";
-  return "最近 7 天";
-}
-
-function groupByAge(entries: RailSession[], now = Date.now()) {
-  const buckets = new Map<AgeGroup, RailSession[]>(AGE_GROUPS.map((label) => [label, []]));
-  for (const entry of entries) buckets.get(sessionAge(Date.parse(entry.session.modified), now))!.push(entry);
-  return AGE_GROUPS.map((label) => ({ label, items: buckets.get(label)! })).filter((group) => group.items.length > 0);
-}
-
 /** 项目栏里的会话行：标题 + 所属项目，右侧是运行状态或相对时间。 */
-function RailSessionCard({
+const RailSessionCard = memo(function RailSessionCard({
   session,
+  project,
   projectLabel,
   active,
   running,
@@ -237,20 +214,19 @@ function RailSessionCard({
   onSelect,
   onContextMenu,
   onStartRename,
-  onCancelRename,
   onRename,
 }: {
   session: Session;
+  project: string;
   projectLabel: string;
   active: boolean;
   running: boolean;
   /** 这一行是否正在行内编辑标题（右键菜单或双击标题进入）。 */
   renaming?: boolean;
-  onSelect: () => void;
-  onContextMenu: (event: ReactMouseEvent) => void;
-  onStartRename?: () => void;
-  onCancelRename?: () => void;
-  onRename?: (name: string) => void;
+  onSelect: (session: Session, project: string) => void;
+  onContextMenu: (session: Session, event: ReactMouseEvent) => void;
+  onStartRename: (path: string) => void;
+  onRename: (session: Session, name: string) => void;
 }) {
   const title = sessionTitle(session);
   return (
@@ -260,14 +236,14 @@ function RailSessionCard({
       title={`${title}\n${projectLabel}`}
       data-session-card={session.path}
       aria-current={active ? "true" : undefined}
-      onClick={onSelect}
-      onContextMenu={onContextMenu}
+      onClick={() => onSelect(session, project)}
+      onContextMenu={event => onContextMenu(session, event)}
       onPointerEnter={() => prefetchSession(session.path)}
       onKeyDown={(event) => {
-        if (event.key === "Enter") onSelect();
-        else if (event.key === "F2" && onStartRename) {
+        if (event.key === "Enter" && !renaming) onSelect(session, project);
+        else if (event.key === "F2" && !renaming) {
           event.preventDefault();
-          onStartRename();
+          onStartRename(session.path);
         }
       }}
       className={`group flex h-8 w-full cursor-default select-none items-center gap-2 rounded-control px-1.5 text-left outline-none focus-visible:ring-1 focus-visible:ring-accent/50 ${
@@ -279,16 +255,15 @@ function RailSessionCard({
         <Icon name={sessionGlyph(session.icon)} className="size-3.5 text-ink-3 group-hover:text-ink-2" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
-        {renaming && onRename && onCancelRename ? (
-          <SessionTitleField value={title} onCommit={onRename} onCancel={onCancelRename} className="text-ui" />
+        {renaming ? (
+          <SessionTitleField value={title} onCommit={name => onRename(session, name)} onCancel={() => onStartRename("")} className="text-ui" />
         ) : (
           <span
             className={`truncate text-ui leading-tight ${active ? "font-medium" : ""}`}
             onDoubleClick={(event) => {
-              if (!onStartRename) return;
               event.preventDefault();
               event.stopPropagation();
-              onStartRename();
+              onStartRename(session.path);
             }}
           >
             {title}
@@ -304,7 +279,7 @@ function RailSessionCard({
       </span>
     </div>
   );
-}
+});
 
 export const NAV: { id: Panel; label: string; icon: IconComponent }[] = [
   { id: "inbox", label: "收件箱", icon: InboxIcon },
@@ -318,7 +293,7 @@ export const NAV: { id: Panel; label: string; icon: IconComponent }[] = [
   { id: "mobile-access", label: "移动端", icon: SmartPhone },
 ];
 
-export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch: () => void }) {
+export const ProjectRail = memo(function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch: () => void }) {
   const panel = useWorkspace((state) => state.panel);
   const cwd = useWorkspace((state) => state.cwd);
   const workspaceMode = useWorkspace((state) => state.workspaceMode);
@@ -333,11 +308,12 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
   // 项目栏的会话行同样支持行内改名；和会话侧栏一样，同一时刻只允许一行在编辑。
   const [renamingPath, setRenamingPath] = useState("");
   const tabs = useWorkspaceTabs();
-  const { openMenu: openSessionMenu, menuNode: sessionMenuNode } = useSessionContextMenu({
-    onOpen: (session) => void openSession(session).catch(report),
-    onRename: (session) => setRenamingPath(session.path),
-    onDeleted: (session) => void queryClient.invalidateQueries({ queryKey: ["pi", "sessions", session.cwd] }),
-  });
+  const openSession = useCallback((session: Session, scope?: string) => {
+    useWorkspace.getState().set({ panel: "chat" });
+    const from = scope || session.cwd;
+    const target = sameScope(from, homeDir) ? homeDir : session.cwd || from;
+    void tabs.openSession({ path: session.path, cwd: target }).catch(report);
+  }, [homeDir, tabs]);
   const [picker, setPicker] = useState(false);
   // 会话区块的展开状态：和其它 shell 偏好一样存 localStorage，重启后保持。
   const [sessionsOpen, setSessionsOpen] = useState(() => {
@@ -394,37 +370,22 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
     return roots;
   }, [cwd, homeDir]);
   const sessionGroups = useProjectSessionGroups(sessionRoots);
+  const listedPaths = useMemo(() => new Set(sessionGroups.flatMap(group => (group.listed ?? []).map(session => session.path))), [sessionGroups]);
+  const { openMenu: openSessionMenu, menuNode: sessionMenuNode } = useSessionContextMenu({
+    onOpen: openSession,
+    onRename: session => setRenamingPath(session.path),
+    canDelete: session => listedPaths.has(session.path),
+  });
+  const runningSessions = useMemo(() => new Set(liveSessions.filter(session => session.running).map(session => session.path)), [liveSessions]);
 
-  /** 当前项目 + 无目录会话（含还没落盘的活跃会话），新到旧；不设上限，列表随项目栏滚动。 */
+  /** Known activity times are retained when a live row has not made it to disk yet. */
   const railSessions = useMemo(() => {
-    const entries: RailSession[] = [];
-    const seen = new Set<string>();
+    const entries = new Map<string, RailSession>();
     for (const group of sessionGroups) {
-      const listed = group.query.data ?? [];
-      const listedPaths = new Set(listed.map((session) => session.path));
-      for (const live of liveSessions) {
-        if (!sameScope(live.cwd, group.cwd) || !live.path || listedPaths.has(live.path) || seen.has(live.path)) continue;
-        seen.add(live.path);
-        entries.push({
-          session: {
-            path: live.path,
-            id: live.path,
-            cwd: live.cwd,
-            firstMessage: live.title,
-            messageCount: 0,
-            modified: new Date().toISOString(),
-          },
-          project: live.cwd,
-        });
-      }
-      for (const session of listed) {
-        if (seen.has(session.path)) continue;
-        seen.add(session.path);
-        entries.push({ session, project: group.cwd });
-      }
+      const { sessions } = mergeProjectSessions(group.cwd, group.listed ?? [], liveSessions);
+      for (const session of sessions) if (!entries.has(session.path)) entries.set(session.path, { session, project: group.cwd });
     }
-    entries.sort((a, b) => Date.parse(b.session.modified) - Date.parse(a.session.modified));
-    return entries;
+    return [...entries.values()].sort((a, b) => compareSessionActivity(a.session, b.session));
   }, [sessionGroups, liveSessions]);
 
   /**
@@ -444,7 +405,8 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
    * 项目会话按最近活动分组。29 条排成一列、每条都一样重，读起来就是一堵墙；
    * 分成四段之后，每一段自己就有了边界，找东西靠位置而不是靠逐行读。
    */
-  const sessionAgeSections = useMemo(() => groupByAge(projectSessions), [projectSessions]);
+  const today = useSessionDay();
+  const sessionAgeSections = useMemo(() => groupSessionsByDay(projectSessions, today), [projectSessions, today]);
 
   /** 会话所属范围的展示名。无目录会话不是注册项目。 */
   const projectLabel = (path: string) => {
@@ -452,21 +414,27 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
     return projects.find((project) => project.path === path)?.name ?? pathProjectName(path);
   };
 
-  async function openSession(session: Session, scope?: string) {
-    useWorkspace.getState().set({ panel: "chat" });
-    const from = scope || railSessions.find((entry) => entry.session.path === session.path)?.project || session.cwd;
-    const loose = Boolean(homeDir) && Boolean(from) && sameScope(from, homeDir);
-    // 真实会话进 header 的标签页；首页只留给“新会话”。
-    // 无目录会话的 cwd 对齐主目录，否则从项目里点开会被当成这个项目的会话。
-    await tabs.openSession(loose ? { ...session, cwd: homeDir } : session.cwd ? session : { ...session, cwd: from });
-  }
-
-  /** 提交项目栏里的改名。列表面自己刷新（`renameSession` 会作废所有项目缓存）。 */
-  function commitRailRename(session: Session, name: string) {
+  const commitRailRename = useCallback((session: Session, name: string) => {
     setRenamingPath("");
     if (name.trim() === sessionTitle(session)) return;
-    void renameSession(session.path, name, liveSessions.find((item) => item.path === session.path)?.connectionId).catch(report);
-  }
+    void renameSession(session.path, name).catch(report);
+  }, []);
+
+  const renderSession = ({ session, project }: RailSession) => (
+    <RailSessionCard
+      key={session.path}
+      session={session}
+      project={project}
+      projectLabel={projectLabel(project)}
+      active={session.path === currentSessionFile}
+      running={runningSessions.has(session.path)}
+      renaming={renamingPath === session.path}
+      onSelect={openSession}
+      onContextMenu={openSessionMenu}
+      onStartRename={setRenamingPath}
+      onRename={commitRailRename}
+    />
+  );
 
   async function chooseHome() {
     if (!homeDir) {
@@ -634,26 +602,12 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
                     {!viewingLooseScope && looseSessions.length > 0 ? (
                       <section aria-label={LOOSE_LABEL}>
                         <div className="flex flex-col gap-px px-2">
-                          {looseSessions.map(({ session, project }) => (
-                            <RailSessionCard
-                              key={session.path}
-                              session={session}
-                              projectLabel={LOOSE_LABEL}
-                              active={session.path === currentSessionFile}
-                              running={Boolean(liveSessions.find((live) => live.path === session.path)?.running)}
-                              renaming={renamingPath === session.path}
-                              onSelect={() => void openSession(session, project).catch(report)}
-                              onContextMenu={(event) => openSessionMenu(session, event)}
-                              onStartRename={() => setRenamingPath(session.path)}
-                              onCancelRename={() => setRenamingPath("")}
-                              onRename={(name) => commitRailRename(session, name)}
-                            />
-                          ))}
+                          {looseSessions.map(renderSession)}
                         </div>
                       </section>
                     ) : null}
                     {sessionAgeSections.map((group, index) => (
-                      <section key={group.label} aria-label={group.label}>
+                      <section key={group.id} aria-label={group.label}>
                         {/* 分组标题：11px、40% 灰，只做分隔不做主角。第一个分组紧贴
                             「会话」，那圈 pt-4 在这里只是一道空档，收掉。 */}
                         <h3
@@ -664,21 +618,7 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
                           <span className="min-w-0 truncate">{group.label}</span>
                         </h3>
                         <div className="flex flex-col gap-px px-2">
-                          {group.items.map(({ session, project }) => (
-                            <RailSessionCard
-                              key={session.path}
-                              session={session}
-                              projectLabel={projectLabel(project)}
-                              active={session.path === currentSessionFile}
-                              running={Boolean(liveSessions.find((live) => live.path === session.path)?.running)}
-                              renaming={renamingPath === session.path}
-                              onSelect={() => void openSession(session, project).catch(report)}
-                              onContextMenu={(event) => openSessionMenu(session, event)}
-                              onStartRename={() => setRenamingPath(session.path)}
-                              onCancelRename={() => setRenamingPath("")}
-                              onRename={(name) => commitRailRename(session, name)}
-                            />
-                          ))}
+                          {group.items.map(renderSession)}
                         </div>
                       </section>
                     ))}
@@ -743,4 +683,4 @@ export function ProjectRail({ visible, onSearch }: { visible: boolean; onSearch:
       <ResizeHandle label="调整项目栏宽度" dragging={resize.dragging} onPointerDown={resize.onPointerDown} onDoubleClick={resize.onDoubleClick} />
     </nav>
   );
-}
+});

@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { toast as gooeyToast } from "../../../shared/ui/toast";
 import { useWorkspace } from "../../../lib/store";
 import { useWorkspaceTabs } from "../../shell/use-workspace-tabs";
-import { report, retireSession } from "../../../lib/rpc";
+import { report } from "../../../lib/rpc";
 import type { Session } from "../../../lib/protocol";
 import { mergeProjectSessions, useProjectSessions } from "../../../hooks/use-project-sessions";
 import { Button, Input, MenuItem, MenuSeparator, PointMenu } from "../../../shared/ui/controls";
@@ -24,9 +24,8 @@ export function SessionsPage() {
   async function remove() {
     if (!deleting) return;
     try {
-      await retireSession(deleting.path);
+      await tabs.deleteSession(deleting.path);
       setDeleting(null);
-      await sessions.refetch();
       gooeyToast.success("会话已删除", { showTimestamp: false });
     } catch (error) {
       report(error);

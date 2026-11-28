@@ -68,6 +68,8 @@ function dockSizeFromDrag(side: DockPosition, startSize: number, startPoint: num
   return clampDockSize(side, startSize + signed);
 }
 import { TerminalView } from "./TerminalView";
+import { piStatusLabel, type PiProgramStatus } from "./pi-program-status";
+import { loadPiResume } from "./pi-program-resume";
 
 
 function sideIcon(side: DockPosition) {
@@ -84,7 +86,7 @@ function hideIcon(side: DockPosition) {
   return ChevronDown;
 }
 
-type Tab = { id: string; label: string; cwd: string };
+type Tab = { id: string; label: string; cwd: string; pi?: { resumeArgs?: string[] } };
 
 /**
  * Orbit's `ProjectTerminalDock`: a resizable pane on any side of the chat,
@@ -102,6 +104,22 @@ export const TerminalDock = memo(function TerminalDock({ cwd, open }: { cwd: str
   const setSize = useShell((state) => state.setTerminalSize);
   const setOpen = useShell((state) => state.setTerminalOpen);
   const [tabs, setTabs] = useState<Tab[]>([]);
+  const [statusById, setStatusById] = useState<Record<string, PiProgramStatus>>({});
+  const [checkpoints, setCheckpoints] = useState<Record<string, string[] | undefined>>({});
+  const checkpoint = !tabs.some(tab => tab.pi && tab.cwd === cwd)
+    ? Object.hasOwn(checkpoints, cwd) ? checkpoints[cwd] : loadPiResume(cwd)?.args
+    : undefined;
+  const refreshCheckpoint = useCallback((project: string) => {
+    setCheckpoints(current => ({ ...current, [project]: loadPiResume(project)?.args }));
+  }, []);
+  const updateStatus = useCallback((id: string, status?: PiProgramStatus) => {
+    setStatusById(current => {
+      if (!status && !current[id]) return current;
+      const next = { ...current };
+      if (status) next[id] = status; else delete next[id];
+      return next;
+    });
+  }, []);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
@@ -112,8 +130,8 @@ export const TerminalDock = memo(function TerminalDock({ cwd, open }: { cwd: str
   const SideIcon = sideIcon(side);
   const HideIcon = hideIcon(side);
 
-  const spawn = useCallback(() => {
-    const tab: Tab = { id: `term-${crypto.randomUUID()}`, label: "pi", cwd };
+  const spawn = useCallback((pi?: Tab["pi"]) => {
+    const tab: Tab = { id: `term-${crypto.randomUUID()}`, label: pi ? "Pi" : "Shell", cwd, pi };
     setTabs((current) => [...current, tab]);
     setActiveId(tab.id);
     setOpen(true);
@@ -121,6 +139,7 @@ export const TerminalDock = memo(function TerminalDock({ cwd, open }: { cwd: str
   }, [cwd, setOpen]);
 
   const close = (id: string) => {
+    updateStatus(id);
     setTabs((current) => {
       const next = current.filter((tab) => tab.id !== id);
       setActiveId((active) => (active === id ? (next.at(-1)?.id ?? null) : active));
@@ -133,9 +152,12 @@ export const TerminalDock = memo(function TerminalDock({ cwd, open }: { cwd: str
   useEffect(() => {
     const stale = tabs.filter((tab) => tab.cwd !== cwd);
     if (stale.length === 0) return;
-    for (const tab of stale) void invoke("pty_kill", { id: tab.id }).catch(() => undefined);
+    for (const tab of stale) {
+      updateStatus(tab.id);
+      void invoke("pty_kill", { id: tab.id }).catch(() => undefined);
+    }
     setTabs((current) => current.filter((tab) => tab.cwd === cwd));
-  }, [cwd, tabs]);
+  }, [cwd, tabs, updateStatus]);
 
   // Opening comes from the footer button, ⌘J, or the "open" flag. This has to be
   // idempotent: React's StrictMode runs mount effects twice in development, and
@@ -242,20 +264,22 @@ export const TerminalDock = memo(function TerminalDock({ cwd, open }: { cwd: str
         <div role="tablist" aria-label="终端标签" className="scrollbar-none flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overscroll-none pl-1.5 pr-2.5">
           {tabs.map((tab) => {
             const active = tab.id === activeId;
+            const status = statusById[tab.id];
+            const label = status ? `${tab.label} · ${piStatusLabel(status)}` : tab.label;
             return (
               <div key={tab.id} className="group relative flex h-full w-56 min-w-28 shrink items-center">
                 <button
                   type="button"
                   role="tab"
                   aria-selected={active}
-                  title={tab.label}
+                  title={status?.message ? `${label} · ${status.message}` : label}
                   onClick={() => setActiveId(tab.id)}
                   className={`relative flex h-7.5 min-w-0 flex-1 cursor-default items-center gap-1.5 self-center rounded-md px-2 pr-7 text-left text-ui ${
                     active ? "bg-selection text-ink-1" : "text-ink-3 hover:bg-fill hover:text-ink-1"
                   }`}
                 >
                   <Terminal className="size-3.5 shrink-0" strokeWidth={1.75} />
-                  <span className="min-w-0 flex-1 truncate">{tab.label}</span>
+                  <span className="min-w-0 flex-1 truncate">{label}</span>
                 </button>
                 <button
                   type="button"
@@ -275,11 +299,13 @@ export const TerminalDock = memo(function TerminalDock({ cwd, open }: { cwd: str
           <div className="min-w-4 flex-1" />
         </div>
         <div className="flex shrink-0 items-center gap-0.5 pr-1.5">
+          {checkpoint && <button type="button" onClick={() => spawn({ resumeArgs: checkpoint })} className="h-6.5 rounded-md px-2 text-ui text-ink-3 hover:bg-fill-strong hover:text-ink-1">恢复 Pi</button>}
+          <button type="button" onClick={() => spawn({})} className="h-6.5 rounded-md px-2 text-ui text-ink-3 hover:bg-fill-strong hover:text-ink-1">新建 Pi</button>
           <button
             type="button"
             title="新建终端 (⌘`)"
             aria-label="新建终端"
-            onClick={spawn}
+            onClick={() => spawn()}
             className="grid size-6.5 place-items-center rounded-md text-ink-3 hover:bg-fill-strong hover:text-ink-1"
           >
             <Plus className="size-3.5" strokeWidth={1.75} />
@@ -313,7 +339,7 @@ export const TerminalDock = memo(function TerminalDock({ cwd, open }: { cwd: str
       <div ref={lockOverscroll} className="relative min-h-0 min-w-0 flex-1">
         {tabs.map((tab) => (
           <div key={tab.id} aria-hidden={tab.id !== activeId} className={tab.id === activeId ? "absolute inset-0 h-full" : "hidden"}>
-            <TerminalView id={tab.id} cwd={tab.cwd} active={open && tab.id === activeId} />
+            <TerminalView id={tab.id} cwd={tab.cwd} active={open && tab.id === activeId} launch={tab.pi} onStatus={updateStatus} onCheckpoint={refreshCheckpoint} />
           </div>
         ))}
       </div>

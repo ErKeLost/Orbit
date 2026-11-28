@@ -51,10 +51,19 @@ pub fn set_project_trust_mode(mode: String) -> Result<String, String> {
     Ok(mode)
 }
 
-/// Pi settings Orbit can edit. `cacheWarming`, `codemode` and `compaction` only
-/// exist in the global settings file, so the GUI needs its own validated write
-/// path.
-const GUI_SETTING_KEYS: [&str; 3] = ["cacheWarming", "codemode", "compaction"];
+/// Pi settings Orbit can edit in the global settings file.
+const GUI_SETTING_KEYS: [&str; 4] = ["cacheWarming", "codemode", "compaction", "notices"];
+const NOTICE_KEYS: [&str; 4] = ["cacheMisses", "cacheWarming", "compactionCosts", "reasoningDrops"];
+
+fn notice_settings(settings: &Value) -> serde_json::Map<String, Value> {
+    let mut notices = settings.get("notices").and_then(Value::as_object).cloned().unwrap_or_default();
+    if let Some(shown) = settings.get("showCacheMissNotices").and_then(Value::as_bool) {
+        for key in NOTICE_KEYS {
+            notices.entry(key.to_string()).or_insert(Value::Bool(shown));
+        }
+    }
+    notices
+}
 
 /// Pi 1.4: `compaction.reserveTokens` only decides *when* compaction starts.
 /// The summary itself now uses the model's output limit. Orbit keeps the two
@@ -89,6 +98,15 @@ fn validate_gui_setting(key: &str, value: &Value) -> Result<(), String> {
                 };
                 if budget > 100_000 {
                     return Err("codemode.inlineBudget 不能超过 100000".into());
+                }
+            }
+            Ok(())
+        }
+        "notices" => {
+            let object = value.as_object().ok_or("notices 需要对象")?;
+            for (key, value) in object {
+                if !NOTICE_KEYS.contains(&key.as_str()) || !value.is_boolean() {
+                    return Err(format!("不支持的提示设置：{key}"));
                 }
             }
             Ok(())
@@ -146,6 +164,7 @@ pub fn get_gui_settings() -> Result<Value, String> {
             settings.get(key).cloned().unwrap_or(Value::Null),
         );
     }
+    view.insert("notices".into(), Value::Object(notice_settings(&settings)));
     Ok(json!({"path": path, "settings": Value::Object(view)}))
 }
 
@@ -163,7 +182,12 @@ pub fn set_gui_setting(key: String, value: Value) -> Result<Value, String> {
     if !settings.is_object() {
         settings = json!({});
     }
-    if value.is_null() {
+    if key == "notices" {
+        let mut notices = notice_settings(&settings);
+        notices.extend(value.as_object().unwrap().clone());
+        settings.as_object_mut().unwrap().remove("showCacheMissNotices");
+        settings["notices"] = Value::Object(notices);
+    } else if value.is_null() {
         settings.as_object_mut().unwrap().remove(&key);
     } else {
         settings[&key] = value.clone();
@@ -256,6 +280,18 @@ mod gui_settings_tests {
         assert!(validate_gui_setting("cacheWarming", &Value::Null).is_ok());
         assert!(validate_gui_setting("cacheWarming", &json!("always")).is_err());
         assert!(validate_gui_setting("cacheWarming", &json!(2)).is_err());
+    }
+
+    #[test]
+    fn notices_retain_individual_overrides_and_migrate_legacy_values() {
+        let notices = notice_settings(&json!({"showCacheMissNotices":true,"notices":{"cacheWarming":false}}));
+        assert_eq!(notices["cacheMisses"], json!(true));
+        assert_eq!(notices["cacheWarming"], json!(false));
+        assert_eq!(notices["compactionCosts"], json!(true));
+        assert_eq!(notices["reasoningDrops"], json!(true));
+        assert!(validate_gui_setting("notices", &json!({"reasoningDrops":false})).is_ok());
+        assert!(validate_gui_setting("notices", &json!({"reasoningDrops":"true"})).is_err());
+        assert!(validate_gui_setting("notices", &json!({"unknown":false})).is_err());
     }
 
     #[test]

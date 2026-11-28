@@ -13,11 +13,13 @@ const read = (name: string): Record<string, unknown> => {
 const settings = read("runtime.json") as { environment?: { name: string; value: string; sensitive: boolean }[] };
 const secrets = read("runtime-secrets.json");
 const env = { ...process.env };
+const resumeToken = env.OSC7577_TOKEN;
 for (const variable of settings.environment ?? []) {
   const value = variable.sensitive ? secrets[variable.name] : variable.value;
   if (typeof value !== "string") throw new Error(`环境变量 ${variable.name} 需要重新设置`);
   env[variable.name] = value;
 }
+if (resumeToken) env.OSC7577_TOKEN = resumeToken;
 const child = spawn(program, args, { cwd, env, stdio: "inherit", shell: false });
 child.on("error", () => { console.error("无法启动配置的 Pi 可执行文件"); process.exitCode = 1; });
 child.on("exit", code => { process.exitCode = code ?? 1; });

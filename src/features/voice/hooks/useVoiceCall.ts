@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react"
-import { voiceCall } from "../model/call"
+import { voiceCall, type CallSnapshot } from "../model/call"
 
-/** 通话状态是应用级单例：切面板不该把电话挂掉。 */
-export function useVoiceCall() {
-  return useSyncExternalStore(voiceCall.subscribe, voiceCall.getSnapshot)
+/** Each subscriber only renders when its own part of the call changes. */
+export function useVoiceCall<K extends keyof CallSnapshot>(key: K): CallSnapshot[K] {
+  return useSyncExternalStore(voiceCall.subscribe, () => voiceCall.getSnapshot()[key])
 }

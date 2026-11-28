@@ -8,7 +8,7 @@ use std::time::Duration;
 #[cfg(unix)]
 use std::time::Instant;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 fn dirs_home() -> Option<std::path::PathBuf> {
@@ -141,6 +141,75 @@ impl Drop for PtyHost {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PiTerminalLaunch {
+    token: String,
+    resume_args: Option<Vec<String>>,
+}
+
+struct PtyLaunch {
+    program: std::path::PathBuf,
+    args: Vec<std::ffi::OsString>,
+    resume_token: Option<String>,
+}
+
+fn checked_resume_args(args: Vec<String>) -> Result<Vec<String>, String> {
+    let invalid = || "无效的 Pi 会话恢复参数".to_string();
+    if args.len() > 63 || args.iter().map(String::len).sum::<usize>() > 2048
+        || args.iter().any(|arg| arg.chars().any(char::is_control))
+    {
+        return Err(invalid());
+    }
+    let mut position = 0;
+    for flag in ["--agent-dir", "--session-dir"] {
+        if args.get(position).is_some_and(|arg| arg == flag) {
+            if !args.get(position + 1).is_some_and(|arg| std::path::Path::new(arg).is_absolute()) {
+                return Err(invalid());
+            }
+            position += 2;
+        }
+    }
+    if !args.get(position).is_some_and(|arg| arg == "--session")
+        || !args.get(position + 1).is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
+    {
+        return Err(invalid());
+    }
+    let flags = args[position + 2..].iter()
+        .map(|flag| shell_words::quote(flag).into_owned())
+        .collect::<Vec<_>>().join(" ");
+    crate::pi_runtime_settings::parse_launch_args(&flags)?;
+    Ok(args)
+}
+
+fn pty_launch(app: &AppHandle, cwd: &std::path::Path, pi: Option<PiTerminalLaunch>) -> Result<PtyLaunch, String> {
+    let Some(pi) = pi else {
+        let (shell, args) = default_shell();
+        return Ok(PtyLaunch { program: shell.into(), args: args.into_iter().map(Into::into).collect(), resume_token: None });
+    };
+    if pi.token.len() != 64 || !pi.token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("无效的 Pi 终端标识".into());
+    }
+    let runtime = crate::bridge::RuntimePaths::resolve(app, cwd)?;
+    let mut args = vec![
+        runtime.resources_dir.join("pi-runtime/terminal.js").into_os_string(),
+        crate::pi_runtime_settings::settings_dir()?.into_os_string(),
+        cwd.as_os_str().to_owned(),
+        if runtime.pi_executable { runtime.pi.clone() } else { runtime.node.clone() }.into_os_string(),
+    ];
+    if !runtime.pi_executable {
+        args.push(runtime.pi.into_os_string());
+    }
+    if let Some(resume) = pi.resume_args {
+        args.extend(checked_resume_args(resume)?.into_iter().map(std::ffi::OsString::from));
+    } else {
+        args.push("--agent-dir".into());
+        args.push(runtime.agent_dir.into_os_string());
+        args.extend(runtime.launch_args.into_iter().map(std::ffi::OsString::from));
+    }
+    Ok(PtyLaunch { program: runtime.node, args, resume_token: Some(pi.token) })
+}
+
 #[tauri::command(async)]
 pub fn pty_spawn(
     app: AppHandle,
@@ -149,8 +218,10 @@ pub fn pty_spawn(
     cwd: String,
     cols: u16,
     rows: u16,
+    pi: Option<PiTerminalLaunch>,
 ) -> Result<(), String> {
-    let workdir = working_dir(&cwd);
+    let workdir = if pi.is_some() { crate::bridge::project(&cwd)? } else { working_dir(&cwd) };
+    let launch = pty_launch(&app, &workdir, pi)?;
     if let Some(prev) = host.remove(&id) {
         terminate(prev.pid);
         #[cfg(unix)]
@@ -159,12 +230,12 @@ pub fn pty_spawn(
 
     #[cfg(unix)]
     {
-        spawn_unix(app, host, id, workdir, cols.max(2), rows.max(2))
+        spawn_unix(app, host, id, workdir, cols.max(2), rows.max(2), launch)
     }
 
     #[cfg(windows)]
     {
-        spawn_windows(app, host, id, workdir, cols.max(2), rows.max(2))
+        spawn_windows(app, host, id, workdir, cols.max(2), rows.max(2), launch)
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -265,17 +336,17 @@ fn spawn_unix(
     workdir: std::path::PathBuf,
     cols: u16,
     rows: u16,
+    launch: PtyLaunch,
 ) -> Result<(), String> {
     use std::fs::File;
     use std::os::unix::io::FromRawFd;
     use std::os::unix::process::CommandExt;
     use std::process::Command;
 
-    let (shell, args) = default_shell();
     let (master, slave) = open_pty(cols, rows)?;
 
-    let mut cmd = Command::new(&shell);
-    cmd.args(&args)
+    let mut cmd = Command::new(&launch.program);
+    cmd.args(&launch.args)
         .current_dir(&workdir)
         .stdin(dup_stdio(slave)?)
         .stdout(dup_stdio(slave)?)
@@ -289,6 +360,9 @@ fn spawn_unix(
         cmd.env("HOME", &home);
     }
     cmd.env("PWD", &workdir);
+    if let Some(token) = launch.resume_token {
+        cmd.env("OSC7577_TOKEN", token);
+    }
 
     // setsid() already creates a new session and process group. Calling
     // process_group(0) first makes the child a group leader, so setsid()
@@ -310,7 +384,7 @@ fn spawn_unix(
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("Failed to start {shell}: {e}"))?;
+        .map_err(|e| format!("Failed to start {}: {e}", launch.program.display()))?;
     close_fd(slave);
     let pid = child.id();
 
@@ -393,10 +467,10 @@ fn spawn_windows(
     workdir: std::path::PathBuf,
     cols: u16,
     rows: u16,
+    launch: PtyLaunch,
 ) -> Result<(), String> {
     use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 
-    let (shell, args) = default_shell();
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
@@ -407,8 +481,8 @@ fn spawn_windows(
         })
         .map_err(|err| format!("Failed to open terminal: {err}"))?;
 
-    let mut cmd = CommandBuilder::new(&shell);
-    cmd.args(&args);
+    let mut cmd = CommandBuilder::new(&launch.program);
+    cmd.args(&launch.args);
     cmd.cwd(&workdir);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
@@ -420,9 +494,12 @@ fn spawn_windows(
         cmd.env("USERPROFILE", &home);
     }
     cmd.env("PWD", workdir.to_string_lossy().as_ref());
+    if let Some(token) = launch.resume_token {
+        cmd.env("OSC7577_TOKEN", token);
+    }
 
     let mut child = crate::windows::spawn_pty(pair.slave.as_ref(), cmd)
-        .map_err(|err| format!("Failed to start {shell}: {err}"))?;
+        .map_err(|err| format!("Failed to start {}: {err}", launch.program.display()))?;
     let pid = child.process_id().unwrap_or(0);
     let mut reader = pair
         .master
