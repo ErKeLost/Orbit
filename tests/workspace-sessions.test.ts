@@ -93,6 +93,7 @@ mock.module("../src/lib/rpc", () => ({
   patchConnectionSnapshot: (id: string, value: Partial<Snap>) => patch(id, value),
   primeConnectionSnapshot: (id: string) => { if (!model.snapshots.has(id)) model.snapshots.set(id, fresh()) },
   restoreProjectRoute(cwd: string, id: string) { if (model.connections.has(id)) model.projectActive.set(cwd, id) },
+  retireSession: mock(async (_path: string) => {}),
   setDesktopScope(cwd: string, mode: string) {
     currentCwd = cwd
     useWorkspace.getState().set({ cwd, workspaceMode: mode })

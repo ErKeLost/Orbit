@@ -50,6 +50,7 @@ const fakeClient = {
 mock.module("../src/lib/remote-runtime", () => ({
   screenRemoteChannel: async (h: Handlers) => { handlers = h; return fakeClient },
   addRemoteForegroundListener: () => () => undefined,
+  addRemoteRouteChangeListener: () => () => undefined,
   sendRemoteScreenAck: () => undefined,
   sendRemoteScreenInput: () => undefined,
 }))

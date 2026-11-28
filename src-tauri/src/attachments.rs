@@ -139,9 +139,8 @@ pub fn save_media_file(data: String, destination: String) -> Result<String, Stri
 #[tauri::command]
 pub fn stage_drag_file(name: String, data: String) -> Result<String, String> {
     let safe = name
-        .split(|ch| matches!(ch, '/' | '\\' | ':' ))
-        .filter(|part| !part.is_empty() && *part != "." && *part != "..")
-        .next_back()
+        .split(['/', '\\', ':'])
+        .rfind(|part| !part.is_empty() && *part != "." && *part != "..")
         .unwrap_or("file");
     let dir = std::env::temp_dir().join("orbit-drag");
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
